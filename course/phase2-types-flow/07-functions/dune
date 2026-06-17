@@ -1,0 +1,10 @@
+; Concept 07 — the Phase-2 front-end + type checker, now with functions.
+; Contracts: token diagnostics types ast driver. Skeletons (you edit): lexer parser sema.
+(library
+ (name swiftml_funcs)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema driver)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

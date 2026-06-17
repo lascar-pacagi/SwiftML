@@ -1,0 +1,244 @@
+---
+title: "27 · Ownership SSA"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+Concept 26's ARC works — twelve lifetime scenarios match swiftc exactly. But look at the IR it
+emits: `retain %6`, `release %14`. *Why* is that retain there? Which release balances it? The
+IR doesn't say; the discipline lives in SILGen's code and in our heads. That's fragile in
+exactly the way that matters: the next pass that touches this IR (concept 28 wants to *delete*
+refcount traffic!) has no way to know which operations are load-bearing.
+
+This concept restructures the IR so the discipline is *in the types of the operations
+themselves* — **Ownership SSA** — and then builds the payoff: a **verifier** that checks the
+ARC rules on every compile. Memory-safety bugs — leaks, double-frees, use-after-free — become
+compile errors. This is swiftc's actual architecture (SIL has been fully OSSA for years), and
+it's the foundation 28 stands on.
+
+- **You implement:** the ownership verifier.
+- **Outcome:** identical behavior to 26, with the ARC rules machine-checked.
+
+## 2. Concepts in depth
+
+### Two kinds of values
+
+Every class-typed SIL value now has an **ownership kind**, determined by its definition:
+
+![The lattice: owned values are born holding +1 and must hand it to exactly one consumer; guaranteed values are borrows — alive courtesy of someone else's +1, never consumed, never generating traffic. The verifier turns each way of breaking the rules into a named compile error.](figs/ownership.png)
+
+- **OWNED** — the value *is* a +1: `alloc_ref` (born owning), `copy_value` (a fresh +1 minted
+  from a borrow), `load [take]` (a slot's +1 moving out), class-typed call results (the
+  callee retained for the caller). An owned value is a *responsibility*: someone must consume
+  it — `destroy_value`, a `store` into durable storage, or `return` — **exactly once**.
+- **GUARANTEED** — a borrow: parameters (the caller keeps them alive for the call — Swift's
+  guaranteed convention) and plain loads (the slot keeps its +1; you're just looking).
+  Borrows generate *no traffic* and may **never** be consumed: destroying one would steal a
+  +1 someone else owns.
+
+The three structured operations replace 26's raw pair, and each now *means* something:
+
+| op | meaning | lowers to |
+|---|---|---|
+| `copy_value %b` | this borrow becomes a NEW owner | `rt.retain` (result = same pointer) |
+| `destroy_value %o` | consume an owned value | `rt.release` |
+| `load [take] %slot` | the slot dies; its +1 moves to me | a plain load — **free** |
+
+`load [take]` is the elegant one: scope exits and overwrites used to look like
+"load (borrow) then release a borrow?!" — a rule violation. As a *take*, the ownership
+transfer is explicit and costs nothing. Concept 26's reassignment is now literally:
+`%old = load [take] slot; store %new; destroy_value %old` — read it aloud and it's the
+semantics.
+
+### The verifier — and how it improved its own compiler
+
+`verify_ownership` checks three rules per function (you'll write it):
+
+- **R1 — exactly once.** Owned and never consumed = the deinit never fires (a leak). Consumed
+  twice = the count hits zero early (a double-free). Both are now *named compile errors* with
+  the value number attached.
+- **R2 — never consume a borrow.** `destroy_value` or `store` of a guaranteed value corrupts
+  a count someone else is relying on. The legal version is explicit: `copy_value` first.
+- **R3 — no use after consume.** An owned value's consuming use must be its last (checked
+  within a block in v0) — the IR-level form of use-after-free.
+
+And here is the concept's best moment, preserved exactly as it happened: the *first* run of
+the verifier failed — on our own compiler's output. Every function with a class parameter
+spilled it to a stack slot at entry (`store %0 to %slot`, inherited uniformity from Phase 2),
+and that store **consumes a guaranteed value**: R2, three errors per class. The verifier was
+right. Guaranteed values don't belong in owned storage — so class-typed parameters (including
+`self`) now stay **pure SSA values**, used directly, no slot, no entry store, no load per use.
+That's the real OSSA design (`Ownership.md`: "guaranteed values are not addressable"), arrived
+at the honest way: a checker rejected the shortcut. Fewer instructions, too.
+
+### Why bother, when 26 already worked?
+
+Three answers, in ascending importance. *Trust*: twelve passing probes show the scenarios we
+thought of; the verifier checks every function of every program, including ones no probe
+covers. *Locality*: an ARC bug at runtime is a crash far from its cause; an ownership error
+names the function, block, and value. *Optimization*: concept 28 wants to delete
+retain/release pairs — which is only safe if "this copy_value's +1 is consumed by exactly
+that destroy_value" is a *checkable fact*. OSSA makes ARC optimization a series of small,
+verifiable rewrites instead of a leap of faith. swiftc's history runs the same direction: the
+ownership model was retrofitted into SIL precisely because ARC optimization kept being
+subtly wrong without it.
+
+> Oracle: `swift/docs/SIL/Ownership.md` (the design document — readable and excellent),
+> `SILOwnershipVerifier.cpp` (the real thing: path-sensitive, borrow-scoped, ~3k lines where
+> ours is ~60 — the *rules* are the same), `OperandOwnership.cpp` (which operands consume —
+> our `consumed_operands` in one table).
+
+## 3. Build it, step by step
+
+`sil.ml` — `TODO(27)`, using the given predicates (`is_class_value`, `def_is_owned`,
+`consumed_operands`, `consumed_by_term`):
+
+1. classify every class-typed value (params → guaranteed; results → `def_is_owned`);
+2. walk all consuming uses: a guaranteed operand consumed ⇒ R2's error; an owned operand
+   consumed ⇒ count it;
+3. every owned value's count must be exactly 1 (0 ⇒ leak; n ⇒ consumed n times);
+4. within each block, record where each owned value is consumed; any operand use at a later
+   index ⇒ R3's error.
+
+Reference: `solution/sil.ml`. (The silgen recast — `copy_value`/`take` insertion and the
+no-spill parameter rule — is given; diff it against 26's to see exactly what changed.)
+
+## 4. Test it
+
+```bash
+make lab C=phase6-classes-arc/27-ownership
+```
+
+cram: the structured ops in `--emit-sil` (one `copy_value` for the borrow, two takes, two
+destroys for the two locals); `T.init` taking no slot for `self`; the 26 lifetime behavior
+unchanged at `-Onone` and `-O`. alcotest: generated SIL verifies clean; hand-built SIL (the
+only way to express violations) trips all four errors with exact messages; the
+copy-then-destroy version of the borrow case verifies.
+
+## 5. Benchmark it
+
+Nothing changed at runtime — that's the point (verify it: the lifetime suite is the
+benchmark). The win is static. If you want a number: count instructions in `--emit-sil` for a
+method-heavy program before/after the no-spill parameter rule — the verifier-forced redesign
+*removed* an alloca, a store, and a load per class parameter.
+
+## 6. Exercises
+
+1. **Path-sensitive R1.** `if c { destroy_value %o }` — consumed on one path, leaked on the
+   other. Our function-wide count can't see it. Implement the dataflow: at each block exit,
+   the set of still-owned values; merge points must agree (swiftc: "non-canonical OSSA").
+2. **Cross-block R3.** Use dominance (concept 16's machinery) to check use-after-consume
+   across blocks: every use must be dominated by the def and not reached from the consume.
+3. **Exclusivity-lite.** Add `inout` parameters (caller passes a slot address); enforce
+   Swift's rule: no two overlapping `inout` accesses to the same slot in one call —
+   statically, by address identity. That's `swift/docs/OwnershipManifesto.md`'s law of
+   exclusivity in the simplest case.
+4. **`borrow` scopes.** Real OSSA brackets borrows: `begin_borrow`/`end_borrow` delimit where
+   a guaranteed value is alive, letting the verifier check borrows don't outlive their
+   source. Add them around method-call receivers and verify the source's destroy comes after
+   `end_borrow`.
+
+## 7. Recap & what's next
+
+Ownership is now *in* the IR: owned values carry an obligation (+1, consume exactly once),
+guaranteed values are free borrows, the three structured ops say why every refcount operation
+exists — and the verifier holds the whole compiler to it on every compile, having already
+caught one real design flaw in its first run. Behavior: bit-identical to 26.
+
+Next, **28-arc-optimization** — the payoff and Phase 6's finale (Milestone **M6**): with
+ownership structured and verified, the optimizer can finally *delete* redundant traffic —
+copy/destroy pairs on values that never escape, borrows that never needed a copy — measured
+against the naive baseline, with the verifier guaranteeing every rewrite stays sound.
+
+## 8. Appendix — full solution
+
+```ocaml
+let verify_ownership (m : modul) : string list =
+  let errs = ref [] in
+  let add s = errs := s :: !errs in
+  List.iter
+    (fun (f : func) ->
+      let owned = Hashtbl.create 16 and guaranteed = Hashtbl.create 16 in
+      List.iter (fun (v, _) -> if is_class_value f v then Hashtbl.replace guaranteed v ()) f.params;
+      List.iter
+        (fun (b : block) ->
+          List.iter
+            (fun (v, i) ->
+              if is_class_value f v then
+                if def_is_owned i then Hashtbl.replace owned v () else Hashtbl.replace guaranteed v ())
+            b.instrs)
+        f.blocks;
+      let consumes = Hashtbl.create 16 in
+      let consume v =
+        if Hashtbl.mem guaranteed v then
+          add (Printf.sprintf "@%s: guaranteed value %%%d consumed without a copy_value" f.fname v)
+        else Hashtbl.replace consumes v (1 + Option.value (Hashtbl.find_opt consumes v) ~default:0)
+      in
+      List.iter
+        (fun (b : block) ->
+          let consumed_at = Hashtbl.create 8 in
+          List.iteri
+            (fun idx (_, i) ->
+              List.iter
+                (fun u ->
+                  match Hashtbl.find_opt consumed_at u with
+                  | Some j when j < idx ->
+                      add (Printf.sprintf "@%s bb%d: owned value %%%d used after being consumed" f.fname b.bid u)
+                  | _ -> ())
+                (operand_list i);
+              List.iter (fun v -> if Hashtbl.mem owned v then Hashtbl.replace consumed_at v idx)
+                (consumed_operands f i))
+            (List.rev b.instrs);
+          List.iter consume (List.concat_map (fun (_, i) -> consumed_operands f i) (List.rev b.instrs));
+          List.iter consume (consumed_by_term f b.term))
+        f.blocks;
+      Hashtbl.iter
+        (fun v () ->
+          match Option.value (Hashtbl.find_opt consumes v) ~default:0 with
+          | 0 -> add (Printf.sprintf "@%s: owned value %%%d is leaked (never consumed)" f.fname v)
+          | 1 -> ()
+          | n -> add (Printf.sprintf "@%s: owned value %%%d consumed %d times" f.fname v n))
+        owned)
+    m.funcs;
+  List.rev !errs
+```
+
+## 9. Exercise solutions
+
+### 1 — path-sensitive R1
+
+Forward dataflow over the CFG: `live_owned_out(B) = (live_owned_in(B) ∪ defined-owned(B)) ∖
+consumed(B)`; `live_owned_in(B) = meet of predecessors` — and the *meet must be equality*: if
+two predecessors disagree about whether `%o` is still owned, one path leaked or
+double-consumed. Report the disagreeing value at the join. (This is exactly why swiftc
+canonicalizes OSSA before optimizing: passes want the invariant "consumed on all paths or
+none".)
+
+### 2 — cross-block R3
+
+With dominators from concept 16: a consume in block C kills the value for every block
+reachable from C (a small reachability walk). Any use in a killed block that isn't dominated
+by a re-definition (impossible in SSA — values define once) is a violation. The subtlety is a
+use in a block reachable from C *and* from a non-consuming path — that's exercise 1's
+disagreement, caught there.
+
+### 3 — exclusivity-lite
+
+`inout` lowers to passing the slot ADDRESS; the callee's writes go through it. The static
+check: at each call, collect the address operands of all `inout` arguments; any two equal
+addresses (same slot) = "overlapping accesses to 'x'; consider copying". Swift's dynamic
+fallback (a per-variable access flag checked at runtime) is the exercise's second half — two
+extra instructions around the call.
+
+### 4 — borrow scopes
+
+`begin_borrow %owner -> %b` (guaranteed) / `end_borrow %b`. SILGen brackets receiver uses;
+the verifier adds: every `end_borrow` matches one `begin_borrow`; no use of `%b` after its
+`end_borrow`; and the owner's consuming use must come after every `end_borrow` of borrows
+derived from it. That last rule is the one that catches "released while borrowed" — the bug
+class exclusivity and borrow checking exist to kill (and the same shape Rust's borrow checker
+enforces at the source level).
+```

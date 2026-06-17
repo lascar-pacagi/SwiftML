@@ -1,0 +1,4 @@
+; The concept-34 register-allocation ladder benchmark: compiles each program with the three rungs
+; (stack -> linear-scan -> graph-colour) + our LLVM -O path as a reference, verifies the outputs
+; agree, and times them. `make bench C=phase8-arm64-backend/34-register-allocation`.
+(executable (name bench) (libraries swiftml_regalloc unix) (flags (:standard -warn-error -a)))

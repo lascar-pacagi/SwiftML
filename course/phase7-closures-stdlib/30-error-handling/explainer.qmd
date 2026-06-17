@@ -1,0 +1,202 @@
+---
+title: "30 · Error handling"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+`throws`, `try`, `do`-`catch`, `try?`, `try!`, `defer` — Swift's whole error-handling surface. It
+*looks* like a big feature, and in most languages it would be: exceptions mean stack unwinding, a
+runtime that walks frames, landing pads. Swift does none of that. Swift errors are **typed return
+values in disguise** — a throwing call just has a second, hidden way to return — and that makes the
+entire feature **pure desugaring**: ordinary branches plus one error register. You'll add `throws`
+to the language *without adding a single new SIL instruction*.
+
+- **You implement:** the error check after a throwing call, and the do-catch dispatch.
+- **Outcome:** error programs — propagation, defers, `try?`/`try!` — matching swiftc, `-Onone` & `-O`.
+
+## 2. Concepts in depth
+
+### Errors are a second return path
+
+A `throws` function can finish two ways: normally (a value) or by throwing (an error). The trick is
+to make the *error* a value too. We give every error case a small **Int ordinal** (1, 2, 3…; 0
+means "no error") and a single global register, `@swiftml.error`. Then:
+
+![Error handling as desugaring: `throw` stores an ordinal in the error register; a `try` call reads it back and branches on nonzero; `do`-`catch` compares it to each catch's ordinal. No new SIL — just branches and two runtime calls. swiftc does exactly this, passing the error in a reserved register (x21 on ARM64) instead of a global.](figs/errordesugar.png)
+
+- **`throw E.c`** stores `ordinal(E.c)` in the register and returns a (discarded) default value of
+  the function's return type — the caller will see the error first and ignore the result.
+- **every throwing call**, right after `apply`, reads the register; if nonzero, control jumps to
+  the current *handler*.
+- **propagation is free**: in a throwing function with no enclosing `do`, the handler just runs
+  cleanup and `return`s — leaving the register set, so *its* caller's check fires next. The error
+  walks up the call chain one early-return at a time. No unwinder, no frame walking.
+
+Why a global and not a hidden parameter? Single-threaded, no async — one register suffices, and
+it's exactly swiftc's model (it reserves a CPU register, `x21` on ARM64, for the in-flight error;
+we use a global because we don't own the register allocator until Phase 8). The behavior is
+identical; the representation is the honest simplification.
+
+### `do`-`catch` is a switch on the ordinal
+
+A `do` block installs a *handler*: throwing calls inside it branch not to propagation but to the
+catch **dispatch** — a chain of equality tests on the register. `catch MathError.divByZero`
+compiles to `if error == ordinal(divByZero)`; a bare `catch` matches anything; the matched handler
+*clears* the register (the error is handled now) and runs its body. If nothing matches, the
+register stays set and propagation resumes (which is why a non-exhaustive `do` is only legal in a
+throwing function — sema enforces it). It's `switch` over an Int, which you've built three times.
+
+### `try`, `try?`, `try!` — same calls, different handlers
+
+The `try` keyword is almost nothing at runtime: it's sema's marker that "a throwing call lives
+here." What changes the *lowering* is the flavour, by swapping the handler:
+
+- **`try`** uses the ambient handler (the enclosing `do`, or propagation).
+- **`try?`** installs a handler that produces **`.none`** and merges — turning `T` into `T?`,
+  exactly the Optional diamond from concept 13.
+- **`try!`** installs a handler that **traps** — `Trap`, exit 133, the same SIGTRAP as
+  force-unwrapping `nil` (and swiftc).
+
+Three behaviours, one mechanism: push a different block onto the handler stack.
+
+### `defer` is cleanup you already built
+
+`defer { … }` runs its body when its scope exits — *any* exit, in LIFO order. That's precisely the
+scope-cleanup discipline from ARC (concept 26): a stack of pending actions, fired newest-first at
+fall-through, `return`, `break`/`continue`, and the throw-propagation path. We hang a parallel
+defer list off the same scope stack, and every exit point that already releases ARC values now
+also runs defers first. The probe pins the ordering: `defer{print(1)} defer{print(2)}` then a
+`return` prints `2, 1` — LIFO, before the value leaves.
+
+### The diagnostics
+
+Two of swiftc's, matched exactly. A throwing call that isn't `try`-marked: *call can throw, but it
+is not marked with 'try' and the error is not handled*. A `try`-marked call with nowhere to send
+the error (not in a `do`, enclosing function not `throws`): *errors thrown from here are not
+handled*. Sema tracks two bits — "am I inside a `try`?" and "can errors be handled here?" (a
+throwing function body, a `do` body, or a `try?`/`try!` which handle locally) — and the two
+diagnostics fall out of their combination.
+
+> Oracle: `SILGenStmt.cpp` lowers `do`/`catch` to exactly this dispatch; `SILGenExpr.cpp` handles
+> `try`/`try?`/`try!`; `ErrorHandlingRationale.rst` is *the* document on why Swift chose
+> typed-return errors over exceptions — read it, it's a masterclass in language design tradeoffs.
+
+## 3. Build it, step by step
+
+In `silgen.ml`:
+
+1. **`TODO(30a)` — `emit_error_check`**: after a throwing call, `rt_error_get b`, compare `!= 0`;
+   on nonzero branch to `List.hd b.handlers` (an `HJump tgt`, or a fresh propagate block that calls
+   `gen_throw_propagate b`); `switch_to` the no-error continue block.
+2. **`TODO(30b)` — the catch dispatch**: for each clause, a bare catch (`cpat = None`) runs
+   `run_handler c`; a pattern catch tests `error == ordinal(en, case)`, branching to a hit block
+   (`run_handler`) vs a next block, then recurses.
+
+Everything else — `throw`, `try?`/`try!`, `defer`, the scope integration, the `rt.error_*`
+intrinsics — is given. Reference: `solution/silgen.ml`.
+
+## 4. Test it
+
+```bash
+make lab C=phase7-closures-stdlib/30-error-handling
+```
+
+cram: do-catch by case, nested propagation, `try!` exit 133, `try?` nil/some, `defer` LIFO across
+the throw path, the two diagnostics — at `-Onone` and `-O`; plus the SIL showing the
+`rt.error_get`/`rt.error_set` desugaring. alcotest: the desugaring shapes, ordinal assignment, all
+three diagnostics, and `-O` validity.
+
+## 5. Benchmark it
+
+The cost of error handling here is one load + compare + branch per throwing call — measure it
+against the same call non-throwing. swiftc's is the same (a register test); the lesson is that
+"exceptions are slow" is a C++ artifact (table-driven unwinding), not a law — Swift's typed-return
+model is nearly free on the happy path.
+
+## 6. Exercises
+
+1. **Payload errors.** `case notFound(String)` — widen the register to carry a payload pointer (or
+   reuse the existential box from concept 23), and bind it in `catch .notFound(let s)`.
+2. **`rethrows`.** A function generic over a closure that *only* throws if the closure does. Track
+   the closure's throwing-ness and propagate the marker.
+3. **Typed throws (`throws(E)`).** Swift 6's feature: the thrown type is declared, so the register
+   needs no dynamic tag dispatch — the catch is exhaustive by construction. A small sema change.
+4. **`Result<T, E>`.** Build the enum and the `try`-to-`Result` bridge (`Result { try f() }`) —
+   showing errors and sum types are the same idea wearing different syntax.
+
+## 7. Recap & what's next
+
+Errors are a second return path: an ordinal in a register, a branch after every throwing call,
+propagation by early-return, `do`-`catch` as a switch, `try?`/`try!` as handler swaps, `defer` as
+scope cleanup. No unwinder, no new IR — *pure desugaring*, exactly swiftc's design at a smaller
+scale.
+
+Next, **31-stdlib-array-string**: `Array<T>` and `String` built in our own subset on the heap,
+with copy-on-write value semantics — where the generics (Phase 5), ARC (Phase 6), and closures
+(29) we've built finally combine into a real library. Then **32** brings `map`/`filter`/`reduce`,
+closing Milestone **M7**.
+
+## 8. Appendix — full solution
+
+```ocaml
+(* 30a — the post-call error check *)
+and emit_error_check (b : builder) : unit =
+  let e = rt_error_get b in
+  let zero = emit b (Sil.Int_lit 0) Types.TInt in
+  let nz = emit b (Sil.Binop (Ast.Ne, e, zero)) Types.TBool in
+  let ok = new_block b in
+  (match b.handlers with
+  | HJump tgt :: _ -> terminate b (Sil.Cond_br (nz, (tgt, []), (ok.Sil.bid, [])))
+  | _ ->
+      let prop = new_block b in
+      terminate b (Sil.Cond_br (nz, (prop.Sil.bid, []), (ok.Sil.bid, [])));
+      switch_to b prop; gen_throw_propagate b);
+  switch_to b ok
+
+(* 30b — the catch dispatch *)
+let rec dispatch_chain = function
+  | [] -> gen_throw_propagate b
+  | (c : Ast.catch_clause) :: rest -> (
+      match c.Ast.cpat with
+      | None -> run_handler c
+      | Some (en, csn) ->
+          let ord = try Hashtbl.find b.error_ord (en, csn) with Not_found -> 0 in
+          let oc = emit b (Sil.Int_lit ord) Types.TInt in
+          let m = emit b (Sil.Binop (Ast.Eq, e, oc)) Types.TBool in
+          let hit = new_block b and nxt = new_block b in
+          terminate b (Sil.Cond_br (m, (hit.Sil.bid, []), (nxt.Sil.bid, [])));
+          switch_to b hit; run_handler c;
+          switch_to b nxt; dispatch_chain rest)
+in dispatch_chain catches
+```
+
+## 9. Exercise solutions
+
+### 1 — payload errors
+Make the register two words: the ordinal + a pointer. `throw .notFound(s)` stores the ordinal and a
+boxed/retained payload; the matched `catch .notFound(let v)` reads the payload word and binds it.
+The clean version reuses concept 23's existential container for the payload, so `any Error` becomes
+a real existential — which is exactly what swiftc's error register holds (a pointer to a boxed
+`Error`), not an Int. Our Int is the payload-free specialisation.
+
+### 2 — rethrows
+A `rethrows` function is throwing iff its closure argument throws. At the *call site*, if the
+closure is non-throwing, the call doesn't need a `try` and emits no error check; if it throws, it
+does. Track per-call whether any closure argument is throwing (a closure type would gain a
+`throws` bit — concept 29's `TFunc` extended), and gate the error-check emission on it.
+
+### 3 — typed throws
+`func f() throws(E)` declares the thrown type. The win: a `do { try f() }` knows the only possible
+errors are `E`'s cases, so the catch is exhaustive without a bare `catch`, and (with one error
+type) the dispatch can even be a jump table. Sema records the declared throw type and checks
+catches against it; silgen is unchanged (the ordinals already encode the case).
+
+### 4 — Result
+`enum Result<T, E> { case success(T); case failure(E) }`. `Result { try f() }` lowers like a
+`do`-`catch` whose body wraps the value in `.success` and whose bare catch wraps the error in
+`.failure`. `result.get()` is a throwing function that switches and re-throws `.failure`. It makes
+visible that `throws` and `Result` are the same machine — one with sugar and a hidden register, one
+with an explicit sum type.

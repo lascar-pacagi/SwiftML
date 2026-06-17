@@ -1,0 +1,24 @@
+# Shared Quarto config for all concept explainers.
+# Render one: `make explainer C=phase1-minimal/01-lexer`  (or `quarto render <dir>/explainer.qmd`)
+# Render all: `make docs`        Live preview: `make preview`
+project:
+  title: "swiftml — the Swift compiler, from scratch, in OCaml"
+  render:
+    - "**/explainer.qmd"
+    - "!**/_TEMPLATE-concept/**"
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    code-copy: true
+    code-overflow: wrap
+    highlight-style: github
+  typst:
+    toc: true
+    papersize: a4
+
+# Cache executed code so re-renders are fast; explainers use static code blocks by default.
+execute:
+  freeze: auto

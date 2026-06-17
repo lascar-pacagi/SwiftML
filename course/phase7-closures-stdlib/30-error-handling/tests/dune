@@ -1,0 +1,3 @@
+(executable (name lab) (modules lab) (libraries swiftml_errors) (flags (:standard -warn-error -a)))
+(cram (deps lab.exe))
+(tests (names test_errors) (modules test_errors) (libraries alcotest swiftml_errors) (flags (:standard -warn-error -a)))

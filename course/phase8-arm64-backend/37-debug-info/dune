@@ -1,0 +1,5 @@
+; Concept 37 — debug info: source locations threaded end-to-end into a DWARF-lite line table.
+(library (name swiftml_debuginfo) (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen arm64 isel regalloc peephole driver)
+ (flags (:standard -warn-error -a)))
+(dirs :standard \ solution)

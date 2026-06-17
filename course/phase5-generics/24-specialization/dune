@@ -1,0 +1,9 @@
+; Concept 24 — generic specialization + devirtualization (Milestone M5).
+(library
+ (name swiftml_spec)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen driver)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

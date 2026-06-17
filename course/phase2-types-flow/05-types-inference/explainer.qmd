@@ -1,0 +1,378 @@
+---
+title: "05 · Types & Bidirectional Inference"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+In Phase 1 every value was an `Int`, so the "type checker" only had to resolve names. Now the
+language has **four ground types** — `Int`, `Bool`, `Double`, `String` — and that changes everything:
+the same syntax (`1 + 2`, `a == b`, `let x = e`) means different things at different types, some
+combinations are errors (`1 + true`), and a literal like `1` can be an `Int` *or* a `Double`
+depending on where it sits. The compiler must work out the type of **every expression** and reject
+the programs that don't add up — exactly, identically to how `swiftc` does.
+
+- **You implement:** the new lexemes (`lexer.ml`), the new syntax (`parser.ml`), and the heart of
+  this concept — the **bidirectional type checker** in `sema.ml`.
+- **Outcome:** `swiftml2 --typecheck foo.swift` accepts a program iff `swiftc -typecheck` does, with
+  matching diagnostics. That accept/reject agreement *is* the test (the type-check oracle).
+- **Out of scope (later concepts):** control flow and functions (06–07); running the code — codegen
+  for the new types flows through **SIL**, introduced at concept 08. Concept 05 stops at
+  `--typecheck`. Also out of scope: generics and protocols (Phase 5), where the real constraint
+  solver lives.
+
+> **Swift note (you're new to Swift).** Swift is **statically, strongly typed** with *local type
+> inference*: you rarely write types (`let x = 1` infers `Int`), but every value has one fixed type,
+> and there are **no implicit numeric conversions** — `let d: Double = anInt` is an *error*; you must
+> write `Double(anInt)`. This strictness (vs. C's silent promotions) is a deliberate safety choice,
+> and matching it precisely is most of this concept.
+
+## 2. Concepts in depth
+
+### Why one mode isn't enough
+
+Imagine you only had **synthesis**: a function `infer : expr -> ty` that reads an expression and
+returns its type bottom-up. `infer(1)` is `Int`, `infer("hi")` is `String`, `infer(a + b)` combines
+the operands. That works for a lot — but it falls apart on the two things Swift does constantly:
+
+1. **Annotations push a type *inward*.** In `let d: Double = 1`, the literal `1` should become a
+   `Double`. Pure synthesis would compute `infer(1) = Int` and then complain that `Int ≠ Double`.
+   The expected type has to flow *down* into the literal.
+2. **Literals are polymorphic.** `1` is an `Int` by default, but `1.0 + 1` is `Double` — the literal
+   adapts to its neighbour. Bottom-up synthesis has already committed `1 : Int` before it ever sees
+   the `1.0`.
+
+The fix is **bidirectional type checking**: *two* judgments that call each other.
+
+### The two judgments
+
+```
+infer       Γ ⊢ e ⇒ τ        "with the bindings Γ, e synthesises type τ"   (no expectation)
+check       Γ ⊢ e ⇐ τ        "e checks against the expected type τ"         (τ is given)
+```
+
+- **`infer` (synthesis, ⇒)** is bottom-up: you have no expectation, so you read the expression and
+  *produce* a type. Use it when nothing tells you what type to want — a bare `let x = e`, an operand
+  of an operator, an expression statement.
+- **`check` (checking, ⇐)** is top-down: you already *have* an expected type τ and you verify the
+  expression conforms, pushing τ into sub-expressions. Use it when the context fixes the type — the
+  right side of `let x: τ = e`, an assignment to a variable of known type, (later) a function
+  argument against its parameter type.
+
+![Bidirectional checking on `1 + 2`: `infer` flows types up; `check(·, Double)` pushes the expected type down, which is what lets the literals coerce.](figs/bidir.png)
+
+The two are mutually recursive and the **default bridge** between them is one rule: *to check `e`
+against `τ`, when there's no smarter rule, `infer` its type and compare.*
+
+```
+Γ ⊢ e ⇒ σ      σ = τ
+────────────────────────   (the fall-through "subsumption" rule)
+     Γ ⊢ e ⇐ τ
+```
+
+Everything interesting is the rules that fire *before* that fall-through — the rules that make
+`check` do something cleverer than "infer then compare."
+
+### Operator typing
+
+Synthesis of an operator is just a case analysis on the operand types. For the arithmetic operators:
+
+- `+` : `Int×Int → Int`, `Double×Double → Double`, **and** `String×String → String` (concatenation).
+- `- * /` : `Int×Int → Int`, `Double×Double → Double` (not `String`).
+- `%` : `Int×Int → Int` only. *(Swift removed `%` on floating-point — you'd use
+  `a.truncatingRemainder(dividingBy: b)`. Matching that "no `%` on Double" is a real parity point.)*
+
+The comparison operators all yield `Bool`:
+
+- `==` `!=` : on any two operands of the **same** type (`Int`, `Double`, `String`, `Bool`).
+- `<` `<=` `>` `>=` : on **ordered** types (`Int`, `Double`, `String`) — *not* `Bool` (Swift's `Bool`
+  isn't `Comparable`, so `true < false` is an error).
+
+If the operands don't fit any rule, you emit
+`binary operator '<op>' cannot be applied to operands of type 'X' and 'Y'` — `swiftc`'s exact wording.
+
+### The one coercion: integer literals
+
+Swift has **no implicit conversions between values** of different types, with one carefully-scoped
+exception: an **integer literal** is *polymorphic*. The literal `1` isn't born an `Int`; it's
+"`ExpressibleByIntegerLiteral`," meaning it takes whatever integer-ish type the context wants —
+`Int` by default, but `Double` (or `Int8`, `UInt`, …) when that's expected. This is why
+`let d: Double = 1` works but `let d: Double = anInt` does not: `1` is a *literal* and can be born a
+`Double`; `anInt` is a *value* that already has type `Int`.
+
+We capture this in two places:
+
+1. **Checking mode does the work.** `check (Int_lit n) τ` succeeds when τ is `Int` *or* `Double`.
+   And crucially, `check` pushes the expected type *through arithmetic*: to check `1 + 2` against
+   `Double`, check `1` against `Double` and `2` against `Double` — both are integer literals, both
+   coerce, the sum is `Double`. That single recursion is why `let d: Double = 1 + 2 * 3` type-checks
+   with every literal becoming a `Double` (see the figure).
+2. **Inference needs a touch of it too.** `1 + 2.0` has *no* expected type, yet Swift accepts it as
+   `Double`: the integer literal `1` flexes to meet the `Double`. We model this with a small `unify`
+   that, when the two operand types differ, lets a *pure integer-literal expression* (an `Int_lit`,
+   or arithmetic built only from them) become `Double` if the other side is `Double`. A `Var` of type
+   `Int` is **not** a literal, so `anInt + 2.0` stays an error — matching `swiftc`.
+
+That `is_int_literal` predicate (recurse through `Unary`/`Binary` to a leaf `Int_lit`) is the seam
+where our simplified model meets Swift's general one.
+
+### What Swift *actually* does — and what we simplify
+
+Our two-mode checker is a real, well-known technique (it's how a lot of production checkers handle the
+common cases), but Swift's full type checker is more powerful: it's a **constraint solver**.
+`swift/lib/Sema/CSGen.cpp` walks the expression and *generates constraints* (`$T0 == $T1`,
+`$T2 conforms to ExpressibleByIntegerLiteral`, "this `+` is one of these N overloads"), and
+`CSSolver.cpp` solves them by **unification + overload resolution**, exploring choices and
+backtracking. That machinery is what makes `let x = [1, 2.0]` infer `[Double]`, or resolves
+user-defined `+` overloads, or threads a return type backward through a whole expression. We don't
+need any of it yet — bidirectional checking is the tractable special case that covers Phase-2's
+subset — so we defer the solver to **Phase 5** (generics & protocols).
+
+Concretely, what we deliberately simplify in concept 05 (all noted so you know the edges):
+
+- **Comparison associativity.** Swift's comparison operators are *non-associative* (`a < b < c` is a
+  precedence error). Our Pratt parser makes them left-associative, so we'd parse `(a < b) < c` and
+  then reject it as a *type* error instead of a precedence one. (Exercise 1 fixes this.)
+- **Literal flexibility** beyond the integer-literal-to-Double case (e.g. collection literals, the
+  full `ExpressibleBy…` protocol family).
+- **Overloading, subtyping, generics** — all constraint-solver territory.
+
+> Oracle: open `../../../swift/lib/Sema/TypeCheckExpr.cpp` — the `visit*` methods synthesise a type
+> for each expression node, and `coerceToType` / `TypeChecker::typeCheckExpression` push an expected
+> "contextual type" down. That split *is* infer/check. The constraint system that backs it lives in
+> `CSGen.cpp`/`CSSolver.cpp`.
+
+## 3. Build it, step by step
+
+Three skeletons, in order — your Phase-1 work is already filled in; you write only the `TODO(05)`
+holes.
+
+1. **`lexer.ml`** — add the new lexemes. The integer-scan is given; extend it so a `.` followed by a
+   digit makes a `Token.Float` (`float_of_string` the whole lexeme). Add a `"` branch that scans a
+   string literal to the closing quote (a `Buffer`, handle the `\n \t \" \\` escapes) → `Token.String`.
+   In the operator `match`, make `=` peek for a second `=` (→ `EqEq`), and add `!=` `<` `<=` `>` `>=`
+   and `:` (`Colon`). The comparison tokens already have precedence wired in the parser.
+2. **`parser.ml`** — two holes. In `parse_expr_bp`'s prefix `match`, turn the new literal tokens into
+   `Ast.Double_lit` / `Ast.String_lit` / `Ast.Bool_lit` (mirror the given `Int_lit` case — advance,
+   read payload + span). In `parse_annot`, if the next token is `Token.Colon`, consume it and read the
+   following identifier as the type *name*, returning `Some name`.
+3. **`sema.ml`** — the type checker. Build it around the two judgments:
+   - `infer e` — the literal cases are given. Add `Var` (look up `env`, else *cannot find … in
+     scope*); `Unary '-'` (operand must be numeric); `Binary` (operator typing above — a helper that
+     `unify`s the operand types is the clean way, with an `is_int_literal` predicate so a literal can
+     flex to `Double`); `Call` (`print(_:)` takes one argument of any type).
+   - `check_expr e τ` — the **bidirectional** half. An `Int_lit` checks against `Int` *or* `Double`.
+     For `Binary` arithmetic when τ is numeric, push τ into both operands. Everything else: `infer`
+     and compare, erroring with *cannot convert value of type 'X' to specified type 'Y'*.
+   - `check_stmt` — `Let`: if annotated, resolve the name with `Types.of_name` (*cannot find type …*
+     if unknown) and `check_expr` the value against it; else `infer`. Bind `name ↦ (τ, is_var)`.
+     `Assign`: target must exist, be a `var`, and the value `check_expr`s against its type.
+
+Don't peek at §8 until you've tried it. The reference is `solution/sema.ml`.
+
+## 4. Test it
+
+```bash
+make lab C=phase2-types-flow/05-types-inference
+```
+
+- **cram** (`tests/typecheck.t`): `--emit-ast` on the new literals/annotations, and `--typecheck`
+  accept/reject with the matching diagnostic substring.
+- **alcotest** (`tests/test_parser.ml`, `tests/test_sema.ml`): AST structure for the new syntax, and
+  the *exact* type-checker diagnostics (and that well-typed programs produce none).
+- **The headline test — the type-check oracle.** For each program, `swiftc -typecheck` and
+  `swiftml2 --typecheck` must *agree* on accept/reject. The lab checks this on a corpus spanning
+  coercion (`let d: Double = 1 + 2` ✓), literal flex (`1 + 2.0` ✓), value mismatch
+  (`let d: Double = i` ✗), and `true < false` ✗ — the cases where a naive checker diverges from Swift.
+
+## 5. Benchmark it
+
+Not perf-relevant here: type-checking this subset is linear and trivially fast. (It's the *constraint
+solver* — Phase 5 — that can blow up: Swift's famous "expression too complex to type-check in
+reasonable time" comes from combinatorial overload/literal search, not from work like ours.) We add
+perf gates when there's something to optimise.
+
+## 6. Exercises
+
+1. **Non-associative comparisons.** Make `a < b < c` a *parse-time* error (like `swiftc`: "adjacent
+   operators are in non-associative precedence group"). Hint: give comparisons a `min_bp` that
+   forbids another comparison on the right.
+2. **Explicit conversions.** Type `Double(x)` and `Int(x)` as conversions: `Double(_:)` accepts an
+   `Int` (or `Double`) and yields `Double`; `Int(_:)` yields `Int` (Swift's `Int(Double)` truncates).
+   Now `let d: Double = Double(i)` works where `let d: Double = i` doesn't.
+3. **Sharper annotation errors.** Point the "cannot convert … to specified type" diagnostic at the
+   *annotation's* span, and add a note showing the value's inferred type — closer to swiftc's output.
+
+## 7. Recap & what's next
+
+You built a **bidirectional type checker**: `infer` synthesises types bottom-up, `check` pushes an
+expected type top-down, and the bridge between them — plus the integer-literal coercion — is what
+makes Swift's literal behaviour and strict value typing fall out correctly. You also met the thing it
+*approximates*: Swift's constraint solver (Phase 5).
+
+Next, **06-control-flow** puts your new `Bool` type to work: `if`/`else`, `while`, `for i in a..<b`,
+and short-circuit `&&`/`||` — the first time the program has more than one straight-line path, which
+is exactly what **SIL**'s basic blocks (concept 08) exist to represent.
+
+## 8. Appendix — full solution
+
+Mirrors `solution/sema.ml` — the checker (the lexer/parser additions are in their own `solution/`
+files). The shape to notice: `infer`/`check_expr` are mutually recursive; `unify` + `is_int_literal`
+localise the one coercion; `check_stmt` chooses **check** (annotated) vs **infer**.
+
+```ocaml
+let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
+  let env : (string, Types.ty * bool) Hashtbl.t = Hashtbl.create 16 in
+  let err span msg = Diagnostics.error diags span msg in
+  let rec is_int_literal = function
+    | Ast.Int_lit _ -> true
+    | Ast.Unary (Ast.Neg, e, _) -> is_int_literal e
+    | Ast.Binary ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod), a, b, _) ->
+        is_int_literal a && is_int_literal b
+    | _ -> false
+  in
+  let unify l tl r tr : Types.ty option =          (* let an integer literal become Double *)
+    if Types.equal tl tr then Some tl
+    else if is_int_literal l && tr = Types.TDouble then Some Types.TDouble
+    else if is_int_literal r && tl = Types.TDouble then Some Types.TDouble
+    else None
+  in
+  let rec infer (e : Ast.expr) : Types.ty =
+    match e with
+    | Ast.Int_lit _ -> Types.TInt
+    | Ast.Double_lit _ -> Types.TDouble
+    | Ast.Bool_lit _ -> Types.TBool
+    | Ast.String_lit _ -> Types.TString
+    | Ast.Var (x, span) ->
+        (match Hashtbl.find_opt env x with
+         | Some (t, _) -> t
+         | None -> err span (Printf.sprintf "cannot find '%s' in scope" x); Types.TInt)
+    | Ast.Unary (Ast.Neg, e0, span) ->
+        let t = infer e0 in
+        if Types.is_numeric t then t
+        else (err span (Printf.sprintf
+          "unary operator '-' cannot be applied to operand of type '%s'" (Types.string_of_ty t)); t)
+    | Ast.Binary (op, l, r, span) -> infer_binary op l r span
+    | Ast.Call (f, args, span) -> infer_call f args span
+  and infer_binary op l r span : Types.ty =
+    let tl = infer l and tr = infer r in
+    let bad () =
+      err span (Printf.sprintf
+        "binary operator '%s' cannot be applied to operands of type '%s' and '%s'"
+        (Ast.string_of_binop op) (Types.string_of_ty tl) (Types.string_of_ty tr));
+      Types.TInt in
+    match op with
+    | Ast.Add -> (match unify l tl r tr with
+        | Some ((Types.TInt | Types.TDouble) as t) -> t
+        | Some Types.TString -> Types.TString | _ -> bad ())
+    | Ast.Sub | Ast.Mul | Ast.Div ->
+        (match unify l tl r tr with Some ((Types.TInt | Types.TDouble) as t) -> t | _ -> bad ())
+    | Ast.Mod -> (match unify l tl r tr with Some Types.TInt -> Types.TInt | _ -> bad ())
+    | Ast.Eq | Ast.Ne ->
+        (match unify l tl r tr with Some _ -> Types.TBool | None -> ignore (bad ()); Types.TBool)
+    | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge ->
+        (match unify l tl r tr with
+         | Some (Types.TInt | Types.TDouble | Types.TString) -> Types.TBool
+         | _ -> ignore (bad ()); Types.TBool)
+  and infer_call f args span : Types.ty =
+    if f = "print" then (
+      (match args with
+       | [ a ] -> ignore (infer a)
+       | _ -> err span "print(_:) expects exactly one argument";
+              List.iter (fun a -> ignore (infer a)) args);
+      Types.TInt)
+    else (err span (Printf.sprintf "cannot find '%s' in scope" f);
+          List.iter (fun a -> ignore (infer a)) args; Types.TInt)
+  and check_expr (e : Ast.expr) (expected : Types.ty) : unit =
+    match e with
+    | Ast.Int_lit _ ->
+        if expected = Types.TInt || expected = Types.TDouble then ()
+        else err (Ast.expr_span e) (Printf.sprintf
+          "cannot convert value of type 'Int' to specified type '%s'" (Types.string_of_ty expected))
+    | Ast.Binary ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div), l, r, _) when Types.is_numeric expected ->
+        check_expr l expected; check_expr r expected
+    | Ast.Binary (Ast.Mod, l, r, _) when expected = Types.TInt ->
+        check_expr l Types.TInt; check_expr r Types.TInt
+    | Ast.Unary (Ast.Neg, e0, _) when Types.is_numeric expected -> check_expr e0 expected
+    | _ ->
+        let t = infer e in
+        if not (Types.equal t expected) then
+          err (Ast.expr_span e) (Printf.sprintf
+            "cannot convert value of type '%s' to specified type '%s'"
+            (Types.string_of_ty t) (Types.string_of_ty expected))
+  in
+  let check_stmt (s : Ast.stmt) : unit =
+    match s with
+    | Ast.Let { name; is_var; annot; value; span } ->
+        let t = match annot with
+          | None -> infer value
+          | Some tyname -> (match Types.of_name tyname with
+              | Some t -> check_expr value t; t
+              | None -> err span (Printf.sprintf "cannot find type '%s' in scope" tyname); infer value)
+        in
+        Hashtbl.replace env name (t, is_var)
+    | Ast.Assign { name; value; span } -> (match Hashtbl.find_opt env name with
+        | None -> err span (Printf.sprintf "cannot find '%s' in scope" name); ignore (infer value)
+        | Some (t, is_var) ->
+            if not is_var then
+              err span (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" name);
+            check_expr value t)
+    | Ast.Expr_stmt (e, _) -> ignore (infer e)
+  in
+  List.iter check_stmt prog.Ast.stmts
+```
+
+## 9. Exercise solutions
+
+### 1 — non-associative comparisons
+
+In the Pratt infix loop, comparisons should refuse a second comparison on their right. The cleanest
+way: after folding a comparison at binding power 5, recurse the right operand with a `min_bp` that is
+*above* the comparison level (e.g. `6`), so another comparison can't be consumed there; if one is
+nonetheless next, report it:
+
+```ocaml
+| Some bp when bp >= min_bp ->
+    let op_tok = advance p in
+    let op = Option.get (binop_of_kind op_tok.Token.kind) in
+    let is_cmp = match op with Ast.Eq|Ast.Ne|Ast.Lt|Ast.Le|Ast.Gt|Ast.Ge -> true | _ -> false in
+    let rhs = parse_expr_bp p (if is_cmp then bp + 1 else bp + 1) in
+    (* if we just parsed a comparison and another comparison is immediately next, it's an error *)
+    (if is_cmp then match infix_bp (peek_kind p) with
+       | Some 5 -> Diagnostics.error p.diags (peek p).Token.span
+                     "adjacent operators are in non-associative precedence group 'ComparisonPrecedence'"
+       | _ -> ());
+    loop (Ast.Binary (op, lhs, rhs, …))
+```
+
+(Comparisons already use `bp + 1`, so `a < b < c` parses as `(a < b) < c`; the added check turns the
+second `<` into the swiftc-style precedence error instead of letting it through to a type error.)
+
+### 2 — explicit conversions `Double(_:)` / `Int(_:)`
+
+Treat them in `infer_call` before the `print` case:
+
+```ocaml
+and infer_call f args span =
+  match f, args with
+  | "Double", [a] -> let t = infer a in
+      if t = Types.TInt || t = Types.TDouble then Types.TDouble
+      else (err span "..."; Types.TDouble)
+  | "Int", [a] -> let t = infer a in
+      if t = Types.TInt || t = Types.TDouble then Types.TInt
+      else (err span "..."; Types.TInt)
+  | "print", _ -> (* as before *) Types.TInt
+  | _ -> err span (Printf.sprintf "cannot find '%s' in scope" f); Types.TInt
+```
+
+Now `let d: Double = Double(i)` checks (the `Call` infers `Double`, matching the annotation), while
+the bare `let d: Double = i` still fails — matching Swift, where conversions are explicit.
+
+### 3 — sharper annotation errors
+
+Thread the annotation's span (add it to `Ast.Let`, or recompute it) and emit the diagnostic there,
+plus a `Diagnostics.Note`: *"value of type 'Int' here"* pointing at the value. `swiftc` shows both the
+"cannot convert" error at the annotation and the inferred type at the expression; mirroring the
+two-location shape is good diagnostics practice you'll reuse throughout Sema.

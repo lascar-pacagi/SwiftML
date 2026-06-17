@@ -1,0 +1,12 @@
+; Rename to `dune` when instantiating the template. Each concept = ONE dune library,
+; carrying the whole compiler forward (wrapped false: modules stay unqualified so phases
+; can evolve same-named modules without linking conflicts — never link two concept libs
+; into one executable). `solution/` is excluded from the build: it's the answer key.
+(library
+ (name swiftml_CONCEPT)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen driver)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

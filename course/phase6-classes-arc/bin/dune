@@ -1,0 +1,8 @@
+; The Phase-6 `swiftml6` binary — links the phase's LATEST concept library
+; (currently concept 28, ARC optimization).
+(executable
+ (name main)
+ (public_name swiftml6)
+ (libraries swiftml_arcopt)
+ (flags
+  (:standard -warn-error -a)))

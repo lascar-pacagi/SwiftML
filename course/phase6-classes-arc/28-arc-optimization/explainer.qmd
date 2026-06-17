@@ -1,0 +1,233 @@
+---
+title: "28 · ARC optimization — Milestone M6"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+Concept 26 made ARC *correct* and measurably slow: a `let c = a` in a hot loop costs a
+retain and a release per iteration, thirty million times. Concept 27 made the traffic
+*structured*: every `copy_value` is a +1 with exactly one consumer, checkable. This concept
+cashes the structure in: the **ARC optimizer** — delete every copy/destroy pair the program
+can't observe, devirtualize every dispatch with only one possible target, and let the
+Phase-4/5 machinery finish the job. The gate is double: the *entire* deinit-parity suite must
+stay byte-identical (you may not move a single deinit), and the benchmark must land in
+`swiftc -O`'s band. That's **Milestone M6**, and Phase 6 closes here.
+
+- **You implement:** the copy-propagation rewrite.
+- **Outcome:** 30M refcount ops deleted; 126% of `swiftc -O` (geomean); 12/12 parity intact.
+
+## 2. Concepts in depth
+
+### The redundancy: a bracket inside a lifetime
+
+Post-mem2reg, `let c = a` inside a function looks like:
+
+```
+%c = copy_value %a          ┐
+…  uses of %c  …            │  the BRACKET: %c's entire life
+destroy_value %c            ┘
+…  (%a still alive here) …
+```
+
+The count goes `n → n+1 → … → n` and never touches zero inside the bracket — so no deinit can
+fire there, no behavior depends on it, and every use of `%c` would work identically as a use
+of `%a`. The pair is *provably unobservable*. Delete it: redirect `%c`'s uses to `%a`, drop
+both instructions. That's copy propagation, and it's exactly what 27's ownership form makes
+safe to state: the copy's +1 and that destroy belong to each other *by construction*.
+
+### The three checks (what you implement)
+
+Eligibility, per `%c = copy_value %src` — each check earns its keep with a counterexample:
+
+1. **One consumer, and it's a destroy, all uses inside the bracket** (same block, v0). If the
+   consumer is a `store` or `return`, the copy *transfers ownership* somewhere real — keep it.
+   (A test pins the subtlety: the pass alone keeps a return-consumed copy; the full pipeline
+   may still erase it *after inlining* puts both ends of the transfer in one function. Sound
+   alone, sound composed.)
+2. **The source outlives the bracket.** A parameter does by convention (guaranteed for the
+   whole call). An owned value does if its own consuming use comes after the bracket in the
+   same block. A **memory load does not** — and this is the case that bites:
+
+   ```swift
+   var a = T(1)
+   let c = a        // copy of a LOADED value
+   a = T(2)         // the slot's +1 to T(1) is RELEASED here…
+   print(c.id)      // …c's copy is the only thing keeping T(1) alive
+   ```
+
+   Remove that pair and `c` reads freed memory. Keeping the old object alive was the copy's
+   whole *job*. The probe suite pins it: T(1)'s deinit must print after the `print`, at both
+   optimization levels.
+3. **One rewrite per sweep.** Deleting two instructions shifts every index and stales the use
+   map; the first draft rewrote chained copies (`let a = n; let b = a; let c = b`) in one
+   sweep off stale indices and corrupted the IR (an operand with no definition — IRGen's
+   `Not_found` was the symptom). The fix is humility: rewrite once, recompute, repeat to a
+   fixpoint. Chains still cascade away — one sweep per link.
+
+### Devirtualization, the whole-module edition
+
+The benchmark exposed a second gap: with the copies gone, `c.add(i)` still paid a vtable
+dispatch per iteration — and an inliner wall — while swiftc -O called `Acc.add` directly. Its
+trick isn't subtle: **`Acc` has no subclasses**, so every `Acc`-typed value's vtable can only
+be `Acc`'s — the dispatch has one possible answer. Whole-module compilation makes that proof
+trivial (count the `cl_super` edges), `final` makes it free. The fold mirrors concept 24's
+witness devirt: `class_method` → direct `Apply` → the inliner eats it → the loop body becomes
+arithmetic. Overridden hierarchies are untouched — the `Sub`/`Base` probe keeps its
+`class_method` and its dynamic answer.
+
+### The measurement
+
+![The M6 run (real numbers, log scale): the borrow-copy loop drops from 0.062s to 0.009s under our -O — thirty million retain/release pairs deleted, then the devirtualized call inlined — landing ahead of swiftc -O (which fights the same battle from a much costlier -Onone baseline).](figs/m6_bench.png)
+
+Honest notes, as always: M4's overflow caveat stands (we don't pay Swift's checked
+arithmetic); and swiftc's enormous `-Onone` bars are its unoptimized ARC + dispatch +
+exclusivity machinery — our `-Onone` is leaner because our runtime is leaner, so our 6.9×
+`-O` improvement on `borrowloop` is the like-for-like number to quote. The parity suite is
+the other half of the gate: **12/12 deinit orderings unchanged**. An ARC optimizer that moves
+a deinit isn't an optimizer; it's a bug with good benchmarks.
+
+> Oracle: `swift/docs/ARCOptimization.md` — the real pass's design notes read like this
+> concept's spec (copy propagation, the "no observable lifetime change" rule, motion).
+> `CopyPropagation.cpp` is the production version of your TODO; its extra complexity is
+> almost entirely the cross-block liveness you're spared in v0.
+
+## 3. Build it, step by step
+
+`opt.ml` — `TODO(28)`, inside the given fixpoint loop (the use map `uses : value → [(block,
+idx, consuming?)]` and `consuming_uses` are built for you):
+
+1. all of `%c`'s uses in this block; exactly one consuming use; it's a `destroy_value %c`
+   (check `arr.(d_idx)`); every other use at an index ≤ the destroy's;
+2. `%src` outlives: `List.mem src params`, or `%src`'s single consuming use is in this block
+   after the destroy;
+3. rewrite: filter the copy and the destroy out of `b.Sil.instrs`, redirect `c → src` across
+   all blocks (`map_instr`/`map_term`), set `changed := true` — and rewrite **nothing else
+   this sweep** (the `not !changed` guard is given; respect it).
+
+Reference: `solution/opt.ml`.
+
+## 4. Test it
+
+```bash
+make lab C=phase6-classes-arc/28-arc-optimization
+make bench C=phase6-classes-arc/28-arc-optimization   # the M6 gate
+```
+
+cram: a parameter borrow-copy vanishes; three chained copies cascade to zero; the
+deinit-bearing program and the **must-keep load-sourced copy** are byte-identical at `-O`;
+subclass-free dispatch devirtualizes while the overridden hierarchy keeps its `class_method`.
+alcotest: removal cases (param / chain / owned-local), the pass-alone-keeps-escaping-copies
+property, and conservation: destroys = copies + allocs in a leak-free program.
+
+## 5. Benchmark it
+
+The bench *is* the milestone. Gate: `-O` beats `-Onone` on both programs and lands in
+`swiftc -O`'s band. Measured: **143% / 110%, geomean 126%** — with `borrowloop`'s 30M
+deleted pairs as the headline. Compare your `--emit-sil` vs `--sil-opt` copy counts for the
+visceral version.
+
+## 6. Exercises
+
+1. **Cross-block brackets.** `let c = a` used inside an `if`: the destroy lands in a merge
+   block. Generalize check 1 with liveness (concept 16's machinery): the bracket is the set
+   of blocks where `%c` is live; the source must be live-out of all of them.
+2. **Retain/release motion.** A copy/destroy pair *inside* a loop whose source is
+   loop-invariant can hoist/sink out of the loop (one pair total instead of N) even when it
+   can't be deleted. This is the "motion" half of `ARCOptimization.md`.
+3. **Dead-object elimination.** `let t = T(1); print(5)` — `t` never escapes and `T` has no
+   deinit: the alloc, the init call, and the destroy are all dead. Define "escapes" precisely
+   (stores, returns, args whose callee might store) and delete the whole object. Measure on
+   a loop allocating per iteration.
+4. **The verifier, post-optimization.** Our ownership verifier guards raw SIL only (mem2reg
+   threads ownership through phis it doesn't understand). Extend `def_is_owned`/the consume
+   rules to block arguments so canonical post-mem2reg SIL verifies too — then run it after
+   every `-O` pass as a sanitizer, the way swiftc's pipeline does.
+
+## 7. Recap & what's next
+
+The ARC optimizer is three checks and a deletion: a copy whose bracket sits inside its
+source's lifetime is unobservable — remove it; a dispatch with one possible target is a
+direct call — make it one and inline. Structure (27) made the checks statable; probes (26)
+made the soundness gate executable; the benchmark makes the payoff a number: **126% of
+`swiftc -O`, 12/12 deinit orderings intact. Milestone M6 — Phase 6 complete.**
+
+Next, per `PLAN.md`: **Phase 7 — closures, errors & a minimal standard library** (29-closures:
+capture, thin vs thick functions, the closure ABI — where the function *type* finally becomes
+first-class; 30-error-handling; 31/32: `Array`/`String`/`Dictionary` built on our own heap,
+generics, and ARC). The language starts feeling like Swift.
+
+## 8. Appendix — full solution
+
+```ocaml
+| Sil.Copy_value src -> (
+    let c_uses = Option.value (Hashtbl.find_opt uses c) ~default:[] in
+    let all_local = List.for_all (fun (bid, _, _) -> bid = b.Sil.bid) c_uses in
+    match (all_local, consuming_uses c) with
+    | true, [ (_, d_idx, _) ] when d_idx <> max_int -> (
+        let is_destroy =
+          d_idx < Array.length arr
+          && (match arr.(d_idx) with _, Sil.Destroy_value v when v = c -> true | _ -> false)
+        in
+        let uses_inside = List.for_all (fun (_, u_idx, _) -> u_idx <= d_idx) c_uses in
+        let src_outlives =
+          List.mem src params
+          || (match consuming_uses src with
+             | [ (sb, s_idx, _) ] -> sb = b.Sil.bid && s_idx > d_idx
+             | _ -> false)
+        in
+        if is_destroy && uses_inside && src_outlives && not !changed then begin
+          b.Sil.instrs <-
+            List.filter
+              (fun (v, i2) ->
+                (not (v = c))
+                && not (match i2 with Sil.Destroy_value v2 -> v2 = c | _ -> false))
+              b.Sil.instrs;
+          let g x = if x = c then src else x in
+          List.iter
+            (fun (bb : Sil.block) ->
+              bb.Sil.instrs <- List.map (fun (v, i2) -> (v, map_instr g i2)) bb.Sil.instrs;
+              bb.Sil.term <- map_term g bb.Sil.term)
+            f.Sil.blocks;
+          changed := true
+        end)
+    | _ -> ())
+```
+
+## 9. Exercise solutions
+
+### 1 — cross-block brackets
+
+Compute `%c`'s live blocks (backward dataflow from uses, concept 16's liveness). The bracket
+is deletable iff: the unique consuming use is a destroy; and for the source, every live block
+of `%c` is dominated by `%src`'s def and not reached from `%src`'s consuming use (reuse the
+dominator tree + a reachability walk from the consume). swiftc's `CopyPropagation` computes
+precisely this under the name "canonical OSSA lifetime".
+
+### 2 — motion
+
+For a loop (back-edge target from concept 16's CFG analysis): a copy whose source is defined
+outside the loop and whose destroy is in the same iteration can be rewritten as one copy in
+the preheader + one destroy in the exit block — count math: N pairs → 1. The subtlety is exit
+paths (`break`): every exit needs the destroy. The cleanup-stack discipline from concept 26
+already taught you where those exits are.
+
+### 3 — dead objects
+
+Escape = the value (or any alias: upcasts, copies) reaches a `store`, `return`, `apply`
+argument, or `init_existential`. For a non-escaping `alloc_ref` of a deinit-free,
+destroy-only class: delete the alloc, its init `apply` (only if the init body is effect-free
+— check: no prints/calls; conservatively require it), and the destroy. swiftc's version is
+`DeadObjectElimination.cpp`, and its init-effect analysis is most of the file.
+
+### 4 — OSSA through mem2reg
+
+Block arguments get ownership kinds: a phi of owned values is owned (it forwards the +1 — and
+the verifier must then require each *predecessor's* branch operand be a consuming use); a phi
+of guaranteed values is guaranteed. `consumed_by_term` grows a case: `Br`/`Cond_br` operands
+feeding owned phis consume. With that, R1 holds across the threaded form and the verifier can
+run after every pass — turn it on in `optimize` behind a debug flag and leave it on in the
+test suite.
+```

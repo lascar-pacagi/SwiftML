@@ -1,0 +1,19 @@
+# Read-only vendored oracle: Apple's swiftc source (~1.6G, pinned snapshot, has its own .git).
+# Never edited; not part of our work — keep it out of the repo.
+/swift/
+
+# Build artifacts & local toolchains
+**/_build/
+course/.venv/
+course/.tools/
+**/.quarto/
+
+# Quarto / Typst render byproducts (regenerable via `make explainer` / `make explainer-pdf`)
+**/explainer_files/
+**/*.typ
+**/*.html
+
+# OS / editor junk
+.DS_Store
+**/.DS_Store
+*.swp

@@ -1,0 +1,10 @@
+; Concept 02 — the parser stage. Depends on the lexer stage (for Token, Diagnostics).
+; Modules: ast (contract) · parser (you implement).
+(library
+ (name swiftml_parser)
+ (libraries swiftml_lexer)
+ (wrapped false)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

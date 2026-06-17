@@ -1,0 +1,5 @@
+; Concept 32 — Sequence higher-order functions: map / filter / reduce over Array<Int>.
+(library (name swiftml_collections) (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen driver)
+ (flags (:standard -warn-error -a)))
+(dirs :standard \ solution)

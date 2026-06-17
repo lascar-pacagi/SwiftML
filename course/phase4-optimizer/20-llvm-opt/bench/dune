@@ -1,0 +1,7 @@
+; The M4 benchmark runner: compiles the suite with swiftml (-Onone/-O) + swiftc (-Onone/-O),
+; verifies the outputs agree, times the binaries. `make bench C=phase4-optimizer/20-llvm-opt`.
+(executable
+ (name bench)
+ (libraries swiftml_llvmopt unix)
+ (flags
+  (:standard -warn-error -a)))

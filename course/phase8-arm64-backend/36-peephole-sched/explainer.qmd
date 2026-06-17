@@ -1,0 +1,216 @@
+---
+title: "36 · Peephole optimization & instruction scheduling"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+Some redundancy only becomes visible at the very end. The SIL-level optimizer (Phase 4) saw values
+and basic blocks; it could not see that, after register allocation, a value gets *stored to a slot
+and loaded straight back into the same register*, or that the same slot is *loaded twice* in a row.
+Those wastes exist only as concrete register/memory traffic in the final instruction stream — and
+the pass that cleans them is the **peephole**: a small window sliding over the machine code,
+rewriting obviously-wasteful patterns.
+
+The headline rewrite turns a **redundant memory load into a register move**. A `ldr` reaches into
+the data cache; a `mov` between registers is often eliminated entirely by the CPU's register
+renamer (zero latency, zero execution ports). So replacing reloads with moves is a real, if modest,
+improvement — and it's the canonical example of "local cleanup after register allocation."
+
+- **You implement:** `rewrite_block` — the within-block local redundant-load elimination: track
+  which register holds each slot, forward reloads to moves, and invalidate the bookkeeping on
+  clobbers.
+- **Outcome:** peephole-optimized code matches `swiftc`; on straight-line code the memory-load count
+  drops (e.g. 18 → 11).
+
+> **What's a peephole optimizer?** A pass that looks at a *small window* of consecutive instructions
+> and replaces it with a cheaper equivalent — `mov x, x` → nothing, `mul x, x, #2` → `lsl x, x, #1`,
+> a store-then-reload → a move. It's "peephole" because it sees only a keyhole's worth of code at a
+> time. Simple, local, and exactly the right tool for redundancy the global passes can't express.
+
+## 2. Concepts in depth
+
+### Local redundant-load elimination
+
+![The peephole, within a basic block: keep a slot→register table; when a slot is loaded whose value is already in a register, forward the reload to a `mov` (or drop it if the same register holds it). Invalidate the table when a tracked register is overwritten or a call clobbers state, and reset it at each block boundary. Honest note: this removes LOCAL redundancy; the variable-reloaded-every-block cost is CROSS-block and needs mem2reg, and scheduling is ~free on out-of-order cores.](figs/peephole.png)
+
+The core idea is a tiny dataflow within one basic block. Keep a table `held : slot → register` that
+answers "which register currently holds the value at this stack slot?" Then walk the block:
+
+- **`str rs, [b,o]`** — the store stays (memory must actually be written), but now slot `(b,o)` is
+  held by `rs`. (A store writes *memory*, not a register, and distinct stack slots don't alias, so
+  nothing is invalidated.)
+- **`ldr rd, [b,o]`** — if the table says `(b,o)` is in `rsrc`:
+  - `rsrc = rd`? The value is *already in `rd`* — **drop the load**.
+  - otherwise — replace the load with **`mov rd, rsrc`**: a register copy beats a memory access.
+  - either way, after the load, `rd` holds `(b,o)`, so update the table.
+- **`mov rd, rd`** — a move to self does nothing; **drop it**.
+- **anything else** — it may *overwrite* registers. Any slot whose holder was just overwritten is
+  now stale, so **invalidate** it. A `bl` (call) clobbers broadly, so clear the table.
+
+### Why invalidation is the whole game
+
+The rewrites are easy; *correctness* is the table's invalidation. If a register that the table
+thinks holds a slot's value gets overwritten, and you forward a later load to it anyway, you've
+miscompiled. So every instruction that writes a register kills that register's entries; a call
+clears everything; and the table **resets at each basic-block boundary** (control flow can merge
+from elsewhere, where the table wouldn't hold). The alcotests check exactly these: a clobber
+between the store and the reload keeps the reload a *load*, and there's no forwarding across a label.
+
+### Running to a fixpoint
+
+One rewrite can expose another (dropping a load may make the next instruction's pattern match), so
+the pass iterates the per-block rewrite until nothing changes. The block splitting and the fixpoint
+driver are given; you write the per-block rewrite.
+
+### The honest part: which redundancy does this remove?
+
+This is the lesson worth more than the code. Measure a hot loop like `collatz`: the peephole removes
+*almost nothing* (one adjacent pair). Measure straight-line code that reuses variables: it removes a
+lot (loads 18 → 11). The difference is **where the redundancy lives**:
+
+- **Local (within a block):** a value reused several times in one straight-line stretch reloads the
+  same slot repeatedly. The peephole forwards those to moves. ✔ This is what we remove.
+- **Structural (across blocks):** because we lower the **memory-based** `-Onone` SIL, every variable
+  lives in `alloc_stack`, so the *top of every basic block reloads it*. That redundancy spans block
+  boundaries — the peephole's table resets there and can't touch it. Removing it needs **mem2reg /
+  SSA promotion** (concept 34's exercise), which lifts variables into registers in the first place.
+
+So the peephole's *runtime* win is small on our backend, and we report that honestly. The instruction
+selection / register allocation we built earlier are the big levers; the peephole is the final
+polish, and knowing it's *polish* — not the structural fix — is the point.
+
+### Instruction scheduling, and why it's ~free here
+
+The plan pairs peephole with **instruction scheduling**: reordering independent instructions to keep
+the pipeline busy (e.g. issue a load several instructions before its result is needed, hiding its
+latency). On an *in-order* core that's a real win. On Apple Silicon — a wide, deep **out-of-order**
+core — the hardware reorders instructions itself within a large window, so a software scheduler's
+benefit is close to nil. We keep the scheduler as the identity and say so. The honest hierarchy on
+modern hardware: **fewer instructions (peephole) > reordered instructions (scheduling)**; a real
+dependence-DAG list scheduler is the exercise, valuable mainly as a lesson about in-order targets.
+
+> Oracle: LLVM's `MachineCSE`/`MachineSink`/peephole passes (the local cleanup) and its
+> `PostRAScheduler` / `MachineScheduler` (the reordering). On `arm64-apple`, the scheduler's model
+> reflects the core; we just acknowledge the OoO reality.
+
+## 3. Build it, step by step
+
+In `peephole.ml`, implement `rewrite_block`. Keep the `held : slot → register` table; for each
+instruction:
+
+1. **`Str (rs, b, o)`** — emit it; `Hashtbl.replace held (mem_key b o) rs`.
+2. **`Ldr (rd, b, o)`** — look up `held (mem_key b o)`: `Some rsrc = rd` → drop; `Some rsrc` → emit
+   `Mov (rd, R rsrc)` (and `kill_reg held rd` first); `None` → emit it (`kill_reg held rd` first).
+   Then `Hashtbl.replace held (mem_key b o) rd`.
+3. **`Mov (rd, R rs)` with `rd = rs`** — drop it.
+4. **otherwise** — `kill_reg held` each written register (`snd (Arm64.reads_writes i)`); on `Bl`,
+   `Hashtbl.reset held`; emit it.
+
+The block splitting, the fixpoint, and the scheduler are given. Reference: `solution/peephole.ml`.
+Run with `make lab C=phase8-arm64-backend/36-peephole-sched`.
+
+## 4. Test it
+
+```bash
+make lab C=phase8-arm64-backend/36-peephole-sched
+```
+
+cram: peephole-optimized programs match `swiftc` (and the `--no-peephole` backend); straight-line
+code's `ldr` count drops; a store-then-reload-same-register pair loses its load. alcotest: the three
+rewrite shapes (drop, forward-to-mov, mov-self), the **soundness** guards (a clobber keeps the
+reload a load; no forwarding across a label), and that a real program's load count falls.
+
+## 5. Benchmark it
+
+Report it honestly. On `collatz` (cross-block-dominated), peephole removes ~one instruction and
+runtime is flat. On straight-line, variable-reuse code, it cuts memory loads ~40% (most becoming
+register moves). The runtime delta on an out-of-order core is small either way — the lesson is that
+the *measurable* effect is fewer memory accesses, and the *structural* win (variables in registers)
+belongs to mem2reg, not here.
+
+## 6. Exercises
+
+1. **Strength reduction.** `mul x, x, #2ⁿ` → `lsl x, x, #n`; `sdiv x, x, #2ⁿ` of a known-positive
+   value → an arithmetic shift. Requires the constant to be visible (track `mov rk, #imm`).
+2. **Immediate folding.** `mov rk, #c; add rd, ra, rk` → `add rd, ra, #c` when `c` fits the 12-bit
+   immediate — removes a register and an instruction.
+3. **Dead-store elimination.** A `str rs, [slot]` whose slot is overwritten by another store before
+   any load (within the block) is dead — drop it. The dual of redundant-load elimination.
+4. **Branch peepholes.** `b.cond L; b M; L:` → `b.!cond M` (fall through to `L`); collapse a `b` to
+   the very next label; remove unreachable code after an unconditional `b`/`ret`.
+5. **A real list scheduler.** Build the dependence DAG of a block (RAW/WAR/WAW edges), and
+   list-schedule it to separate producers from consumers by the instruction's latency. Measure on an
+   in-order target (e.g. via a simulator) — the case where it actually pays.
+
+## 7. Recap & what's next
+
+The peephole is the final-polish pass: within a basic block, forward a redundant memory load to a
+register move (and drop the truly-dead), with careful invalidation for soundness. It removes *local*
+redundancy honestly and modestly; the *structural* redundancy (variables in memory, reloaded every
+block) is mem2reg's job, and scheduling is ~free on out-of-order cores. Matching the pass to the
+redundancy is the lesson.
+
+Next, **37-debug-info** — thread source locations end-to-end, emit a DWARF-lite line table, and step
+through a `swiftml`-built binary in `lldb` — to reach **M8-core** (the native backend, complete and
+debuggable).
+
+## 8. Appendix — full solution
+
+```ocaml
+let rewrite_block (changed : bool ref) (instrs : Arm64.instr list) : Arm64.instr list =
+  let held : (Arm64.reg * int, Arm64.reg) Hashtbl.t = Hashtbl.create 16 in
+  let out = ref [] in
+  let emit i = out := i :: !out in
+  List.iter
+    (fun (i : Arm64.instr) ->
+      match i with
+      | Arm64.Str (rs, b, o) -> emit i; Hashtbl.replace held (mem_key b o) rs
+      | Arm64.Ldr (rd, b, o) -> (
+          (match Hashtbl.find_opt held (mem_key b o) with
+          | Some rsrc when rsrc = rd -> changed := true                          (* drop *)
+          | Some rsrc -> changed := true; kill_reg held rd; emit (Arm64.Mov (rd, Arm64.R rsrc))
+          | None -> kill_reg held rd; emit i);
+          Hashtbl.replace held (mem_key b o) rd)
+      | Arm64.Mov (rd, Arm64.R rs) when rd = rs -> changed := true               (* mov self *)
+      | other ->
+          let _, writes = Arm64.reads_writes other in
+          List.iter (kill_reg held) writes;
+          (match other with Arm64.Bl _ -> Hashtbl.reset held | _ -> ());
+          emit other)
+    instrs;
+  List.rev !out
+```
+
+## 9. Exercise solutions
+
+### 1 — strength reduction
+Track `mov rk, #c` (a constant in a register). When you see `mul rd, ra, rk` with `c = 2ⁿ`, emit
+`lsl rd, ra, #n`. A multiply is a few cycles; a shift is one. (Many compilers do this at the IR
+level; doing it post-RA catches constants that survived to the machine code.)
+
+### 2 — immediate folding
+Same constant tracking: `mov rk, #c; add rd, ra, rk` → `add rd, ra, #c` when `0 ≤ c < 4096`. The
+arithmetic instructions take a 12-bit immediate directly, so the materializing `mov` and the extra
+register both disappear. Watch the range (and the optional shift-by-12).
+
+### 3 — dead-store elimination
+Within a block, if `str rs, [slot]` is followed (before any `ldr [slot]` or `bl`) by another `str
+_, [slot]`, the first store is dead — its value is never observed. Track the last store per slot;
+when a new store to the same slot arrives with no intervening read, delete the previous one.
+
+### 4 — branch peepholes
+`b.cond L; b M; L: …` inverts to `b.!cond M; L: …` (fall through to `L`), saving a branch. A `b` to
+the immediately-following label is dead. Instructions after an unconditional `b`/`ret`, up to the
+next label, are unreachable — delete them. These shrink the CFG's edges, the machine-code analogue
+of concept 17's `simplify_cfg`.
+
+### 5 — a real list scheduler
+Per block: build a DAG with an edge from each instruction to the later instructions that depend on
+it (read-after-write through registers/memory). Topologically list-schedule, at each step picking a
+ready instruction whose inputs were produced longest ago (greedily hiding latency). It helps on
+in-order cores (Cortex-A53, many embedded targets); on Apple's OoO cores, measuring it is the lesson
+in why it's ~free there.
+```

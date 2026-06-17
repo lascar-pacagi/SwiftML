@@ -1,0 +1,10 @@
+(cram
+ (deps
+  (package swiftml)))
+
+; Alcotest unit tests for the parser — assert AST structure + diagnostics in-process.
+(test
+ (name test_parser)
+ (libraries alcotest swiftml_parser)
+ (flags
+  (:standard -warn-error -a)))

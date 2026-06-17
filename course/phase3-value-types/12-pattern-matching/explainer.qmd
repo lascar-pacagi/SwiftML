@@ -1,0 +1,206 @@
+---
+title: "12 · Pattern matching (`switch`)"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+Concept 11 let you *build* an enum value but not look inside it — you could ask "are these the same
+case?" but not "what's the radius of this circle?". That question — "*if* this is a `.circle`, give me
+its `Int`" — is a **pattern**, and `switch` is how Swift asks it. Pattern matching reads which case a
+value is, **binds its associated values**, runs the matching arm, and (this is the safety net)
+**checks that you covered every case**. With it, the tagged unions from concept 11 finally become the
+**algebraic data types** that make Swift expressive — and a little interpreter over an enum runs and
+matches swiftc.
+
+- **You implement:** the `switch` **dispatch lowering** in SILGen, and the **exhaustiveness** check in
+  sema.
+- **Outcome:** `switch` programs **run and match swiftc** — destructuring, an ADT evaluator, `Int`
+  switches.
+
+## 2. Concepts in depth
+
+### A switch is a dispatch on the tag
+
+Once an enum is a tag + payload (concept 11), `switch` almost writes itself: read the **tag**, then
+test it against each case; on a match, **pull the payload out** and run that arm. It compiles to a
+chain of conditional branches:
+
+![Lowering `switch`: read the tag with `enum_tag`, then a chain of `tag == k ?` tests; each true edge goes to a case block that binds the payload (`enum_payload`) and runs the body; all case blocks join at a merge. An exhaustive enum switch ends the chain in `unreachable`.](figs/dispatch.png)
+
+It's the same block-building you did for `if`/`while` in concept 08, in a new shape: evaluate the
+subject **once**, derive the discriminant (`enum_tag` for an enum, the value itself for an `Int`), make
+a `merge` block, and walk the cases — each one emits `key = tag`, `cond_br (disc == key)` to a fresh
+*case block* or a fresh *next-test block*. The case block binds, runs its body, and branches to merge.
+The chain's final fall-through is the `default` body, or — for an exhaustive enum switch — `unreachable`
+(control provably never gets there).
+
+### Binding a payload *is* a `let`
+
+`case .circle(let r):` binds `r` to the circle's associated value. In the case block you know the tag,
+so it's now **safe** to read the payload (you'd never read `rect`'s second field out of a `circle`).
+Each `let x` lowers exactly like a local binding: `enum_payload subj #i` reads the slot, then
+`alloc_stack x` + `store` puts it in a variable, in scope for the arm's body. `_` ignores its slot.
+That safety — you can only read a payload *after* the tag check routes you into the case — is the whole
+reason associated values live behind `switch` and not behind plain field access.
+
+### Exhaustiveness — the check that makes it safe
+
+A `switch` over an enum **must handle every case** (or have a `default`). swiftc rejects a switch that
+forgets one, and so do we: track which case names the patterns matched, and if any of the enum's cases
+is left uncovered with no `default`, emit "switch must be exhaustive." This is more than pedantry — it's
+what makes enums *refactorable*: add a case to the enum, and the compiler points you at every `switch`
+that now needs updating. (`Int` switches can't be exhaustive — too many values — so they always need a
+`default`.) Real swiftc proves exhaustiveness with a small algebra of "spaces"
+(`TypeCheckSwitchStmt.cpp`); ours is the set-cover special case for flat enum patterns.
+
+### A switch can also return
+
+A function whose whole body is a `switch` returns a value *through* the switch:
+`func area(_ s: Shape) -> Int { switch s { case …: return … } }`. So the **"missing return"** analysis
+from concept 07 grows one rule: a `switch` is a definite return when **every** case body returns and
+(the `default` returns, or there's no `default` and it's exhaustive — which sema already guaranteed).
+Without that rule, every `switch`-bodied function would falsely report "missing return" — a bug worth
+seeing, because it's the kind of cross-feature interaction that only shows up when you actually run a
+realistic program.
+
+### How a real compiler dispatches (and what we simplified)
+
+Our dispatch is a **linear** chain: *n* cases cost up to *n* tag comparisons. A production compiler
+builds a **decision tree** — a balanced binary search on the tag, or a **jump table** when the tags are
+dense (which they are: 0, 1, 2, …). swiftc's SIL has a dedicated **`switch_enum`** terminator that
+lowers straight to LLVM's `switch` instruction (a jump table). Same semantics, better asymptotics; the
+linear chain is the honest, readable starting point, and turning it into a `switch_enum` is an exercise.
+
+## 3. Build it, step by step
+
+- **`silgen.ml`** — `TODO(12)`, the `Switch` case in `gen_stmt`: `gen_expr` the subject once; the
+  discriminant is `Sil.Enum_tag subj` (enum) or `subj` (Int). `new_block` a `merge`. For each
+  `(pattern, body)`: the key is the case's `Types.case_index` (enum) or the literal (`PInt`); emit it
+  (`Sil.Int_lit`), compare (`Sil.Binop Ast.Eq`), `terminate` a `Cond_br` to a fresh case-block / a
+  fresh next-block. In the case-block, bind each `Ast.Bind x` (`Sil.Enum_payload (subj, i)` →
+  `alloc_stack` + `store`), `gen_block` the body, `terminate` `Br merge`; then `switch_to` the
+  next-block. After the chain: the `default` body (→ `Br merge`) or `Sil.Unreachable`. Finally
+  `switch_to merge`.
+- **`sema.ml`** — `TODO(12-sema)`, in `check_switch`: with no `default`, compare the matched cases
+  (`covered`) against `el.Types.el_cases`; if any is missing, `err span "switch must be exhaustive"`.
+
+Reference: `solution/`.
+
+## 4. Test it
+
+```bash
+make lab C=phase3-value-types/12-pattern-matching
+```
+
+The cram test **builds and runs** switch programs — a `Shape.area` that destructures, and an `Op`
+interpreter — and FileChecks the dispatch SIL (`enum_tag`, `enum_payload`). The alcotest pins
+exhaustiveness (missing case, `Int` with no default), the pattern rules (unknown case, wrong binding
+arity), and the lowered shape.
+
+## 5. Benchmark it
+
+Time a `switch` with many cases against swiftc. Our linear chain is O(cases); swiftc's jump table is
+O(1). For a hot interpreter loop that's a real gap — and exactly what Exercise 4 (a `switch_enum`
+terminator → LLVM `switch`) closes.
+
+## 6. Exercises
+
+1. **`where` clauses.** `case .circle(let r) where r > 0:` — after binding, evaluate the guard and
+   `cond_br` on it (match only if the pattern *and* the guard hold; otherwise fall to the next test).
+2. **`if let` / `guard let`.** `if case .circle(let r) = shape { … }` is a one-case switch; `guard`
+   binds into the *enclosing* scope and `else`-returns. Desugar both to the dispatch you just built.
+3. **Tuple & nested patterns.** `switch (a, b) { case (0, let y): … }` — match a tuple position-wise,
+   recursing the matcher into sub-patterns. The space algebra generalizes exhaustiveness to these.
+4. **`switch_enum` (jump table).** Add a `Switch_enum of value * (int * int) list * int option`
+   terminator (tag → block, plus default) and lower it to LLVM's `switch`. Replace the linear chain;
+   measure the speedup.
+
+## 7. Recap & what's next
+
+You added `switch`: a tag dispatch that binds associated values and is checked **exhaustive**. Enums
+are now first-class — you can take them apart, and a tree of cases is an interpreter. That's the ADT
+half of Phase 3 complete.
+
+Next, **13-optionals**, where a beautiful thing happens: `Optional<T>` turns out to be *just an enum* —
+`enum Optional<T> { case none; case some(T) }` — so `nil`, `?`, `!`, `if let`, and `??` are all built
+on the enum + pattern-matching machinery you now have. The sugar is new; the engine is done.
+
+## 8. Appendix — full solution
+
+From `solution/silgen.ml` (dispatch) and `solution/sema.ml` (exhaustiveness):
+
+```ocaml
+| Ast.Switch { subject; cases; default; _ } ->
+    let subj = gen_expr b subject in
+    let enum_name = match vty b subj with Types.TEnum en -> Some en | _ -> None in
+    let disc = match enum_name with Some _ -> emit b (Sil.Enum_tag subj) Types.TInt | None -> subj in
+    let merge = new_block b in
+    let key_of = function
+      | Ast.PEnumCase (cn, _) -> Option.get (Types.case_index (Hashtbl.find b.enums (Option.get enum_name)) cn)
+      | Ast.PInt n -> n in
+    let bind_payload = function
+      | Ast.PEnumCase (cn, bindings) when enum_name <> None ->
+          let tys = Option.get (Types.case_payload (Hashtbl.find b.enums (Option.get enum_name)) cn) in
+          List.iteri (fun i bnd -> match bnd with
+            | Ast.Bind x ->
+                let pv = emit b (Sil.Enum_payload (subj, i)) (List.nth tys i) in
+                let addr = emit b (Sil.Alloc_stack x) (vty b pv) in
+                Hashtbl.replace b.vars x addr; ignore (emit b (Sil.Store (pv, addr)) Types.TVoid)
+            | Ast.Ignore -> ()) bindings
+      | _ -> () in
+    let rec dispatch = function
+      | [] -> (match default with
+          | Some body -> gen_block b body; terminate b (Sil.Br merge.Sil.bid)
+          | None -> terminate b Sil.Unreachable)
+      | (pat, body) :: rest ->
+          let k = emit b (Sil.Int_lit (key_of pat)) Types.TInt in
+          let c = emit b (Sil.Binop (Ast.Eq, disc, k)) Types.TBool in
+          let case_b = new_block b and next_b = new_block b in
+          terminate b (Sil.Cond_br (c, case_b.Sil.bid, next_b.Sil.bid));
+          switch_to b case_b; bind_payload pat; gen_block b body; terminate b (Sil.Br merge.Sil.bid);
+          switch_to b next_b; dispatch rest in
+    dispatch cases; switch_to b merge
+```
+
+```ocaml
+(* sema: exhaustiveness — no default ⇒ every case must be covered *)
+Option.iter check_block default;
+if default = None then begin
+  let missing = List.filter (fun (c, _) -> not (List.mem c !covered)) el.Types.el_cases in
+  if missing <> [] then err span "switch must be exhaustive"
+end
+```
+
+## 9. Exercise solutions
+
+### 1 — `where` clauses
+
+Give a case an optional guard expression. After `bind_payload`, `gen_expr` the guard and `cond_br` on
+it: true → the body (→ merge), false → the *next* test block (so a guarded pattern that fails tries the
+following case). In sema, a `where`-guarded case does **not** count toward exhaustiveness (it might not
+match), so swiftc still requires a `default` — match that.
+
+### 2 — `if let` / `guard let`
+
+`if case .some(let x) = opt { … } else { … }` is a two-arm switch (the case, and an implicit default).
+`guard case .some(let x) = opt else { return }` binds `x` into the **enclosing** scope (not a nested
+block) and requires the `else` to exit. Both desugar to the same `enum_tag` + `cond_br` + `enum_payload`
+you built — which is exactly why concept 13 gets optionals "for free."
+
+### 3 — tuple & nested patterns
+
+Represent patterns recursively (`PTuple of pattern list`, `PEnumCase of string * pattern list`). The
+matcher becomes recursive: test the outer tag/shape, then match each sub-pattern against the
+corresponding payload slot, binding as it descends. Exhaustiveness generalizes to a **product/sum
+space** algebra — the real `TypeCheckSwitchStmt` algorithm.
+
+### 4 — `switch_enum` terminator
+
+Add `Switch_enum of value * (int * int) list * int option` (discriminant, (tag → block) list, optional
+default block). Build all case blocks first, then emit one terminator; lower it to LLVM
+`switch i64 %t, label %default [ i64 0, label %bb0  i64 1, label %bb1 … ]` — a jump table. O(1) dispatch
+regardless of case count, and the shape swiftc actually emits.
+```

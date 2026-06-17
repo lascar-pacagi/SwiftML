@@ -1,0 +1,247 @@
+---
+title: "26 · The ARC runtime"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+Concept 25 ended on a confession: every object leaked. This concept builds Swift's answer —
+**Automatic Reference Counting**. Not a garbage collector: there's no pause, no tracer, no
+runtime heuristics. The *compiler* inserts `retain` and `release` operations at exactly the
+points ownership changes hands, and when an object's count reaches zero its `deinit` runs and
+the memory is freed — **deterministically**, at a source-predictable moment. That determinism
+is testable, and it is this concept's oracle: our programs must print their `deinit` side
+effects in *exactly* swiftc's order.
+
+- **You implement:** the ownership-transfer rule, the field-destroy chain, and the runtime's
+  release path.
+- **Outcome:** 12 lifetime scenarios byte-identical to swiftc, at `-Onone` and `-O`.
+
+## 2. Concepts in depth
+
+### Ownership: who holds the +1?
+
+The mental model that makes ARC simple: a reference count is the number of **owners**, and
+every owner holds exactly +1. The compiler's job is bookkeeping at the moments ownership
+changes:
+
+![One object's life: born at +1 (consumed by `a`'s slot), retained when `c` borrows-then-owns, untouched by reads, released by each owner at scope exit — then the deallocation sequence runs.](figs/arc.png)
+
+Two kinds of values flow through SILGen, and telling them apart is the rule you implement:
+
+- **Owned (+1)**: a fresh allocation (`T(1)`) or a class-typed call result (the callee
+  retained it for you). Someone must balance it — either a slot *consumes* it (the +1
+  transfers; no instruction emitted) or, if nobody does, it's a **statement temp**, released
+  when the statement completes (probe: `print(use(mk()))` — the temp dies after the whole
+  statement, exactly like swiftc).
+- **Borrowed (+0)**: a value *loaded* from a slot or field, or a parameter (Swift's calling
+  convention passes arguments **guaranteed** — the caller keeps them alive for the call's
+  duration, so the callee emits no traffic for them). Storing a borrowed value somewhere
+  durable mints a new owner: **retain**.
+
+Everything else falls out: reads are free; `let c = a` is one retain; scope exit releases each
+class-typed local **newest-first** (probed); reassignment evaluates the new value, takes it,
+stores, *then* releases the old — which is why the old object's deinit prints after the new
+one's init (probed); `return t` retains *before* the scope's releases so the +1 survives the
+cleanup and transfers to the caller. And top-level `var`s are globals: swiftc never runs their
+deinit at process exit, so neither do we — a one-line rule that our first run got wrong by
+printing one extra deinit.
+
+The machinery that emits all this is SILGen's **cleanup discipline** — scopes as a stack of
+release lists, statement temps, and early exits (`return`/`break`/`continue`) emitting the
+releases for every scope they jump out of. swiftc's SILGen has the same structure, literally
+called the cleanup stack (`SILGenDecl.cpp`).
+
+### Deallocation: the order is two chains
+
+What happens at zero? Our first implementation did the obvious: each class's destructor ran
+its deinit body, released its own fields, then chained to the superclass. **swiftc disagreed.**
+The probe that caught it (a subclass with a class-typed field and deinits at both levels)
+prints `2000, 1003, 7` — body, *super's body*, then the field. The real order, verified with a
+second probe for the cross-level case:
+
+1. **all deinit bodies**, derived → base (`B.deinit` → `A.deinit`);
+2. **then all field releases**, base → derived (`A`'s fields before `B`'s);
+3. then one `free`.
+
+So the destructor is **two chains**, walked in opposite directions — vtable slot 0 (`C.deinit`,
+bodies) and slot 1 (`C.destroy`, fields), each chaining to its super by direct call, both
+entered through the object's vtable so the most-derived class leads. The runtime's release —
+which you write — runs slot 0, slot 1, `free`. (swiftc's equivalent lives in the
+heap-destructor metadata; `HeapObject.cpp`'s `swift_release` → `swift_deallocObject`.)
+
+This is the concept's best lesson in *oracle discipline*: the "obvious" per-level order is
+plausible, simple, and wrong, and only a behavioral probe against the reference compiler
+catches it. (Why does Swift do it this way? A base-class deinit may still touch `self`'s
+derived state — Objective-C inherited the same two-phase `dealloc` shape for the same reason.)
+
+### What the optimizer must respect
+
+`Retain`/`Release` are **side-effecting** — every Phase-4/5 pass treats them as immovable,
+like calls. That's deliberately blunt: a retain/release pair on a value nobody else can see is
+pure overhead, and swiftc's ARC optimizer removes thousands of them — *without changing any
+deinit observation*. That precision game is concept 28; today's job is `-O` changing *nothing*
+about lifetime behavior, which the whole suite checks at both optimization levels. (One pass
+did break it: dead-function elimination dropped the destructors — nothing `Apply`s them; they're
+reachable only through vtable slot 0/1 and the runtime. Reachability through *tables* is a
+recurring blind spot — the same fix witness tables needed in concept 21.)
+
+### Honest boundaries
+
+Three, stated plainly. **Cycles leak** — two objects retaining each other never hit zero;
+that's real Swift too (`weak`/`unowned` are the language's answer, and an exercise). **Class
+references can't sit inside value types yet** — a struct copy would duplicate the pointer
+without a retain; sema rejects it until copy machinery exists (the value-witness path from
+concept 23). And the traffic is **naive**: `let c = a; print(c.id)` retains and releases even
+though `a` outlives `c` — correct, measurable, and exactly the waste concept 28 eliminates.
+
+> Oracle: `HeapObject.cpp` (the runtime), `SILGenDecl.cpp`/`Cleanup.h` (the cleanup stack),
+> `swift/docs/ARCOptimization.md` (what comes next).
+
+## 3. Build it, step by step
+
+1. **`silgen.ml` — `take_ownership`** (`TODO(26a)`): class values only. In `b.owned` ⇒ consume
+   (remove from `owned` *and* `stmt_temps`). Otherwise ⇒ emit `Retain`. This one function is
+   called from every store site (locals, fields, returns) — the given machinery routes
+   everything through it.
+2. **`silgen.ml` — `destroy_epilogue`** (`TODO(26b)`): chain to `Super.destroy` *first*
+   (upcast + direct apply), then release own class-typed fields (`index >= inherited`,
+   `Ref_element_addr` + `Load` + `Release`).
+3. **`irgen.ml` — `rt.release`** (`TODO(26c)`): mirror the given `rt.retain`; at zero, call
+   vtable slots 0 and 1, then `@free`.
+
+Reference: `solution/silgen.ml`, `solution/irgen.ml`.
+
+## 4. Test it
+
+```bash
+make lab C=phase6-classes-arc/26-arc-runtime
+```
+
+cram: scope/reverse-order/shared-object lifetimes; reassignment ordering; the two-chain
+deallocation (both orderings verified against swiftc); ownership transfer through returns;
+loop and `break` releases; `-O` identical; the value-type guard diagnostic. alcotest: borrow
+retains vs fresh consumption (counted per function), destructor synthesis, both chains'
+structure, and `-O` preserving every retain/release.
+
+## 5. Benchmark it
+
+Re-run concept 25's class-vs-struct hot loop: ARC just made the class side *slower* (a
+retain/release pair per loop iteration in the borrow-heavy pattern). Measure the regression
+honestly — it is concept 28's baseline, and the reason `ARCOptimization.md` exists.
+
+## 6. Exercises
+
+1. **`weak` references.** A weak slot doesn't retain; it must become `nil` when the object
+   dies. Sketch the side-table (swiftc keeps weak refs out of the object for exactly the
+   reasons you'll hit), then implement the leak-detecting probe: a two-object cycle whose
+   deinits never print — until one link is `weak`.
+2. **A leak detector.** Track live allocations in the runtime (a counter, or a linked list of
+   headers); print leaked objects at exit under a `--leaks` flag. Run it on the cycle probe.
+3. **Lift one value-type guard.** Allow `Optional<C>`: `.some(c)` wraps retain, destruction
+   releases, copies retain — the enum payload needs exactly the copy/destroy hooks the value
+   witness table promises. Doing one case by hand shows why 23's vwt is the general answer.
+4. **Deinit re-entrancy.** What if a deinit body resurrects `self` (stores it somewhere)?
+   Probe swiftc (it aborts on over-release after the deinit). Decide and document our
+   behavior.
+
+## 7. Recap & what's next
+
+ARC is bookkeeping at ownership-transfer points: fresh values are born +1 and consumed or
+released by statement's end; borrows that become owners retain; scopes release newest-first;
+the deallocation runs bodies derived→base, fields base→derived, then frees — all of it
+deterministic, all of it verified against swiftc at both optimization levels.
+
+Next, **27-ownership**: making these rules *visible and checkable* in the IR — SIL's ownership
+SSA (owned/guaranteed values, `copy_value`/`destroy_value`, an ownership verifier), the
+representation swiftc uses to make ARC bugs into compile errors. Then **28** spends that
+structure: the ARC optimizer.
+
+## 8. Appendix — full solution
+
+```ocaml
+(* 26a — the ownership-transfer rule *)
+let take_ownership (b : builder) (v : Sil.value) : unit =
+  if is_class_ty (Hashtbl.find b.val_ty v) then begin
+    if Hashtbl.mem b.owned v then begin
+      Hashtbl.remove b.owned v;
+      b.stmt_temps <- List.filter (fun t -> t <> v) b.stmt_temps
+    end
+    else ignore (emit b (Sil.Retain v) Types.TVoid)
+  end
+
+(* 26b — the field-destroy chain (super FIRST, then own fields) *)
+let destroy_epilogue (b : builder) =
+  let selfv = emit b (Sil.Load (Hashtbl.find b.vars "self")) (Types.TClass c.Ast.cname) in
+  (match cl.Types.cl_super with
+  | Some sup ->
+      let upv = emit b (Sil.Upcast (selfv, sup)) (Types.TClass sup) in
+      let fr = emit b (Sil.Func_ref (sup ^ ".destroy")) Types.TVoid in
+      ignore (emit b (Sil.Apply (fr, [ upv ])) Types.TVoid)
+  | None -> ());
+  List.iteri
+    (fun i (_, ft) ->
+      if i >= inherited && is_class_ty ft then begin
+        let fa = emit b (Sil.Ref_element_addr (selfv, i)) ft in
+        let fv = emit b (Sil.Load fa) ft in
+        ignore (emit b (Sil.Release fv) Types.TVoid)
+      end)
+    cl.Types.cl_fields
+
+(* 26c — rt.release *)
+define private void @rt.release(ptr %o) {
+  %rcp = getelementptr i8, ptr %o, i64 8
+  %rc = load i64, ptr %rcp
+  %n = sub i64 %rc, 1
+  store i64 %n, ptr %rcp
+  %z = icmp eq i64 %n, 0
+  br i1 %z, label %dead, label %done
+dead:
+  %vt = load ptr, ptr %o
+  %dtor = load ptr, ptr %vt        ; slot 0: deinit bodies, derived -> base
+  call void %dtor(ptr %o)
+  %dsp = getelementptr ptr, ptr %vt, i64 1
+  %dstr = load ptr, ptr %dsp       ; slot 1: field releases, base -> derived
+  call void %dstr(ptr %o)
+  call void @free(ptr %o)
+  br label %done
+done:
+  ret void
+}
+```
+
+## 9. Exercise solutions
+
+### 1 — weak
+
+A weak reference can't live in the object (the object dies first). Side table: a heap cell
+`{ object ptr, weak count }`; weak slots point at the cell; on deallocation the runtime nulls
+the cell's object pointer; weak loads read through the cell and produce an `Optional<C>`.
+swiftc's real design (`HeapObject.cpp`, `WeakReference`) adds bit-packed flags and atomicity,
+but the cell is the essence. The probe: `class A { var b: B? }`-style cycle (needs exercise 3)
+or two classes with direct fields — deinits silent; mark one `weak` — both print.
+
+### 2 — leak detector
+
+In `rt.alloc` (factor allocation into the runtime), push the header onto a global intrusive
+list; in deallocation, unlink. `@main`'s epilogue (or an `atexit`) walks the list and writes
+one line per survivor. Top-level globals are expected survivors — subtract them or note them.
+
+### 3 — Optional<C>
+
+Wrapping retains the payload (it's a store into a durable home); `.none` does nothing.
+Destruction switches on the tag and releases `.some`'s payload. Copy = bitwise + conditional
+retain. Then every place our compiler copies/destroys enums must consult the payload type —
+which is precisely the per-type copy/destroy function table (the value witness table) arriving
+by the back door. That generalization, not the optional itself, is the lesson.
+
+### 4 — re-entrancy
+
+swiftc: the object is already mid-death; a resurrecting store retains a half-dead object and
+the subsequent over-release traps (`attempted to retain deallocating object` in debug
+runtimes). Our honest options: document UB, or detect (a sentinel refcount value, e.g. set rc
+to a marker before running the chains, and trap in retain on the marker). The marker version
+is ten lines and makes a great regression test.
+```

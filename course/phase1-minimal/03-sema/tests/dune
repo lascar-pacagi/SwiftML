@@ -1,0 +1,10 @@
+(cram
+ (deps
+  (package swiftml)))
+
+; Alcotest unit tests for sema — assert exact diagnostic messages in-process.
+(test
+ (name test_sema)
+ (libraries alcotest swiftml_sema)
+ (flags
+  (:standard -warn-error -a)))

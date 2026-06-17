@@ -1,0 +1,5 @@
+; Concept 38 — async/await: a cooperative executor + coroutine runtime (the full-language LLVM path).
+(library (name swiftml_async) (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen driver)
+ (flags (:standard -warn-error -a)))
+(dirs :standard \ solution)

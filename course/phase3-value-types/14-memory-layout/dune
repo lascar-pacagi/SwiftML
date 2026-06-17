@@ -1,0 +1,9 @@
+; Concept 14 — memory layout: alignment, padding, struct field offsets, tagged-union sizing.
+(library
+ (name swiftml_layout)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen irgen driver layout)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

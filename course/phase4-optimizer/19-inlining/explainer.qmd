@@ -1,0 +1,184 @@
+---
+title: "19 · Function inlining"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+A function call has a cost — set up arguments, jump, return — and, worse, it's a **wall**: the
+optimizer can't see that `sq(5)` is `25`, because `sq`'s body is somewhere else. **Inlining** tears
+down the wall by copying the callee's body into the caller. Now `sq(5)` becomes `5*5` right there, and
+the constant folder you already wrote finishes the job. Inlining is valuable less for removing the call
+overhead than for **everything it unblocks** — it's the pass that turns a tower of tiny helper
+functions into one flat, optimizable blob.
+
+- **You implement:** the inline transform — splice the callee's body at the call site.
+- **Outcome:** small calls disappear, the passes cascade across the boundary, and `-O` matches
+  `swiftc`.
+
+## 2. Concepts in depth
+
+### Inlining is a copy-and-rename
+
+To inline `%r = apply @f(a₀, a₁)`, you replace it with a copy of `f`'s body, with two substitutions:
+`f`'s **parameters** become the actual **arguments**, and `f`'s **return value** becomes `%r`. The only
+real work is **renumbering** — `f`'s SSA values (`%0`, `%1`, …) would collide with the caller's, so you
+shift them by an offset; `f`'s parameter values map to the caller's argument values instead. Then you
+splice the renumbered instructions where the call was, and rewrite every use of `%r` to the callee's
+returned value:
+
+![Inlining replaces a call with the callee's body. `sq(5)` becomes `5 * 5` spliced into `main`; then constant folding — which couldn't see across the call before — collapses it to `25`, and the now-uncalled `sq` is removed.](figs/inline.png)
+
+That's the whole transform: a value map (`param → arg`, else `+offset`), a splice, and a
+result-substitution. Because we're on SSA, there's no aliasing to worry about and exactly one
+definition to rewire — Phase 4's recurring gift.
+
+### Inter-procedural: the first pass that needs the whole program
+
+Every pass so far was **intra-procedural** — it transformed one function in isolation. Inlining is
+different: it needs the *callee*, which lives in another function. So it runs as a **module-level**
+transform (over `Sil.modul`), before the per-function pipeline. After inlining, callees that are no
+longer called anywhere are **dead** and removed — `sq` vanishes once its only call is inlined.
+
+### Why v0 only inlines single-block leaves
+
+Two real hazards make "inline everything" wrong:
+
+- **Recursion.** Inline a call to `fib` inside `fib` and you get another call to inline, forever. We
+  sidestep it by only inlining **leaf** functions (no `apply` inside) — a leaf can't be recursive.
+- **Block surgery.** A callee with internal control flow (an `if`) has *several* blocks and *several*
+  `return`s. Splicing those means **splitting** the caller's block at the call and threading every
+  `return` to a continuation block (with a block argument for the result) — doable, but fiddly. A
+  **single-block** leaf has one block and one `return`, so you just splice its instructions, no
+  surgery. That's the simplest safe inlining, and it already covers a huge fraction of real helpers
+  (`sq`, `add`, `area`, accessors). Multi-block inlining is the v1 upgrade.
+
+A real compiler doesn't inline *every* eligible call either — it uses a **cost model**: inline if the
+callee is small, or called once, or the call is hot, but not if it would bloat the code. We always
+inline our eligible callees (they're tiny); the cost model is an exercise.
+
+### The payoff is the cascade
+
+Run `--sil-opt` on `func sq(x){ x*x }; print(sq(5)+sq(6))`: after inlining, the two calls become
+`5*5` and `6*6`; constant folding makes them `25` and `36`; folding again makes the sum `61`; DCE
+sweeps the leftovers; and `sq` is gone. **One inline created work for three other passes.** This is why
+inlining runs early and the pipeline runs the cleanup passes after it — and why production pipelines
+sometimes inline, optimize, and inline again. The optimizer is a system; inlining is the pass that
+feeds it the most.
+
+> Oracle: swiftc's `PerformanceInliner` (with a real cost model and a "what does inlining *enable*"
+> bonus) runs in the SIL optimizer; LLVM's inliner does the same on LLVM IR. Both run **before** the
+> scalar passes for exactly the cascade reason.
+
+## 3. Build it, step by step
+
+In `opt.ml`, fill the `TODO(19)` in `inline_module`'s `inline_in` (the call-finding worklist, the
+`inlinable` check, and dead-callee removal are given):
+
+For the found call `(b, rv, args, f)`: pick `off = max_val g + 1`; let `fb` be `f`'s single block.
+Build `vmap` (a parameter → its `args` entry; else `v + off`). Map `fb`'s instructions
+(`List.rev fb.Sil.instrs`) through `(vmap v, map_instr vmap i)`, copying each type into
+`g.Sil.val_ty`; compute `retval` from `fb`'s `Return`. Splice the inlined instructions in place of the
+`(rv, apply …)` entry. Substitute `rv → retval` everywhere via `map_instr`/`map_term`. Set
+`progress := true`.
+
+Reference: `solution/opt.ml`.
+
+## 4. Test it
+
+```bash
+make lab C=phase4-optimizer/19-inlining
+```
+
+cram checks `sq(5)` is inlined and folded to `25` with `@sq` removed, and that `-O` (nested calls,
+inlining in a loop, recursion left alone) matches `swiftc`. alcotest checks a single-block leaf is
+inlined and removed, a recursive function is kept, a multi-block leaf is kept, and the result still
+verifies after the full pipeline.
+
+## 5. Benchmark it
+
+A program built from many tiny helpers (`sq`, `add`, accessors) collapses under `-O` to flat,
+constant-folded code with no calls — diff the instruction/call counts with vs without inlining. Time a
+hot loop that calls a leaf each iteration: inlining removes the per-iteration call and lets the loop
+body fold/CSE as a whole.
+
+## 6. Exercises
+
+1. **A cost model.** Only inline if the callee is "small" (instruction count below a threshold) or
+   called exactly once. Add the count and the policy — and a flag to log inlining decisions.
+2. **Multi-block inlining.** Handle callees with control flow: split the caller's block at the call,
+   copy *all* the callee's blocks (renumbering block ids too), turn each `return v` into a branch to a
+   continuation block that takes the result as a **block argument**, and continue there.
+3. **Recursion via a bound.** Allow inlining a recursive call to a fixed depth (inline once, leaving
+   the inner call) — useful for small base cases. Guard against blow-up.
+4. **Inline + re-optimize loop.** Run inline → the scalar pipeline → inline again to a fixed point, so
+   a chain `a()→b()→c()` flattens fully and each round re-exposes the next.
+
+## 7. Recap & what's next
+
+You built **inlining**: copy the callee's body in, renumber and bind, splice, rewire the result —
+the first inter-procedural pass, and the one that feeds all the others. Small functions are free, and
+`sq(5)` folds to `25` because the wall is gone.
+
+Next, **20-llvm-opt**: hand the optimized SIL to **LLVM's** optimizer (compile at `-O2`) and measure
+the generated-code runtime against `swiftc -O`. Our SIL passes did the Swift-level work; LLVM's
+backend does the machine-level work (instruction selection, register allocation, scheduling). Together
+they are **Milestone M4** — `swiftml -O` competitive with `swiftc -O`.
+
+## 8. Appendix — full solution
+
+```ocaml
+| Some (b, rv, args, f) ->
+    progress := true;
+    let off = max_val g + 1 in
+    let fb = match f.Sil.blocks with [ b ] -> b | _ -> assert false in
+    let param_arg = List.map2 (fun (p, _) a -> (p, a)) f.Sil.params args in
+    let vmap v = match List.assoc_opt v param_arg with Some a -> a | None -> v + off in
+    let inlined = List.map
+      (fun (v, i) -> Hashtbl.replace g.Sil.val_ty (vmap v) (Hashtbl.find f.Sil.val_ty v); (vmap v, map_instr vmap i))
+      (List.rev fb.Sil.instrs) in
+    let retval = match fb.Sil.term with
+      | Sil.Return (Some v) -> Some (vmap v) | Sil.Return None -> None | _ -> assert false in
+    let rec splice = function
+      | (v, _) :: rest when v = rv -> inlined @ rest
+      | x :: rest -> x :: splice rest | [] -> [] in
+    b.Sil.instrs <- List.rev (splice (List.rev b.Sil.instrs));
+    (match retval with
+     | Some rv' -> let sub x = if x = rv then rv' else x in
+         List.iter (fun (bb : Sil.block) ->
+           bb.Sil.instrs <- List.map (fun (v, i) -> (v, map_instr sub i)) bb.Sil.instrs;
+           bb.Sil.term <- map_term sub bb.Sil.term) g.Sil.blocks
+     | None -> ())
+```
+
+## 9. Exercise solutions
+
+### 1 — cost model
+
+`size f = Σ |block.instrs|`. Inline a call only if `size callee <= threshold` (say 10) **or** the
+callee has a single call site in the whole module (computed from the apply counts). Add a `bonus` if
+the arguments are constants (inlining will fold a lot) — that's swiftc's "inlining benefit" heuristic
+in miniature.
+
+### 2 — multi-block inlining
+
+Split the caller block `B` at the call into `B` (instrs before) and a fresh continuation `C` (instrs
+after + `B`'s old terminator); give `C` a block argument for the result. Copy all of `f`'s blocks with
+both value and **block-id** offsets; point `B` at `f`'s entry; turn each `return v` into
+`br C(vmap v)` and each `return` (void) into `br C`. Replace `rv` with `C`'s argument. mem2reg/GVN then
+clean up exactly as for the single-block case.
+
+### 3 — bounded recursion
+
+Track an inline depth per callee; allow inlining a self-call up to depth *k*, leaving the innermost
+call intact (so it terminates). Useful to specialize a couple of base-case iterations; guard total
+code growth with the cost model from Exercise 1.
+
+### 4 — inline + re-optimize
+
+Wrap `inline_module` and the per-function pipeline in a loop with change detection: inline, run the
+scalar passes, and if inlining changed anything, repeat. A chain `a()→b()→c()` flattens one level per
+round; the scalar passes in between keep the IR small so later inlining decisions stay cheap.
+```

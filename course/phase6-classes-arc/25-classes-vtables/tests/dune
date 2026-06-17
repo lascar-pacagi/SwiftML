@@ -1,0 +1,18 @@
+; The concept lab binary: the .t cram tests run ./lab.exe, which links THIS concept's library —
+; so the tests are RED until you fill this directory's TODO holes.
+(executable
+ (name lab)
+ (modules lab)
+ (libraries swiftml_classes)
+ (flags
+  (:standard -warn-error -a)))
+
+(cram
+ (deps lab.exe))
+
+(tests
+ (names test_classes)
+ (modules test_classes)
+ (libraries alcotest swiftml_classes)
+ (flags
+  (:standard -warn-error -a)))

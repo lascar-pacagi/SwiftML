@@ -1,0 +1,10 @@
+; Concept 16 — the optimizer + SSA. SIL now carries basic-block arguments; mem2reg promotes
+; alloc_stack/load/store to SSA values threaded through them.
+(library
+ (name swiftml_mem2reg)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen driver)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

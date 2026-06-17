@@ -1,0 +1,229 @@
+---
+title: "16 · mem2reg & SSA"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+Back in concept 08 we made a deliberate choice: emit **raw, memory-based SIL** — every variable in an
+`alloc_stack` slot, every read a `load`, every write a `store` — and defer SSA. The reason was that
+**SILGen stays trivial** and the cleanup is a separate, well-understood pass. This is that pass, and
+the lesson it teaches — **SSA construction** — is one of the most important ideas in compilers.
+
+**mem2reg** ("memory to register") takes that load/store-heavy SIL and promotes the slots to **SSA
+values**: each value assigned exactly once, with the values that a loop or an `if` carries across a
+join expressed as **basic-block arguments** (your chosen SSA form — swiftc's "phi"). After it runs,
+the constant folder and DCE from concept 15 — which couldn't see through a `load` — suddenly can,
+because there's nothing to see through.
+
+- **You implement:** the **renaming** walk — the core of SSA construction.
+- **Outcome:** loops, recursion, structs run in SSA, and `-O` still matches `swiftc`.
+
+## 2. Concepts in depth
+
+### What is SSA, and why?
+
+**Static Single Assignment** form requires that *every value is assigned exactly once*. Instead of a
+mutable variable `s` that's stored to repeatedly, you get a sequence of distinct values `s₀`, `s₁`,
+`s₂`, each defined once. Why bother? Because it makes **def-use explicit**: to find where a value came
+from, you look at its single definition — no dataflow analysis to ask "which store reaches this load?"
+That question *is* the analysis, and SSA answers it once, structurally. Constant propagation, CSE,
+value numbering, dead-code elimination — all become easy when each value has one definition.
+
+The hard part is **joins**. If `s` is set to `1` on one branch and `2` on another, what's its value
+where the branches merge? SSA's answer is a **φ ("phi")**: a pseudo-instruction at the join that picks
+the value based on *which predecessor you came from*. In our SIL — and in swiftc — a φ is a **block
+argument**: the join block declares a parameter, and each predecessor passes a value:
+
+![mem2reg on a loop. Left: the raw memory form — the accumulator `s` and induction `i` live in stack slots, loaded and stored every iteration. Right: SSA — the loop header `bb1(i, s):` takes the carried values as block arguments; the entry edge passes `(0, 0)` and the back-edge passes `(i', s')`. No load/store remain.](figs/mem2reg.png)
+
+### Which slots can we promote?
+
+Only a slot whose **address never escapes** — one used *only* as the address of a `load` or `store`.
+If a slot's address is taken some other way (e.g. `struct_element_addr` for in-place field mutation,
+or passed to a function), we can't replace it with a single SSA value, so we leave it alone. So
+"promotable" = an `alloc_stack` whose value appears only as a load/store address — a one-line check
+over all the operands.
+
+### Step 1 — dominators: who *must* have run before you
+
+A block **D dominates** block B if **every** path from the entry to B goes through D. The
+**immediate dominator** `idom(B)` is the closest such D — and the idom relation forms the
+**dominator tree**. This is the backbone of SSA construction: if D dominates B, then a value defined
+in D is available in B (it definitely ran). We compute dominators by the classic iterative dataflow:
+`Dom(B) = {B} ∪ ⋂ Dom(predecessors)`, to a fixed point; then `idom(B)` is the deepest strict dominator.
+
+### Step 2 — dominance frontiers: where φs go
+
+A φ for a variable is needed exactly where two definitions *first meet*. That place is the
+**dominance frontier**: `DF(D)` is the set of blocks `W` that `D` dominates a *predecessor* of, but
+does **not** strictly dominate `W` itself — the boundary "just past" D's dominance. The insight
+(Cytron et al.): a variable stored in block D needs a φ at every block in the **iterated dominance
+frontier** of its store-blocks. For a loop, the body's dominance frontier is the **header** — which is
+exactly where the loop-carried φ belongs.
+
+### Step 3 — liveness: don't place φs you don't need (pruned SSA)
+
+Naïvely placing a φ at every iterated-frontier block over-places: it can demand a φ for a variable
+that isn't even *live* there — and that φ would need an incoming value on an edge where the variable is
+undefined. **This is a real bug I hit:** a `let p` defined *inside* a loop body has the header in its
+dominance frontier, so a φ for `p` gets placed at the header — but `p` isn't live across the loop, so
+the entry edge has no value to pass, and renaming crashed. The fix is **pruned SSA**: a backward
+**liveness** dataflow (`live-in[B] = used-before-defined[B] ∪ (live-out[B] ∖ defined[B])`), and we
+place a φ at a frontier block only if the slot is **live-in** there. `p` isn't live at the header, so
+no φ — and the crash is gone. (swiftc and LLVM do the same; this is why liveness shows up in mem2reg.)
+
+### Step 4 — renaming: thread the reaching value (your job)
+
+Now walk the **dominator tree** top-down, carrying a map `cur : slot → reaching value`:
+
+- A **block argument** (φ) at the block you enter *defines* its slot — set `cur[slot]` to the φ value.
+- A **store** `store x → slot` updates `cur[slot] := x`, and the store is **deleted**.
+- A **load** `r = load slot` is *replaced*: every later use of `r` becomes `cur[slot]`, and the load is
+  **deleted**.
+- At a **branch**, for each successor that has φs, pass the current reaching values as the branch's
+  **arguments** (in φ order).
+- **Recurse** on the dominator-tree children with the updated `cur`.
+
+Because you walk the dominator tree, the `cur` you carry into a block holds exactly the definitions
+that dominate it — the reaching value is always the right one. After the walk, delete the promoted
+`alloc_stack`s and apply the load→value substitution everywhere. That's SSA construction.
+
+### Block arguments vs. phi nodes
+
+You chose **block arguments**, and they're worth contrasting with classic **φ-nodes**. A φ-node lives
+at the *top of the target block* and lists `[value, predecessor]` pairs; a block argument lives in the
+*block's signature* and the values ride along the *branches*. They're equivalent — same SSA, different
+bookkeeping — but block arguments (swiftc, MLIR) keep the value-flow on the edges where it belongs and
+avoid the "φ must be first" special-casing. Our IRGen lowers block arguments straight to LLVM φ-nodes
+(LLVM uses φ), so both worlds meet at the backend.
+
+### Why this is the keystone
+
+Try `let x = 1; let y = 2; print(x + y)` with `--sil-opt`: before mem2reg, `x + y` is
+`add (load x_slot) (load y_slot)` and the constant folder is blind; after mem2reg, it's `add 1 2`,
+and the folder collapses it to `3`. mem2reg doesn't just remove loads/stores — it **unblocks every
+other pass**. That's why it runs first, and why the memory-based SIL we've emitted since Phase 2 was
+the right setup: build it simple, then promote it once.
+
+> Oracle: `swift/lib/SILOptimizer/Mandatory/SILMem2Reg.cpp` is swiftc's version (mandatory, run even
+> at `-Onone` for predictable debugging). LLVM's `mem2reg`/`SROA` promote `alloca`s the same way.
+
+## 3. Build it, step by step
+
+In `opt.ml`, fill the `TODO(16)` **renaming** hole in `mem2reg` (everything else — promotable-slot
+detection, dominators, dominance frontiers, liveness, φ placement, and the final commit — is given):
+
+Implement the `rename n cur` DFS: (a) block arguments define their slots in `cur`; (b) walk the
+instructions — a `Store (x, a)` to a promotable slot sets `cur[a] := x` and is marked removed, a
+`Load a` records `replace[result] := cur[a]` and is marked removed; (c) rewrite the terminator so each
+successor gets the current reaching values for its block arguments; (d) recurse on the dominator-tree
+children. Use `arg_slot`, `replace`, `removed`, `is_promo`, `blk`, `children`, all given above.
+
+Reference: `solution/opt.ml`.
+
+## 4. Test it
+
+```bash
+make lab C=phase4-optimizer/16-mem2reg-ssa
+```
+
+cram checks that `--emit-sil` is memory-heavy, `--sil-opt` has **no** load/store and a header with
+**block arguments**, and that `-O` programs (loop, `fib`, struct-in-loop) match `swiftc`. alcotest
+checks promotion (same-block `let` → value, no φ), loop φs (block args at the header), `if`/`else` φ
+at the merge, and that a non-promotable struct is left **valid**.
+
+## 5. Benchmark it
+
+Count instructions (or loads) in `--emit-sil` vs `--sil-opt` for a tight loop — mem2reg removes the
+per-iteration load/store traffic, and the LLVM backend keeps the values in registers instead of
+spilling. This is the first pass that moves the runtime metric, and it compounds: the passes after it
+(constant folding, CSE, inlining) only work because mem2reg ran.
+
+## 6. Exercises
+
+1. **Braun et al. SSA.** Implement the *simple* on-the-fly construction (sealed blocks, `readVariable`/
+   `writeVariable`) — no explicit dominance frontiers. Compare its output to the Cytron version here.
+2. **SROA.** Scalar Replacement of Aggregates: split a promotable *struct* slot into one slot per
+   field (rewriting `struct_element_addr` into per-field slots), then let mem2reg promote those — so
+   struct locals become SSA too.
+3. **Copy propagation + trivial-φ removal.** After mem2reg, remove a block argument whose incoming
+   values are all identical (or all the φ itself), replacing it with that single value. This is the
+   cleanup that makes SSA tidy.
+4. **Verify SSA.** Add a checker: every value is defined once; every use is dominated by its
+   definition. Run it after mem2reg — a great way to catch a renaming bug.
+
+## 7. Recap & what's next
+
+You built **SSA construction**: dominators tell you what's available, dominance frontiers tell you
+where φs go, liveness prunes the unnecessary ones, and the dominator-tree **renaming** threads each
+value's single reaching definition — promoting memory to block arguments. The raw SIL you've emitted
+since Phase 2 is now clean SSA, and `-O` still matches `swiftc`.
+
+Next, **17-constfold-dce** turns the toy passes from concept 15 into the real thing — constant
+*propagation*, dead-*store* elimination, CFG simplification — now devastatingly effective because they
+run on SSA. Then **18-cse-gvn** and **19-inlining**, until `swiftml -O` approaches `swiftc -O`
+(**Milestone M4**).
+
+## 8. Appendix — full solution (the renaming)
+
+```ocaml
+let rec rename n (cur : Sil.value IMap.t) =
+  let b = blk n in
+  (* (a) incoming block arguments define their slots *)
+  let cur = List.fold_left
+    (fun c (av, _) -> match Hashtbl.find_opt arg_slot av with Some s -> IMap.add s av c | None -> c)
+    cur b.Sil.args in
+  let cur = ref cur in
+  (* (b) walk instructions: stores update the reaching value, loads are replaced — both deleted *)
+  List.iter (fun (v, i) -> match i with
+    | Sil.Store (x, a) when is_promo a -> cur := IMap.add a x !cur; Hashtbl.replace removed v ()
+    | Sil.Load a  when is_promo a -> Hashtbl.replace replace v (IMap.find a !cur); Hashtbl.replace removed v ()
+    | _ -> ()) (List.rev b.Sil.instrs);
+  (* (c) pass each successor's φs their current reaching values, on this block's branch *)
+  let arg_list_for s =
+    List.map (fun (av, _) -> match Hashtbl.find_opt arg_slot av with
+      | Some sl -> IMap.find sl !cur | None -> av) (blk s).Sil.args in
+  b.Sil.term <- (match b.Sil.term with
+    | Sil.Br (s, _) -> Sil.Br (s, arg_list_for s)
+    | Sil.Cond_br (c, (t, _), (e, _)) -> Sil.Cond_br (c, (t, arg_list_for t), (e, arg_list_for e))
+    | other -> other);
+  (* (d) recurse on the dominator-tree children *)
+  List.iter (fun child -> rename child !cur) (children n)
+in
+rename entry IMap.empty
+```
+
+## 9. Exercise solutions
+
+### 1 — Braun et al.
+
+Their algorithm builds SSA *while* you read/write variables, using `readVariableRecursive` that,
+on a φ-needing block, creates a block argument and asks each predecessor for its value (recursing).
+"Sealing" a block once all its predecessors are known lets it resolve and remove trivial φs on the
+fly. It produces the *minimal* (pruned) SSA directly, no dominance frontiers — elegant, and a great
+contrast to the Cytron pipeline you just built.
+
+### 2 — SROA
+
+For a struct slot accessed only by `struct_element_addr`+load/store (never copied whole), allocate one
+slot per field, rewrite each `struct_element_addr(p, i)` to the i-th field slot, and rewrite whole
+load/store of `p` into field-wise load/stores. Now each field slot is a scalar → mem2reg promotes it.
+This is how a struct local ends up entirely in registers.
+
+### 3 — trivial-φ removal
+
+A block argument `a` whose incoming values (over all predecessors) are all the same value `v` (or `v`
+and `a` itself) is **trivial**: replace every use of `a` by `v`, drop the argument, and drop the
+corresponding branch operands. Iterate (removing one trivial φ can make another trivial). This is the
+core of Braun et al.'s cleanup and tidies the output of any SSA construction.
+
+### 4 — an SSA verifier
+
+Walk the function: record each value's defining block; for every operand use, check its definition's
+block dominates the use's block (block arguments are defined "on the edge", so check the predecessor).
+Also check no value is defined twice. Running this after mem2reg turns a subtle renaming bug into a
+loud, located error — exactly the kind of invariant a real compiler asserts.
+```

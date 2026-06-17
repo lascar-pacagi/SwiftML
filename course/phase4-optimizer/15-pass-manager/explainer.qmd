@@ -1,0 +1,194 @@
+---
+title: "15 · The pass manager (the optimizer's spine)"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+Everything so far has been *correctness*: turn Swift into equivalent native code. Phase 4 is about
+*speed* — and the whole reason we built **SIL** (concept 08) was to have a place to do it. An
+optimizer isn't one big procedure; it's a **pipeline of small passes**, each a transformation
+`SIL → SIL` that makes the code a little better and hands it to the next. This concept builds the
+**pass manager** that runs that pipeline, plus two starter passes — so that every optimization to come
+(mem2reg, constant folding, CSE, inlining) has a place to plug in.
+
+- **You implement:** `run_pipeline` (the manager) and `constant_fold` (a pass).
+- **Outcome:** `swiftml4 -O` folds and cleans up the SIL — and produces the same answers as before.
+
+## 2. Concepts in depth
+
+### Optimization is a pipeline
+
+A modern optimizer is a list of **passes** run in order; each does one job and re-exposes
+opportunities for the next. That's exactly swiftc's design (`SILPassManager` running a pipeline), and
+ours:
+
+![The pass manager runs a pipeline of passes (each `Sil.func -> Sil.func`), driven by `-O`. For `print(1 + 2 * 3)`: constant-fold turns the arithmetic into the literal `7`, then dead-instr-elim deletes the now-unused literals and binops.](figs/pipeline.png)
+
+A **pass** here is `{ name; run : Sil.func -> Sil.func }` — it transforms one function. The **pass
+manager** (`run_pipeline`) just folds the pipeline over each function of the module: for every
+function, run pass 1, then pass 2, …. That's the entire architecture — small, composable
+transformations behind a uniform interface. `--sil-opt` prints the result so you can *see* what the
+passes did; `-O` runs the same pipeline right before IRGen so the native code benefits.
+
+### Two starter passes, and why order matters
+
+- **Constant folding** walks the instructions, tracking which SIL values are known integer constants,
+  and replaces a `binop` of two constants with the literal result — so `1`, `2`, `3`, `*`, `+` collapse
+  the `1 + 2 * 3` into `integer_literal 7`. (We don't fold `÷0`/`%0` — those must keep trapping at
+  runtime, matching swiftc.)
+- **Dead-instruction elimination** then removes any *pure* instruction whose result nobody uses. After
+  folding, the original literals and binops are dead, so DCE deletes them.
+
+Run them in the other order and you'd accomplish nothing — there's no dead code until folding creates
+it. That's the first lesson of a pass pipeline: **passes enable each other**, and ordering is part of
+the design (swiftc tunes its pipeline carefully, and re-runs cleanup passes after big transforms).
+
+### The non-negotiable invariant: behavior is preserved
+
+An optimization that changes what the program *prints* is a bug, not an optimization. Every pass must
+preserve observable behavior, which is why `-O` output must match `-Onone` (and `swiftc`) exactly —
+the optimizer is held to the same parity bar as the compiler. (It's also why DCE keeps anything
+side-effecting — a `store`, an `apply`, a `print` — no matter whether its *result* is used.) The SIL
+**verifier** still runs after optimization, catching a pass that produced a malformed CFG.
+
+### Why these passes are weak *right now* — and the setup for mem2reg
+
+Try folding `let x = 1; let y = 2; print(x + y)`. It won't fold to `3` — because `x` and `y` live in
+**`alloc_stack` slots**, so `x + y` is really `add (load x_slot) (load y_slot)`, and our
+constant-folder only sees literal *values*, not values that *came from a load of a slot that was
+stored a constant*. The memory indirection blocks the analysis. **This is the whole motivation for
+concept 16.** `mem2reg` promotes those stack slots to SSA values — turning `load x_slot` into the
+constant `1` directly — and suddenly constant folding, CSE, and everything else can *see through* what
+used to be loads and stores. The raw, memory-based SIL we've emitted since concept 08 was the
+deliberate setup; mem2reg is the unlock, and these passes are why it matters.
+
+> Oracle: `swift/lib/SILOptimizer/PassManager/PassManager.cpp` runs the pipeline;
+> `Transforms/`/`Mandatory/` are the passes. swiftc separates *mandatory* passes (always run, for
+> correctness — like definite-init) from *performance* passes (only at `-O`). Ours is one perf
+> pipeline; the split is an exercise.
+
+## 3. Build it, step by step
+
+In `opt.ml`:
+
+- `run_pipeline` — `TODO(15)`: `List.map` over `m.Sil.funcs`; for each, `List.fold_left` the passes,
+  calling `p.run f` (and `Printf.eprintf` the pass/function name when `log`). Return the module with
+  the new functions.
+- `constant_fold` — `TODO(15)`: walk blocks in execution order (`List.rev f.Sil.blocks`) and instrs
+  in program order (`List.rev block.instrs`), keeping a `value → int` table of known constants
+  (record each `Int_lit`). Replace a `Binop (op, a, b)` whose operands are both known with
+  `Int_lit (eval_binop op x y)` when it's `Some` (record the result too, so chains fold). Mutate
+  `block.instrs` in place. `eval_binop` is given.
+
+Reference: `solution/opt.ml`.
+
+## 4. Test it
+
+```bash
+make lab C=phase4-optimizer/15-pass-manager
+```
+
+cram checks `--emit-sil` (binops present) vs `--sil-opt` (binops gone, `integer_literal 7` present)
+and that `-O` programs run correctly. alcotest checks folding (chains fold to one literal), DCE
+(instruction count drops), and the pass manager (`run_pipeline` actually applies a pass; the empty
+pipeline is the identity).
+
+## 5. Benchmark it
+
+Compare `-O` vs `-Onone` on a constant-heavy program — you'll see a small win (less arithmetic at
+runtime). The *big* wins are still ahead: after mem2reg (16) these passes reach through memory, and
+inlining (19) + LLVM's backend (20) close most of the gap to `swiftc -O`. Tracking the metric pass by
+pass is the point of Phase 4.
+
+## 6. Exercises
+
+1. **A peephole pass.** `x + 0 → x`, `x * 1 → x`, `x * 0 → 0`, `x - x → 0`. Algebraic identities that
+   don't need both operands constant — a different shape of pass from folding.
+2. **An analysis (not a transform).** Write `instruction_count : Sil.func -> int` and a pass that just
+   *logs* per-function stats. Analyses inform transforms; this is the seed of a cost model (concept 19).
+3. **Dead-block elimination.** Remove blocks unreachable from the entry (a graph reachability over the
+   terminators) — and watch it clean up the `unreachable` blocks SILGen leaves after returning switches.
+4. **Mandatory vs. performance passes + a fixed point.** Split the pipeline into always-run and
+   `-O`-only, and run the `-O` pipeline to a **fixed point** (repeat until a pass makes no change), so
+   fold→DCE→fold cascades fully.
+
+## 7. Recap & what's next
+
+You built the optimizer's spine: a **pass** is a `SIL → SIL` transform, the **pass manager** runs a
+pipeline, `-O` applies it, `--sil-opt` shows it — and it all **preserves behavior**. Two starter
+passes (constant folding, DCE) proved the pipeline works and showed how passes enable one another.
+
+Next is the one you've been waiting for since concept 08: **16-mem2reg-ssa**. The raw,
+`alloc_stack`/`load`/`store`-heavy SIL gets promoted to **SSA** — values defined once, threaded through
+**basic-block arguments** (swiftc's "phi"). It's a from-zero SSA lesson — **dominator trees**,
+where to place the block arguments, and a **renaming** walk — and it's what turns the weak passes here
+into powerful ones, because they finally see *through* memory.
+
+## 8. Appendix — full solution
+
+From `solution/opt.ml`:
+
+```ocaml
+let run_pipeline ?(log = false) (passes : pass list) (m : Sil.modul) : Sil.modul =
+  let run_func (f : Sil.func) =
+    List.fold_left
+      (fun f p ->
+        if log then Printf.eprintf "  sil-opt: [%-16s] @%s\n" p.name f.Sil.fname;
+        p.run f)
+      f passes
+  in
+  { m with Sil.funcs = List.map run_func m.Sil.funcs }
+
+let constant_fold (f : Sil.func) : Sil.func =
+  let lit : (Sil.value, int) Hashtbl.t = Hashtbl.create 64 in
+  let fold (v, instr) =
+    (match instr with Sil.Int_lit n -> Hashtbl.replace lit v n | _ -> ());
+    match instr with
+    | Sil.Binop (op, a, b) -> (
+        match (Hashtbl.find_opt lit a, Hashtbl.find_opt lit b) with
+        | Some x, Some y -> (
+            match eval_binop op x y with
+            | Some n -> Hashtbl.replace lit v n; (v, Sil.Int_lit n)
+            | None -> (v, instr))
+        | _ -> (v, instr))
+    | _ -> (v, instr)
+  in
+  List.iter
+    (fun (b : Sil.block) -> b.Sil.instrs <- List.rev_map fold (List.rev b.Sil.instrs))
+    (List.rev f.Sil.blocks);
+  f
+```
+
+## 9. Exercise solutions
+
+### 1 — peephole
+
+A second pass like `constant_fold`, but matching algebraic identities: a `Binop (Add, a, b)` where `b`
+is the literal `0` becomes a copy of `a` — i.e. replace later uses of the result with `a` (a tiny
+*copy propagation*), or, more simply, rewrite the instruction's result to alias `a` and let DCE remove
+it. `x * 0` becomes `integer_literal 0`. These don't need *both* operands constant, so they catch cases
+folding misses.
+
+### 2 — an analysis
+
+`instruction_count f = List.fold_left (fun n b -> n + List.length b.Sil.instrs) 0 f.Sil.blocks`. Wrap
+it in a pass whose `run` logs the count and returns `f` unchanged. Analyses are passes that *compute*
+rather than *transform*; the inliner (concept 19) is a transform driven by exactly this kind of
+cost analysis.
+
+### 3 — dead-block elimination
+
+BFS/DFS from the entry block (`bid = 0`) following `Br`/`Cond_br` targets; any block not reached is
+dead. Filter `f.Sil.blocks` to the reachable set. This removes the trailing `unreachable` blocks
+SILGen emits after an exhaustive returning `switch`, shrinking the IR with no behavior change.
+
+### 4 — mandatory/performance + fixed point
+
+Tag each pass `Mandatory | Performance`; `-Onone` runs only the mandatory ones, `-O` runs both. For the
+fixed point, make passes return whether they changed anything (`Sil.func -> Sil.func * bool`) and loop
+the `-O` pipeline until a full sweep reports no change — so `fold → DCE → fold` cascades converge
+instead of stopping after one round.
+```

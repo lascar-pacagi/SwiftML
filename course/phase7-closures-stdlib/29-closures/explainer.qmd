@@ -1,0 +1,259 @@
+---
+title: "29 · Closures"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+Every function so far has been a *name* — something you call, never something you *hold*. This
+concept makes functions **values**: `(Int) -> Int` becomes a type you can store, pass, and
+return; `{ (x: Int) -> Int in x + n }` becomes an expression — one that **captures** `n` from
+its surroundings and carries it along. Closures are the feature that makes `map`/`filter`
+possible (concepts 31–32 need them), and their implementation is one of the great compiler
+lessons: a closure is *not* magic — it's a plain function plus a record, wearing a trench
+coat.
+
+- **You implement:** the lifting (SILGen) and the indirect call (IRGen).
+- **Outcome:** higher-order programs matching swiftc at `-Onone` and `-O`.
+
+## 2. Concepts in depth
+
+### The problem: code is static, environments aren't
+
+`makeAdder(7)` must return something that *remembers* 7; `makeAdder(9)` must return something
+that remembers 9 — from the *same compiled code*. Machine code can't hold a different `n` per
+call. The classic solution (Landin, 1964 — older than most languages) is to split the closure
+into the two things it actually is:
+
+![The ABI: the literal LIFTS to a top-level function taking a context parameter; creation copies the captures into a refcounted heap context; the value is the pair {code, ctx}; a named function rides the same convention through a thunk with a null context.](figs/closure.png)
+
+- **the code**: the body, *lifted* to an ordinary top-level function with one extra
+  parameter — the context. Free variables become `capture_get` loads from it. Compiled once,
+  like any function.
+- **the environment**: a heap record holding the captured *values*, created fresh at each
+  closure expression. `makeAdder(7)`'s context holds 7; `makeAdder(9)`'s holds 9.
+
+A function **value** is the pair `{ code ptr, context ptr }` — the *thick* function (swiftc's
+term, and ours: `%thickfn = type { ptr, ptr }`). Calling one is mechanical: extract both,
+`call code(ctx, args)`. You'll write exactly that.
+
+### Capture semantics: by value, at creation
+
+What does `{ ... x + n ... }` capture — the *variable* `n`, or its *value*? Swift's default
+for a `var` is the variable (mutations are shared with the closure — implemented with heap
+boxes); a capture *list* `[n]` copies the value at creation. **v0 implements the capture-list
+semantics implicitly**: free variables are evaluated at the closure expression and copied
+into the context, immutable forever after. It's the simpler model, it's honest Swift (just
+spelled `[n]` there), and the box machinery for shared mutable captures is the chapter's
+classic exercise. Two consequences the tests pin: each creation mints an *independent*
+context (`add7`/`add9` don't interfere), and the captured value is the value *then* (the
+`Box`/`reader` probe: the class dies at scope exit because the closure captured `b.v`'s Int,
+not `b`).
+
+What can be captured? PODs — `Int`, `Bool`, structs, enums. Classes and function values are
+**rejected** in v0: their context slot would need a retain at creation and a release at
+context destruction — per-type copy/destroy entries in the context's vtable, which is
+precisely the value-witness design from concept 23 knocking again. (Exercise; the rejection
+message points the way.)
+
+### Thin, thick, and the thunk
+
+`let g = dbl` — a named function as a value — has no captures, so what's its context? Null.
+But there's a wrinkle worth savoring: `dbl(Int)` was compiled *without* a context parameter,
+and every indirect call site passes one. The fix is a **thunk**: `dbl$thunk(ctx, x)` ignores
+`ctx` and tail-calls `dbl(x)`. The pair is `{ dbl$thunk, null }`, and one calling convention
+serves everything — that uniformity *is* the ABI. (swiftc: `thin_to_thick_function`, and its
+thunks live in `SILGenPoly.cpp` next to the witness thunks from concept 21 — adapter thunks
+are a compiler's duct tape, and by now you've built three kinds.)
+
+The null context also explains a runtime tweak: contexts are refcounted objects (header,
+vtable with no-op destructors, the works — Phase 6's machinery reused wholesale, `TFunc`
+simply joining `TClass` as a *managed* type), and `rt.retain`/`rt.release` gained a
+null-guard so thin functions' ARC traffic costs one branch, taken never.
+
+### The verifier strikes again (twice)
+
+Concept 27's ownership verifier ran on the first closure program and rejected it — twice
+over, both real bugs, both fixed before anything executed:
+
+- `Closure` results weren't marked **owned** — so `let d = {...}` treated the fresh value as
+  a borrow, *copied* it (a spurious retain), and the original +1 leaked: `owned value %4 is
+  leaked (never consumed)`. One `mark_owned` fixed creation everywhere.
+- `TFunc` parameters were still **spilled to stack slots** — the entry store consumed a
+  guaranteed value, exactly the flaw the verifier caught for class params in 27. The
+  managed-param rule just needed to include function types.
+
+This is the payoff of building the checker *before* the feature: new language features
+arrive with their ARC discipline machine-checked from the first compile.
+
+> Oracle: swiftc lowers closures to `partial_apply` over a captured-arguments convention
+> (`SILGenFunction.cpp`); our `Closure` instruction is its monomorphic little sibling.
+> `GenFunc.cpp` shows the same `{ ptr, ptr }` pair at the LLVM level.
+
+## 3. Build it, step by step
+
+1. **`silgen.ml` — `TODO(29a)`, the lifting** (the FV analysis `fv_expr` and the capture-name
+   filtering are given): evaluate each capture (`gen_expr` of the `Var`), build the layout;
+   name the lifted function `b.fname ^ "$clo" ^ counter`; `lower_func ~prologue` with the
+   context as parameter 0 (typed `TClass "$ctx"` — a managed borrow that never spills) and
+   the body as a single `Return`; the prologue binds each capture via `Capture_get` into
+   `borrows`; patch an unannotated return type from the lifted body's actual `Return`; record
+   the layout in `b.lifted`; emit `Sil.Closure` and **`mark_owned`** it.
+2. **`irgen.ml` — `TODO(29b)`, the call**: extract field 0 (code) and field 1 (context) from
+   the `%thickfn` pair, call `code(ctx, args...)` — void results use a bare `call void`.
+
+Reference: `solution/silgen.ml`, `solution/irgen.ml`.
+
+## 4. Test it
+
+```bash
+make lab C=phase7-closures-stdlib/29-closures
+```
+
+cram: the lifted function, `capture_get`, and `apply_value` in SIL; independent adder
+contexts; named-function values through thunks; struct captures and reassigned function
+vars; the closure/ARC interplay (the Box deinit fires at scope exit, not closure death); the
+managed-capture rejection verbatim — all at `-Onone` and `-O`. alcotest: the lift + layout +
+ABI shapes, ownership-clean generated SIL, capture discipline, `-O` keeping lifted functions
+alive.
+
+## 5. Benchmark it
+
+Time a hot loop calling a closure-typed parameter vs a direct call: the indirect call costs
+two extracts + a pointer call, and — the real price — an inliner wall (the callee is a
+runtime value). Then check what our `-O` does when the closure is locally provable
+(`let f = {...}; f(x)` in one function): nothing yet — `apply_value` of a known `Closure` is
+the devirtualization exercise, and you have all the machinery from concepts 24/28 to build
+it.
+
+## 6. Exercises
+
+1. **Closure devirtualization.** `apply_value %f` where `%f`'s def is `Closure`/
+   `Thin_to_thick` (concept 24's `wrap_of` pattern): rewrite to a direct call passing the
+   context — then the inliner fires and `let f = {...}; f(2)` folds to a constant.
+2. **Mutable captures (boxes).** Swift's default `var` capture shares mutation: allocate the
+   variable in a heap box (refcounted), capture the box pointer, and make loads/stores go
+   through it — inside *and* outside the closure. (This is `alloc_box` in swiftc, and why
+   "captured by reference" and ARC are inseparable.)
+3. **Managed captures.** Allow capturing classes/function values: the context's vtable slots
+   stop being no-ops — slot 1 (destroy) releases each managed capture. You're writing the
+   context's value-witness entries; concept 23's exercise 4 was the rehearsal.
+4. **`@escaping` checking.** Track which function-typed *parameters* flow into stores,
+   returns, or captures; reject unless declared `@escaping` (we currently accept-and-ignore
+   it — match swiftc's error wording).
+5. **Multi-statement bodies.** `{ (x: Int) -> Int in let y = x * 2; return y + 1 }` — reuse
+   `parse_block`; sema's capture-floor machinery already handles statements (the
+   assignment-to-capture check is sitting there waiting).
+
+## 7. Recap & what's next
+
+A closure is a lifted function plus a heap record of captured values; a function value is the
+`{code, ctx}` pair; a named function joins the convention through a thunk and a null context;
+and calling any of them is two extracts and an indirect call. Capture-by-value at creation
+gives independent, immutable contexts — refcounted by the Phase-6 machinery with `TFunc` as
+just another managed type, and verified by the Phase-6 checker, which caught two real bugs
+before the first program ran.
+
+Next, **30-error-handling**: `throws`/`try`/`do-catch` — Swift's typed error propagation and
+its surprisingly simple ABI (an extra return path, not stack unwinding). Then the closures
+built here meet collections in **31/32**, where `map` and `filter` finally exist.
+
+## 8. Appendix — full solution
+
+```ocaml
+(* 29a — the lifting (silgen) *)
+let capvals = List.map (fun x -> gen_expr b (Ast.Var (x, Ast.expr_span body))) caps in
+let capltys = List.map2 (fun x v -> (x, vty b v)) caps capvals in
+let lifted_name = Printf.sprintf "%s$clo%d" b.fname !(b.clo_count) in
+incr b.clo_count;
+let rty = match retname with Some n -> resolve_name b n | None -> Types.TVoid in
+let ctx_param = ("$ctx", Types.TClass "$ctx") in
+let lifted_params = ctx_param :: List.combine pnames ptys in
+let prologue (lb : builder) =
+  let ctxv = Hashtbl.find lb.borrows "$ctx" in
+  List.iteri
+    (fun i (x, t) ->
+      let v = emit lb (Sil.Capture_get (ctxv, i)) t in
+      Hashtbl.replace lb.borrows x v)
+    capltys
+in
+let lf =
+  lower_func ~prologue ~lifted:b.lifted b.structs b.enums b.protos b.methods b.funcs b.gfuncs
+    b.classes lifted_name lifted_params rty
+    [ Ast.Return (Some body, Ast.expr_span body) ]
+in
+let lf =
+  match retname with
+  | Some _ -> lf
+  | None ->
+      let actual =
+        List.fold_left
+          (fun acc (blk : Sil.block) ->
+            match blk.Sil.term with
+            | Sil.Return (Some v) -> ( try Hashtbl.find lf.Sil.val_ty v with Not_found -> acc)
+            | _ -> acc)
+          Types.TVoid lf.Sil.blocks
+      in
+      { lf with Sil.ret = actual }
+in
+b.lifted := (lf, capltys) :: !(b.lifted);
+mark_owned b (emit b (Sil.Closure (lifted_name, capvals)) (Types.TFunc (ptys, lf.Sil.ret)))
+
+(* 29b — the indirect call (irgen) *)
+| Sil.Apply_value (fv, args) ->
+    let code = fresh () and ctx = fresh () in
+    p (Printf.sprintf "  %s = extractvalue %%thickfn %s, 0\n" code (op fv));
+    p (Printf.sprintf "  %s = extractvalue %%thickfn %s, 1\n" ctx (op fv));
+    let argstr =
+      String.concat "" (List.map (fun a -> Printf.sprintf ", %s %s" (llty (vty a)) (op a)) args)
+    in
+    let rt = vty v in
+    if rt = Types.TVoid then p (Printf.sprintf "  call void %s(ptr %s%s)\n" code ctx argstr)
+    else p (Printf.sprintf "  %s = call %s %s(ptr %s%s)\n" (op v) (llty rt) code ctx argstr)
+```
+
+## 9. Exercise solutions
+
+### 1 — closure devirtualization
+
+In `devirt_module`: `Apply_value (fv, args)` where `def fv = Closure (fn, _)` → the context
+is `extractvalue fv, 1`… which SIL can't express on a value — add a `Context_of` instruction,
+or simpler: rewrite to `Apply (Func_ref fn, ctx_of :: args)` with a small `Closure_context`
+projection instruction. For `Thin_to_thick fn`, it's purer: direct `Apply` of the original
+(drop the unused ctx entirely). Then inline, fold, and watch `let f = {...}; print(f(2))`
+become `print` of a constant.
+
+### 2 — boxes
+
+`alloc_box $Int` = a refcounted heap cell. SILGen: a `var` that is captured anywhere lowers
+its *storage* to a box; reads/writes inside and outside the closure go through the box
+pointer; the closure captures the box (managed — needs exercise 3's machinery). Swift's
+SILGen does exactly this analysis ("captured by a closure ⇒ boxed") before optimization
+promotes unescaped boxes back to the stack.
+
+### 3 — managed captures
+
+The context's vtable gets real entries: `destroy` releases each managed capture (walk the
+layout; classes and nested contexts both). Creation retains what it copies in
+(`take_ownership` per capture instead of plain `gen_expr`). The sema rejection lifts. Test
+with a deinit-tracing class captured by a closure that outlives the scope: the deinit must
+fire when the *closure* dies — which is the demonstration that contexts are objects.
+
+### 4 — `@escaping`
+
+Mark each function-typed parameter non-escaping by default. Walk its uses: `store`, `return`,
+appearing in a `Closure`'s captures, or being passed in an escaping position of another call
+⇒ error `escaping closure captures non-escaping parameter 'f'` / `assigning non-escaping
+parameter 'f' to an '@escaping' closure` (probe swiftc per shape). The analysis is
+concept 28's escape analysis with one bit of polarity from the declaration.
+
+### 5 — multi-statement bodies
+
+Parse `{ (params) -> T in` then `parse_block`-style statements to `}`. SILGen: the lifted
+body is the statement list directly (drop the `Return`-wrapping). Sema: the closure checks
+like a small function body (the `current_ret` save/restore machinery from concept 07 — set
+it to the closure's return type) plus the existing capture floor. The assignment-to-capture
+diagnostic, dead code in v0, comes alive here — and so does the motivation for exercise 2.
+```

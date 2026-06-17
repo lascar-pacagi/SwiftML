@@ -1,0 +1,269 @@
+---
+title: "33 · ARM64 instruction selection — a second backend, no LLVM"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+For thirty-two concepts every program has ended the same way: SIL → IRGen → **LLVM IR** → `clang` →
+native. LLVM did the last mile — instruction selection, register allocation, scheduling, encoding.
+This phase takes that last mile away and builds it **ourselves**, in OCaml, targeting **ARM64**
+(AArch64, Apple Silicon). By the end of Phase 8 we have *two* backends sharing one front end: the
+LLVM spine (Backend A) and a from-scratch native compiler (Backend B).
+
+This concept is the first step: **instruction selection** — turning each SIL operation into ARM64
+machine instructions. v0 is deliberately the simplest thing that works: a **stack machine**. Every
+SIL value gets a slot in the function's stack frame; each instruction loads its operands into
+scratch registers, computes, and stores the result back. It's correct, it runs real `fib` and loops
+and prints, it matches `swiftc` — and it's *slow*, because every value lives in memory. That
+slowness is the entire motivation for concept 34 (register allocation), which keeps values in
+registers and makes the load/store traffic disappear.
+
+- **You implement:** `sel_instr` (the per-SIL-op ARM64 templates) and `sel_term` (the branch/return
+  terminators) — the "munch" that maps SIL onto the machine.
+- **Outcome:** `swiftml8 build x.swift --native` produces a real ARM64 executable that runs and
+  matches `swiftc` on the scalar + control-flow + functions corpus.
+
+> **New to ARM64?** A few facts used below. There are 31 general registers `x0`–`x30` (64-bit);
+> `x0`–`x7` pass arguments and return values; `x9`–`x15` are caller-saved scratch; `sp` is the
+> stack pointer; `x30` is the link register (the return address). Most instructions are
+> `op dst, src1, src2`. There's no memory-to-memory: you `ldr` into a register, compute, `str`
+> back. Apple prefixes symbols with `_` (`main` → `_main`).
+
+## 2. Concepts in depth
+
+### Instruction selection: SIL op → machine instructions
+
+A SIL instruction like `%11 = binop add %9, %10` is *abstract* — it names values, not registers or
+memory. Instruction selection picks concrete ARM64 instructions that realize it. The cleanest
+possible scheme, and our v0, is the **stack machine**:
+
+![The v0 stack machine. Each SIL value gets a stack-frame slot; a `binop add` lowers to: load both operands into scratch registers (`ldr x9` / `ldr x10`), compute (`add x9, x9, x10`), store the result back (`str x9`). One template per SIL op. The load/store traffic is the cost — concept 34's register allocator removes it by keeping values in registers.](figs/isel.png)
+
+Read the figure. `%9 = load %a` becomes `ldr x9, [sp, #off_a]; str x9, [sp, #off_9]`. The binop
+becomes load-load-compute-store. Every value round-trips through memory. This is the same idea as a
+naive bytecode interpreter's stack — hence "stack machine" — and it has one great virtue: it's
+**local**. Each SIL instruction lowers in isolation, needing no knowledge of what's live, what's in
+which register, or what comes next. That locality is why it's the right v0: get *correct* code out,
+then optimize.
+
+### The stack frame
+
+Each function gets a frame, carved by adjusting `sp`. Our layout keeps `sp` **fixed for the whole
+body** so that shuffling call arguments never disturbs slot offsets:
+
+```
+[sp, #0  .. #15]     outgoing call scratch (printf's variadic argument)
+[sp, #16 .. ]        locals: SIL value %v lives at [sp, #16 + 8*v]
+[sp, #FRAME-16 ..]   saved x29 (frame pointer) / x30 (link register)
+FRAME = round16(32 + 8 * nvals)
+```
+
+The **prologue** is `sub sp, sp, #FRAME` then `stp x29, x30, [sp, #FRAME-16]` (save the caller's
+frame pointer and our return address). The **epilogue** reverses it: `ldp x29, x30, …; add sp, sp,
+#FRAME; ret`. Because all state lives in the frame, a `bl` (call) — which clobbers x0–x18 — is
+harmless: nothing important is in a register across a call. That's the stack machine's other gift:
+calls are trivially correct.
+
+### Calls and the AAPCS64 convention
+
+A function call lowers to: load arguments into `x0`, `x1`, … (the first eight arg registers), `bl
+_callee`, then store `x0` (the return value) to the result's slot. A function definition spills its
+incoming parameters (`x0`, `x1`, …) to their slots on entry, so the body can treat them like any
+other value. Recursion needs nothing special — `fib` calling `fib` is just a `bl _fib`; each
+activation has its own frame.
+
+### `print` and the Apple variadic gotcha
+
+`print(n)` calls libc's `printf("%lld\n", n)`. The format string goes in `x0` — but `n` is a
+**variadic** argument, and here Apple's arm64 ABI diverges from the generic AAPCS64: **variadic
+arguments are passed on the stack**, not in registers. So we store `n` at `[sp, #0]` (our reserved
+scratch), put the format-string address in `x0`, and `bl _printf`. (On Linux arm64 the same code
+would pass `n` in `x1`; this stack rule is Apple-specific, and getting it wrong prints garbage — a
+classic first-native-backend bug.) The format string lives in a `__TEXT,__cstring` section,
+addressed by the two-instruction `adrp x0, L@PAGE; add x0, x0, L@PAGEOFF` PC-relative pair.
+
+### Comparisons, division, modulo
+
+A few ARM64-isms the templates encode:
+
+- a **comparison** (`a < b`) is two instructions: `cmp x9, x10` sets the condition flags, then
+  `cset x9, lt` materializes `0`/`1` from them.
+- **division** is `sdiv` (signed). There is **no modulo instruction**: `a % b` is `sdiv x11, x9,
+  x10` (the quotient) then `msub x9, x11, x10, x9` (`x9 = x9 − x11*x10` — the remainder). Knowing
+  the machine lacks an op and synthesizing it is the essence of instruction selection.
+- a **constant** larger than 16 bits can't be one `mov`; it's built with `movz` + up to three
+  `movk` (one 16-bit chunk at a time). `materialize` (given) handles this.
+
+### Why lower the `-Onone` SIL?
+
+We lower the **raw, memory-based** SIL (the `-Onone` path), not the optimized SSA form. Raw SIL has
+**no block arguments** — control flow is plain `br`/`cond_br`, and variables already live in
+`alloc_stack` slots — which maps directly onto the stack machine with zero phi/SSA handling. The
+optimized SSA form (block args = φ-nodes) needs *parallel copies on edges* to lower, which is real
+work; it arrives in concept 34, where register allocation makes the SSA form worth the trouble. v0
+keeps the first backend simple and correct.
+
+### How a real backend does it
+
+LLVM's path is the same shape, industrialized: SelectionDAG / GlobalISel does instruction selection
+(but with *maximal munch* — matching multi-node patterns like `a*b+c` → a single `madd`), then a
+real register allocator, then scheduling, then encoding to bytes. Our v0 is "minimal munch" (one
+SIL op at a time) emitting *text* (assembled by `as`); concept 33's exercise and concept 36 climb
+toward pattern matching, and the regalloc ladder (34) is the big perf lever. The architecture —
+select → allocate → schedule → encode — is exactly LLVM's; we're just doing each stage by hand.
+
+> Oracle: there's no single `swift/lib` file for this (swiftc *is* LLVM here); the references are
+> the LLVM AArch64 backend and Apple's *Writing ARM64 Code for Apple Platforms* (the calling
+> convention, the variadic rule, PC-relative addressing).
+
+## 3. Build it, step by step
+
+You implement two functions in `isel.ml`. Given: the frame layout, `materialize dst n` (build a
+constant), `load r v` / `store r v` (slot access), `lea_cstring` (string address), `epilogue ()`,
+`cond_of` (comparison → condition code), and the whole `arm64.ml` IR + printer.
+
+1. **`TODO(33a)` — `sel_instr v i`**: one ARM64 sequence per SIL op (the table is spelled out in
+   the skeleton's comment): literals → `materialize` + `store`; `load`/`store` → `ldr`/`str`
+   through slots; `binop` → load-load-compute-store (with the `mod` = `sdiv`+`msub` and comparison
+   = `cmp`+`cset` cases); `apply` → args into `x0…`, `bl _name`, store `x0`; `print` → the
+   `printf` call with the variadic on the stack. Unsupported ops emit a visible `; UNSUPPORTED`
+   comment.
+2. **`TODO(33b)` — `sel_term t`**: `return` → load `x0` + `epilogue`; `br` → `b`; `cond_br` →
+   `cmp`+`b.ne`+`b`; `trap` → `brk`.
+
+Reference: `solution/isel.ml`. Run with `make lab C=phase8-arm64-backend/33-arm64-isel`.
+
+## 4. Test it
+
+```bash
+make lab C=phase8-arm64-backend/33-arm64-isel
+```
+
+cram: a native ARM64 executable (fib, loops, division, comparisons, print) **runs and matches
+`swiftc`**; the asm has the right shape (prologue, `bl _printf`, `cmp`/`cset`, `sdiv`/`msub`, the
+cstring section); and **Backend B agrees with Backend A** (the LLVM path) byte-for-byte. alcotest:
+the prologue, arithmetic (`add`/`mul`), `mod` = `sdiv`+`msub`, comparison = `cmp`+`cset`, the direct
+`bl`, `print` → `_printf`, branches, and that the asm renders without a leftover virtual register.
+
+## 5. Benchmark it
+
+Look at the asm for a hot loop and count the `ldr`/`str`: every iteration reloads the induction
+variable and accumulator from the frame. That's the cost. Time a loop-heavy program built `--native`
+(v0) against the same program through `clang -O0` and `swiftc -O` — v0 will be far behind, and that
+gap is exactly what the register-allocation ladder closes in concept 34. Measuring it now sets the
+baseline the ladder has to beat.
+
+## 6. Exercises
+
+1. **Immediate operands.** `x + 3` currently materializes `3` into a register first. ARM64's
+   `add`/`sub`/`cmp` take a 12-bit immediate directly — emit `add x9, x9, #3` when the operand is a
+   small `Int_lit`. (Your first peephole; concept 36 generalizes it.)
+2. **Maximal munch.** Match `a*b + c` (a `binop add` whose operand is a `binop mul`) and emit a
+   single `madd x9, xa, xb, xc`. One pattern, but it's the whole idea of pattern-matched isel.
+3. **`tbz`/`cbz` for conditions.** `cond_br` currently does `cmp #0; b.ne; b`. When the condition is
+   a comparison result, branch on the flags directly (`b.lt`, …); when it's `== 0`, use `cbz`.
+4. **Spill fewer literals.** A value used exactly once, immediately, needn't get a slot — thread it
+   in a register. (A taste of register allocation, by hand.)
+5. **Real encoding.** Instead of asm text, encode a handful of instructions to their 32-bit machine
+   words and emit a Mach-O object directly — the ladder's true top rung.
+
+## 7. Recap & what's next
+
+Instruction selection turns abstract SIL into concrete ARM64. v0 is a **stack machine**: a frame
+slot per value, one template per op, load-compute-store. It's local, correct, and runs real
+programs that match `swiftc` — with two backends now sharing one front end. Its weakness, the
+load/store traffic, is the lever for everything next.
+
+Next, **34-register-allocation** — the flagship Phase-8 concept and a runnable **ladder**: v0 stack
+(this) → v1 linear-scan → v2 graph-coloring, each rung keeping more values in registers and beating
+the last, the top rung approaching LLVM's own allocator. Then **35-mc-abi** (real frames & the full
+AAPCS64), **36-peephole-sched**, **37-debug-info** — to **M8-core**.
+
+## 8. Appendix — full solution
+
+```ocaml
+(* 33a — one template per SIL op (the stack machine) *)
+let sel_instr (v : Sil.value) (i : Sil.instr) : unit =
+  match i with
+  | Sil.Int_lit n -> materialize (x 9) n; store (x 9) v
+  | Sil.Bool_lit b -> materialize (x 9) (if b then 1 else 0); store (x 9) v
+  | Sil.Func_ref _ -> ()                        (* the apply turns it into a direct bl *)
+  | Sil.Alloc_stack name -> emit (Arm64.Comment (Printf.sprintf "alloc_stack %s" name))
+  | Sil.Load a -> load (x 9) a; store (x 9) v
+  | Sil.Store (src, a) -> load (x 9) src; store (x 9) a
+  | Sil.Unop (Ast.Neg, a) -> load (x 9) a; emit (Arm64.Neg (x 9, x 9)); store (x 9) v
+  | Sil.Binop (op, l, r) ->
+      load (x 9) l; load (x 10) r;
+      (match op with
+      | Ast.Add -> emit (Arm64.Add (x 9, x 9, Arm64.R (x 10)))
+      | Ast.Sub -> emit (Arm64.Sub (x 9, x 9, Arm64.R (x 10)))
+      | Ast.Mul -> emit (Arm64.Mul (x 9, x 9, x 10))
+      | Ast.Div -> emit (Arm64.Sdiv (x 9, x 9, x 10))
+      | Ast.Mod -> emit (Arm64.Sdiv (x 11, x 9, x 10)); emit (Arm64.Msub (x 9, x 11, x 10, x 9))
+      | Ast.And -> emit (Arm64.And (x 9, x 9, Arm64.R (x 10)))
+      | Ast.Or  -> emit (Arm64.Orr (x 9, x 9, Arm64.R (x 10)))
+      | _ -> emit (Arm64.Cmp (x 9, Arm64.R (x 10))); emit (Arm64.Cset (x 9, cond_of op)));
+      store (x 9) v
+  | Sil.Apply (callee, args) ->
+      List.iteri (fun k a -> load (x k) a) args;
+      emit (Arm64.Bl ("_" ^ Hashtbl.find funcrefs callee)); store (x 0) v
+  | Sil.Print a -> (match vty a with
+      | Types.TBool ->
+          load (x 9) a;
+          lea_cstring (x 11) (use_cstring "Ltrue" "true");
+          lea_cstring (x 12) (use_cstring "Lfalse" "false");
+          emit (Arm64.Cmp (x 9, Arm64.Imm 0)); emit (Arm64.Csel (x 9, x 11, x 12, Arm64.NE));
+          emit (Arm64.Str (x 9, Arm64.SP, 0));
+          lea_cstring (x 0) (use_cstring "Lfmt_str" "%s\n"); emit (Arm64.Bl "_printf")
+      | _ ->
+          load (x 9) a; emit (Arm64.Str (x 9, Arm64.SP, 0));
+          lea_cstring (x 0) (use_cstring "Lfmt_int" "%lld\n"); emit (Arm64.Bl "_printf"))
+  | other -> emit (Arm64.Comment ("UNSUPPORTED: " ^ Sil.string_of_instr f (v, other)))
+
+(* 33b — terminators *)
+let sel_term (t : Sil.term) : unit =
+  match t with
+  | Sil.Return (Some a) -> load (x 0) a; epilogue ()
+  | Sil.Return None -> if is_main then materialize (x 0) 0; epilogue ()
+  | Sil.Br (n, _) -> emit (Arm64.B (blabel n))
+  | Sil.Cond_br (c, (tb, _), (eb, _)) ->
+      load (x 9) c; emit (Arm64.Cmp (x 9, Arm64.Imm 0));
+      emit (Arm64.Bcond (Arm64.NE, blabel tb)); emit (Arm64.B (blabel eb))
+  | Sil.Trap _ | Sil.Abort _ -> emit (Arm64.Brk 1)
+  | Sil.Unreachable -> ()
+```
+
+## 9. Exercise solutions
+
+### 1 — immediate operands
+In the `binop` template, special-case `r` being a small non-negative `Int_lit`: emit `Add (x9, x9,
+Imm n)` instead of materializing `n` into `x10` first. ARM64's add/sub/cmp accept a 12-bit
+unsigned immediate (optionally shifted by 12), so `n < 4096` qualifies. Saves a `mov` + a register.
+
+### 2 — maximal munch
+Before lowering a `binop add (l, r)`, peek: if `r` is itself a `binop mul (a, b)` whose result is
+used only here, emit `madd x9, xa, xb, xl` (a fused multiply-add) in one instruction. This is
+tree-pattern matching — the difference between "minimal munch" (one node) and "maximal munch"
+(largest matching subtree), which is how production isel earns its name.
+
+### 3 — tbz/cbz
+Track when a `cond_br`'s condition value is *defined by* a comparison `cmp`. Instead of
+materializing `0`/`1` (`cset`) and re-testing it (`cmp #0; b.ne`), branch on the original flags:
+`b.lt label`. For an equality-to-zero test, `cbz x9, label`. Removes a `cset` and a `cmp` per
+branch — common in tight loops.
+
+### 4 — single-use values
+A value produced and consumed by the very next instruction (e.g. `%9 = load; %10 = binop … %9 …`)
+needn't be stored and reloaded — keep it in the scratch register. A tiny liveness check ("is this
+value used again after the next instruction?") lets you skip the `str`/`ldr` pair. This is register
+allocation in miniature, and motivates doing it *properly* in concept 34.
+
+### 5 — real encoding
+Each ARM64 instruction is a 32-bit word with fixed bit-fields (opcode, registers, immediate).
+Encode, say, `add`/`ldr`/`str`/`ret`/`b` to their words, write a minimal Mach-O object with a
+`__text` section and the right relocations, and link with `ld` directly — no `as`. This is the
+backend's true bottom turtle, and where "assembly text" becomes "machine code."
+```

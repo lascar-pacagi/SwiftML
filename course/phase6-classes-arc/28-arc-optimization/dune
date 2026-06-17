@@ -1,0 +1,9 @@
+; Concept 28 — ARC optimization: copy propagation over ownership SSA (Milestone M6).
+(library
+ (name swiftml_arcopt)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen driver)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

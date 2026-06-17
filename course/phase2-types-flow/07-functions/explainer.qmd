@@ -1,0 +1,246 @@
+---
+title: "07 · Functions"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+A function is the first real **abstraction**: a named, parameterised, reusable piece of code with a
+**type signature** — "give me these argument types, I'll give you back that result type." This
+concept adds `func` declarations, `return`, and calls to your own functions, with the two things that
+make functions powerful and that the type checker has to handle carefully: **recursion** (a function
+that calls itself) and **forward references** (calling a function written later in the file).
+
+- **You implement:** the arrow `->` (lexer), function declarations + `return` (parser), and the
+  function rules in `sema.ml` — the **two-pass** check, call typing, return typing, and the
+  "missing return" analysis.
+- **Outcome:** `swiftml2 --typecheck` agrees with `swiftc -typecheck` on functions: recursion and
+  forward refs accepted; wrong argument types/counts, missing returns, return-type mismatches, and
+  stray top-level `return`s all rejected.
+- **Out of scope:** *running* functions (that's the SIL backend, 08–09); closures and functions as
+  values (Phase 7); and full **argument labels** — see the note below.
+
+## 2. Concepts in depth
+
+### A function is a signature plus a body
+
+`func add(_ a: Int, _ b: Int) -> Int { return a + b }` has two parts the checker cares about:
+
+- a **signature** — the parameter types `(Int, Int)` and the return type `Int` — which is all a
+  *caller* needs to know; and
+- a **body** — checked once, in its own world, where the parameters are in scope.
+
+So the checker does two different jobs: at a **call site**, look up the signature and check the
+arguments against it (count + types), yielding the return type; inside the **body**, check the
+statements with the parameters bound and the return type known.
+
+### Why two passes — the heart of this concept
+
+If you checked top-level items strictly top-to-bottom, two everyday things would break:
+
+- **Recursion.** `func fib(_ n: Int) -> Int { … fib(n-1) … }` calls `fib` *inside its own body* —
+  before you've finished defining it.
+- **Forward references.** `print(g())` can appear *above* `func g()`; Swift makes all top-level
+  functions visible throughout the file.
+
+The fix is to split checking into **two passes** (this is exactly how real compilers bind names —
+`swift/lib/Sema/TypeCheckDecl.cpp` does a declaration pass before a body pass):
+
+![Two passes: collect every signature first, then check the bodies — which is what lets a function call itself and lets a call precede the function's declaration.](figs/twopass.png)
+
+1. **Pass 1 — collect signatures.** Walk every `func` declaration and record its signature (param
+   types, return type) in a table. Nothing in a *body* is checked yet, so order doesn't matter.
+2. **Pass 2 — check bodies.** Now the table is complete, so a call to `fib` resolves while you're
+   *inside* `fib`, and `print(g())` resolves even though `g` is declared later.
+
+That's the whole trick, and it's a recurring one: separate "what does each thing's interface look
+like?" from "is each thing internally correct?"
+
+### Checking a body: a fresh scope, immutable parameters
+
+A function body is checked in a **fresh scope** containing just its parameters — each bound as an
+**immutable** value (a `let`, so `a = 5` inside the body is "cannot assign to a 'let' constant"),
+with the function's return type recorded so `return`s can be checked. (Our functions are
+*self-contained*: they see their parameters and the function table, but not top-level variables —
+real Swift globals/closures are a later concept. We use a fresh `env` for each body to enforce that.)
+
+### `return`, `Void`, and checking against the declared type
+
+`return e` must produce the function's declared type — `check_expr e returnType`, the same
+checking-mode judgment from concept 05, so an integer literal returned from a `-> Double` function
+coerces. A function with no `-> T` returns **`Void`** (`()`); returning a value from it
+(`return 1`) is an error, and a bare `return` from a non-`Void` function ("should return a value")
+is too. And a `return` with no enclosing function — at the top level — is "'return' invalid outside
+of a func." The return type is the contextual type that flows *into* every `return`.
+
+### "Missing return": your first real flow analysis
+
+A non-`Void` function must return a value **on every path**. `func f() -> Int { print(1) }` is
+rejected — "missing return in function expected to return 'Int'." Deciding this is a tiny
+**flow-sensitive analysis**: a block *definitely returns* if its last statement does; a `return`
+definitely returns; an `if`/`else` definitely returns iff **both** branches do (no `else` ⇒ no). A
+`while`/`for` doesn't count — the loop might run zero times.
+
+This is the same shape as the dead-code idea from concept 06, and a direct ancestor of the
+**definite-initialization** check you'll build on the SIL control-flow graph in concept 09 (Swift's
+"variable used before being initialized"). Today it's a recursion over the AST; on a real CFG it
+becomes a dataflow pass over basic blocks — which is *why* control flow (06) and functions (07) both
+land right before SIL (08).
+
+### A note on argument labels (a Swift feature we simplify)
+
+Swift parameters carry **argument labels**: `func add(a: Int, b: Int)` must be **called**
+`add(a: 1, b: 2)`, not `add(1, 2)` — the label is part of the function's name (it's why the builtin
+is written `print(_:)`). We check calls **positionally**, so we lean on Swift's `_` "no-label" form:
+write `func add(_ a: Int, _ b: Int)` and `add(1, 2)` matches `swiftc`. The parser accepts the
+optional external label and discards it. Full label checking (and overloading by label) is a
+refinement for later; positional calls are enough to teach the core of the call ABI.
+
+### The call ABI, in one breath
+
+Type-checking a call is half the story; the other half (concepts 08–09) is *running* it. A call
+evaluates its arguments, hands control to the function with those values bound to the parameters, and
+the function `return`s a value and control to the caller. In SIL/LLVM that's a calling convention —
+arguments in registers/stack, a return slot, a return address — and **each function is its own
+control-flow graph** with its own entry and exits. You've now built every front-end piece those two
+concepts need.
+
+## 3. Build it, step by step
+
+Three skeletons; concepts 1–06 are filled in.
+
+1. **`lexer.ml`** — in the `'-'` case, peek: if the next char is `>`, emit `Token.Arrow`; else `Minus`.
+2. **`parser.ml`** — `parse_params`: consume `(`, then zero-or-more `name: Type` separated by `,`
+   (accept an optional external label — a `_` or identifier before the name — and drop it), up to
+   `)`. `parse_func`: `func`, a name, `parse_params`, an optional `-> Type`, then `parse_block`.
+   `return`: a bare `return` if the next token ends the statement, else `return <expr>`.
+3. **`sema.ml`** — four holes: **call typing** in `infer_call` (look the name up in `funcs`; check
+   arity and each arg against its parameter type with `check_expr`; return the function's return
+   type); **`return`** (valid only in a function — check `!current_ret`; check the value against the
+   return type / Void rules); **`check_func`** (fresh `env`, parameters bound immutable, set
+   `current_ret`, check the body, then the "missing return" rule using `block_returns`); and the
+   **two passes** (fill `funcs` with signatures, then check each item). The scope helpers,
+   `loop_depth`, `current_ret`, `block_returns`, and `resolve_*` are given.
+
+Reference: `solution/`.
+
+## 4. Test it
+
+```bash
+make lab C=phase2-types-flow/07-functions
+```
+
+cram dumps a function AST and runs `--typecheck`; alcotest pins the function diagnostics and AST
+shape. The **type-check oracle** is the proof: `swiftml2 --typecheck` must agree with `swiftc
+-typecheck` across recursion, forward references, missing returns, argument-count/type errors,
+return-type mismatches, top-level `return`, and a `Void` function returning a value.
+
+## 5. Benchmark it
+
+Not perf-relevant (type-check only, linear). Perf arrives in Phase 4 on SIL.
+
+## 6. Exercises
+
+1. **Argument labels.** Give `Ast.param` a `label : string option` and `Ast.Call` labelled
+   arguments; parse `f(x: 1)`; in sema, check each argument's label matches the parameter's. Now
+   `func f(a: Int)` *requires* `f(a: 1)` — true Swift.
+2. **Unreachable code after `return`.** Warn on any statement following an unconditional `return` in
+   the same block ("code after 'return' will never be executed"). You already have `stmt_returns` —
+   walk each block and flag the tail.
+3. **Mutual recursion + redeclaration.** Confirm `isEven`/`isOdd` calling each other already works
+   (why? — the two passes). Then check that two functions with the same name are rejected
+   ("invalid redeclaration"), matching `swiftc`.
+
+## 7. Recap & what's next
+
+You added functions: a signature/body split, the **two-pass** check that makes recursion and forward
+references work, immutable-parameter scopes, return-type checking, and the "missing return"
+flow analysis. With this, the **Phase-2 front-end is complete** — every program in the subset
+lexes, parses, and type-checks exactly like `swiftc`.
+
+Next is the pivot the whole phase has been building toward: **08-sil-silgen** introduces **SIL**, our
+SSA intermediate representation. SILGen lowers these checked ASTs — with their control-flow graphs
+(06) and per-function CFGs (07) — into **basic blocks**, the form every optimization and backend
+needs. The tree becomes a graph, and `swiftml` finally runs Phase-2 programs.
+
+## 8. Appendix — full solution
+
+Mirrors `solution/sema.ml` — the function machinery. Note the two passes at the bottom, and that
+`check_func` gives the body a fresh `env`.
+
+```ocaml
+and infer_call f args span : Types.ty =
+  match Hashtbl.find_opt funcs f with
+  | Some (ptypes, ret) ->
+      let np = List.length ptypes and na = List.length args in
+      if np <> na then err span (Printf.sprintf "function '%s' expects %d argument(s) but %d given" f np na)
+      else List.iter2 (fun a t -> check_expr a t) args ptypes;
+      ret
+  | None ->
+      if f = "print" then (
+        (match args with [a] -> ignore (infer a)
+         | _ -> err span "print(_:) expects exactly one argument"; List.iter (fun a -> ignore (infer a)) args);
+        Types.TVoid)
+      else (err span (Printf.sprintf "cannot find '%s' in scope" f); Types.TInt)
+
+(* return: only in a function; value checked against the return type *)
+| Ast.Return (eo, span) -> (match !current_ret with
+    | None -> err span "'return' invalid outside of a func"
+    | Some rt -> (match eo with
+        | Some e -> if rt = Types.TVoid then err span "unexpected non-void return value in void function"
+                    else check_expr e rt
+        | None -> if rt <> Types.TVoid then err span "non-void function should return a value"))
+
+(* does a block definitely return on every path? *)
+let rec stmt_returns = function
+  | Ast.Return _ -> true
+  | Ast.If { then_blk; else_blk = Some e; _ } -> block_returns then_blk && block_returns e
+  | _ -> false
+and block_returns stmts = match List.rev stmts with last :: _ -> stmt_returns last | [] -> false
+
+let check_func (f : Ast.func_decl) : unit =
+  let ret = match f.Ast.ret with None -> Types.TVoid | Some n -> resolve_ty f.Ast.fspan n in
+  let saved_env = !env and saved_ret = !current_ret in
+  env := []; current_ret := Some ret;                 (* fresh scope; record the return type *)
+  List.iter (fun (pr:Ast.param) -> bind pr.Ast.pname (resolve_ty f.Ast.fspan pr.Ast.ptype, false)) f.Ast.params;
+  List.iter check_stmt f.Ast.body;
+  env := saved_env; current_ret := saved_ret;
+  if ret <> Types.TVoid && not (block_returns f.Ast.body) then
+    err f.Ast.fspan (Printf.sprintf "missing return in function expected to return '%s'" (Types.string_of_ty ret))
+
+(* PASS 1: signatures. PASS 2: bodies + top-level statements. *)
+List.iter (function
+  | Ast.IFunc f ->
+      if Hashtbl.mem funcs f.Ast.fname then err f.Ast.fspan (Printf.sprintf "invalid redeclaration of '%s'" f.Ast.fname);
+      let ptypes = List.map (fun (pr:Ast.param) -> resolve_silent pr.Ast.ptype) f.Ast.params in
+      let ret = match f.Ast.ret with None -> Types.TVoid | Some n -> resolve_silent n in
+      Hashtbl.replace funcs f.Ast.fname (ptypes, ret)
+  | Ast.IStmt _ -> ()) prog.Ast.items;
+List.iter (function Ast.IFunc f -> check_func f | Ast.IStmt s -> check_stmt s) prog.Ast.items
+```
+
+## 9. Exercise solutions
+
+### 1 — argument labels
+
+`Ast.param` gains `label : string option` (the external label; `None` for `_`). `Ast.Call` becomes
+`Call of string * (string option * expr) list * span`. The parser reads `[label :] expr` in each
+argument (an `Ident` followed by `:` is a label; otherwise it's positional). In `infer_call`, after
+the arity check, verify `arg_label = param_label` for each pair, else "incorrect argument label in
+call (have 'x:', expected 'y:')". Now `func f(a: Int)` rejects `f(1)` and requires `f(a: 1)`.
+
+### 2 — unreachable code after `return`
+
+Walk a block; once `stmt_returns` is true for a statement, every later statement in that block is
+unreachable — emit a `Warning` "code after 'return' will never be executed." (Generalises to
+`break`/`continue` from concept 06.) It's a one-line fold over each block, and the AST-level version
+of the basic-block reachability you'll get for free once code lives on a SIL CFG.
+
+### 3 — mutual recursion + redeclaration
+
+`func isEven(_ n: Int) -> Bool { if n == 0 { return true }\n return isOdd(n-1) }` and `isOdd` calling
+`isEven` **already type-check** — because Pass 1 records *both* signatures before Pass 2 checks
+either body. That's the payoff of two passes, for free. Redeclaration is already handled: Pass 1
+reports "invalid redeclaration of 'f'" when a name is added twice (mirroring `swiftc`).

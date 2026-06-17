@@ -1,0 +1,8 @@
+; The Phase-5 `swiftml5` binary — links the phase's LATEST concept library
+; (currently concept 24, specialization).
+(executable
+ (name main)
+ (public_name swiftml5)
+ (libraries swiftml_spec)
+ (flags
+  (:standard -warn-error -a)))

@@ -1,0 +1,189 @@
+---
+title: "03 · Sema (name resolution + type checking)"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+**Sema** (semantic analysis) is the stage that decides whether a syntactically-valid program is
+*meaningful*: are all names defined? do the types line up? In Phase 1 the only type is `Int`, so
+the type part is trivial — but you build the **environment + diagnostics** machinery that every
+later phase extends.
+
+- **You implement:** `sema.ml : check` (this concept dir).
+- **Outcome:** undeclared-variable use and bad `print` arity are reported; valid programs pass and
+  flow on to IRGen.
+
+## 2. Concepts in depth
+
+### The environment
+
+Name resolution needs to know what's in scope at each point. In Phase 1 the scope is flat (all
+top-level), so an environment can be as simple as a `string list` (or `Set`/`Hashtbl`) of declared
+names. The rule for `let`/`var` is subtle and worth getting right: the initializer is checked **in
+the scope *before* the new name is added**, so `let x = x` is an error (`x` isn't in scope yet) —
+exactly as in Swift. Add the name *after* checking the initializer.
+
+![Sema is one walk threading an environment: each statement is checked against the env-so-far, then extends it. Both classic rejections fall out of the threading order — `let x = x` fails because the initializer is checked *before* `x` is added, and `a = 9` fails because the env records that `a` is a `let`.](figs/env_walk.png)
+
+### Type checking as a recursive judgment
+
+The canonical shape is a function `check_expr : env -> expr -> ty` that returns the type of an
+expression (and reports diagnostics as a side effect):
+
+```
+check_expr env (Int_lit _)        = TInt
+check_expr env (Var x)            = if x in env then TInt else error "cannot find 'x' in scope"; TInt
+check_expr env (Unary(_, e))      = check_expr env e            (* must be Int *)
+check_expr env (Binary(_, l, r))  = check_expr env l; check_expr env r; TInt
+check_expr env (Call("print",[a])) = check_expr env a; TInt
+check_expr env (Call(f, args))    = error if f<>"print" or arity<>1
+```
+
+Everything returns `TInt` in Phase 1, so there are no *mismatches* yet — but this is the exact
+function Phase 2 rewrites to return real types and report `cannot convert value of type 'X' to 'Y'`.
+Building it now means Phase 2 is an edit, not a rewrite.
+
+> Oracle: in `../../swift/lib/Sema/`, declaration checking and scope live in `TypeCheckDecl.cpp`;
+> expression checking funnels into the **constraint system** (`CSGen.cpp` generates constraints,
+> `CSSolver.cpp` solves them). That machinery exists because Swift's inference is bidirectional and
+> overload-heavy; our Phase-1 version is the degenerate case where every node is `Int`.
+
+## 3. Build it, step by step
+
+Open `sema.ml` in this directory. Implement `check (prog) (diags)`:
+
+1. Keep a mutable `env` (e.g. `let env = Hashtbl.create 16` or a `ref []`).
+2. Write a local `check_expr : expr -> ty` that recurses as in §2, using
+   `Diagnostics.error diags (Ast.expr_span e) "cannot find '<name>' in scope"` for unknown `Var`,
+   and an arity/`print`-name check for `Call`.
+3. Walk the statements:
+   - `Ast.Let { name; is_var; value; _ }` ⇒ `ignore (check_expr value)`; **then** record `name`
+     (store `is_var` so assignment can check mutability).
+   - `Ast.Assign { name; value; span }` ⇒ the target `name` must already be in scope (else
+     `cannot find '<name>' in scope`) **and** be a `var` (else `cannot assign to value: '<name>'
+     is a 'let' constant`); then `ignore (check_expr value)`.
+   - `Ast.Expr_stmt (e, _)` ⇒ `ignore (check_expr e)`.
+4. `check` returns `unit`; the driver checks `Diagnostics.has_errors` and bails before IRGen.
+
+**Tip:** match swiftc's wording where easy (`cannot find 'x' in scope`) so diagnostics are
+familiar — but the test only needs the substring `in scope`.
+
+## 4. Test it
+
+```bash
+make lab C=phase1-minimal/03-sema
+```
+
+The cram test feeds an undeclared-name program and greps the diagnostic; it also confirms a valid
+program is accepted (exit 0, no diagnostics).
+
+## 5. Benchmark it
+
+Not perf-relevant in Phase 1.
+
+## 6. Exercises
+
+1. Disallow re-declaring a name in the same scope (`let x = 1; let x = 2` ⇒ error), matching Swift
+   at top level? (Check what swiftc actually does first with `make oracle` — Swift *allows*
+   top-level redeclaration shadowing in scripts; decide and match it.)
+2. Reject assigning to a `let` (`let x = 1; x = 2`). The AST already has `Ast.Assign` (see §9 for
+   why it landed in Phase 1) — extend your env to record let-vs-var, and match swiftc's
+   "cannot assign to value: 'x' is a 'let' constant".
+
+## 7. Recap & what's next
+
+You built the scope + diagnostics machinery and a trivial type judgment. **04-codegen** lowers the
+checked AST to LLVM IR and links a real executable — the end of the Phase-1 pipeline.
+
+## 8. Appendix — full solution
+
+Mirrors `solution/sema.ml`. `type ty = TInt` and `string_of_ty` are given; `check` is what you
+write. **Try §3 first — this is the answer.**
+
+```ocaml
+let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
+  (* name -> is_var (true for `var`, false for `let`). One flat top-level scope in
+     Phase 1; later phases make this a stack of scopes. *)
+  let scope : (string, bool) Hashtbl.t = Hashtbl.create 16 in
+  let rec check_expr (e : Ast.expr) : ty =
+    match e with
+    | Ast.Int_lit _ -> TInt
+    | Ast.Var (x, span) ->
+        if not (Hashtbl.mem scope x) then
+          Diagnostics.error diags span (Printf.sprintf "cannot find '%s' in scope" x);
+        TInt
+    | Ast.Unary (_, e, _) -> ignore (check_expr e); TInt
+    | Ast.Binary (_, l, r, _) -> ignore (check_expr l); ignore (check_expr r); TInt
+    | Ast.Call (f, args, span) ->
+        (* Phase 1: the only callable is the builtin print(_:). *)
+        if f = "print" then (
+          match args with
+          | [ a ] -> ignore (check_expr a)
+          | _ ->
+              Diagnostics.error diags span "print(_:) expects exactly one argument";
+              List.iter (fun a -> ignore (check_expr a)) args)
+        else (
+          Diagnostics.error diags span (Printf.sprintf "cannot find '%s' in scope" f);
+          List.iter (fun a -> ignore (check_expr a)) args);
+        TInt
+  in
+  let check_stmt (s : Ast.stmt) : unit =
+    match s with
+    | Ast.Let { name; is_var; value; _ } ->
+        (* check the initializer BEFORE binding the name, so `let a = a` is an error. *)
+        ignore (check_expr value);
+        Hashtbl.replace scope name is_var
+    | Ast.Assign { name; value; span } ->
+        (match Hashtbl.find_opt scope name with
+        | None -> Diagnostics.error diags span (Printf.sprintf "cannot find '%s' in scope" name)
+        | Some is_var ->
+            if not is_var then
+              Diagnostics.error diags span
+                (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" name));
+        ignore (check_expr value)
+    | Ast.Expr_stmt (e, _) -> ignore (check_expr e)
+  in
+  List.iter check_stmt prog.Ast.stmts
+```
+
+Why it's shaped this way:
+
+- **`let` binds *after* checking its initializer** — `Hashtbl.replace` runs only once `check_expr
+  value` is done, so `let a = a` correctly reports `a` out of scope.
+- **Assignment** must target a **declared, mutable** binding: unknown ⇒ `cannot find … in scope`;
+  a `let` ⇒ `cannot assign to value: '…' is a 'let' constant` (both match swiftc's wording).
+- **`check_expr` returns a `ty`** even though it's always `TInt` now — that's the seam Phase 2's
+  bidirectional checker grows into (real `Bool`/`Double`/`String`, operator typing, coercions).
+- `print` is handled in the `Call` arm, so it is *not* looked up as a variable.
+
+## 9. Exercise solutions
+
+### 1 — reject redeclaration (check the oracle first!)
+
+Ask the behavioral oracle what swiftc actually does — and it **rejects** top-level redeclaration:
+`let x = 1` then `let x = 2` gives *invalid redeclaration of 'x'* (so the parenthetical guess about
+"script shadowing" does **not** hold for swiftc 6.3.2; always verify rather than assume). Match it by
+erroring when the name is already bound, instead of silently overwriting with `Hashtbl.replace`:
+
+```ocaml
+| Ast.Let { name; is_var; value; span } ->
+    ignore (check_expr value);
+    if Hashtbl.mem scope name then
+      Diagnostics.error diags span (Printf.sprintf "invalid redeclaration of '%s'" name)
+    else Hashtbl.add scope name is_var
+```
+
+(The `Let` record already carries its `span`, so point the diagnostic there.) This is the lab's
+mantra in miniature: the **oracle is ground truth**, and a plausible assumption was wrong.
+
+### 2 — reject assigning to a `let`
+
+This is **already done** in the Phase-1 base solution. The exercise text predates a design decision:
+the Phase-1 corpus reassigns a `var` (`c = c * 2`), so we brought assignment into Phase 1 as an
+`Ast.Assign` node rather than deferring it to Phase 2. `check`'s `Assign` arm therefore already
+reports *cannot assign to value: 'x' is a 'let' constant* when the target's `is_var` is `false` — see
+the `Assign` case in §8, and the `immutability` case in `tests/test_sema.ml`. Nothing further to add;
+the seam this exercise anticipated is the `is_var` flag we store in `scope`.

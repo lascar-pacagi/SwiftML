@@ -1,0 +1,231 @@
+---
+title: "38 · async / await — coroutines & a cooperative executor"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+`async`/`await` looks like magic: a function pauses mid-execution, lets other work run, and resumes
+exactly where it left off. The magic is **coroutines** + an **executor** — a function that can
+suspend and resume, and a scheduler that decides which suspended task runs next. This concept builds
+both: Swift's `async` functions, `await`, `Task { … }`, and `Task.yield()`, lowered onto a real
+**cooperative executor** with stackful coroutines.
+
+The whole feature lowers to **runtime calls — zero new SIL** (the same trick as errors and arrays):
+`Task { … }` becomes a lifted coroutine handed to `rt_async_spawn`, `Task.yield()` becomes
+`rt_async_yield`, and the program drains the executor with `rt_async_run`. A small C runtime
+implements the scheduler and the coroutine stack-switching.
+
+- **You implement:** the `Task { … }` lowering — lifting the body into a coroutine and spawning it.
+- **Outcome:** sequential async matches `swiftc`; spawned tasks interleave round-robin on the
+  executor.
+
+> **New to async/await?** An `async` function can `await` another async function; at an `await`, it
+> may *suspend* — give up the CPU so other tasks run — and *resume* later. `Task { … }` starts a
+> concurrent task. `Task.yield()` voluntarily suspends so others get a turn (cooperative
+> scheduling). Without suspension points, async is just synchronous calls; the suspension is what
+> makes concurrency possible on a single thread.
+
+## 2. Concepts in depth
+
+### A coroutine is a function that can pause
+
+![async/await on a cooperative executor. `Task { … }` lifts the body into a coroutine and calls `rt_async_spawn`; the executor's `rt_async_run` drains a FIFO ready queue, resuming each task until it yields or finishes. Each task is a stackful coroutine — its own stack via `ucontext` — and `Task.yield()` is a `swapcontext` to the scheduler. The compiler emits only runtime calls; zero new SIL. swiftc uses stackless (CPS) coroutines; we use stackful for simplicity, same semantics. Swift's default executor is concurrent/nondeterministic; ours is deterministic FIFO.](figs/async.png)
+
+An ordinary function runs to completion on the call stack. A **coroutine** can *suspend* — save its
+execution state and hand control elsewhere — and later *resume* from that exact point. There are two
+ways to build one:
+
+- **Stackful** (what we do): give each task its **own stack**. Suspending is `swapcontext` — swap
+  the CPU's stack pointer and registers from the task's stack to the scheduler's. The task's local
+  variables, call frames, the program counter — all preserved on its stack. Simple and general; the
+  cost is a stack per task. We use `ucontext` (POSIX), so each task gets a malloc'd stack and the
+  runtime switches between them.
+- **Stackless** (what swiftc does): transform each async function into a **state machine** (a
+  struct of its locals + a `resume` function that `switch`es on a saved state, à la concept 29's
+  closure context). No per-task stack; the "frame" is a heap object. More efficient, much more
+  complex compiler work (a CPS / coroutine-splitting transform). We note the difference and take the
+  simpler road — the observable semantics are identical.
+
+### The cooperative executor
+
+The **executor** is the scheduler. Ours is a **FIFO ready queue** drained by a run loop:
+
+```
+rt_async_spawn(task)   enqueue a new coroutine (its own stack)
+rt_async_yield()       suspend the current task back to the scheduler
+rt_async_run()         while the queue is nonempty: pop a task, resume it (swapcontext into its
+                       stack); when it yields, re-enqueue it; when it finishes, free it
+```
+
+This is **cooperative** scheduling: a task runs until it *voluntarily* yields (or finishes) — the
+scheduler never preempts it. So three tasks that each `print; yield; print; yield; print` interleave
+deterministically round by round: `11 21 31`, `12 22 32`, `13 23 33`. The whole runtime is ~30 lines
+of C (given); the lesson is *what* it does, not the `ucontext` plumbing.
+
+### Lowering: it's all runtime calls
+
+Because the coroutine machinery lives in the runtime, the compiler's job is tiny:
+
+- **`async func f`** — a normal function. Async-ness is a marker; the function runs on whatever
+  task's stack called it.
+- **`await e`** — lowers to just `e`. The `await` keyword marks "a suspension may happen here," but
+  the actual suspension occurs at the yield points *inside* the awaited call. With stackful
+  coroutines, calling an async function that yields suspends the whole task (they share the stack) —
+  so `await f()` is just `f()`, and it works.
+- **`Task.yield()`** — `Apply (Func_ref "rt_async_yield", [])`.
+- **`Task { body }`** — *your hole*: lift `body` into a void coroutine function (just like a
+  closure, concept 29), make a closure value, and `Apply (Func_ref "rt_async_spawn", [closure])`.
+  The closure's `{code, ctx}` pair is passed by value (two registers), matching the C
+  `swiftml_closure` struct, and `rt_async_spawn` later calls `code(ctx)` on the task's stack.
+- **draining** — after top-level code, `main`'s epilogue calls `rt_async_run` to run the spawned
+  tasks to completion before exit.
+
+### Sequential async is deterministic — and matches swiftc
+
+A *chain* of awaits (`let a = await f(); let b = await g(a)`) has no concurrency — it's a sequence —
+so its result is deterministic and **matches `swiftc` exactly**. Even `await worker(1); await
+worker(2)` at top level is deterministic (each runs to completion before the next): the `Task.yield`
+inside, with no other task ready, just resumes immediately. That's why our matched corpus is
+sequential async.
+
+### The honest difference from swiftc
+
+Swift's *default* executor is **concurrent and multi-threaded** — `Task { }` work runs on a thread
+pool, so the interleaving of independent tasks is **nondeterministic**. Ours is a **serial,
+deterministic, FIFO** cooperative executor (closer to a custom serial executor or `@MainActor`). So
+we match `swiftc` on the deterministic sequential programs and verify *interleaving* against our own
+documented semantics. This is the honest framing: we model *a* valid execution mode (serial
+cooperative), not Swift's concurrent default, and we say so.
+
+> Oracle: Swift's `_Concurrency` library (`Task`, `SerialExecutor`, `withTaskGroup`); the
+> SIL `@async` lowering (the coroutine-splitting transform); and `<ucontext.h>` for the stackful
+> mechanism we borrow.
+
+## 3. Build it, step by step
+
+In `silgen.ml`, implement the `Spawn (body, _)` case (`Task { body }`):
+
+1. Lift `body` into a void function `b.fname ^ "$task" ^ counter` (use `b.clo_count`) with
+   `lower_func ~lifted:b.lifted ~throwing:b.throwing ~error_ord:b.error_ord b.structs … b.classes
+   name [("$ctx", Types.TClass "$ctx")] Types.TVoid body`, and record it:
+   `b.lifted := (lf, []) :: !(b.lifted)` (v0 tasks are capture-free).
+2. Make a closure value: `emit b (Sil.Closure (name, [])) (Types.TFunc ([], Types.TVoid))`.
+3. Spawn it: `Apply (Func_ref "rt_async_spawn", [clo])`.
+4. `Destroy_value clo` (the task takes ownership; this balances the verifier).
+
+The `await`/`Task.yield()` lowering, the `rt_async_run` epilogue, and the C runtime are given.
+Reference: `solution/silgen.ml`. Run with `make lab C=phase8-arm64-backend/38-async-await`.
+
+## 4. Test it
+
+```bash
+make lab C=phase8-arm64-backend/38-async-await
+```
+
+cram: sequential async matches `swiftc` (`36 1296`, `11 12 21 22`); three spawned tasks interleave
+round-robin (`0 11 21 31 12 22 32 13 23 33`); the SIL shows the `rt_async_spawn`/`yield`/`run` calls
+and the lifted `main$task*` coroutines. alcotest: `Task { }` lifts a coroutine + emits a spawn,
+`Task.yield()` is a runtime call, `main` emits exactly one `rt_async_run`, `await` is transparent,
+and `-O` is valid.
+
+## 5. Benchmark it
+
+The interesting measurement is the per-suspension cost: a `swapcontext` (save/restore registers + SP)
+is tens of nanoseconds, versus a stackless resume (a load + indirect branch) of a few. Time a tight
+yield loop; the gap is exactly why production runtimes invest in stackless coroutines. Our stackful
+model trades that efficiency for a ~30-line runtime — the right call for understanding the model.
+
+## 6. Exercises
+
+1. **`await` results across suspension.** Make `let x = await slowCompute()` where `slowCompute`
+   yields internally and returns a value the caller uses after resuming. (Stackful coroutines
+   already make this work — verify it, and see why stackless needs the state machine.)
+2. **Task results & `await task.value`.** Have `Task { }` return a handle whose `.value` you can
+   `await` — the spawning task suspends until the spawned one completes.
+3. **`async let`.** Concurrent bindings: `async let a = f(); async let b = g()` start both, then
+   `await a + b` joins. Spawn two tasks and await their results.
+4. **Cancellation.** A `Task` you can cancel; `Task.isCancelled` checked at yield points. Add a flag
+   to the task struct and a runtime call.
+5. **Managed captures.** Let task bodies capture managed values (closures with a real context). The
+   runtime must keep the context alive until the task finishes (retain on spawn, release on
+   completion) — the v0 capture-free restriction lifted.
+
+## 7. Recap & what's next
+
+`async`/`await` is **coroutines + an executor**: a function that can suspend and resume, and a
+scheduler that round-robins ready tasks. We lower it to **runtime calls** — `Task { }` to a lifted
+coroutine + `rt_async_spawn`, `Task.yield()` to `rt_async_yield`, draining with `rt_async_run` — and
+a ~30-line C runtime gives each task a stackful coroutine. Sequential async matches `swiftc`;
+concurrent tasks interleave on our deterministic cooperative executor (honestly distinct from
+Swift's concurrent default).
+
+Next, **39-actors** — an `actor` serializes access to its state, and a cross-actor call *hops* onto
+the actor's executor. It builds directly on classes (concept 25) and this executor — actors are how
+Swift makes concurrent code data-race-free.
+
+## 8. Appendix — full solution
+
+```ocaml
+(* Task { body } — lift a coroutine and spawn it *)
+| Ast.Spawn (body, _) ->
+    let name = Printf.sprintf "%s$task%d" b.fname !(b.clo_count) in
+    incr b.clo_count;
+    let lf =
+      lower_func ~lifted:b.lifted ~throwing:b.throwing ~error_ord:b.error_ord b.structs b.enums
+        b.protos b.methods b.funcs b.gfuncs b.classes name [ ("$ctx", Types.TClass "$ctx") ]
+        Types.TVoid body
+    in
+    b.lifted := (lf, []) :: !(b.lifted);
+    let clo = emit b (Sil.Closure (name, [])) (Types.TFunc ([], Types.TVoid)) in
+    let fr = emit b (Sil.Func_ref "rt_async_spawn") Types.TVoid in
+    ignore (emit b (Sil.Apply (fr, [ clo ])) Types.TVoid);
+    ignore (emit b (Sil.Destroy_value clo) Types.TVoid)
+```
+
+The given runtime (C, linked):
+
+```c
+void rt_async_spawn(swiftml_closure c) { /* new ucontext stack; makecontext(task_trampoline); enqueue */ }
+void rt_async_yield(void) { if (current) swapcontext(&current->uctx, &sched_ctx); }
+void rt_async_run(void) {
+  while (ready_head) {
+    AsyncTask* t = pop();
+    current = t; swapcontext(&sched_ctx, &t->uctx); current = 0;   /* resume until yield/finish */
+    if (t->done) free_task(t); else enqueue(t);                    /* round robin */
+  }
+}
+```
+
+## 9. Exercise solutions
+
+### 1 — await results across suspension
+With stackful coroutines this already works: `slowCompute` runs on the caller's stack, yields
+(suspending the whole task), resumes, and returns normally — the return value is on the stack, intact.
+The lesson is the contrast: a *stackless* lowering would have to split `let x = await slowCompute()`
+at the await, save the continuation, and thread `x` through the state machine — which is the compiler
+work we avoided.
+
+### 2 — task results
+`Task { }` returns a handle: a heap cell with a `done` flag and a result slot. `await handle.value`
+checks the flag; if not done, the current task yields and re-checks when resumed (or registers as a
+waiter the completing task wakes). When the spawned task returns, it stores the result and marks done.
+
+### 3 — async let
+`async let a = f()` spawns a task computing `f()`; `await a` joins it. Desugar to a `Task { }` plus a
+result handle, then `await handle.value`. Two `async let`s run concurrently on the executor and the
+final `await a + b` joins both.
+
+### 4 — cancellation
+Add `int cancelled` to the task struct and a `rt_async_cancel(handle)` that sets it. `Task.isCancelled`
+reads the current task's flag; well-behaved tasks check it at yield points and return early. (Swift's
+cancellation is cooperative for exactly this reason — it's a flag, not a forced stop.)
+
+### 5 — managed captures
+A capturing `Task { }` builds a real closure context (concept 29). The runtime must **retain** the
+context on `rt_async_spawn` and **release** it when the task finishes (in `rt_async_run`'s free path),
+so the captured values outlive the spawning scope — exactly ARC across the suspension boundary, which
+is why v0 restricted tasks to capture-free bodies.
+```

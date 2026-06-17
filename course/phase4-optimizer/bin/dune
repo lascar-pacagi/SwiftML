@@ -1,0 +1,9 @@
+; The `swiftml4` binary for Phase 4 — links the latest concept's stage library,
+; currently concept 20 (llvm-opt).
+(executable
+ (name main)
+ (public_name swiftml4)
+ (package swiftml)
+ (libraries swiftml_llvmopt)
+ (flags
+  (:standard -warn-error -a)))

@@ -1,0 +1,9 @@
+; Concept 18 — the optimizer + GVN (global value numbering / CSE).
+(library
+ (name swiftml_gvn)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen driver)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

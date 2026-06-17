@@ -1,0 +1,5 @@
+; Concept 34 — register allocation: vreg ARM64 + the ladder (stack -> linear-scan -> graph-colour).
+(library (name swiftml_regalloc) (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen arm64 isel regalloc driver)
+ (flags (:standard -warn-error -a)))
+(dirs :standard \ solution)

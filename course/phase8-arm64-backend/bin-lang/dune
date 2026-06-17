@@ -1,0 +1,2 @@
+; The Phase-8 language-tail binary `swiftml9` — macros on the full-language LLVM path.
+(executable (name main) (public_name swiftml9) (libraries swiftml_macros) (flags (:standard -warn-error -a)))

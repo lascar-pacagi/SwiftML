@@ -1,0 +1,189 @@
+---
+title: "11 · Enums (ADTs / tagged unions)"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+`struct` gave you *product* types — "all of these fields at once." `enum` gives you *sum* types —
+"exactly **one** of these **cases**." Together they're **algebraic data types** (ADTs), and they're
+how you model data that comes in alternatives: a result that's success *or* failure, a shape that's a
+circle *or* a rectangle, a value that's present *or* `nil` (that last one is `Optional`, concept 13 —
+it's an enum). You'll add `enum` through the whole compiler, represented the way every compiler
+represents a sum type: a **tagged union**.
+
+- **You implement:** enum *construction* in SILGen and the enum LLVM instructions in IRGen.
+- **Outcome:** enum programs **run and match swiftc** — case equality, raw values, enums in
+  conditionals.
+- **Out of scope (by design):** taking an enum *apart* — reading a case's associated values — needs
+  `switch`, which is **concept 12**. That's why enums and pattern matching are a pair.
+
+## 2. Concepts in depth
+
+### A sum type is a tag plus a payload
+
+A value of `enum Shape { case circle(Int); case rect(Int, Int); case dot }` is exactly one case at a
+time. You can't store both a circle and a rectangle, so you don't need room for both — you need a
+**tag** saying which case it is, and enough **payload** for the *widest* case's associated values:
+
+![A tagged union: every `Shape` value is the same size — a tag (which case) plus a payload sized to the widest case. `circle(5)` is `{tag 0, 5, –}`, `rect(3,4)` is `{tag 1, 3, 4}`, `dot` is `{tag 2, –, –}`.](figs/tagged_union.png)
+
+We lay this out as an LLVM aggregate `%Shape = type { i64, i64, i64 }` — field 0 is the tag, fields
+1… are the payload slots (sized to the widest case; unused slots are just dead for narrower cases).
+This is the naive-but-honest layout; real swiftc is far cleverer (it packs the tag into **spare
+bits** of the payload when it can — see `swift/lib/IRGen/GenEnum.cpp`), but the *idea* is identical.
+
+### Construction: pick a tag, fill the payload
+
+`Color.red` and `Shape.circle(5)` both lower to one SIL instruction, **`enum #tag (payload…)`**, which
+builds the aggregate: store the case's **index** as the tag, then the associated values into the
+payload slots. `Color.red` → `enum #0 ()`; `Shape.rect(3, 4)` → `enum #1 (%a, %b)`. In LLVM that's an
+`insertvalue` chain, exactly like a struct — the tag is just field 0.
+
+### Raw values and equality — what you *can* do without `switch`
+
+Without pattern matching you still have two useful operations, and both reduce to **reading the tag**
+(`enum_tag`, an `extractvalue 0`):
+
+- **`.rawValue`** on a `: Int` raw-value enum is the case's raw integer. With Swift's implicit raws
+  (`north = 0, south = 1, …`) the raw value *is* the tag, so `Dir.south.rawValue` is just the tag, `1`.
+- **`==`** on a payload-free enum compares the tags: `Color.green == Color.green` is `tag == tag`.
+
+There's a real parity subtlety here, and we match swiftc on both sides of it: a payload-free enum is
+**implicitly `Equatable`**, so `==` just works; but an **associated-value** enum's `==` has to compare
+payloads *per case*, which Swift only synthesizes when you declare `: Equatable` (with all payloads
+Equatable). Without that conformance, swiftc **rejects** `Shape.circle(5) == …` — and so do we
+("type 'Shape' does not conform to protocol 'Equatable'"). Tag-only equality would be *wrong*
+(`circle(5)` would equal `circle(6)`), so refusing it is the correct, faithful behaviour.
+
+### Why you can't read a payload yet
+
+You can build `Shape.circle(5)` and compare tags, but you can't ask "what's the radius?" — that means
+"*if* this is a `circle`, bind its `Int`," which is a **pattern**. Reading associated values safely
+requires checking the tag first (you mustn't read `rect`'s second field out of a `circle`), and that
+tag-check-then-extract is exactly what `switch` compiles to. So associated-value enums are *built*
+here and *used* in concept 12 — the two halves of ADTs.
+
+### The new SIL instructions (swiftc's shape)
+
+| SIL | meaning | LLVM |
+|---|---|---|
+| `enum #t (payload…)` | build a value of case `t` | `insertvalue` (tag at #0, payload at #1…) |
+| `enum_tag %e` | read the case tag (an `Int`) | `extractvalue %e, 0` |
+
+swiftc's real instructions are `enum`/`unchecked_enum_data`/`select_enum`; `enum_tag` stands in for
+"read the discriminator." Concept 12 will add the destructuring counterpart.
+
+## 3. Build it, step by step
+
+Front-end is given; fill the lowering.
+
+- **`silgen.ml`** — `TODO(11)`: in `gen_expr`, the `Member (Var tn, case)` case (a no-payload enum
+  case): emit `Sil.Enum (Types.case_index (Hashtbl.find b.enums tn) case, [])` of type `Types.TEnum tn`.
+  And the `Method_call (Var tn, case, args)` case (a payload case): `gen_expr` each argument, then emit
+  `Sil.Enum (tag, payloads)`.
+- **`irgen.ml`** — `TODO(11)`: `Enum (tag, payload)` → `insertvalue` the tag at 0 then each payload at
+  `i+1`; `Enum_tag a` → `extractvalue … , 0`. The enum type is `llty (vty …)`.
+
+Reference: `solution/`.
+
+## 4. Test it
+
+```bash
+make lab C=phase3-value-types/11-enums-adts
+```
+
+The cram test **builds and runs** enum programs — simple-enum `==` and raw values — and FileChecks the
+`{ i64, … }` layout. The alcotest pins the sema rules (case lookup, payload arity, the `Equatable`
+rejection, `rawValue` only on raw enums) and the emitted `insertvalue`/`extractvalue`.
+
+## 5. Benchmark it
+
+An enum is the size of its widest case (plus tag), regardless of which case is live — so a
+`{ huge payload | empty case }` enum wastes space in the empty case. swiftc's spare-bit packing
+reclaims much of this; `Optional` (concept 13) is the famous win (`Optional<SomePointer>` is the same
+size as the pointer, using an invalid bit pattern as the `nil` tag). Ours is unpacked — the honest
+baseline a Phase-4/layout pass would later optimize.
+
+## 6. Exercises
+
+1. **Explicit raw values.** Support `case north = 1` (and `enum E: String`): store the per-case raw in
+   the layout and lower `.rawValue` to that constant (a small tag→raw map) instead of the tag.
+2. **`Equatable` for associated values.** When the enum declares `: Equatable`, synthesize `==`: compare
+   tags, and *if equal*, `switch` on the tag and compare the live payload slots. (Needs concept 12's
+   switch — circle back after it.)
+3. **Indirect (recursive) enums.** `indirect enum Expr { case lit(Int); case add(Expr, Expr) }`. A
+   recursive case can't be inline (infinite size), so its payload is **boxed** (a pointer). Add an
+   `indirect` flag and lower the payload to a heap pointer — the seed of the ADT interpreter that is
+   Milestone M3.
+
+## 7. Recap & what's next
+
+You added `enum` — the **sum** half of algebraic data types — as a **tagged union**: a tag plus a
+payload sized to the widest case. Construction picks a tag and fills the payload; `.rawValue` and `==`
+read the tag. Enum programs run and match swiftc.
+
+Next, **12-pattern-matching**: `switch`. It's the missing half — it reads the **tag**, branches to the
+matching `case`, and **binds the associated values** (`case .circle(let r):`), with **exhaustiveness**
+checking so you can't forget a case. That's when `Shape.circle(5)` finally gives up its `5`, and when
+the tagged unions you just built become the ADTs that make Swift Swift.
+
+## 8. Appendix — full solution
+
+From `solution/silgen.ml` (construction) and `solution/irgen.ml` (the LLVM):
+
+```ocaml
+(* SILGen — an enum case is a tag + payload values *)
+| Ast.Member (Ast.Var (tn, _), case, _) when Hashtbl.mem b.enums tn ->
+    let el = Hashtbl.find b.enums tn in
+    emit b (Sil.Enum (Option.get (Types.case_index el case), [])) (Types.TEnum tn)
+| Ast.Method_call (Ast.Var (tn, _), case, args, _) when Hashtbl.mem b.enums tn ->
+    let el = Hashtbl.find b.enums tn in
+    let argvs = List.map (fun (_, e) -> gen_expr b e) args in
+    emit b (Sil.Enum (Option.get (Types.case_index el case), argvs)) (Types.TEnum tn)
+```
+
+```ocaml
+(* IRGen — a tagged union in LLVM: tag at #0, payload at #1.. *)
+| Sil.Enum (tag, payload) ->
+    let ety = llty (vty v) in
+    let r0 = fresh () in
+    p (Printf.sprintf "  %s = insertvalue %s undef, i64 %d, 0\n" r0 ety tag);
+    let acc = ref r0 in
+    List.iteri (fun idx fv ->
+      let r = fresh () in
+      p (Printf.sprintf "  %s = insertvalue %s %s, %s %s, %d\n" r ety !acc (llty (vty fv)) (op fv) (idx + 1));
+      acc := r) payload;
+    Hashtbl.replace opnd v !acc
+| Sil.Enum_tag a ->
+    let r = fresh () in
+    p (Printf.sprintf "  %s = extractvalue %s %s, 0\n" r (llty (vty a)) (op a));
+    Hashtbl.replace opnd v r
+```
+
+## 9. Exercise solutions
+
+### 1 — explicit raw values
+
+Give `enum_layout` a `raws : int list` (parsed from `= N`, defaulting to the index). Lower `.rawValue`
+not to `enum_tag` but to a lookup: in the simplest form, since the tag *is* the case index, emit a
+`switch`/`select` over the tag returning the matching `raws` constant. For `enum E: String`, store the
+strings as globals and return the pointer.
+
+### 2 — Equatable synthesis
+
+With `: Equatable`, generate `==` as: `enum_tag a == enum_tag b` and, when equal, a `switch` on the tag
+where each case compares its live payload slots (`unchecked_enum_data` in real SIL). This is the same
+derived-conformance machinery as struct `Equatable`, plus a tag dispatch — and it's exactly what
+concept 12's `switch` lowering gives you, so it's a natural follow-on.
+
+### 3 — indirect enums
+
+A recursive enum has unbounded size, so Swift **boxes** the recursive payload: the case stores a
+pointer to a heap allocation holding the associated values. Add `indirect` to the case, lower
+construction to a `malloc` + store, and lower extraction (in `switch`) to a load through the pointer.
+This is what lets `enum Expr { case add(Expr, Expr) }` exist — and a tree-walking evaluator over it,
+written in our Swift subset and matching swiftc, is **Milestone M3**.
+```

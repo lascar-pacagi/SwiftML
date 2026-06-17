@@ -1,0 +1,22 @@
+; Rename to `dune` when instantiating. Three stanzas:
+; 1) `lab` — a tiny CLI built from THIS concept's library. The cram tests run ./lab.exe so
+;    they exercise the code in this directory (RED on the skeleton, GREEN on solution/),
+;    not the phase binary (which links only the phase's final concept).
+; 2) cram — the .t FileCheck-style tests, with lab.exe as a dependency.
+; 3) alcotest — unit tests linked directly against the concept library.
+(executable
+ (name lab)
+ (modules lab)
+ (libraries swiftml_CONCEPT)
+ (flags
+  (:standard -warn-error -a)))
+
+(cram
+ (deps lab.exe))
+
+(tests
+ (names test_CONCEPT)
+ (modules test_CONCEPT)
+ (libraries alcotest swiftml_CONCEPT)
+ (flags
+  (:standard -warn-error -a)))

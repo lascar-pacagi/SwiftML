@@ -1,0 +1,260 @@
+---
+title: "08 · SIL & SILGen"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+This is the pivot of the whole project. Until now `swiftml` has been a *front end*: source → tokens →
+tree → "is this tree well-typed?" Now we add the **middle** — **SIL**, our SSA-style intermediate
+representation — and **SILGen**, the pass that lowers the type-checked AST into it. From here the
+pipeline is the real swiftc one:
+
+```
+Parse → Sema → SILGen → SIL → (Phase-4 passes) → IRGen → LLVM → native
+                  └── you build SILGen here; SIL is the IR everything downstream works on ──┘
+```
+
+The reason SIL has to exist is the thing concepts 06–07 kept pointing at: **the AST is a tree, but a
+program's control flow is a graph.** A loop jumps backward; an `if` merges two paths. A tree can't
+hold a back-edge. SIL represents the graph directly, as **basic blocks** joined by branches — and
+*that* is the form on which every optimization and every backend operates.
+
+- **You implement:** the **control-flow lowering** in `silgen.ml` — `if`/`while`/`for`/`break`/
+  `continue` becoming basic blocks and branches. The front-end (05–07) is given and complete.
+- **Outcome:** `swiftml2 --emit-sil` prints verified SIL whose shape mirrors `swiftc -emit-sil`.
+- **Out of scope:** *running* it — IRGen (SIL → LLVM) is concept 09. 08 stops at emitting SIL.
+
+## 2. Concepts in depth
+
+### Basic blocks and terminators — the CFG
+
+A **basic block** is a maximal run of straight-line instructions with **one entry and one exit**:
+control enters at the top, falls straight through, and leaves via exactly one **terminator** at the
+bottom. Our terminators are `br bbN` (unconditional jump), `cond_br %c, bbT, bbF` (branch on a Bool),
+and `return`. A SIL **function** is just a list of these blocks; block `bb0` is the entry. The edges
+between blocks (who branches to whom) form the **control-flow graph (CFG)** — the same graph you saw
+for a `while` loop in concept 06, now made real.
+
+SILGen's whole job is to walk the AST tree and *build that graph*:
+
+![SILGen lowers the AST tree into a SIL control-flow graph: an `if`/`else` becomes a `cond_br` diamond — entry branches to a then-block and an else-block, which both branch to a merge.](figs/lowering.png)
+
+### Raw, memory-based SIL — and why we *want* the loads and stores
+
+Look at the SIL for `let x = 1; print(x)`:
+
+```
+%0 = integer_literal $Int, 1
+%1 = alloc_stack $Int   // x
+store %0 to %1
+%3 = load %1 $Int
+%4 = apply @print(%3)
+```
+
+Every variable becomes a **stack slot** (`alloc_stack`), and you only touch it through `load`/`store`.
+This is **raw SIL** — exactly what swiftc's SILGen emits — and it is deliberately *not* SSA: the value
+in `x` lives in memory, not in a single-assignment register. That looks wasteful, and it is — but it
+makes **SILGen trivial**: lowering a variable is "store on write, load on read," with no need to track
+which definition reaches which use. The cleanup is a *separate, well-understood* pass — **mem2reg** —
+that promotes these slots to SSA values, deleting the loads and stores. That's **Phase 4, concept 16**,
+and it's where you'll learn SSA properly, by watching this exact memory-heavy SIL turn into clean SSA.
+Splitting "lower correctly" (here) from "lower *well*" (later) is swiftc's raw-SIL → canonical-SIL
+design, and ours.
+
+### SILGen is a *builder*
+
+SILGen threads a small **builder**: a current block you append instructions to (`emit`), a way to
+make new blocks (`new_block`) and switch the cursor to them (`switch_to`), and `terminate` to set the
+current block's terminator (only if it doesn't have one — so a block that already ended in `return`
+isn't overwritten). Lowering an expression returns the **value** holding its result (`%n`); lowering
+a statement emits instructions and, for control flow, *splits the block*.
+
+The two halves:
+
+- **Expressions → values (mostly straight-line).** A literal emits a literal; a `Var` emits a `load`
+  of its slot; a binary op lowers both sides then emits the op; a call lowers its arguments, emits a
+  `function_ref`, then `apply`. The one exception is `&&`/`||`: they **short-circuit**, so the given
+  `gen_expr` lowers them as a small `cond_br` diamond that evaluates the right operand only on the
+  deciding edge (the result merges through a stack slot). That's the same diamond you're about to
+  build for `if` — read it first as a warm-up. (Lowering `&&` as a plain bitwise op would be a real
+  bug: `i < n && a[i]` would evaluate `a[i]` when `i == n` and trap, where swiftc runs clean.)
+- **Statements → CFG.** This is your part. The pattern is always: evaluate, **create the blocks** you
+  need, `terminate` the current block with the branch into them, lower each block's contents, and
+  `switch_to` wherever control continues.
+
+### Lowering control flow (your job)
+
+- **`if c { A } else { B }`** — a **diamond** (see the figure). Evaluate `c`; make a *then*, an
+  *else* (if present), and a *merge* block; `cond_br c` to then/else (or then/merge if no else); lower
+  `A` in the then-block and `B` in the else-block, each ending `br merge`; continue in *merge*.
+- **`while c { body }`** — a **header** block evaluates `c` and `cond_br`s to a *body* or an *exit*;
+  the body ends with `br header` — the **back-edge** that makes it a loop; control continues in
+  *exit*. The block before the loop must `br header` to get in.
+- **`for v in lo ..< hi { body }`** desugars to a counted loop: a slot for `v` initialized to `lo`,
+  then a while-shaped loop testing `v < hi`, with `v = v + 1` in a separate **latch** block. The
+  increment lives in its own block because `continue` must branch *there* (not to the header), or it
+  would skip `v = v + 1` and loop forever. (Evaluate `hi` *once*, before the loop.)
+- **`break`/`continue`** branch to the current loop's *exit* / *header*. SILGen keeps a stack of
+  `(header, exit)` for the enclosing loops; you push on entering a loop body and pop on leaving.
+
+One subtlety the given `gen_block` handles for you: once a statement sets a terminator (a `return`, a
+`break`), the rest of that block is **unreachable**, so it stops lowering there — you never append
+after a terminator, and dead trailing blocks just stay `unreachable` (a valid terminator the verifier
+accepts).
+
+### Why SIL at all (instead of AST → LLVM directly)?
+
+Phase 1 *did* go straight AST → LLVM, and it worked. SIL earns its place because it's the right level
+for the work to come: it's **Swift-aware** (it will carry ARC retain/release, value-witness calls,
+exclusivity — concepts LLVM has no idea about), and it's **structured for analysis** (basic blocks +
+the CFG) so that **every optimization and diagnostic in Phase 4** — mem2reg, constant folding, DCE,
+CSE, inlining — is a graph transformation on SIL, not a hack on a tree or a fight with LLVM. swiftc
+runs *mandatory* SIL passes (definite-initialization, which is concept 09) before it ever reaches
+LLVM. Build the right IR once, and everything downstream gets easier.
+
+> Oracle: `swift/lib/SILGen/SILGenStmt.cpp` is the direct analogue of your `gen_stmt` — `visitIfStmt`,
+> `visitWhileStmt`, etc., each create blocks and emit `cond_br`/`br`. `swift/docs/SIL.rst` documents
+> the IR; our version drops the verbose `$*T` address types, `@convention`, and name mangling.
+
+## 3. Build it, step by step
+
+Open `silgen.ml`. The builder (`emit`/`new_block`/`switch_to`/`terminate`), `gen_expr`, the simple
+statements (`Let`/`Assign`/`Expr_stmt`/`Return`), and `lower_func`/`lower` are given. Fill the
+`TODO(08)` holes in `gen_stmt` — the five control-flow cases described above. Use `new_block` to make
+blocks, `terminate` to set branches, `gen_block` to lower a block's statements in the current block,
+and `switch_to` to move the cursor. For loops, push `(header.bid, exit.bid)` onto `b.loops` around the
+body so `break`/`continue` find their targets. Reference: `solution/silgen.ml`.
+
+## 4. Test it
+
+```bash
+make lab C=phase2-types-flow/08-sil-silgen
+```
+
+cram (`tests/sil.t`) is **FileCheck-style**: it matches the `--emit-sil` output for a function
+(memory-based body) and greps the loop `cond_br`, the **back-edge** (`br bb1` appears twice), and the
+`if` diamond's single `cond_br` — exactly how swiftc's own SIL tests work. alcotest checks the lowered
+module's structure (a `@main`, `alloc_stack`/`load`/`store`, a back-edge in a `while`). And the SIL
+**verifier** runs on every `--emit-sil` — branch targets must exist.
+
+## 5. Benchmark it
+
+Nothing to time yet (we don't run). But note *where* you are: SIL is the IR the **Phase-4 optimizer**
+transforms and benchmarks. The memory-heavy SIL you just emitted is the *input* to mem2reg — the first
+thing Phase 4 makes faster.
+
+## 6. Exercises
+
+1. **The `guard cond else { … }` statement.** `guard` is an early-exit: if the condition is *false*
+   run the else block, which must leave the scope (`return`/`break`/`continue`). Lower it as an
+   inverted `if` whose false edge runs the else block and whose true edge simply continues — there is
+   no merge, because the else block never falls through. (The value-diamond for `&&`/`||` and the
+   ternary `a ? b : c` are already shipped in `gen_expr` — study them first; swiftc is your oracle.)
+2. **A textual SIL parser.** Write a reader for your `--emit-sil` syntax so SIL can round-trip
+   (emit → parse → emit). This is what makes a `--sil-opt` workflow possible in Phase 4 (run a pass on
+   a `.sil` file).
+3. **Critical-edge splitting.** A "critical edge" is a CFG edge from a block with multiple successors
+   to one with multiple predecessors. Detect them; some optimizations require splitting them (insert
+   an empty block on the edge). A first taste of CFG surgery.
+
+## 7. Recap & what's next
+
+You introduced **SIL** and wrote **SILGen**: the AST tree became a control-flow graph of basic blocks,
+with variables in `alloc_stack` slots (raw, memory-based SIL) and `if`/`while`/`for` as `cond_br`/`br`
+between blocks. This is the representation the rest of the compiler is built on.
+
+Next, **09-sil-to-llvm** writes **IRGen** (SIL → LLVM IR), adds the mandatory **definite-initialization**
+diagnostic (on the SIL CFG — the flow analysis you previewed with "missing return"), and finally
+**runs** Phase-2 programs: `if`/`while`/`for`/functions execute, and `swiftml2`'s output matches
+`swiftc` byte-for-byte again. Then **Phase 4** turns this raw SIL into fast code — starting with
+**mem2reg**, where those loads and stores become SSA and you learn SSA for real.
+
+## 8. Appendix — full solution
+
+Mirrors `solution/silgen.ml` (the control-flow lowering). The shape to notice: each case
+**creates blocks**, **terminates** the current block with a branch, lowers the branch contents, and
+**switches** to where control continues; loops push/pop `b.loops` and add the back-edge.
+
+```ocaml
+| Ast.If { cond; then_blk; else_blk; _ } ->
+    let c = gen_expr b cond in
+    let then_b = new_block b in
+    let merge = new_block b in
+    let else_b = match else_blk with Some _ -> new_block b | None -> merge in
+    terminate b (Sil.Cond_br (c, then_b.Sil.bid, else_b.Sil.bid));
+    switch_to b then_b; gen_block b then_blk; terminate b (Sil.Br merge.Sil.bid);
+    (match else_blk with
+     | Some e -> switch_to b else_b; gen_block b e; terminate b (Sil.Br merge.Sil.bid)
+     | None -> ());
+    switch_to b merge
+| Ast.While { cond; body; _ } ->
+    let header = new_block b and body_b = new_block b and exit_b = new_block b in
+    terminate b (Sil.Br header.Sil.bid);                     (* enter the loop *)
+    switch_to b header;
+    let c = gen_expr b cond in
+    terminate b (Sil.Cond_br (c, body_b.Sil.bid, exit_b.Sil.bid));
+    switch_to b body_b;
+    b.loops <- (header.Sil.bid, exit_b.Sil.bid) :: b.loops;  (* break/continue targets *)
+    gen_block b body;
+    terminate b (Sil.Br header.Sil.bid);                     (* the back-edge *)
+    b.loops <- List.tl b.loops;
+    switch_to b exit_b
+| Ast.For { var; lo; hi; body; _ } ->
+    let lov = gen_expr b lo in
+    let hiv = gen_expr b hi in                               (* evaluate hi ONCE *)
+    let addr = emit b (Sil.Alloc_stack var) Types.TInt in
+    Hashtbl.replace b.vars var addr;
+    ignore (emit b (Sil.Store (lov, addr)) Types.TVoid);
+    (* header -> body -> latch (v = v + 1) -> header.  The increment lives in its OWN
+       block (the latch), and `continue` targets the latch — not the header — so it can't
+       skip the increment and loop forever. *)
+    let header = new_block b and body_b = new_block b in
+    let latch = new_block b and exit_b = new_block b in
+    terminate b (Sil.Br header.Sil.bid);
+    switch_to b header;
+    let cur_v = emit b (Sil.Load addr) Types.TInt in
+    let c = emit b (Sil.Binop (Ast.Lt, cur_v, hiv)) Types.TBool in
+    terminate b (Sil.Cond_br (c, body_b.Sil.bid, exit_b.Sil.bid));
+    switch_to b body_b;
+    b.loops <- (latch.Sil.bid, exit_b.Sil.bid) :: b.loops;   (* continue -> latch, break -> exit *)
+    gen_block b body;
+    terminate b (Sil.Br latch.Sil.bid);
+    b.loops <- List.tl b.loops;
+    switch_to b latch;
+    let cv = emit b (Sil.Load addr) Types.TInt in            (* v = v + 1 *)
+    let one = emit b (Sil.Int_lit 1) Types.TInt in
+    let inc = emit b (Sil.Binop (Ast.Add, cv, one)) Types.TInt in
+    ignore (emit b (Sil.Store (inc, addr)) Types.TVoid);
+    terminate b (Sil.Br header.Sil.bid);
+    switch_to b exit_b
+| Ast.Break _ -> (match b.loops with (_, ex) :: _ -> terminate b (Sil.Br ex) | [] -> ())
+| Ast.Continue _ -> (match b.loops with (cont, _) :: _ -> terminate b (Sil.Br cont) | [] -> ())
+```
+
+## 9. Exercise solutions
+
+### 1 — the `guard` statement
+
+`guard cond else { stmts }` is an *inverted* `if` with no fall-through on the false edge. Lower it:
+evaluate `cond`; `cond_br` to a *continue* block (the rest of the enclosing block) and an *else*
+block; lower `stmts` into the else block — they end in `return`/`break`/`continue`, so the else
+block terminates itself and there is **no merge**. Contrast this with the value-diamond used for
+`&&`/`||`/ternary (already in `gen_expr`), which *does* merge because both arms produce a value;
+`guard`'s else arm produces nothing and leaves the scope. swiftc is the oracle for the control flow.
+
+### 2 — a textual SIL reader
+
+Lex the `--emit-sil` output (it's a tiny language: `sil @name(...)`, `bbN:`, `%n = <instr>`,
+terminators) and rebuild the `Sil.modul`. Round-trip property: `parse (emit m)` ≡ `m` (up to
+renumbering). This unlocks `--sil-opt`: read a `.sil`, run a pass, re-emit — the Phase-4 workflow for
+testing one optimization in isolation.
+
+### 3 — critical-edge splitting
+
+Build successor/predecessor sets from the terminators. An edge `u → v` is critical when `u` has ≥2
+successors and `v` has ≥2 predecessors. To split it, make a fresh block `w` with `br v`, and rewrite
+`u`'s terminator to target `w` instead of `v`. Several Phase-4 passes (e.g. inserting code "on an
+edge") need this; it's the simplest CFG-rewriting primitive.

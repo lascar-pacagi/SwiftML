@@ -1,0 +1,7 @@
+(lang dune 3.0)
+(cram enable)
+
+; The compiler is shipped as a single package so `dune exec swiftml -- …` works.
+(package
+ (name swiftml)
+ (synopsis "A Swift compiler written from scratch in OCaml (learning project)"))

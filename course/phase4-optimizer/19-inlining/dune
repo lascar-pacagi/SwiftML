@@ -1,0 +1,9 @@
+; Concept 19 — the optimizer + function inlining (inter-procedural).
+(library
+ (name swiftml_inline)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen driver)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

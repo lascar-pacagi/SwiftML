@@ -1,0 +1,131 @@
+---
+title: "14 · Memory layout"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+You've been building value types since concept 10 — structs, enums, optionals — and lowering
+them to LLVM aggregates without ever asking the obvious question: *how big are they, and where
+does each field sit?* This concept answers it. Given a type, compute its **size**, **alignment**,
+**stride**, and the **byte offset** of every stored property — the same numbers `swiftc` reports
+through `MemoryLayout<T>`, and for structs of scalars, *identical to the byte*. It's a short,
+sharp lesson in the one rule that governs all of it: **natural alignment**.
+
+(This is the Phase-3 layout chapter, built now as a backfill — it branches off `13-optionals`.)
+
+- **You implement:** the struct padding walk and the field offsets.
+- **Outcome:** `--emit-layout` matching swiftc's `MemoryLayout` on structs of scalars.
+
+## 2. Concepts in depth
+
+### Three numbers: size, alignment, stride
+
+Every type has:
+
+- **alignment** — the address multiple a value must start on (hardware likes aligned access; an
+  `Int` wants an 8-byte-aligned address). A struct's alignment is the **max** of its fields'.
+- **size** — the bytes from the start to just past the last field.
+- **stride** — the size **rounded up to the alignment**: the distance between consecutive
+  elements in an array. Size and stride differ exactly when a struct has trailing slack.
+
+The single rule that produces all of them is **natural alignment with padding**: lay the fields
+out in declaration order, and before each field, *pad* the running offset up to that field's
+alignment.
+
+### Why order changes size
+
+The consequence is the lesson:
+
+![Two structs, same fields, different order. `{Int; Bool}`: the Int fills bytes 0–7, the Bool sits at 8 → size 9, but stride 16 (rounded to the 8-byte alignment). `{Bool; Int}`: the Bool is at 0, then 7 bytes of padding push the Int to offset 8 → size 16. Same data, 16 vs 9 bytes — field order is a real performance knob.](figs/padding.png)
+
+`{ var i: Int; var b: Bool }`: `i` at offset 0 (8 bytes), `b` at offset 8 (1 byte). Size = 9.
+Alignment = 8 (the Int). Stride = round_up(9, 8) = 16.
+
+`{ var b: Bool; var i: Int }`: `b` at offset 0, but `i` needs an 8-aligned address, so **7
+padding bytes** push it to offset 8. Size = 16. The Bool's single byte cost the struct seven
+wasted ones. (This is why C programmers reorder struct fields largest-first, and why Swift's
+ABI documents field order as layout-affecting.)
+
+The walk is four lines: an offset starting at 0, a max-alignment starting at 1; for each field,
+`offset = round_up(offset, field.align)` is its start, then `offset += field.size` and
+`align = max(align, field.align)`. The struct's size is the final offset; its alignment the
+final max. Field offsets are the same walk, remembering each start. That's `TODO(14a)`/`(14b)`.
+
+### Stride vs size, and arrays
+
+Why two numbers? Because an array of `{Int; Bool}` can't pack elements 9 bytes apart — the
+second element's `Int` would be misaligned. Stride (16) is the real spacing; size (9) is the
+meaningful content. `MemoryLayout<T>.size` and `.stride` expose both, and the gap is where
+"struct of mostly-Bools wastes memory" comes from. Nested structs compose by the same rule: a
+struct field contributes its *own* size and alignment to the parent's walk.
+
+### How swiftc does it — spare-bit packing (the honest divergence)
+
+Structs of scalars we nail exactly. **Enums and optionals we don't** — and the reason is the
+most beautiful trick in Swift's layout. Our enum is `{ i64 tag, payload }` — a whole word just
+for the tag. swiftc is cleverer: it finds **spare bits** in the payload (bit patterns the
+payload can never use) and stores the tag *there*. The killer case: `Optional<SomeClass>`. A
+class reference is a pointer; pointers are never `0` for a valid object; so swiftc represents
+`.none` as the all-zeros pointer and `.some(ref)` as the pointer itself — `Optional<SomeClass>`
+is **pointer-sized, zero overhead**, with `nil` == null. Our model would make it 16 bytes
+(tag + pointer). swiftc's `MemoryLayout<Int?>` is 9 (a spare-bit case in the Int's high byte);
+ours is 16. That's a documented divergence — and a glimpse of why real layout is a research
+topic (`TypeLayout.rst` is dozens of pages). The principles you implement here are universal;
+the packing is the optimization on top.
+
+> Oracle: `swift/docs/ABI/TypeLayout.rst` (the spec — read the "Single-Payload Enums" and
+> "Multi-Payload Enums" sections for the spare-bit machinery), `GenStruct.cpp`/`GenEnum.cpp`
+> (the IR-level layout), and `MemoryLayout<T>` (the behavioral oracle you check against).
+
+## 3. Build it, step by step
+
+In `layout.ml`:
+
+1. **`TODO(14a)` — `struct_info`**: the padding walk. `off` from 0, `align` from 1; per field,
+   `off := round_up off field.align + field.size`, `align := max align field.align`; return
+   `{ size = off; align }`.
+2. **`TODO(14b)` — `field_offsets`**: the same walk, returning `(name, round_up off field.align)`
+   per field and advancing `off`.
+
+The dispatch, the scalar/enum/optional sizes, and `stride` are given. Reference:
+`solution/layout.ml`.
+
+## 4. Test it
+
+```bash
+make lab C=phase3-value-types/14-memory-layout
+```
+
+cram: the four-struct layout (`P`, `Mixed`, `Mixed2` with `size=9`, `Three`) and offsets — all
+matching swiftc's `MemoryLayout`; nested struct composition. alcotest: scalar sizes/strides, the
+order-dependent padding (9 vs 16), field offsets, and nesting.
+
+## 5. Benchmark it
+
+Reorder a real struct's fields largest-alignment-first and watch the size shrink — then size an
+array of a million of them. The byte you save per element times a million is the lesson:
+layout is a memory-bandwidth knob, and `MemoryLayout` is how you measure it.
+
+## 6. Exercises
+
+1. **Single-payload spare bits.** Make `Optional<Bool>` size 1 (a Bool only uses `0`/`1`, so
+   `2` is a spare value for `.none`) instead of `{i64 tag, i64}`. The simplest spare-bit case.
+2. **Enum tag sizing.** A payload-free enum with ≤256 cases needs only a 1-byte tag, not a word.
+   Compute the minimal tag size and shrink the layout — matching swiftc's `MemoryLayout<E>` of 1.
+3. **`offset(of:)` for nested paths.** `\Outer.inner.field` — compose offsets down a key path.
+4. **Reorder-to-pack.** A pass that sorts a struct's fields by descending alignment and reports
+   the bytes saved — the optimization C does by hand and Swift's ABI permits the compiler to do.
+
+## 7. Recap & what's next
+
+Layout is one rule — natural alignment + padding — applied field by field: size is the end
+offset, alignment the max, stride the size rounded up, and field order is a real size knob.
+Structs of scalars match swiftc to the byte; enums and optionals are where swiftc's spare-bit
+packing pulls ahead, which is the next layer of the same idea.
+
+This closes the deferred Phase-3 layout chapter. Back in Phase 7, **31-stdlib-array-string**
+builds `Array`/`String` on the heap — where these size/stride numbers stop being academic
+(an array allocates `count * stride` bytes and addresses element `i` at `base + i * stride`).

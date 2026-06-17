@@ -1,0 +1,9 @@
+; Concept 25 — classes: reference semantics, init, inheritance, override, VTABLES.
+(library
+ (name swiftml_classes)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen driver)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

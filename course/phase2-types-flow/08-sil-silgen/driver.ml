@@ -1,0 +1,49 @@
+(* The driver — a *contract* (given). Ties the Phase-2 front end together. Concept 08 adds
+   `--emit-sil` (lex -> parse -> sema -> SILGen -> verify -> print). Running the SIL is
+   concept 09 (IRGen -> LLVM). Mirrors swift/lib/FrontendTool at small scale. *)
+
+type emit =
+  | Tokens
+  | Ast
+  | Check (* lex -> parse -> sema, then stop *)
+  | Sil (* + SILGen, print the SIL module *)
+
+let read_file (path : string) : string =
+  let ic = open_in_bin path in
+  Fun.protect ~finally:(fun () -> close_in ic) (fun () -> really_input_string ic (in_channel_length ic))
+
+let frontend (src : string) (diags : Diagnostics.sink) : Ast.program =
+  let toks = Lexer.tokenize (Lexer.create src) in
+  let prog = Parser.parse_program (Parser.create toks diags) in
+  Sema.check prog diags;
+  prog
+
+let bail_on_errors (diags : Diagnostics.sink) : unit =
+  if Diagnostics.has_errors diags then (
+    Diagnostics.print diags;
+    exit 1)
+
+let compile_file ~(src_path : string) ~(emit : emit) : unit =
+  let src = read_file src_path in
+  let diags = Diagnostics.create () in
+  match emit with
+  | Tokens ->
+      Lexer.tokenize (Lexer.create src)
+      |> List.iter (fun (t : Token.t) -> print_endline (Token.string_of_kind t.Token.kind))
+  | Ast ->
+      let prog = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src)) diags) in
+      bail_on_errors diags;
+      print_endline (Ast.dump_program prog)
+  | Check ->
+      let (_ : Ast.program) = frontend src diags in
+      bail_on_errors diags
+  | Sil ->
+      let prog = frontend src diags in
+      bail_on_errors diags;
+      let m = Silgen.lower prog in
+      (match Sil.verify m with
+      | [] -> ()
+      | errs ->
+          List.iter (fun e -> prerr_endline ("SIL verification error: " ^ e)) errs;
+          exit 1);
+      print_endline (Sil.string_of_module m)

@@ -1,0 +1,256 @@
+---
+title: "22 · Generic functions"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+Concept 21 gave you one way to write code against a protocol: the existential, `any Shape` — a
+box holding *some unknown conformer*. Generics are the **other** way:
+
+```swift
+func pick<T: Shape>(_ a: T, _ b: T) -> T { ... }
+```
+
+Here `T` is not a box — it's a **type parameter**: unknown to the function, but *statically
+consistent*. Both arguments are the *same* `T`; the result is that same `T` too, so the caller
+gets back exactly what it put in (`pick(c1, c2).r` works — try that with `any Shape`!). This
+concept builds generic functions end to end: the syntax, the call-site **inference**, the
+constraint checking, and the runtime model — which turns out to reuse almost everything you built
+for existentials, on purpose.
+
+- **You implement:** the call-site inference (sema) and the call lowering (silgen).
+- **Outcome:** generic programs run — matching swiftc, including under `-O`.
+
+## 2. Concepts in depth
+
+### Static identity: what `T` adds over `any P`
+
+An existential erases the type *per value*; a type parameter erases it *per call*, keeping
+identity. Three consequences, all checkable statically:
+
+1. `pick(A(x:3), B())` is an error — `conflicting arguments to generic parameter 'T' ('A' vs.
+   'B')`. With `any P` parameters it would be fine (each box is independent).
+2. The return type `T` *substitutes*: at `pick(A(x:3), A(x:8))`, the result IS an `A` — fields
+   and all. An `any P` result would expose only `P`'s requirements forever.
+3. Inside the body, `T` is opaque-but-constrained: `a.v()` is allowed because `T: P` and `v` is
+   a requirement; `a.w()` is `value of type 'T' has no member 'w'` even if every conformer has a
+   `w` — the *constraint* is the whole interface. That's the difference between Swift generics
+   and C++ templates: a generic body is checked **once, against the constraint**, not per
+   instantiation. (No SFINAE, no post-instantiation error novels.)
+
+### Inference: the call site solves for T
+
+There's no `pick<Circle>(...)` spelling needed — `T` is inferred from the arguments. The
+algorithm you'll implement is the smallest real unifier:
+
+- walk parameters and arguments together; every parameter typed `T` *binds* `T` to its
+  argument's type — the first binding wins, later ones must **agree**;
+- each binding must **satisfy its constraint** (`struct_conforms` from concept 21 — the same
+  predicate, third customer);
+- the declared return type has the bindings **substituted** in.
+
+swiftc's version of this is the constraint solver (`CSGen`/`CSSolver`) — ours is the degenerate
+single-variable case, but the shape (collect constraints, solve, substitute) is the same.
+
+### The runtime model: one copy, erased to the constraint
+
+How does *one* compiled function body handle every conformer? The answer this concept teaches —
+and the reason 21 came first — is **erasure**:
+
+![The unspecialized lowering: one compiled copy of `pick`, with `T` erased to its constraint's existential. The call site wraps concrete arguments (`init_existential`) and opens the `T`-result back to the statically-known type (`open_existential`). The body's `a.v()` is witness dispatch — it was compiled not knowing `T`.](figs/erasure.png)
+
+Inside the compiled body, a `T` value *is* an `any P` — same `{payload, witness-table}` pair,
+same dispatch. What's new is the **call boundary**:
+
+- **wrap**: each argument in a `T` position gets `init_existential` (a concrete `A` becomes the
+  pair; a value that's already erased — a generic calling a generic — passes through untouched);
+- **open**: if the declared result is `T` and the caller inferred `T = A`, the call's result is
+  `open_existential`-ed back to `$A` — a *statically checked* unwrap. No tag test, no trap: the
+  type system proved the payload is an `A`, because the only way an `A`-bound call returns is
+  with a `T` that *is* `A`. (swiftc spells this `open_existential` + an unchecked take.)
+
+This is faithfully swiftc's **unspecialized** path (its generic ABI passes values indirectly
+plus witness tables as hidden arguments — our existential rep is that, packaged). It's also
+deliberately the *slow* path: every call wraps, every method inside is dynamic, and the inliner
+is walled off. Concept 24 is the payoff: **specialization** clones `pick` per concrete type,
+turning every `T` into `A`, every witness dispatch into a direct call, and feeding the whole
+Phase-4 cascade. You're building the baseline it beats.
+
+### Why v0 requires a constraint
+
+`func ident<T>(_ x: T) -> T` is legal Swift — but with no constraint there's no witness table
+and, more fundamentally, no *size*: our erased representation borrows the constraint's
+existential buffer. swiftc solves this with runtime **type metadata** (every type, even `Int`,
+has a metadata record carrying size/alignment/copy functions — that's the "value witness table",
+concept 23's subject). We don't have metadata yet, so v0 rejects unconstrained parameters with a
+clear message. The exercise sketches the metadata route.
+
+> Oracle: `swift/docs/Generics.rst` is the canonical design document; `CSGen.cpp` for inference;
+> the indirect calling convention is in `swift/lib/SILGen` (emitApply, indirect parameters).
+
+## 3. Build it, step by step
+
+1. **`sema.ml` — `infer_generic_call`** (`TODO(22-sema)`): arity check; walk `ptypes`/args —
+   `TVar (n, _)` positions infer and bind (conflict ⇒ swiftc's wording), others `check_expr`;
+   then each `(n, c)` binding must conform (`struct_conforms`, or an equal-constraint `TVar` for
+   generic-from-generic); finally substitute into the return.
+2. **`silgen.ml` — the call lowering** (`TODO(22-silgen)`): `T`-position args lower with
+   `gen_expr`, record the binding, wrap concrete structs with `Init_existential`; `Apply` the
+   single erased copy (result type = declared return, erased); `Open_existential` the result if
+   the binding was concrete.
+
+Everything else — parsing `<T: P>`/`where`, `TVar` scoping, the erased lowering of the generic
+function itself, IRGen's `open_existential` — is given.
+
+Reference: `solution/sema.ml`, `solution/silgen.ml`.
+
+## 4. Test it
+
+```bash
+make lab C=phase5-generics/22-generics
+```
+
+cram: one `@pick` in SIL; `open_existential` at the call; generic programs (incl. a generic
+calling a generic, and a `where` clause) run with `-O` matching swiftc; the three diagnostics
+match swiftc's wording. alcotest: inference accept/conflict/constraint, the v0 unconstrained
+rejection, wrap/open counts in SIL, and `-O` validity.
+
+## 5. Benchmark it
+
+Time `apply3(Inc(by: 5), x)` in a hot loop against a hand-monomorphized version: the generic
+pays wrap + dynamic dispatch per call and blocks inlining. Hold that number — concept 24's
+specializer should close the gap to zero, and *measuring the gap now* is what makes 24's gate
+meaningful.
+
+## 6. Exercises
+
+1. **Multiple type parameters.** `func zip2<A: P, B: Q>(_ a: A, _ b: B) -> Int` — the inference
+   generalizes to a per-parameter binding map; conflicts stay per-parameter.
+2. **Unconstrained `T` via boxing.** Give every type a minimal metadata record (size in words)
+   and represent unconstrained `T` as `{ [K x i64], ptr metadata }`; reject types over K words.
+   You've just invented the value-witness direction concept 23 completes.
+3. **Generic methods.** `func scaled<T: Factor>(_ by: T) -> Int` inside a struct — the method's
+   generics compose with `self`; the lowering adds the erased parameter after `self`.
+4. **Explicit specialization, by hand.** Write `pick_A` (the monomorphized clone) yourself and
+   diff its SIL against the generic's — you're previewing exactly what concept 24 automates.
+
+## 7. Recap & what's next
+
+A type parameter is a *statically consistent* unknown: inferred per call, checked against its
+constraint once, erased to the constraint's existential in the one compiled copy — wrap going
+in, open coming out. Generics and existentials share a runtime model; they differ in what the
+*type system* knows, and that static knowledge is unexploited fuel.
+
+Next, **23-existentials** goes deeper into the box itself — what happens when values outgrow
+the inline buffer (heap boxing), how copies/destroys work for an unknown type (**value witness
+tables**), and `as?` opening. Then **24-specialization** burns the static fuel: clone,
+devirtualize, inline, and watch the Phase-4 pipeline erase the entire abstraction cost.
+
+## 8. Appendix — full solution
+
+```ocaml
+(* sema: the inference *)
+and infer_generic_call f generics ptypes ret (args : Ast.arg list) span : Types.ty =
+  let exprs = List.map snd args in
+  let np = List.length ptypes and na = List.length exprs in
+  if np <> na then (
+    err span (Printf.sprintf "function '%s' expects %d argument(s) but %d given" f np na);
+    ret)
+  else begin
+    let bind = ref [] in
+    List.iter2
+      (fun pt a ->
+        match pt with
+        | Types.TVar (n, _) -> (
+            let t = infer a in
+            match List.assoc_opt n !bind with
+            | None -> bind := (n, t) :: !bind
+            | Some t0 ->
+                if not (Types.equal t0 t) then
+                  err span (Printf.sprintf
+                    "conflicting arguments to generic parameter '%s' ('%s' vs. '%s')"
+                    n (Types.string_of_ty t0) (Types.string_of_ty t)))
+        | _ -> check_expr a pt)
+      ptypes exprs;
+    List.iter
+      (fun (n, c) ->
+        match List.assoc_opt n !bind with
+        | Some (Types.TStruct sn) ->
+            if not (struct_conforms sn c) then
+              err span (Printf.sprintf "global function '%s' requires that '%s' conform to '%s'" f sn c)
+        | Some (Types.TVar (_, c')) when c' = c -> ()
+        | Some t ->
+            err span (Printf.sprintf "global function '%s' requires that '%s' conform to '%s'"
+                        f (Types.string_of_ty t) c)
+        | None -> ())
+      generics;
+    match ret with
+    | Types.TVar (n, _) -> ( match List.assoc_opt n !bind with Some t -> t | None -> ret)
+    | t -> t
+  end
+
+(* silgen: the call lowering *)
+else if Hashtbl.mem b.gfuncs f then (
+  let _, ptypes, ret = Hashtbl.find b.gfuncs f in
+  let binding = ref [] in
+  let argvs =
+    List.map2
+      (fun pt (_, e) ->
+        match pt with
+        | Types.TVar (n, c) -> (
+            let v = gen_expr b e in
+            if not (List.mem_assoc n !binding) then binding := (n, vty b v) :: !binding;
+            match vty b v with
+            | Types.TProto _ -> v
+            | Types.TStruct sn -> emit b (Sil.Init_existential (v, sn, c)) (Types.TProto c)
+            | _ -> assert false)
+        | _ -> gen_expr_as b e pt)
+      ptypes args
+  in
+  let erased_ret = match ret with Types.TVar (_, c) -> Types.TProto c | t -> t in
+  let fr = emit b (Sil.Func_ref f) erased_ret in
+  let callv = emit b (Sil.Apply (fr, argvs)) erased_ret in
+  match ret with
+  | Types.TVar (n, _) -> (
+      match List.assoc_opt n !binding with
+      | Some (Types.TStruct sn) -> emit b (Sil.Open_existential (callv, sn)) (Types.TStruct sn)
+      | _ -> callv)
+  | _ -> callv)
+```
+
+## 9. Exercise solutions
+
+### 1 — multiple type parameters
+
+The `bind` map already keys by parameter name; nothing changes in the algorithm — only the
+conformance pass iterates all of `generics`. The interesting new error is a return type
+mentioning an *unbound* parameter (no argument position used it): swiftc rejects the
+declaration ("generic parameter 'B' is not used in function signature" appears when it's used
+nowhere; if used only in the return, inference fails at the call) — pick the declaration-time
+check, it's kinder.
+
+### 2 — unconstrained T
+
+Metadata-lite: emit one global per struct `@meta.S = { i64 words }` and represent unconstrained
+`T` as `{ [K x i64], ptr }` where the ptr is metadata instead of a witness table. Copies inside
+the generic body are bitwise (fine for our value types — no ARC yet), so the only metadata
+consumer is the open at the call boundary. The deep version — copy/destroy function pointers in
+the metadata — is the value witness table, concept 23.
+
+### 3 — generic methods
+
+Parse generics after the method name; the method's `gfuncs` entry includes `self`'s concrete
+type as parameter 0 (not erased — `self` is known!). Lowering: `S.m` takes `(%S, any P, ...)`.
+Dispatch on a generic method through a *protocol requirement* is where this gets deep (witness
+thunks per instantiation) — out of scope until specialization exists.
+
+### 4 — by-hand specialization
+
+`func pick_A(_ a: A, _ b: A) -> A` compiles to direct calls on `%A` values — no
+`init_existential`, no `witness_method`, and after `-O` the comparisons inline to field reads.
+Diff `--sil-opt` outputs: every line that differs is a line concept 24 will delete
+automatically.
+```

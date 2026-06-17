@@ -1,0 +1,9 @@
+; The `swiftml2` binary for Phase 2 — links the latest concept's stage library (a
+; superset compiler), currently concept 09.
+(executable
+ (name main)
+ (public_name swiftml2)
+ (package swiftml)
+ (libraries swiftml_llvm)
+ (flags
+  (:standard -warn-error -a)))

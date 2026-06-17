@@ -1,0 +1,9 @@
+; The `swiftml` binary for Phase 1 — assembled from the four concept-stage libraries.
+; Depends on swiftml_codegen, which transitively pulls in sema → parser → lexer.
+(executable
+ (name main)
+ (public_name swiftml)
+ (package swiftml)
+ (libraries swiftml_codegen)
+ (flags
+  (:standard -warn-error -a)))

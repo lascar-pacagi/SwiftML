@@ -1,0 +1,225 @@
+---
+title: "40 · Macros — compile-time code that writes code (the capstone)"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+A **macro** is code that runs at compile time and produces *more code*. `#line` becomes the literal
+`1`; `#assert(x > 0)` becomes `if x > 0 { } else { fatalError() }`. The compiler **expands** the
+macro — rewrites the syntax tree — *before* the type checker ever runs, so everything downstream
+(sema, SILGen, both backends) sees only ordinary code and checks it exactly as if you'd written the
+expansion by hand. That's the whole idea, and it's swiftc's model: macros are an early, syntactic
+`AST → AST` transform.
+
+This is the project's **capstone**. With it, the front end is complete: a program flows lex → parse →
+**expand macros** → type-check → SILGen → optimize → (LLVM **or** our ARM64 backend) → native. Two
+backends, a real optimizer, a from-scratch register allocator and debugger, the whole value/reference
+type system, generics, ARC, closures, errors, a stdlib, concurrency — and now metaprogramming.
+
+- **You implement:** the macro expansion rules — what `#line`/`#column` and `#assert` turn into.
+- **Outcome:** `#line` matches `swiftc`'s line numbers; `#assert(false)` traps like `swiftc`'s
+  `assert`; an unknown macro is a clean type error.
+
+> **New to macros?** Think of a macro as a *template the compiler fills in*. `#line` is replaced by
+> the line it sits on; `#assert(c)` is replaced by a check that crashes if `c` is false. You write
+> `#assert(balance >= 0)` and the compiler expands it to the `if`/crash — you didn't write the `if`,
+> the macro did. Metaprogramming: programs that write programs.
+
+## 2. Concepts in depth
+
+### Expand before you check
+
+![Macros are an AST→AST rewrite that runs BEFORE the type checker. `#line` becomes an integer literal, `#assert(c)` becomes `if c {} else { fatalError() }`; the expander walks the tree replacing each macro node, then hands the result to sema — so nothing downstream ever sees a macro, only ordinary code it checks and lowers. Real macro systems also let users define macros (a plugin returning generated syntax) — same model.](figs/macros.png)
+
+The architecture is one decision: **macros expand early**. After parsing, before type-checking, a
+pass walks the AST and replaces every macro node with the AST it stands for. By the time sema runs,
+there are no macros left — only the expansion, which sema type-checks like any other code. SILGen
+and the backends never even know macros existed.
+
+This early-expansion model is why macros are *syntactic* (they manipulate trees, not values) and why
+the expansion is *checked* (a macro that expands to ill-typed code is an error at the expansion site,
+caught by the normal type checker). It's the same reason C's `#define` is fragile (it expands *text*,
+before parsing, so it can produce un-parseable garbage) and Swift's macros are safe (they expand
+*typed syntax trees*, after parsing). We do the Swift thing: expand the AST.
+
+### The expander is a tree walk + the rules
+
+Two parts:
+
+1. **The walk** (given): a recursive `ex`/`exs` that maps over every expression and statement,
+   rebuilding the tree. At each macro node it calls your rule. This is mechanical — one case per AST
+   variant — but it's what *reaches* a macro wherever it hides (in a `print` argument, a `let`
+   initializer, a `return`, deep in a loop). Note the OCaml wrinkle the walk handles: statement
+   variants are *inline records*, so each is destructured and rebuilt field by field.
+2. **The rules** (*your hole*): given a macro's name (and arguments), return the AST it expands to.
+   - `#line` → `Int_lit(span.line)` — the source line. `#column` → `Int_lit(span.col)`. These are
+     **expression** macros: they stand in for a value.
+   - `#assert(cond)` → `if cond { } else { fatalError() }` — a **statement** macro: it stands in for
+     control flow. `fatalError()` is a given primitive that SILGen lowers to a trap (`Sil.Trap`, exit
+     133 — the same trap as a failed force-unwrap, and as swiftc's `assert`).
+   - an unknown macro is left in place; the type checker then rejects it (*"unknown macro '#x'"*).
+
+### Expression macros vs statement macros
+
+`#line` produces a *value*, so it expands wherever an expression goes: `print(#line)`, `let x =
+#line + 5`, `return #line`. `#assert(c)` produces *control flow* (an `if`), which isn't a value, so
+it expands at *statement* position: `#assert(c)` on its own line. The walk distinguishes them — a
+macro that's an entire `Expr_stmt` gets the statement rule (and can become an `if`); a macro nested
+inside an expression gets the expression rule. That split — expression-position vs statement-position
+expansion — is exactly how real macro systems classify macros (`@freestanding(expression)` vs
+`@freestanding(declaration)`/`statement`).
+
+### Why this matters: the same machine, one level up
+
+Look at what the expansion *reuses*: `#assert` becomes an `if` (concept 6) calling `fatalError`,
+which traps (concept 13). `#line` becomes an integer literal. The macro doesn't add new compiler
+machinery — it *composes existing AST*. That's the power and the safety of macros: they're a
+controlled way to generate code out of the language's own constructs, checked by the language's own
+rules. Everything you built — types, control flow, traps — is what a macro expands *into*.
+
+> Oracle: Swift's macro system (`SE-0382` "Expression Macros", `SE-0389` "Attached Macros"); the
+> magic identifiers (`#line`, `#column`, `#function`, `#fileID`) in the parser; and the principle
+> from `swift/lib/Sema` that macro expansions are type-checked as ordinary code.
+
+## 3. Build it, step by step
+
+In `macros.ml`:
+
+1. **`TODO(40a)` — `expand_macro_expr name args span`**: `"line"` → `int_lit span.Token.lo.Token.line
+   span`; `"column"` → `int_lit span.Token.lo.Token.col span`; anything else → `Ast.MacroExpr (other,
+   [], span)` (leave it for sema to reject).
+2. **`TODO(40b)` — `expand_macro_stmt name args span`**: `("assert", [cond])` →
+   `Some (Ast.If { cond; then_blk = []; else_blk = Some [fatal_error span]; span })`; otherwise
+   `None`.
+
+The tree walk (`ex`/`exs`/`expand_program`), the `fatalError()` primitive (→ `Sil.Trap`), and the
+wiring of `Macros.expand_program` into the front end (before `Sema.check`) are given. Reference:
+`solution/macros.ml`. Run with `make lab C=phase8-arm64-backend/40-macros`.
+
+## 4. Test it
+
+```bash
+make lab C=phase8-arm64-backend/40-macros
+```
+
+cram: `#line`/`#column` produce the right numbers (matching `swiftc`), nested in ordinary
+expressions; `#assert(false)` traps (exit 133) like `swiftc`'s `assert`; an unknown macro is a clean
+type error. alcotest: `#line` expands to the literal `1`, no `MacroExpr` survives expansion,
+`#assert` expands to an `if`/`fatalError`, and an unknown macro is rejected by sema.
+
+## 5. Benchmark it
+
+Macros have *zero* runtime cost — they're gone before code generation; `print(#line)` compiles to
+exactly `print(1)`. The cost is at *compile* time (one extra AST pass), and the benefit is
+expressiveness: `#assert(c)` is one token where the expansion is five. The real-world payoff (and
+why Swift invested in macros) is eliminating boilerplate — `@Observable`, `#Predicate`, derived
+conformances — generated correctly, checked like hand-written code. The trade is compile time for
+written code, which is almost always worth it.
+
+## 6. Exercises
+
+1. **`#function` / `#fileID`.** `#function` → a string literal of the enclosing function's name
+   (thread the current function through the walk); `#fileID` → the source path. The rest of Swift's
+   magic identifiers.
+2. **`#stringify(e)`.** The canonical example: `#stringify(a + b)` → `(a + b, "a + b")` — a tuple of
+   the value and a *string of its source*. Needs the source text of the argument (capture the span's
+   slice, or pretty-print the AST). Shows a macro that reads its argument's *syntax*.
+3. **User-defined macros (the plugin model).** Let a program *declare* a macro whose expansion is
+   computed by code — the real Swift model: a macro is a function `(argument syntax) → generated
+   syntax`. Build a tiny interpreter for macro bodies, or a registration table of OCaml expanders.
+4. **Hygiene.** Names a macro introduces must not capture (or be captured by) the call site's names.
+   Rename macro-generated identifiers to fresh ones — the subtle correctness property real macro
+   systems guarantee.
+5. **Modules & incremental build.** Survey the rest of a real toolchain: `import` and separate
+   compilation (each file → a `.o`, linked), and rebuilding only the files whose inputs changed (a
+   dependency graph + timestamps). The plumbing that turns a compiler into a *build system*.
+
+## 7. Recap & what's next — the project is complete
+
+A macro is compile-time code that writes code. We expand macros **early** — an `AST → AST` rewrite
+before the type checker — so the rest of the compiler sees only ordinary, checkable code. `#line`
+becomes an integer literal; `#assert` becomes a conditional trap; unknown macros are rejected. The
+expansion *composes the language's own constructs*, which is what makes macros powerful and safe.
+
+**The project is done.** From a single integer in Phase 0 to a Swift compiler subset that:
+
+- parses and type-checks a large language — value types (structs, enums, optionals, tuples), pattern
+  matching, generics & protocols, classes & inheritance, ARC & ownership, closures, error handling,
+  a copy-on-write `Array`/`String` and the `map`/`filter`/`reduce` stdlib, async/await & actors, and
+  now macros;
+- lowers through a real **SIL** with an **optimizer** (mem2reg/SSA, const-fold, CSE/GVN, inlining,
+  specialization, ARC optimization) competitive with `swiftc -O`;
+- emits via **two backends** — the LLVM spine *and* a from-scratch **ARM64** backend (instruction
+  selection, a register-allocation ladder, the AAPCS64 ABI, peephole, DWARF debug info);
+- verified at every step against the real `swiftc`.
+
+Two backends, one front end, forty concepts — a complete, working, *honest* compiler you built by
+hand. **M0 through M8, and the tail, all green.**
+
+## 8. Appendix — full solution
+
+```ocaml
+(* 40a — expression macros *)
+let expand_macro_expr (name : string) (_args : Ast.expr list) (span : Token.span) : Ast.expr =
+  match name with
+  | "line"   -> int_lit span.Token.lo.Token.line span
+  | "column" -> int_lit span.Token.lo.Token.col span
+  | other    -> Ast.MacroExpr (other, [], span)   (* unknown — sema rejects it *)
+
+(* 40b — statement macros *)
+let expand_macro_stmt (name : string) (args : Ast.expr list) (span : Token.span) : Ast.stmt option =
+  match (name, args) with
+  | "assert", [ cond ] -> Some (Ast.If { cond; then_blk = []; else_blk = Some [ fatal_error span ]; span })
+  | _ -> None
+```
+
+The given walk + wiring:
+
+```ocaml
+let rec ex e = match e with
+  | Ast.MacroExpr (name, args, span) -> expand_macro_expr name (List.map ex args) span
+  | … (* map over every sub-expression *) …
+and exs s = match s with
+  | Ast.Expr_stmt (Ast.MacroExpr (name, args, sp), _) ->
+      (match expand_macro_stmt name (List.map ex args) sp with Some s' -> s' | None -> …)
+  | … (* destructure each inline-record statement, recurse *) …
+
+(* in the driver's frontend, BEFORE Sema.check: *)
+let prog = Macros.expand_program prog in
+Sema.check prog diags;
+```
+
+## 9. Exercise solutions
+
+### 1 — #function / #fileID
+Thread a `current_function : string` through the walk (set when entering each `func`/method/init).
+`#function` → `String_lit(current_function)`. `#fileID` → `String_lit(source_path)` (pass the path
+into `expand_program`). These are the rest of the location magic-identifiers, all pure expansion.
+
+### 2 — #stringify
+`#stringify(e)` → a tuple `(e, "<source of e>")`. Get the source string by slicing the original
+text with `e`'s span (`span.lo.offset .. span.hi.offset`) or by pretty-printing the AST. You'll need
+a tuple type/expr (a small addition). It demonstrates the defining feature: a macro that inspects its
+argument's *syntax*, not its value.
+
+### 3 — user-defined macros
+A real macro is a function from syntax to syntax. Add `macro M(...) = <body>` declarations and a
+registry mapping names to expander functions (interpreted from the body, or OCaml closures). The
+expander, on `#M(args)`, looks up `M` and runs it on the argument ASTs to get the expansion — the
+compiler-plugin model, in miniature.
+
+### 4 — hygiene
+When a macro introduces a name (`let tmp = …`), rename it to a fresh, un-spellable symbol so it can't
+shadow or be shadowed by names at the call site. Maintain a counter; every macro-generated binding
+gets `tmp$<n>`. Hygiene is the property that makes macros *compose* — the user's `tmp` and the
+macro's `tmp` never collide.
+
+### 5 — modules & incremental
+`import` + separate compilation: compile each file to a `.o` (or `.ll`), exposing/consuming a symbol
+table, and link them. Incremental: build a dependency graph (which files import which) and recompile
+only files whose sources (or dependencies' interfaces) changed since the last build, by timestamp or
+content hash. This is the step from *compiler* to *build system* — the last mile of a real toolchain.
+```

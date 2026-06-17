@@ -1,0 +1,3 @@
+(executable (name lab) (modules lab) (libraries swiftml_regalloc) (flags (:standard -warn-error -a)))
+(cram (deps lab.exe))
+(tests (names test_regalloc) (modules test_regalloc) (libraries alcotest swiftml_regalloc) (flags (:standard -warn-error -a)))

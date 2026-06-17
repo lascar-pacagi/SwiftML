@@ -1,0 +1,193 @@
+---
+title: "39 · Actors — serialized isolation"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+Concurrency's great hazard is the **data race**: two tasks touching the same mutable state at once,
+corrupting it. Swift's answer is the **actor** — a reference type that *serializes* access to its
+state, so only one task touches it at a time. The remarkable part is *how* Swift guarantees it: not
+with locks you might forget, but at **compile time**. You cannot even write the racy code — the type
+checker rejects a synchronous reach into an actor from outside, demanding `await` (a hop onto the
+actor's executor) instead.
+
+This concept builds that. An `actor` is, at runtime, just a class (concept 25's machinery — a heap
+object with methods). The whole feature is one rule in the **type checker**: cross-actor access must
+be `await`ed. That single rule is what makes concurrent Swift data-race-free *by construction*.
+
+- **You implement:** the actor-isolation rule — reject a synchronous, non-awaited call to an actor
+  method from a nonisolated context.
+- **Outcome:** actors run and match `swiftc`; synchronous cross-actor access is a compile error with
+  `swiftc`'s wording.
+
+> **New to actors?** An `actor` looks like a class, but its mutable state is *isolated*: code outside
+> the actor can't touch it directly. To call an actor's method from outside you write
+> `await someActor.method()` — the `await` marks that you might *suspend* while the actor finishes
+> whatever it's doing, then your call runs with the actor to itself. One-at-a-time access, enforced.
+
+## 2. Concepts in depth
+
+### Isolation is a compile-time rule
+
+![Actor isolation. An actor's state is reachable from outside ONLY through `await` — a hop onto the actor's executor, which serializes access. A synchronous call is a compile error: "actor-isolated … in a synchronous nonisolated context." Inside the actor, self-access is direct. A regular class has no isolation. The runtime is the class machinery; the value of actors is the compile-time guarantee.](figs/actors.png)
+
+Here is the entire rule. A call `a.method()` where `a` has actor type is **isolated** — only legal
+from a context that's allowed to touch the actor's state:
+
+- **Inside the actor** (you're executing one of the actor's own methods, so `current_class` is the
+  actor): synchronous access is fine. `self.balance += n` just works; calling another of the actor's
+  methods is a plain call.
+- **Outside the actor** (a nonisolated context — top-level code, a different type's method): you may
+  only reach in with **`await`**. `await a.method()` is the *hop*: it suspends if the actor is busy,
+  runs your call when the actor is free, and resumes you. A bare `a.method()` is a **compile error**.
+
+So the checker needs three facts at a call to `a.method()`: is `a`'s type an actor? are we under an
+`await`? are we inside that actor? If actor-and-not-awaited-and-not-inside, reject. That's `TODO(39)`
+— a few lines, and it's the heart of Swift concurrency safety.
+
+### Tracking "are we under `await`?"
+
+The one piece of state the rule needs is whether the call sits under an `await`. We add an `in_await`
+flag: checking `Await e`'s operand sets it true (and restores it after). So in `await a.method()`,
+when we reach the `Method_call`, `in_await` is true and the call is allowed; in a bare `a.method()`,
+it's false and we reject. (We also track `current_class` — already there from classes — to allow
+synchronous access *inside* the actor.) The set of actor names is collected up front from the
+declarations.
+
+### An actor is a class at runtime
+
+Everything else — the `actor` keyword, the heap object, the `init`, the methods, dynamic dispatch —
+**reuses concept 25's class machinery**. We parse `actor X { … }` exactly like `class X { … }`
+(setting an `is_actor` flag), and lower it identically: `Alloc_ref`, a vtable, method dispatch. The
+only divergence is in the type checker. This is faithful to swiftc: an actor *is* a reference type;
+its special-ness is the isolation the compiler enforces, plus (in a real runtime) the serial
+executor it runs on.
+
+### Why our runtime serialization is "free" (the honest part)
+
+In real Swift, the *runtime* enforcement of "one task at a time" is the actor's **serial executor** —
+a queue that runs the actor's submitted work one item at a time, even on a multi-threaded global
+executor. Our executor (concept 38) is **single-threaded and cooperative**, so there's no true
+parallelism to serialize against — the runtime serialization is automatic and degenerate. That's why
+this concept's *value* is the **compile-time rule**, not a runtime queue. The honest framing: we
+build the part that makes actors *safe* (the type rule, which is real and matches swiftc), and note
+that the runtime queue-hop a concurrent executor needs is the same `await`-suspend mechanism from
+concept 38, here trivial.
+
+> Oracle: `swift/lib/Sema/TypeCheckConcurrency.cpp` (the `ActorIsolation` checker — `SE-0306`);
+> `SerialExecutor` in `_Concurrency`. The diagnostic we match — *"call to actor-isolated instance
+> method '…' in a synchronous nonisolated context"* — is swiftc's, near-verbatim.
+
+## 3. Build it, step by step
+
+In `sema.ml`, in the `Method_call` handler's `TClass cn` case, add the isolation check. Given:
+`actors` (the set of actor names), `in_await` (true under an `await`), `current_class` (the type
+whose method we're checking), and `m`/`span`. Emit
+`err span "call to actor-isolated instance method '%s' in a synchronous nonisolated context"` when
+**all three** hold: `Hashtbl.mem actors cn`, `not !in_await`, and `!current_class <> Some cn`. Then
+fall through to the normal method lookup. Reference: `solution/sema.ml`. Run with
+`make lab C=phase8-arm64-backend/39-actors`.
+
+## 4. Test it
+
+```bash
+make lab C=phase8-arm64-backend/39-actors
+```
+
+cram: an actor (a `Bank`) runs and matches `swiftc` through awaited deposits/withdrawals; a
+synchronous non-awaited actor call is rejected with `swiftc`'s wording; inside-actor access is
+synchronous and a regular `class` is unaffected. alcotest: the sync call is rejected, the awaited
+call accepted, inside-actor access accepted, and a plain class is never isolated.
+
+## 5. Benchmark it
+
+There's nothing new to time — actors run as classes, and the isolation rule is a type-check-time
+check. The conceptual "benchmark" is the *guarantee*: an entire class of concurrency bug (the data
+race on shared mutable state) is made *unrepresentable*, at zero runtime cost beyond the executor
+hop. That's the trade compile-time concurrency safety makes — and why Swift, Rust, and others invest
+in it.
+
+## 6. Exercises
+
+1. **Property isolation.** Extend the rule to actor *property* access (`a.balance` from outside is
+   isolated too), not just methods — `swiftc` rejects both.
+2. **`nonisolated`.** A `nonisolated func` on an actor (that touches no isolated state) is callable
+   synchronously from anywhere. Parse the keyword and exempt those members from the rule.
+3. **`Sendable` checking (lite).** A value crossing an actor boundary must be `Sendable` (safe to
+   share). Flag passing a non-`Sendable` (e.g. a mutable class) into an actor call.
+4. **Global actors (`@MainActor`).** A type or function pinned to a global actor; calls between the
+   `@MainActor` context and others follow the same await rule. Track a "current global actor."
+5. **The real runtime hop.** On the concept-38 executor, make `await a.method()` actually enqueue on
+   a per-actor serial queue (re-entrancy-aware), so two tasks awaiting the same actor genuinely
+   serialize — the runtime half that's degenerate in our single-threaded model.
+
+## 7. Recap & what's next
+
+An `actor` serializes access to its state, and Swift enforces it at **compile time**: cross-actor
+access must be `await`ed (a hop onto the actor's executor); inside the actor it's synchronous. At
+runtime an actor is a class; the value is the type rule — a few lines in the checker that make data
+races unrepresentable. We match `swiftc`'s behaviour and its diagnostic.
+
+Next, the course's capstone: **40-macros** — a compile-time AST→AST **macro expander** that runs
+*before* sema, the final piece of the front end (and a survey of modules / incremental compilation).
+With it, the project — a complete Swift compiler subset, two backends — is done.
+
+## 8. Appendix — full solution
+
+```ocaml
+(* in the Method_call handler's `TClass cn` case — the actor-isolation rule *)
+| Types.TClass cn -> (
+    if Hashtbl.mem actors cn && (not !in_await) && !current_class <> Some cn then
+      err span
+        (Printf.sprintf
+           "call to actor-isolated instance method '%s' in a synchronous nonisolated context" m);
+    match Option.bind (Hashtbl.find_opt classes cn) (fun cl -> Types.vsig cl m) with
+    | Some (ptys, ret) -> check_args (Printf.sprintf "method '%s'" m) ptys; ret
+    | None -> err span (…); …)
+```
+
+The given pieces: the actor set + the `in_await` flag (set while checking `Await`'s operand), and
+`actor` parsed/lowered as a class.
+
+```ocaml
+let actors : (string, unit) Hashtbl.t = Hashtbl.create 8 in
+List.iter (function Ast.IClass c when c.Ast.is_actor -> Hashtbl.replace actors c.Ast.cname () | _ -> ())
+  prog.Ast.items;
+let in_await = ref false in
+…
+| Ast.Await (e0, _) ->
+    let saved = !in_await in in_await := true;
+    let t = infer e0 in in_await := saved; t
+```
+
+## 9. Exercise solutions
+
+### 1 — property isolation
+Apply the same three-condition check in the `Member` (property read) and `Set_member` (property
+write) handlers when the base type is an actor: reject `a.balance` / `a.balance = …` from a
+nonisolated, non-awaited context. swiftc isolates the whole stored-property surface, not just methods.
+
+### 2 — nonisolated
+Add a `nonisolated` keyword on a member; record the nonisolated method names per actor. In the rule,
+skip the check when `m` is nonisolated. (swiftc additionally verifies a `nonisolated` member touches
+no isolated state — a stricter check you can add.)
+
+### 3 — Sendable (lite)
+Mark `Int`/`Bool`/`String`/value types `Sendable`; classes (mutable reference types) not. At an actor
+call, check each argument's type is `Sendable` and flag the rest — the data that crosses the boundary
+must be safe to share, which is the deeper reason actors are race-free.
+
+### 4 — global actors
+`@MainActor` pins code to one shared actor. Track a `current_global_actor`; a call from `@MainActor`
+to a non-`@MainActor` function (or vice versa) follows the await rule. It's the same isolation check
+with a global, rather than instance, identity.
+
+### 5 — the real runtime hop
+Give each actor a serial queue (a list of pending closures) and a "busy" flag. `await a.method()`
+checks the flag: if free, run directly and mark busy; if busy, enqueue the continuation and yield
+(concept 38). When a method finishes, dequeue the next. Now two tasks awaiting the same actor
+genuinely serialize — the runtime guarantee that, on our single-threaded executor, was free.
+```

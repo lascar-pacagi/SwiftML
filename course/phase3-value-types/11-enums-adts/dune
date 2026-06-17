@@ -1,0 +1,10 @@
+; Concept 11 — the struct compiler (given) + enums (sum types / tagged unions).
+; New work threads `enum` through every stage; the lowering (Enum/Enum_tag) is the skeleton.
+(library
+ (name swiftml_enums)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen irgen driver)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

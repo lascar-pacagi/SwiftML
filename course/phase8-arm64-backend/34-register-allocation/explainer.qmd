@@ -1,0 +1,277 @@
+---
+title: "34 · Register allocation — the ladder that makes the native backend fast"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+Concept 33's backend works, but it's a stack machine: every value round-trips through memory. A
+hot loop reloads its operands from the frame on every iteration. This concept fixes that — it keeps
+values in **registers** — and it's the single biggest performance lever in the native backend.
+
+You build it as a **ladder**, three rungs you can select and benchmark independently:
+
+- **v0 stack** — spill every value to its frame slot (essentially concept 33). Correct, slow.
+- **v1 linear-scan** — assign registers over each value's *live interval*; under pressure, spill
+  the interval that ends latest.
+- **v2 graph-colouring** — model interference as a graph and colour it (Chaitin–Briggs).
+
+isel now emits over **virtual registers** — each SIL value becomes a `Virt v`, an abstract,
+unlimited register — and the allocator's job is to map those onto the machine's real, finite
+register file (or spill to memory when there aren't enough).
+
+- **You implement:** `linscan` and `graphcolor` — the two classic allocation algorithms, the cores
+  of the ladder.
+- **Outcome:** all three rungs produce native binaries matching `swiftc`; the upper rungs run
+  **~2.9× faster than stack** (measured), approaching our LLVM `-O` path.
+
+> **New to register allocation?** A CPU has a fixed, small set of fast registers (here, the 31
+> general ones). A program has unboundedly many *values*. Register allocation decides which values
+> live in which registers at which times, and which must be "spilled" to slower memory when the
+> registers run out. It's the difference between fast code and a glorified interpreter.
+
+## 2. Concepts in depth
+
+### Virtual registers, a callee-saved pool, and "spill = your slot"
+
+![Left: isel emits each SIL value as a virtual register; the allocator places it in a physical register or spills it. Linear-scan walks live intervals and spills the one ending latest; graph-colouring colours the interference graph. The pool is the 9 callee-saved registers (so allocated values survive calls for free); a spill just means "live in your own frame slot." Right: measured runtimes — each rung beats the last, graph-colour ~2.9× over stack, approaching the LLVM -O path.](figs/ladder.png)
+
+Three design choices make this tractable (and they're the reason the code is short):
+
+1. **The pool is `x19`–`x27` — the callee-saved registers.** AAPCS64 guarantees a callee preserves
+   these across a call, so any value we place in one **automatically survives a `bl`**. We never
+   have to model which registers a call clobbers — a notorious source of register-allocator bugs.
+   The prologue saves (and the epilogue restores) exactly the callee-saved registers we used.
+2. **`x9`–`x14` are reserved scratch.** When a value is spilled, the rewrite loads it into a
+   scratch register right before the instruction and stores the result right after. The allocator
+   never touches scratch, so spill code never conflicts with allocated values.
+3. **A "spill" is free to express.** Every virtual register already owns a frame slot
+   (`[sp, #16 + 8*v]`). So "spill v" just means "v lives in its slot" — no spill-slot allocation,
+   no frame growth. The v0 stack rung is literally "spill everything."
+
+### Liveness and live intervals (given)
+
+Both algorithms need to know **when each value is alive** — from its definition to its last use. We
+compute this by classic backward dataflow: `live_in[i] = (live_out[i] \ defs[i]) ∪ uses[i]`,
+iterated to a fixpoint over the control-flow graph (so loops are handled correctly — a value used
+at the bottom of a loop is live through the whole body). From the per-instruction live sets we
+derive each value's **interval** `[start, end]` — the span of instruction indices over which it's
+live. Two values **interfere** when their intervals overlap: they can't share a register.
+
+`liveness` and `intervals` are given; you consume their output.
+
+### Linear-scan (v1) — your first hole
+
+Poletto & Sarkar's algorithm is beautifully simple. Sort the intervals by **start** point, and
+sweep left to right keeping an `active` set (the intervals currently holding a register), sorted by
+**end** point:
+
+- **Expire**: before placing the current interval, return to the free pool any active interval
+  whose end has already passed.
+- **Allocate**: if a register is free, take it.
+- **Spill under pressure**: if none is free, look at the active interval that ends **latest**. If
+  it ends *after* the current one, **steal its register** (it had the most still to lose) and spill
+  *it* instead; otherwise spill the current interval. Spilling the longest-lived value frees a
+  register for the longest stretch — the greedy choice that makes linear-scan competitive.
+
+One pass, no graph. It's what LLVM's fast (`-O0`-ish) allocator and many JITs use.
+
+### Graph-colouring (v2) — your second hole
+
+The Chaitin–Briggs view: build the **interference graph** (a node per value, an edge between values
+whose intervals overlap), and a valid allocation is a **K-colouring** (K = 9 registers). The
+algorithm:
+
+- **Simplify**: repeatedly remove a node with **degree < K** and push it on a stack. Such a node is
+  *always* colourable once its neighbours are coloured (it has fewer neighbours than colours), so
+  removing it can't hurt. When every remaining node has degree ≥ K, remove the **highest-degree**
+  one as a *spill candidate* and push it too.
+- **Select**: pop the stack, giving each node a colour (register) that **none of its already-coloured
+  neighbours** took. If every colour is taken (a real spill), mark it `Spill`.
+
+Graph-colouring finds register assignments linear-scan misses under high pressure, because it sees
+the *global* conflict structure, not just a left-to-right sweep. On low-pressure code (most of our
+corpus — a handful of live values, well under 9) the two **coincide**; they diverge when live
+values exceed the pool, which is exactly where colouring's global view pays off.
+
+### The rewrite and frame finalization (given)
+
+Once you've produced an assignment (`vreg → Reg r | Spill`), the given `rewrite` walks the
+instructions: a value in a register becomes that physical register; a spilled value is loaded into
+scratch before the instruction and stored after. It also reports which callee-saved registers got
+used. Then `finalize` builds the frame — `sub sp`, save `fp`/`lr` and the used callee-saved
+registers in the prologue, restore them before every `ret`. The body's slot offsets were fixed at
+isel time, so finalize only needs to know *how many* callee-saved registers to save.
+
+### The honest gap to LLVM
+
+The bench shows graph-colour reaching ~45% of our LLVM `-O` path, not 100%. The reason is principled:
+we lower the **raw `-Onone`** SIL, where *variables* live in `alloc_stack` memory; register
+allocation only places the **temporaries** (literals, arithmetic results) in registers. LLVM (and a
+full backend) runs **mem2reg** first to promote variables into SSA values, so *they* get registers
+too. Promoting variables — running our own mem2reg (concept 16!) before isel and lowering the
+resulting block-arguments — is the documented next step; this concept nails the allocator itself.
+
+> Oracle: the LLVM AArch64 greedy allocator; Poletto & Sarkar 1999 (linear scan); Chaitin 1982 /
+> Briggs 1994 (graph-colouring with optimistic spilling). The algorithms you write are the
+> textbook ones, at teaching scale.
+
+## 3. Build it, step by step
+
+In `regalloc.ml`, given `instrs` (the function's instruction array), `liveness instrs` and
+`intervals instrs (liveness instrs)` (the `(vreg,(start,end)) list`), `pool` (the 9 registers),
+and `k`:
+
+1. **`TODO(34a)` — `linscan`**: the sweep above. Sort intervals by start; keep `free` and `active`
+   (by end); expire, allocate, or spill-the-latest. Fill `assign : (int,loc) Hashtbl.t`.
+2. **`TODO(34b)` — `graphcolor`**: build adjacency from interval overlap (`s1≤e2 && s2≤e1`),
+   simplify onto a stack (degree < K first, else highest-degree), then select colours; spill when
+   stuck.
+
+The liveness, intervals, the spill rewrite, frame finalization, the v0 stack rung, and the driver
+are given. Reference: `solution/regalloc.ml`. Select a rung with `--regalloc=…`; run with
+`make lab C=…` and `make bench C=…`.
+
+## 4. Test it
+
+```bash
+make lab  C=phase8-arm64-backend/34-register-allocation
+make bench C=phase8-arm64-backend/34-register-allocation
+```
+
+cram: all three rungs produce native binaries matching `swiftc` (fib, loops, division); graph-colour
+has far less load/store traffic than stack and uses callee-saved registers where stack uses none;
+Backend B still agrees with Backend A. alcotest: stack spills everything; linscan/graphcolor keep
+values in registers and are **sound** (no two overlapping intervals share a register — checked
+directly against the interference relation); after allocation no virtual register remains.
+
+## 5. Benchmark it
+
+`bench/` compiles `hotloop`/`collatz`/`fibloop` with each rung plus the LLVM `-O` path, verifies
+the outputs agree, and times them. Measured: **graph-colour ≈ 2.9× faster than stack (geomean)**,
+2.3–4.3× per program, reaching ~45% of the LLVM path. Linear-scan ties graph-colour here (low
+pressure). Report it honestly: the upper rungs win big over stack; the remaining gap to LLVM is the
+in-memory variables, not the allocator.
+
+## 6. Exercises
+
+1. **Promote variables (mem2reg → SSA → φ-elimination).** Run concept 16's mem2reg before isel so
+   variables become SSA values; lower block-arguments by inserting parallel copies on edges. Now
+   the allocator can keep *variables* in registers — this is the single change that closes most of
+   the gap to LLVM.
+2. **Live-range splitting & spill-cost.** Instead of spilling a whole interval, split it so the
+   hot part stays in a register. Weight spill choices by use-frequency (a value used in a loop is
+   expensive to spill).
+3. **Coalescing.** Eliminate a `mov xa, xb` by giving both the same register when they don't
+   interfere (move-related coalescing) — Briggs/George conservative coalescing.
+4. **Caller-saved registers too.** Add `x9`–`x15` to the pool for values *not* live across a call;
+   model call-clobbers in the interference graph. More registers, more pressure relief.
+5. **Better pressure test.** Construct a function with > 9 simultaneously-live values and show
+   graph-colour spilling *less* than linear-scan — the case where they diverge.
+
+## 7. Recap & what's next
+
+Register allocation maps unlimited virtual registers onto a finite register file. The ladder —
+**stack → linear-scan → graph-colouring** — climbs from "spill everything" to "keep what fits,"
+each rung correct and each faster, the top ~2.9× over the bottom. The callee-saved pool makes calls
+free; the per-value slot makes spilling trivial; liveness and intervals drive both algorithms.
+
+Next, **35-mc-abi** — the full AAPCS64 / Apple ABI (real stack frames, argument passing beyond
+eight registers, struct returns, `as`/`ld` details) — then **36-peephole-sched** (peephole cleanup
++ instruction scheduling, which would delete that redundant `str`/`ldr` pair you can see in the
+asm) and **37-debug-info** (a DWARF-lite line table) to reach **M8-core**.
+
+## 8. Appendix — full solution
+
+```ocaml
+(* 34a — linear scan *)
+let linscan (instrs : Arm64.instr array) : (int, loc) Hashtbl.t =
+  let assign = Hashtbl.create 32 in
+  let ivs = List.sort (fun (_,(s1,_)) (_,(s2,_)) -> compare s1 s2)
+              (intervals instrs (liveness instrs)) in
+  let free = ref pool and active = ref [] in            (* active = (vreg,end,reg), by end *)
+  let expire start =
+    let keep, gone = List.partition (fun (_,e,_) -> e >= start) !active in
+    List.iter (fun (_,_,r) -> free := r :: !free) gone; active := keep in
+  List.iter (fun (v,(s,e)) ->
+    expire s;
+    match !free with
+    | r :: rest -> free := rest; Hashtbl.replace assign v (Reg r);
+        active := List.sort (fun (_,e1,_) (_,e2,_) -> compare e1 e2) ((v,e,r) :: !active)
+    | [] ->
+        let (lv,le,lr) = List.fold_left (fun a x ->
+            if (let (_,e,_)=x in e) > (let (_,e2,_)=a in e2) then x else a)
+            (List.hd !active) (List.tl !active) in
+        if le > e then begin
+          Hashtbl.replace assign lv Spill; Hashtbl.replace assign v (Reg lr);
+          active := List.sort (fun (_,e1,_) (_,e2,_) -> compare e1 e2)
+                      ((v,e,lr) :: List.filter (fun (vv,_,_) -> vv <> lv) !active)
+        end else Hashtbl.replace assign v Spill) ivs;
+  assign
+
+(* 34b — graph colouring *)
+let graphcolor (instrs : Arm64.instr array) : (int, loc) Hashtbl.t =
+  let assign = Hashtbl.create 32 in
+  let ivs = intervals instrs (liveness instrs) in
+  let nodes = List.map fst ivs in
+  let span = Hashtbl.create 32 in List.iter (fun (v,se) -> Hashtbl.replace span v se) ivs;
+  let overlap (s1,e1) (s2,e2) = s1 <= e2 && s2 <= e1 in
+  let adj = Hashtbl.create 32 in
+  List.iter (fun v -> Hashtbl.replace adj v (Hashtbl.create 8)) nodes;
+  let rec pairs = function [] | [_] -> () | a :: rest ->
+    List.iter (fun b -> if overlap (Hashtbl.find span a) (Hashtbl.find span b) then (
+        Hashtbl.replace (Hashtbl.find adj a) b (); Hashtbl.replace (Hashtbl.find adj b) a ())) rest;
+    pairs rest in
+  pairs nodes;
+  let deg v rm = Hashtbl.fold (fun u () a -> if Hashtbl.mem rm u then a else a+1) (Hashtbl.find adj v) 0 in
+  let removed = Hashtbl.create 32 and stack = ref [] in
+  let remaining () = List.filter (fun v -> not (Hashtbl.mem removed v)) nodes in
+  while remaining () <> [] do
+    let rem = remaining () in
+    let pick = match List.filter (fun v -> deg v removed < k) rem with v :: _ -> v
+      | [] -> List.fold_left (fun a v -> if deg v removed > deg a removed then v else a) (List.hd rem) (List.tl rem) in
+    Hashtbl.replace removed pick (); stack := pick :: !stack
+  done;
+  List.iter (fun v ->
+    let used = Hashtbl.fold (fun u () a -> match Hashtbl.find_opt assign u with Some (Reg r) -> r::a | _ -> a)
+                 (Hashtbl.find adj v) [] in
+    match List.filter (fun r -> not (List.mem r used)) pool with
+    | r :: _ -> Hashtbl.replace assign v (Reg r) | [] -> Hashtbl.replace assign v Spill) !stack;
+  assign
+```
+
+## 9. Exercise solutions
+
+### 1 — promote variables (the big one)
+Before isel, run `Opt`'s mem2reg (concept 16) on the SIL. Now variables are SSA values flowing
+through block arguments instead of `alloc_stack` loads/stores. In isel, lower a block argument to a
+virtual register, and on each `Br (n, [a0;…])` to a block with parameters `[p0;…]`, emit moves
+`p_i := a_i` *before* the branch (out-of-SSA / φ-elimination; use a temp for the rare cyclic case).
+The allocator is unchanged — but now it sees the variables, so they get registers, and the gap to
+LLVM mostly closes. This is why concept 16's block-argument SSA was worth building.
+
+### 2 — live-range splitting & spill cost
+Give each interval a *weight* = number of uses (×10 per loop nesting level). When you must spill,
+spill the lowest weight-per-unit-length, not just the latest-ending. Splitting: when an interval
+spans a region of high pressure, cut it into two (with a store/load at the cut) so only the cold
+half spills.
+
+### 3 — coalescing
+A `mov xa, xb` where `a` and `b` don't interfere can be removed by allocating both to the same
+register. Merge their interference nodes (conservatively — Briggs: only if the merged node has
+< K neighbours of degree ≥ K) before colouring. Removes the parameter-shuffle `mov`s and many
+SSA-elimination copies.
+
+### 4 — caller-saved too
+Add `x9`–`x15` to the pool, but only for values **not live across any `bl`**. Compute "crosses a
+call" per interval; such intervals may use only callee-saved registers (or spill). More pool, less
+spilling on call-free stretches — at the cost of modelling the call boundary.
+
+### 5 — a divergence test
+`let`-bind a dozen values all used together in one expression: their intervals all overlap, so > 9
+interfere. Linear-scan (sweeping by start) spills whatever's active when it runs out; graph-colour,
+seeing the full clique, spills the minimum. Count spills under each — graph-colour wins, the textbook
+reason it exists.
+```

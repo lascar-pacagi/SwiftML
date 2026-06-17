@@ -1,0 +1,12 @@
+; Make the `swiftml` binary available to the cram tests in this directory.
+(cram
+ (deps
+  (package swiftml)))
+
+; Alcotest unit tests — link the lexer stage library directly and assert on
+; token kinds/spans in-process. Runs under `dune build @runtest` alongside the cram test.
+(test
+ (name test_lexer)
+ (libraries alcotest swiftml_lexer)
+ (flags
+  (:standard -warn-error -a)))

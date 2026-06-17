@@ -1,0 +1,255 @@
+---
+title: "25 · Classes & vtables"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+Everything so far has been a **value**: structs copy, enums copy, even existentials copy their
+payloads. `class` introduces Swift's other world — **references**:
+
+```swift
+let c = Counter(10)
+let d = c        // NOT a copy: a second name for the SAME object
+d.bump()
+print(c.value()) // 11 — c saw d's mutation
+```
+
+A class value is a *pointer* to a heap object. That one change drags in everything this concept
+builds: heap allocation and an object header, initializers (someone must set the fields before
+the object escapes), inheritance (objects that extend other objects), and — the centerpiece —
+**dynamic dispatch through a vtable**, the mechanism that makes `override` work.
+
+*Swift note:* Swift is unusual in making the value/reference split a *declaration-site* choice
+(`struct` vs `class`) rather than a use-site one. Everything you learned about structs stays
+true; classes are the deliberate opt-in to sharing — and, in concept 26, to automatic
+reference counting.
+
+- **You implement:** the vtable construction (sema), the dispatch lowering (silgen), and its
+  LLVM emission (irgen).
+- **Outcome:** inheritance hierarchies run with swiftc parity, at `-Onone` and `-O`.
+
+## 2. Concepts in depth
+
+### The heap object and its header
+
+`Counter(10)` lowers to `alloc_ref $Counter`: malloc an object shaped
+
+```
+{ ptr vtable, i64 refcount, fields... }
+```
+
+Word 0 is the **vtable pointer** — the object's runtime identity ("I am a Dog"), set once at
+allocation and the thing dispatch reads. Word 1 is the **reference count**, initialized to 1
+and then… ignored: concept 26 (ARC) gives it meaning. Designing the header *now* is
+deliberate — it's swiftc's layout (metadata pointer + refcounts; `GenClass.cpp`), and it means
+26 changes lifetimes without changing layout. Until then: **objects leak**. That's the honest
+debt this phase exists to pay, stated up front.
+
+Reference semantics falls out of the representation: the SIL value for a class is the
+*pointer*, so `let d = c` copies eight bytes of pointer, and field access is
+`ref_element_addr` + load/store through it — every binding sees every write. It also explains
+a rule that surprises Swift newcomers: `c.x = 9` is legal on a `let` binding. The *binding* is
+constant (you can't re-point `c`); the *object* was never constant.
+
+### Initializers: nobody sees a half-built object
+
+Structs got a free memberwise init; classes don't (Swift's rule too — subclassing makes
+memberwise generation ambiguous). You write `init`, and sema enforces **definite
+initialization**: every own stored property assigned, and `super.init` called when there's a
+superclass (which initializes the inherited prefix). One subtlety worth knowing: swiftc
+enforces DI at *SIL* level, so `swiftc -typecheck` won't report it — only a full compile does.
+Ours fires in sema; same programs rejected, earlier. And initializer **inheritance** is real
+Swift: a subclass that adds no stored properties inherits its superclass's init — our
+constructor lookup walks the super chain exactly like the runtime would.
+
+### The vtable: inheritance, made indexable
+
+A class's vtable is an array of function pointers, one per method. The build rule — the part
+you implement — is the whole trick:
+
+1. **start from the superclass's table** (same methods, same slots);
+2. an **`override` replaces** its slot's function pointer *in place*;
+3. **new methods append** new slots.
+
+Slot *numbering* is therefore inherited: `sound` is slot #0 in `Animal` and in every
+descendant, forever. That invariant is what makes dispatch work through an upcast:
+
+![Two objects, two vtables, one call site. `a.sound()` compiles to "load the object's word 0, index slot #0, call" — the SLOT comes from the static type, the TABLE comes from the object. A Dog's table has `Dog.sound` sitting in slot #0, so the override wins; `Animal.describe` in slot #1 is inherited unchanged.](figs/vtable.png)
+
+Dispatch is three loads and a call (you'll write them):
+
+```
+%vt = load ptr, ptr %obj            ; word 0: the object's vtable
+%sp = getelementptr ptr, ptr %vt, i64 SLOT
+%fn = load ptr, ptr %sp
+call %fn(ptr %obj, args...)
+```
+
+Compare the witness dispatch from concept 21 — same shape, one structural difference worth
+internalizing: a class carries its table *in the object* (one pointer per object); an
+existential carries it *next to the value* (one pointer per box). That's why upcasting a class
+is free (the table rides along) while wrapping a struct into an existential does work.
+
+Two consequences the tests pin down. **Self-calls dispatch dynamically**: `Animal.describe`
+calls `sound()` — compiled as slot-#0 dispatch on `self` — so a `Dog`'s describe says 7. (This
+is the classic OO "template method" behavior, and it's why `final`/devirtualization matter for
+performance — swiftc's `Devirtualize.cpp` exists to undo this cost when the type is provable,
+exactly like our concept 24 did for witness tables; classes get the same treatment as an
+exercise.) And **fields prefix-extend**: `Dog`'s object layout begins with `Animal`'s fields,
+so an upcast doesn't move or convert anything — the same pointer simply gets a weaker static
+type.
+
+### What sema enforces
+
+The vtable build is also where override *checking* lives, with swiftc's words:
+`overriding declaration requires an 'override' keyword` (you redefined a superclass method
+without saying so) and `method does not override any method from its superclass` (you said so
+but nothing matches — wrong name or wrong signature). Both are layout-time checks: the table
+can't be built ambiguously.
+
+> Oracle: `SILVTable.cpp` (swiftc's vtables are exactly this, printed by `-emit-sil` in the
+> same `sil_vtable` syntax we mirror), `GenClass.cpp` (object layout), `TypeCheckDeclOverride.cpp`
+> (the override rules — vastly more general than ours: properties, availability, access).
+
+## 3. Build it, step by step
+
+1. **`sema.ml` — `TODO(25a)`**: the vtable build loop. Start `methods`/`impls` from the
+   superclass (given); for each own method: `override`+match ⇒ replace the impl at that slot;
+   `override`+no-match or signature mismatch ⇒ the does-not-override error; no-`override`+match
+   ⇒ the requires-override error; genuinely new ⇒ append.
+2. **`silgen.ml` — `TODO(25b)`**: `recv.m(args)` on a class — slot and signature from the
+   *static* layout (`Types.vslot`/`Types.vsig`), arguments via `gen_expr_as`, emit
+   `Apply_class (recv, slot, args)`.
+3. **`irgen.ml` — `TODO(25c)`**: the three loads and a call shown above; void results use a
+   bare `call void`.
+
+Reference: `solution/sema.ml`, `solution/silgen.ml`, `solution/irgen.ml`.
+
+## 4. Test it
+
+```bash
+make lab C=phase6-classes-arc/25-classes-vtables
+```
+
+cram: reference semantics (two bindings, one object); the `Dog` vtable printed with the
+override in place; dispatch through an `Animal`-typed variable *and* through `describe`'s
+internal `sound()` call (the 7/407 program) at `-Onone` and `-O`; `super.init` chains and
+initializer inheritance; four diagnostics verbatim. alcotest: the layout triple
+(inherit/replace/append), both override errors, SIL shapes (`alloc_ref`/`upcast`/
+`class_method`), and `-O` keeping vtable impls alive.
+
+## 5. Benchmark it
+
+Time a hot loop calling `n.step()` on a class vs the same code on a struct: the class pays a
+heap allocation per object, three dependent loads per call, and an inliner wall. Keep the
+number — it's the cost ARC will *add to* (26) and devirtualization + the ARC optimizer will
+then claw back (28). The Phase-6 arc is literally this benchmark's story.
+
+## 6. Exercises
+
+1. **Class devirtualization.** Extend concept 24's `devirt_module`: an `Apply_class` whose
+   receiver's def is an `Alloc_ref C` has a *known exact type* — fold to a direct call to
+   `C`'s impl at that slot. (This is `Devirtualize.cpp`'s simplest case.)
+2. **`super.method()`.** Parse it, and lower as a *direct* call to the superclass's impl at
+   that slot — the one place method calls are static on purpose.
+3. **`===` and class casts.** Identity is pointer equality; `as?`/`as!` between classes walks
+   the vtable-pointer chain (a Dog's table, then its super's…). You built the same idea for
+   existentials in concept 23.
+4. **`final`.** A `final` method can never be overridden — record it, reject overrides, and
+   let the silgen call site emit a direct call (free devirtualization, no analysis needed).
+
+## 7. Recap & what's next
+
+A class value is a pointer; the object's first word names its type; the vtable inherits slot
+numbering, overrides replace in place, new methods append; dispatch is three loads and a call,
+chosen by the *object*, not the variable. Initializers guarantee no one sees a half-built
+object — and every object we made tonight is still alive, because nothing ever frees them.
+
+That's the cliffhanger. **26-arc-runtime** builds the reference-counting runtime: `retain` on
+copy, `release` on scope exit, `deinit` runs at refcount zero — with swiftc's exact deinit
+*timing and order* as the oracle. The refcount word is already sitting in every header,
+waiting.
+
+## 8. Appendix — full solution
+
+```ocaml
+(* 25a — sema: the vtable build *)
+List.iter
+  (fun (is_override, (m : Ast.func_decl)) ->
+    let ps = List.map (fun (p : Ast.param) -> resolve_silent p.Ast.ptype) m.Ast.params in
+    let ret = match m.Ast.ret with None -> Types.TVoid | Some n -> resolve_silent n in
+    let slot =
+      let rec go i = function (n, _, _) :: _ when n = m.Ast.fname -> Some i
+                            | _ :: tl -> go (i + 1) tl | [] -> None in
+      go 0 !methods
+    in
+    match (is_override, slot) with
+    | true, Some i ->
+        let _, sps, sret = List.nth !methods i in
+        if sps <> ps || sret <> ret then
+          err m.Ast.fspan "method does not override any method from its superclass";
+        impls := List.mapi (fun j fn -> if j = i then c.Ast.cname ^ "." ^ m.Ast.fname else fn) !impls
+    | true, None -> err m.Ast.fspan "method does not override any method from its superclass"
+    | false, Some _ -> err m.Ast.fspan "overriding declaration requires an 'override' keyword"
+    | false, None ->
+        methods := !methods @ [ (m.Ast.fname, ps, ret) ];
+        impls := !impls @ [ c.Ast.cname ^ "." ^ m.Ast.fname ])
+  c.Ast.cmethods
+
+(* 25b — silgen: dispatch *)
+| Types.TClass cn ->
+    let cl = Hashtbl.find b.classes cn in
+    let slot = Option.get (Types.vslot cl m) in
+    let ptypes, ret = Option.get (Types.vsig cl m) in
+    let argvs = List.map2 (fun (_, e) pt -> gen_expr_as b e pt) args ptypes in
+    emit b (Sil.Apply_class (rv, slot, argvs)) ret
+
+(* 25c — irgen: emission *)
+| Sil.Apply_class (o, slot, args) ->
+    let vt = fresh () and sp = fresh () and fn = fresh () in
+    p (Printf.sprintf "  %s = load ptr, ptr %s\n" vt (op o));
+    p (Printf.sprintf "  %s = getelementptr ptr, ptr %s, i64 %d\n" sp vt slot);
+    p (Printf.sprintf "  %s = load ptr, ptr %s\n" fn sp);
+    let argstr = String.concat ""
+      (List.map (fun a -> Printf.sprintf ", %s %s" (llty (vty a)) (op a)) args) in
+    let rt = vty v in
+    if rt = Types.TVoid then p (Printf.sprintf "  call void %s(ptr %s%s)\n" fn (op o) argstr)
+    else p (Printf.sprintf "  %s = call %s %s(ptr %s%s)\n" (op v) (llty rt) fn (op o) argstr)
+```
+
+## 9. Exercise solutions
+
+### 1 — class devirtualization
+
+In `devirt_module`'s `wrap_of` spirit: `Apply_class (o, slot, args)` where `def o` is
+`Alloc_ref cn` (or an `Upcast` whose operand's def is) — the *exact* dynamic type is `cn`, so
+replace with `Func_ref (List.nth (clay cn).cl_impls slot)` + direct `Apply`. Unlike protocols
+there's a subtlety: an upcast hides the exact type one def away, so chase `Upcast` defs first.
+Then the inliner eats the direct call and the heap object often dies entirely (escape analysis
+willing — concept 28's territory).
+
+### 2 — `super.method()`
+
+Parse `super.m(args)` in method bodies (the keyword machinery exists from `super.init`); sema
+resolves against the *superclass's* layout; silgen emits a direct `Apply` of the superclass's
+impl at that slot (`(clay sup).cl_impls[slot]`) with `self` upcast. Static on purpose: calling
+through the vtable here would infinite-loop an overriding method that calls `super`.
+
+### 3 — `===` and casts
+
+`a === b` is `icmp eq ptr`. For `d as? C`: load `d`'s vtable pointer and compare against
+`@vtbl.X` for X = C and every descendant of C (the compiler knows the closed hierarchy in our
+whole-module world — swiftc instead walks superclass metadata pointers at runtime, which is
+open-world). Same diamond lowering as concept 23's casts.
+
+### 4 — `final`
+
+A `final` flag on the method's layout entry; sema rejects an override of a final slot
+(`instance method overrides a 'final' instance method`); silgen, seeing a final slot, emits
+`Func_ref impl` + `Apply` instead of `Apply_class`. Zero-analysis devirtualization — and the
+reason performance-sensitive Swift sprinkles `final` (or `private`, which implies it) on
+classes.
+```

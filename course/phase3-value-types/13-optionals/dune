@@ -1,0 +1,11 @@
+; Concept 13 — the switch compiler (given) + optionals (Optional = an enum).
+; New work threads `T?`/`nil`/`!`/`if let`/`??` through every stage; the lowering reuses the
+; enum machinery (none = tag 0, some = tag 1).
+(library
+ (name swiftml_optionals)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen irgen driver)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

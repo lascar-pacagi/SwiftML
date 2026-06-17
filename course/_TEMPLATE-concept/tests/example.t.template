@@ -1,0 +1,13 @@
+Rename to <topic>.t. Cram tests invoke ./lab.exe (this concept's own binary). State the RED
+condition in the header: which TODO(NN) holes must be filled before this goes green.
+
+  $ printf 'print(1 + 2)\n' > p.swift
+  $ ./lab.exe --emit-sil p.swift | grep -c 'integer_literal'
+  2
+
+Prefer assertions that a WRONG implementation would fail: exact counts, exact diagnostics,
+build-and-run with output compared against swiftc. Gotchas learned the hard way:
+- `grep -c` exits 1 when the count is 0 — append `|| true` if 0 is the expected count.
+- dune cram does NOT support `(re)`/`(glob)` patterns — goldens are literal text only.
+- a binary killed by a signal makes the shell print a nondeterministic job message; wrap it:
+  `$ sh -c './t; echo "exit=$?"' 2>/dev/null`

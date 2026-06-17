@@ -1,0 +1,5 @@
+; Concept 40 — macros: a compile-time AST->AST expression/statement macro expander (the capstone).
+(library (name swiftml_macros) (wrapped false)
+ (modules token diagnostics types lexer ast parser macros sema sil silgen opt irgen driver)
+ (flags (:standard -warn-error -a)))
+(dirs :standard \ solution)

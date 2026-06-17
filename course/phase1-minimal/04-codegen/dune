@@ -1,0 +1,10 @@
+; Concept 04 — codegen + the driver. Depends on the sema stage (and transitively all earlier).
+; Modules: irgen (you implement) · driver (the pipeline wiring, given).
+(library
+ (name swiftml_codegen)
+ (libraries swiftml_sema)
+ (wrapped false)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

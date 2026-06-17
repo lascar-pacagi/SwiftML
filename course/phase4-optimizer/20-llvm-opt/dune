@@ -1,0 +1,9 @@
+; Concept 20 — the full -O pipeline: SIL passes + LLVM -O2. Milestone M4.
+(library
+ (name swiftml_llvmopt)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen driver)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

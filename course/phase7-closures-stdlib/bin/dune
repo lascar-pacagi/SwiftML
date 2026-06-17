@@ -1,0 +1,8 @@
+; The Phase-7 `swiftml7` binary — links the phase's LATEST concept library
+; (currently concept 32, collections (map/filter/reduce)).
+(executable
+ (name main)
+ (public_name swiftml7)
+ (libraries swiftml_collections)
+ (flags
+  (:standard -warn-error -a)))

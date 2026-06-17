@@ -1,0 +1,9 @@
+; Concept 27 — ownership SSA: owned/guaranteed values, copy/destroy_value, the verifier.
+(library
+ (name swiftml_ownership)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen driver)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

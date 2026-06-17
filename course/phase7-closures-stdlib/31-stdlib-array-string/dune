@@ -1,0 +1,5 @@
+; Concept 31 — Array<Int> (heap buffer + copy-on-write) and String.
+(library (name swiftml_arrays) (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen driver)
+ (flags (:standard -warn-error -a)))
+(dirs :standard \ solution)

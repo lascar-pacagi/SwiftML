@@ -1,0 +1,10 @@
+; Concept 03 — the type-checking stage. Depends on the parser stage (for Ast, Diagnostics).
+; Module: sema (you implement).
+(library
+ (name swiftml_sema)
+ (libraries swiftml_parser)
+ (wrapped false)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

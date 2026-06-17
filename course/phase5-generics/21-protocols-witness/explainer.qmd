@@ -1,0 +1,255 @@
+---
+title: "21 · Protocols & witness tables"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+Phase 5 is the heart of Swift: **protocol-oriented programming**. A `protocol` declares what a type
+can *do*; concrete types **conform** by implementing the requirements; and code written against the
+protocol works for *every* conformer — including ones that don't exist yet. This concept builds all
+of it: protocol declarations, methods on structs (a prerequisite we owed from concept 10),
+conformance checking, and the machinery that makes `s.area()` work when `s`'s concrete type is
+unknown at compile time — the **witness table**, swiftc's own design, and the foundation for
+generics (22), existential containers (23), and specialization (24).
+
+*Swift note (you know protocols as "interfaces" or "traits"):* Swift protocols are nominal
+(`struct Circle: Shape` is an explicit declaration, not duck typing), checked at the conformance
+site, and double as **types**: `let s: Shape` (spelled `any Shape` since Swift 5.6 — both are
+accepted, by swiftc and by us).
+
+- **You implement:** the conformance check, the existential wrap, method dispatch (static vs
+  dynamic), and the witness tables themselves.
+- **Outcome:** heterogeneous protocol programs run — matching swiftc, including under `-O`.
+
+## 2. Concepts in depth
+
+### Methods are just functions with a `self`
+
+Before protocols can require methods, structs need methods. The lowering shows there's no magic:
+`func area() -> Int { 3 * r * r }` inside `struct Circle` becomes a plain SIL function
+`@Circle.area(%0 : $Circle) -> $Int` — **`self` is argument 0**, and `c.area()` is
+`apply @Circle.area(c)`. Method-call syntax is a *calling convention*, nothing more. Inside the
+body, `r` means `self.r` (locals shadow properties, like Swift), and a bare `scaled(2)` means
+`self.scaled(2)`. One Swift rule we enforce exactly: a plain method **cannot write** a stored
+property — `cannot assign to property: 'self' is immutable` (Swift's `mutating` is an exercise).
+
+A call on a *concrete* receiver is **static dispatch**: the compiler knows the type, names the
+function, done — same cost as any call, and the inliner can eat it. The interesting case is next.
+
+### A protocol as a type: the existential
+
+What is the type of `s` in `let s: Shape = Circle(r: 2)`? It's not `Circle` — you can reassign a
+`Square` into it. It's `any Shape`: *"some value, type unknown, that conforms to Shape."* That's
+called an **existential** (from logic: ∃T. T conforms to Shape). The compiler can't know the
+concrete type at a call site, so the value must *carry everything needed to use it*:
+
+- the **payload** — the concrete value's bytes (ours: an inline buffer `[N x i64]`, sized to the
+  protocol's largest conformer — a whole-module luxury; swiftc uses a fixed 3-word buffer and
+  heap-boxes anything bigger, which is concept 23's subject);
+- the **witness table pointer** — *which* implementations to call.
+
+### The witness table: conformance, made physical
+
+For each conformance `Circle: Shape`, the compiler emits one constant table: an array of function
+pointers, one per requirement, **in requirement-declaration order** — the order *is* the slot
+numbering. The table is the proof of conformance, made physical:
+
+![Dynamic dispatch through a witness table: the existential carries (payload, table ptr). The call site knows only the SLOT (`area` = #0 in Shape); it loads that entry — a thunk — and calls it with the payload's address. The thunk reloads the concrete `self` and calls the real method directly.](figs/witness.png)
+
+Dispatching `s.area()` where `s : any Shape`:
+
+1. extract the table pointer from the existential;
+2. load the function pointer at **slot #0** (`area` is Shape's first requirement — the call site
+   knows the slot from the *protocol*, never the type);
+3. call it, passing the payload.
+
+In our SIL that's one fused instruction, `apply_witness %s, #0` — swiftc spells it as two
+(`witness_method` + `apply`), and the explainer-to-oracle mapping is exactly that pair.
+
+One subtlety earns its own paragraph: the table entries are not the methods themselves but
+**thunks**. `@Circle.area` takes `self` *by value, as a `%Circle`* — but a dispatch site doesn't
+know the concrete type, so it can only pass the payload *by pointer*. The thunk
+`@w.Shape.Circle.0(ptr %self, ...)` is the ABI adapter: load the `%Circle` out of the buffer, call
+`@Circle.area` directly. Every conformance gets its own thunks; they're where "unknown type" meets
+"concrete code." (swiftc's witness thunks do the same job — `SILGenPoly.cpp`.)
+
+### Conformance checking, and the implicit wrap
+
+`struct Circle: Shape` is a *claim*; sema verifies it: **every** requirement must be implemented
+with the **exact** signature. Fail one and you get swiftc's words: `type 'Circle' does not conform
+to protocol 'Shape'`. The same predicate powers the **implicit existential wrap** — the protocol
+twin of concept 13's optional wrap, at the same four coercion points (`let` annotation, argument,
+`return`, assignment): a `Circle` value where `any Shape` is expected becomes
+`init_existential %c : $Circle, $any Shape` — payload + table, packed.
+
+And the wrap is where this concept paid for itself twice over. Two REAL shipped bugs surfaced:
+
+- **The Assign-wrap miscompile.** `Assign` lowered its value with plain `gen_expr` — not
+  `gen_expr_as` to the *slot's* type. Assigning a concrete struct to an existential `var` stored
+  raw bytes with no table… and the same bug had been silently corrupting **optionals since
+  concept 13**: `var x: Int? = 5; x = 7; print(x ?? 0)` printed `0` (the raw `7` overwrote the
+  tag). No test had ever reassigned-with-wrap. Fixed in 13–21, regression pinned in 13's cram.
+- **GVN's type-blind value key.** Two *empty* conformers (`Zero()`, `One()`) produced
+  `struct () $Zero` and `struct () $One` — identical operands, identical key, **merged by GVN**
+  into one value, and dispatch went through the wrong table (then ill-typed LLVM). The `Struct`/
+  `Enum` value keys must include the **result type** — the instruction alone doesn't determine
+  the value. Fixed in 18–21, pinned in 18's tests.
+
+Both morals are the same: every new language feature is a new adversary for your optimizer, and
+behavioral parity testing is what catches the collision.
+
+> Oracle: `swift/lib/AST/ProtocolConformance.cpp` (the conformance machinery),
+> `swift/lib/SILGen/SILGenPoly.cpp` (witness thunks), `swift/lib/IRGen/GenProto.cpp` (tables in
+> LLVM IR). Our `sil_witness_table` printing mirrors swiftc's `-emit-sil` output.
+
+## 3. Build it, step by step
+
+Three holes, in dependency order:
+
+1. **`sema.ml` — `struct_conforms`** (`TODO(21-sema)`): does struct S conform to protocol P?
+   The protocol must exist, and every `(name, params, ret)` in `pl_reqs` needs a method of S with
+   the exact signature (`method_sig`, given). This one predicate drives both the conformance
+   error and the coercion in `check_expr`.
+2. **`silgen.ml` — the wrap** (`TODO(21a)`): in `gen_expr_as`, when `any P` is expected — an
+   existing existential passes through; a concrete `TStruct sn` wraps with
+   `Init_existential (v, sn, pn)`.
+3. **`silgen.ml` — dispatch** (`TODO(21b)`): in `Method_call` — concrete receiver ⇒ static
+   `Apply` of `Func_ref "S.m"` with the receiver as argument 0; existential receiver ⇒
+   `Apply_witness (recv, slot, args)` with the slot from `Types.req_index`.
+4. **`silgen.ml` — the tables** (`TODO(21c)`): in `lower` — one `(proto, struct, impls)` entry
+   per conformance clause, impls named `"S.req"` in requirement order.
+
+Reference: `solution/sema.ml`, `solution/silgen.ml`.
+
+## 4. Test it
+
+```bash
+make lab C=phase5-generics/21-protocols-witness
+```
+
+cram: witness tables in `--emit-sil`; static + dynamic dispatch running (with `-O`) against
+swiftc's outputs; the four rejection diagnostics with swiftc's exact wording. alcotest:
+conformance accept/reject, table contents and slot order, wrap/dispatch instruction counts
+(a concrete call must NOT dispatch through the table), and `-O` keeping table-referenced
+functions alive.
+
+## 5. Benchmark it
+
+Time a hot loop calling `p.step(x)` on an existential vs the same loop on the concrete type:
+the dynamic version pays a load-load-indirect-call per iteration and — more important — **walls
+off the inliner** (the callee is unknowable). That gap is the entire motivation for concept 24
+(devirtualization + specialization): when the optimizer can prove the concrete type, it replaces
+the table dispatch with a direct call and lets the cascade run.
+
+## 6. Exercises
+
+1. **`mutating` methods.** Lower `self` by pointer for mutating methods, allow property writes
+   there, and reject calling a mutating method on a `let`. (Witness thunks for mutating
+   requirements then pass the payload buffer address through — no reload.)
+2. **Property requirements.** `var area: Int { get }` — a getter requirement is just a method
+   requirement named `area.get` in the table; wire the sugar.
+3. **Default implementations (protocol extensions).** A requirement with a default body gets the
+   default's thunk in any table whose type doesn't implement it — the lookup order is the lesson.
+4. **Conformance diagnostics.** swiftc attaches a note per missing requirement
+   (`protocol requires function 'area()' with type '() -> Int'`). Add notes to our diagnostic.
+
+## 7. Recap & what's next
+
+A protocol is a contract; a conformance is a **witness table** (one per type-protocol pair,
+slots in requirement order, thunks adapting unknown-type call sites to concrete methods); an
+existential is a value carrying its own table; and dispatch is a slot load — *that's* dynamic
+dispatch, demystified. Static dispatch stays free; dynamic costs an indirection and an inliner
+wall.
+
+Next, **22-generics**: `func largest<T: Shape>(...)` — the *other* way to write
+protocol-generic code, where the type is a checked **parameter** instead of a boxed unknown, and
+the same witness table arrives as a hidden argument instead of riding inside the value.
+
+## 8. Appendix — full solution
+
+```ocaml
+(* sema: the conformance predicate *)
+let struct_conforms sname pname =
+  match Hashtbl.find_opt protos pname with
+  | None -> false
+  | Some pl ->
+      List.for_all
+        (fun (rn, rps, rret) ->
+          match method_sig sname rn with Some (ps, r) -> ps = rps && r = rret | None -> false)
+        pl.Types.pl_reqs
+
+(* silgen 21a: the wrap, in gen_expr_as *)
+| _, Types.TProto pn -> (
+    let v = gen_expr b e in
+    match vty b v with
+    | Types.TProto _ -> v
+    | Types.TStruct sn -> emit b (Sil.Init_existential (v, sn, pn)) expected
+    | _ -> assert false)
+
+(* silgen 21b: dispatch *)
+| Ast.Method_call (recv, m, args, _) -> (
+    let rv = gen_expr b recv in
+    match vty b rv with
+    | Types.TStruct sn ->
+        let ptypes, ret = Option.get (method_sig b sn m) in
+        let argvs = List.map2 (fun (_, e) pt -> gen_expr_as b e pt) args ptypes in
+        let fr = emit b (Sil.Func_ref (sn ^ "." ^ m)) ret in
+        emit b (Sil.Apply (fr, rv :: argvs)) ret
+    | Types.TProto pn ->
+        let pl = Hashtbl.find b.protos pn in
+        let slot = Option.get (Types.req_index pl m) in
+        let ptypes, ret = Option.get (Types.req_sig pl m) in
+        let argvs = List.map2 (fun (_, e) pt -> gen_expr_as b e pt) args ptypes in
+        emit b (Sil.Apply_witness (rv, slot, argvs)) ret
+    | _ -> assert false)
+
+(* silgen 21c: the tables *)
+let wtables =
+  List.concat_map
+    (function
+      | Ast.IStruct st ->
+          List.map
+            (fun pname ->
+              let pl = Hashtbl.find protos pname in
+              let impls = List.map (fun (rn, _, _) -> st.Ast.sname ^ "." ^ rn) pl.Types.pl_reqs in
+              (pname, st.Ast.sname, impls))
+            st.Ast.sconforms
+      | _ -> [])
+    prog.Ast.items
+```
+
+## 9. Exercise solutions
+
+### 1 — `mutating`
+
+Parse the `mutating` modifier; record it in the method signature. A mutating method lowers with
+`self` as a **pointer** parameter (the caller passes the variable's slot address — which is why
+you can't call it on a `let` or on an rvalue). Field writes inside become
+`struct_element_addr self_ptr` stores. The witness thunk for a mutating requirement passes the
+payload buffer address straight through — the existential's buffer *is* the mutable self.
+
+### 2 — property requirements
+
+Desugar `var area: Int { get }` to a requirement `area.get : () -> Int`; a conforming stored
+property `var area: Int` synthesizes the getter `S.area.get(self) = self.area`; `e.area` on an
+existential dispatches slot `area.get`. Setters add `area.set : (Int) -> ()` with the mutating
+machinery from exercise 1.
+
+### 3 — default implementations
+
+Store extension defaults as functions `P.req.default`. When building a witness table, fill each
+slot with the type's own method if present, else the default's thunk (which dispatches *other*
+requirements through the same table it's installed in — pass the table along). The subtle case —
+a type implements a requirement *and* a default exists — must prefer the type's own (that's
+Swift's static-shadowing rule for protocol extensions).
+
+### 4 — diagnostic notes
+
+Extend `Diagnostics` with a `note` severity attached to the previous error. In the conformance
+check, after the main error, emit one note per failing requirement:
+`protocol requires function 'area()' with type '() -> Int'` — format the signature from
+`pl_reqs`. The cram test then pins both lines, exactly like swiftc's output shape.
+```

@@ -1,0 +1,9 @@
+; The `swiftml3` binary for Phase 3 — links the latest concept's stage library,
+; currently concept 14 (memory layout).
+(executable
+ (name main)
+ (public_name swiftml3)
+ (package swiftml)
+ (libraries swiftml_layout)
+ (flags
+  (:standard -warn-error -a)))

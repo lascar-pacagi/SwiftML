@@ -1,0 +1,226 @@
+---
+title: "06 · Control Flow"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+Until now every program was *straight-line*: statements ran top to bottom, once each. Real programs
+branch and loop. This concept adds the four shapes that do it — `if`/`else`, `while`,
+`for v in lo ..< hi`, and `break`/`continue` — plus the short-circuit logical operators `&&`/`||`
+that conditions are built from. And it adds the *checking* those shapes need: a condition must be a
+`Bool`, a block is its own **scope**, the loop variable is an immutable `Int`, and `break`/`continue`
+only make sense inside a loop.
+
+- **You implement:** the new lexemes (`{ } && || ..<`), the new statement syntax
+  (`parse_block`/`parse_if` + `while`/`for`/`break`/`continue`), and the control-flow **type rules**
+  in `sema.ml`. Concept 05 (types) is carried forward and working.
+- **Outcome:** `swiftml2 --typecheck` accepts/rejects control flow exactly as `swiftc -typecheck`
+  does (the oracle): non-`Bool` conditions, mutated loop variables, leaking block-locals, and stray
+  `break`s are all rejected.
+- **Out of scope:** *running* the loops. Codegen for Phase-2 flows through **SIL** (concepts 08–09).
+  As you'll see, that's not an accident — branching is the whole reason SIL exists.
+
+## 2. Concepts in depth
+
+### Statements vs expressions: a second kind of type-checking
+
+In concept 05 you type-checked *expressions* — things that have a value and a type. Control flow is
+made of **statements**, which don't have a value; you check them for *well-formedness*. The judgment
+flips from "what type is this?" to "is this allowed, and are its parts well-typed?" Swift keeps these
+separate too — `swift/lib/Sema/TypeCheckExpr.cpp` vs `TypeCheckStmt.cpp`.
+
+The rules are short but each one is a real Swift design decision:
+
+- **Conditions are `Bool`, full stop.** `if cond { … }` requires `cond : Bool`. This is just
+  `check_expr cond Bool` — the checking-mode judgment you already built. Swift is strict here: unlike
+  C, an `Int` is **not** a truthy value (`if 1 { }` is an error), and there's no `=`-vs-`==` foot-gun
+  because assignment isn't an expression. `while` is identical.
+- **`&&` / `||` are `Bool × Bool → Bool`.** They're ordinary binary operators in the AST; the only
+  twist is **precedence** — looser than comparison, and `&&` tighter than `||` — so
+  `a < b && c == d || e` groups as `((a<b) && (c==d)) || e`. (They also *short-circuit* at runtime —
+  `false && f()` never calls `f` — which matters for codegen later, not for type-checking.)
+
+### Blocks are scopes — a scope *stack*
+
+A `{ … }` block introduces a **lexical scope**: a `let`/`var` declared inside it is visible only
+inside it. `if c { let x = 1 }` then `print(x)` is an error — `x` died at the `}`. Concept 05's flat
+symbol table can't express that, so the checker now carries a **scope stack**: a list of bindings,
+innermost first. Entering a block saves the stack; leaving it restores the saved stack, dropping
+everything the block added. Lookups scan inner-to-outer, so an inner binding **shadows** an outer one
+of the same name and the outer one reappears when the block ends.
+
+```
+env before block:        [outer ↦ Int]
+inside { let x = 1 }:    [x ↦ Int, outer ↦ Int]     ← x found first, outer still visible
+env after block:         [outer ↦ Int]              ← restored; x is gone
+```
+
+That's the entire trick (`in_scope` in the code): `let saved = !env in run (); env := saved`.
+
+### The `for` loop: a range and an immutable counter
+
+`for v in lo ..< hi { … }` desugars, for us, to: check `lo` and `hi` are `Int`, then check the body
+in a fresh scope where `v` is bound to **`Int`**, as a **`let`** (immutable). Swift's loop variable
+is a constant — `for i in 0..<3 { i = 9 }` is "cannot assign to value: 'i' is a 'let' constant" —
+which falls out for free because you bind it with `is_var = false` and reuse the assignment rule from
+concept 05. (`..<` is the *half-open* range: `0 ..< 3` is `0, 1, 2`. The closed `...` and ranges as
+first-class values would need a `Range` type — that's later.)
+
+### `break` / `continue` need a *context*
+
+`break` and `continue` are only meaningful inside a loop, so the checker tracks whether it's *in* one
+with a depth counter: bump it entering a loop body, drop it leaving, and a `break`/`continue` seen at
+depth 0 is the error "'break' is only allowed inside a loop." This is the simplest example of a
+**context-sensitive** check — the legality of a statement depends on where it sits, not just on its
+own parts. (Swift threads this context through the checker too; see the loop tracking in
+`TypeCheckStmt.cpp`.)
+
+### The big idea: control flow is a *graph*, and that's why SIL exists
+
+Here's the thing to carry into the rest of Phase 2. Your AST is a **tree** — `If` has a `then` and an
+`else` subtree, `While` has a body subtree. But what the program *does* at runtime is a **graph**: a
+loop jumps *backward*, an `if` *merges* two paths back together. A tree can't express a back-edge.
+
+![A `while` loop as a control-flow graph: basic blocks joined by branch edges, including the loop's back-edge. The AST is a tree; this is what SIL represents directly.](figs/cfg.png)
+
+The standard representation of that graph is **basic blocks** — straight-line runs of instructions
+ending in a branch — connected by edges. The `while` above becomes four blocks (entry, header, body,
+exit) with a true-edge, a false-edge, and a **back-edge** from body to header. *Every* optimization
+and every backend works on this graph, not the tree. That representation is **SIL**, and building it
+(SILGen) is concept 08. So: control flow is the feature that forces the tree-to-graph leap, and this
+concept is where you feel why the next one needs to exist. (It's also why we don't run loops yet —
+there's no graph-shaped IR to lower them into until SIL.)
+
+## 3. Build it, step by step
+
+Three skeletons; concepts 1–05 are filled in. Fill the `TODO(06)` holes.
+
+1. **`lexer.ml`** — in the operator `match`: `{` → `LBrace`, `}` → `RBrace`; `&` then `&` → `AmpAmp`
+   (error on a lone `&`); `|` then `|` → `PipePipe`; and `.` then `.<` → `DotDotLt` (the range; error
+   on a lone `.`, since a leading `.` isn't a valid number here). All mirror 05's multi-char `==`/`<=`.
+2. **`parser.ml`** — `parse_block` consumes `{`, parses statements (skipping blank `Newline`s) until
+   `}`, returns the `stmt list`. `parse_if` parses `if <expr> <block>` then an optional `else`
+   (`else if` recurses into `parse_if`, wrapped in a one-element list). In `parse_stmt`, add `while`
+   (`<expr>` then a block), `for` (`<ident> in <expr> ..< <expr>` then a block), and `break`/`continue`
+   (just the keyword + its span). `parse_expr` already stops at `{`, so a condition parses cleanly.
+3. **`sema.ml`** — `&&`/`||`: both operands `Bool`, result `Bool`. Then the statements: `If`/`While`
+   `check_expr cond Bool` and `check_block` the body (a loop also brackets the body with `loop_depth`);
+   `For` checks `lo`/`hi` are `Int` and, in a fresh scope, `bind`s the variable as an immutable `Int`
+   before checking the body (also a loop); `Break`/`Continue` error if `loop_depth = 0`. The scope
+   helpers (`bind`/`lookup`/`in_scope`/`check_block`) and `loop_depth` are given.
+
+Reference: `solution/`. Don't peek until you've tried it.
+
+## 4. Test it
+
+```bash
+make lab C=phase2-types-flow/06-control-flow
+```
+
+cram (`tests/typecheck.t`) dumps the control-flow AST and runs `--typecheck`; alcotest checks AST
+shape and the exact statement diagnostics. The **type-check oracle** is the headline: `swiftml2
+--typecheck` must agree with `swiftc -typecheck` on the corpus — including the rejections that catch a
+naive checker (`if 1`, `break` at top level, `for i … { i = 9 }`, a block-local that escapes its
+braces, a `Double` range bound).
+
+## 5. Benchmark it
+
+Not perf-relevant (still linear, type-check only). Performance enters Phase 4, once there's SIL to
+optimise and generated code to run.
+
+## 6. Exercises
+
+1. **`repeat { } while cond`** (Swift's do-while). Add the `repeat`/`while` keywords, an
+   `Ast.Repeat`, and the check (body is a loop; `cond : Bool`). Note the body runs once before the
+   condition — a different CFG shape (the back-edge is unconditional into the condition).
+2. **Closed ranges `...`.** Add `for v in lo ... hi` (inclusive). You'll add a `...` token and decide
+   whether to keep `lo`/`hi` separate or introduce a real `Range` so `let r = 0..<10` also works.
+3. **Reachability / dead code.** Warn on a statement that follows an unconditional `break`/`continue`
+   in the same block ("code after 'break' will never be executed") — your first *flow-sensitive*
+   analysis, a baby step toward the dataflow passes of Phase 4.
+
+## 7. Recap & what's next
+
+You added branching and looping, and the checks that keep them sound: `Bool` conditions, lexical
+block scopes (a scope stack), an immutable `Int` loop variable, and the loop-context rule for
+`break`/`continue`. And you met the idea that drives the rest of Phase 2 — control flow is a
+**graph**, which a tree-shaped AST can't hold.
+
+Next, **07-functions** adds `func`, parameters, return values, and recursion (each function its own
+scope and its own little control-flow graph). Then **08-sil-silgen** introduces **SIL** and turns
+these trees into basic blocks for real — the representation everything downstream depends on.
+
+## 8. Appendix — full solution
+
+Mirrors `solution/sema.ml` (the control-flow checking). The scope stack and `loop_depth` are the new
+machinery; notice `check_block` is the only place a scope is pushed/popped.
+
+```ocaml
+let rec check_stmt (s : Ast.stmt) : unit =
+  match s with
+  (* … Let / Assign / Expr_stmt as in concept 05 … *)
+  | Ast.If { cond; then_blk; else_blk; _ } ->
+      check_expr cond Types.TBool;
+      check_block then_blk;
+      Option.iter check_block else_blk
+  | Ast.While { cond; body; _ } ->
+      check_expr cond Types.TBool;
+      incr loop_depth; check_block body; decr loop_depth
+  | Ast.For { var; lo; hi; body; _ } ->
+      check_expr lo Types.TInt;
+      check_expr hi Types.TInt;
+      incr loop_depth;
+      in_scope (fun () ->
+          bind var (Types.TInt, false);     (* the loop variable is an immutable Int *)
+          List.iter check_stmt body);
+      decr loop_depth
+  | Ast.Break span -> if !loop_depth = 0 then err span "'break' is only allowed inside a loop"
+  | Ast.Continue span -> if !loop_depth = 0 then err span "'continue' is only allowed inside a loop"
+and check_block (stmts : Ast.stmt list) : unit =
+  in_scope (fun () -> List.iter check_stmt stmts)   (* push a scope, check, pop *)
+
+(* the scope stack, defined once at the top of `check`: *)
+(*   let env = ref [] and lookup x = List.assoc_opt x !env
+     and bind n v = env := (n,v) :: !env
+     and in_scope f = let saved = !env in f (); env := saved *)
+
+(* and && / || in infer_binary: *)
+| Ast.And | Ast.Or ->
+    if tl = Types.TBool && tr = Types.TBool then Types.TBool else (ignore (bad ()); Types.TBool)
+```
+
+## 9. Exercise solutions
+
+### 1 — `repeat { } while cond`
+
+Token: `Kw_repeat`. AST: `Repeat of { body : stmt list; cond : expr; span }`. Parser: on `repeat`,
+parse a block, expect `while`, parse the condition. Sema:
+
+```ocaml
+| Ast.Repeat { body; cond; _ } ->
+    incr loop_depth; check_block body; decr loop_depth;   (* body is a loop *)
+    check_expr cond Types.TBool
+```
+
+The CFG differs from `while`: control enters the **body** first, and the back-edge comes from the
+condition (`true` → body, `false` → exit) — the body always runs at least once.
+
+### 2 — closed ranges `...`
+
+Lex `...` as `Token.DotDotDot` (after the two dots, check for a third). Easiest: an
+`Ast.For` gets a `closed : bool` field (or a separate `lo`/`hi` plus the flag). Type-checking is
+identical (`lo`, `hi` must be `Int`); only the *meaning* (and later, codegen) differs — `0...3` is
+`0,1,2,3`. Making ranges first-class (`let r = 0..<10`) is bigger: introduce a `Range` type, make
+`..<`/`...` infix operators returning it, and let `for … in` accept any range expression.
+
+### 3 — reachability
+
+After checking a block's statements, walk them once more (or fold during the walk): once you've seen
+an unconditional `break`/`continue`/(later) `return`, any further statement in that *same* block is
+unreachable — emit a `Warning` "code after '…' will never be executed." This is *flow-sensitive*: the
+warning depends on statement *order*, not types. It's the smallest possible dataflow analysis, and a
+direct preview of the worklist passes (liveness, reachability, definite-init) you'll build in Phase 4
+on the SIL CFG — where "the block after a terminator" is literally an unreachable basic block.

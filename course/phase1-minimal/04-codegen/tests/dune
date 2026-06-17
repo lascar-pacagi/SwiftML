@@ -1,0 +1,10 @@
+(cram
+ (deps
+  (package swiftml)))
+
+; Alcotest unit tests for IRGen — assert emitted-IR shape (opcodes, slot model).
+(test
+ (name test_irgen)
+ (libraries alcotest swiftml_codegen)
+ (flags
+  (:standard -warn-error -a)))

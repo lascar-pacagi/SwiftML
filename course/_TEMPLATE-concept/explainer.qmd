@@ -1,0 +1,70 @@
+---
+title: "NN · <concept-name>"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+<!--
+THE LESSON. A learner enters from zero and can do the work from this file alone.
+All nine sections are required (see CLAUDE.md "The explainer is the lesson").
+Diagrams are REAL figures from figs/ (matplotlib/graphviz), embedded with ![](figs/x.png).
+-->
+
+## 1. What you'll build, and why
+
+- **Objective:** …
+- **Prerequisites:** …
+- **Outcome:** by the end you can … (and the test/oracle that proves it).
+- **Out of scope (for now):** …
+
+## 2. Concepts in depth
+
+> The bulk of the lesson. Teach the idea thoroughly, with diagrams, the relevant theory, and
+> worked examples. Show **how `swiftc` does it** (cite the `../../swift/lib/…` file).
+
+…
+
+![<caption>](figs/<name>.png)
+
+## 3. Build it, step by step
+
+> Point at the skeleton in this dir's `<module>.ml`. For each `TODO`: which function, what it must
+> do, the types/API to use, a **short example**, and tips — **not** the full code (that's §8).
+
+1. …
+
+## 4. Test it
+
+```bash
+make lab C=<this-dir>
+make oracle F=tests/programs/<prog>.swift   # behavioral parity vs swiftc
+```
+
+What each test checks; the FileCheck/oracle assertions; expected output.
+
+## 5. Benchmark it
+
+```bash
+make bench C=<this-dir>
+```
+
+Expected numbers and how to read them vs `swiftc -Onone`/`-O`. (Perf-relevant concepts only.)
+
+## 6. Exercises
+
+1. …
+
+## 7. Recap & what's next
+
+- Takeaways.
+- Bridge to the next concept.
+
+## 8. Appendix — full solution
+
+The complete, heavily-commented answer (mirrors `solution/`), with a short explanation (+ diagram)
+of the hard part.
+
+## 9. Exercise solutions
+
+A worked answer for every exercise in §6.

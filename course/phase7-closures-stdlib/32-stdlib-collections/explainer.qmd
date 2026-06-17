@@ -1,0 +1,257 @@
+---
+title: "32 · map / filter / reduce — closures meet collections"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+You have two halves of a powerful idea sitting in separate concepts. Concept 29 gave you
+**closures** — a function value you can pass around and call indirectly (`apply_value` through a
+`%thickfn`). Concept 31 gave you **collections** — a heap buffer you can walk. This concept snaps
+them together into the single most-used pattern in modern Swift: the **higher-order trio**,
+`map` / `filter` / `reduce`. They are the reason functional-style Swift reads the way it does, and
+they are the **payoff of Phase 7** — and of Milestone **M7**.
+
+The lesson is that all three are *the same shape*: a **counted loop over the buffer that calls a
+closure once per element**. `map` keeps every result; `filter` keeps the ones a predicate accepts;
+`reduce` folds them into a single accumulator. There is **no new SIL instruction and no new
+runtime** — you reuse `apply_value` (the closure ABI, concept 29) and the array buffer intrinsics
+(`rt.array_get`/`push`/`count`, concept 31). The whole feature is a SILGen lowering.
+
+- **You implement:** the lowering of `a.map(f)`, `a.filter(f)`, `a.reduce(init, f)` — the three
+  loop bodies that call the closure and assemble the result.
+- **Outcome:** `map`/`filter`/`reduce` (chained, with captures, on empty arrays) matching `swiftc`
+  byte-for-byte at `-Onone` and `-O`.
+
+> **New to Swift?** `a.map { $0 * 2 }` returns a *new* array with the closure applied to each
+> element; `a.filter { $0 > 0 }` returns a new array of the elements that satisfy the predicate;
+> `a.reduce(0) { $0 + $1 }` folds the array left-to-right into one value (here, the sum). They
+> compose: `a.map(…).filter(…).reduce(…)` is a pipeline. Every Swift programmer reaches for these
+> instead of writing explicit loops.
+
+## 2. Concepts in depth
+
+### One shape, three outcomes
+
+![map / filter / reduce are one shape: a counted loop over the buffer that calls the closure (`apply_value` through the thick-function pair) once per element. map pushes every result into a new array; filter pushes only the kept elements; reduce folds into an accumulator. No new SIL, no new runtime — swiftc's `Sequence.map`/`filter`/`reduce` are literally the same for-loop.](figs/hof.png)
+
+Read the figure left to right. The **source buffer** and the **closure** feed a **counted loop**
+(the same `for i in 0..<count` walk you built for `for`-`in` in concept 31). Inside the loop, each
+element is loaded (`rt.array_get`) and the closure is called on it (`apply_value`). What differs is
+only *what the body does with the result* `r`:
+
+- **`map`** builds a fresh result array and **pushes `r`** for every element → `[R]`.
+- **`filter`** treats `r` as a `Bool` and pushes the **original element** only when `r` is true →
+  `[E]`.
+- **`reduce`** keeps an **accumulator** in a slot and overwrites it with `r` each iteration; after
+  the loop it returns the accumulator → `R`.
+
+That's the entire concept. The closure is the parameter that makes one loop serve three (really,
+infinitely many) purposes — *behaviour passed as a value*.
+
+### How swiftc does exactly this
+
+Open `stdlib/public/core/Sequence.swift`. `map`, `filter`, and `reduce` are **default methods on
+the `Sequence` protocol**, and their bodies are… `for` loops:
+
+```swift
+func map<T>(_ transform: (Element) -> T) -> [T] {
+  var result = [T](); result.reserveCapacity(underestimatedCount)
+  for element in self { result.append(transform(element)) }   // <- the loop you'll write
+  return result
+}
+func reduce<R>(_ initial: R, _ next: (R, Element) -> R) -> R {
+  var acc = initial
+  for element in self { acc = next(acc, element) }             // <- fold into an accumulator
+  return acc
+}
+```
+
+Our `gen_array_hof` *is* these loops, emitted as SIL instead of written in Swift. swiftc additionally
+**inlines** the closure and the loop at `-O` (so `a.map { $0 + 1 }.reduce(0, +)` can fuse into one
+pass with no intermediate array — deforestation); our `-O` already inlines single-block closures
+(concept 19) and can constant-fold through them, which is why the optimized output matches. The
+*specialisation* (monomorphising the generic `map<T>` per element type) is swiftc's; we sidestep it
+because v0 is monomorphic (`[Int]`, closures explicitly typed) already.
+
+> Oracle: `Sequence.swift` (the trio's default implementations), `SequenceAlgorithms.swift`
+> (`reduce(into:)`, `enumerated`, …). Notice `map` calls `reserveCapacity` then `append` in a loop
+> — the CoW `append` you built in concept 31, used by the stdlib itself.
+
+### The closure is a value — `apply_value` is the call
+
+The closure argument arrives as a `%thickfn`: a `{ code pointer, context pointer }` pair (concept
+29). To call it, you don't reference a named function — you `apply_value (fv, [args])`, which
+extracts the code pointer and calls it with the captured context first, then the arguments. This is
+why a closure that **captures** an outer variable (`let factor = 10; a.map { $0 * factor }`) works
+without any special handling here: the capture rode along in the closure's context when it was
+created; `apply_value` passes that context back in. The loop is oblivious — it just calls the value.
+
+### map/filter read; they never mutate
+
+Crucially, `map`/`filter`/`reduce` only **read** the source array — they don't mutate it — so they
+need **no copy-on-write**. The receiver is lowered with plain `gen_expr` (giving the buffer
+pointer), walked with `rt.array_get`, and left untouched. The *results* are fresh arrays (born
+`refcount` 1). This is the read/write distinction from concept 31 paying off: only the in-place
+mutators (`append`, `a[i]=`) pay the make_unique cost; the functional trio is copy-free on its
+input.
+
+### Typing the trio
+
+Sema checks each closure's shape against the array's element type `E`:
+
+- `map`: the closure must be `(E) -> R`; the call's type is `[R]`.
+- `filter`: the closure must be `(E) -> Bool`; the call's type is `[E]`.
+- `reduce`: given `init : R`, the closure must be `(R, E) -> R`; the call's type is `R`.
+
+A mismatch — `a.filter { (x: Int) -> Int in … }` — is rejected with a message naming the expected
+shape, exactly as `swiftc` rejects it (its error is phrased around generic inference, but the
+effect is the same: a non-`Bool` predicate doesn't type-check).
+
+## 3. Build it, step by step
+
+You implement `TODO(32)` in `silgen.ml`, inside `gen_array_hof`. Given to you: `count` (the
+element count), an `$i` index slot, a **`loop ~body_fill`** helper that emits the counted walk and
+hands each loaded element to your `body_fill` callback, and **`rt_call b name args ret`** (the
+`apply @rt.name(args)` shortcut). A fresh result array is
+`emit b (Sil.Apply (emit b (Sil.Func_ref "rt.array_new") (TArray t), [])) (TArray t)`; the closure
+is `fv = gen_expr b fexpr` and you call it with `emit b (Sil.Apply_value (fv, [args])) retTy`.
+
+Write the three `match (m, args)` arms:
+
+1. **`"map", [ (_, fexpr) ]`** — `rty` = the result type of `vty b fv` (a `TFunc`); make a
+   `TArray rty` result; `loop ~body_fill:(fun elt -> push (apply_value fv [elt]) onto result)`;
+   return the result.
+2. **`"filter", [ (_, fexpr) ]`** — make a `TArray el` result; in `body_fill`, `apply_value fv
+   [elt]` is a `Bool`; **branch** on it (a `keep`/`skip` block pair, like the For_in shape) and
+   push `elt` only on the keep side; return the result.
+3. **`"reduce", [ (_, initexpr); (_, fexpr) ]`** — lower `init` (type `rty = vty b init`), store it
+   in an `Alloc_stack "$acc"`; in `body_fill`, `acc := apply_value fv [load acc; elt]`; after the
+   loop, return `load acc`.
+
+Reference: `solution/silgen.ml`. Run with `make lab C=phase7-closures-stdlib/32-stdlib-collections`.
+
+## 4. Test it
+
+```bash
+make lab C=phase7-closures-stdlib/32-stdlib-collections
+```
+
+cram: the chained trio (with a captured variable, sum-of-squares via reduce) matching `swiftc` at
+`-Onone` **and** `-O`; boundary cases (a filter that keeps nothing, the trio on an empty array);
+the SIL shape (`apply_value` per closure; `reduce` builds no result array while `map`/`filter`
+each build one); and the wrong-shape-closure diagnostic. alcotest: each lowering calls the closure
+via `apply_value`, `reduce` allocates only the literal's array (not a result), the typing accepts
+a chained pipeline and rejects a bad predicate, and `-O` validity.
+
+## 5. Benchmark it
+
+The trio is where loop-fusion lives. `a.map(f).filter(g).reduce(0, h)` as written allocates two
+intermediate arrays; `-O` (closure inlining + CSE/DCE from Phase 4) can often collapse the
+pipeline. Compare the `-Onone` and `-O` instruction counts of a three-stage pipeline, and against
+the hand-written `for`-loop equivalent — the lesson is that the functional style costs nothing once
+the optimizer has inlined the closures, which is exactly the bet swiftc makes.
+
+## 6. Exercises
+
+1. **Trailing closures & `$0`.** Parse `a.map { … }` (trailing closure, no parens) and the `$0`/`$1`
+   anonymous-argument shorthand. Pure parser work; the lowering is unchanged — and the corpus
+   suddenly reads like real Swift.
+2. **More `Sequence`.** `forEach`, `contains(where:)`, `first(where:)`, `allSatisfy`, `enumerated`.
+   Each is the same loop with a different body — `contains` early-exits, `enumerated` pairs an index.
+3. **`reduce(into:)`.** The in-place fold (`a.reduce(into: [])  { $0.append($1 * 2) }`) — the
+   accumulator is mutated, not replaced. Combines reduce with concept 31's CoW `append`.
+4. **`sorted` / `sorted(by:)`.** A comparator closure over the buffer — the first algorithm (not
+   just a traversal) that takes a closure.
+5. **`Dictionary` & `Set`.** The big v1: a hash table (Int/String keys), `Sequence` conformance so
+   `for (k, v) in dict` works, and `map`/`filter`/`reduce` over it — the same trio, a new container.
+
+## 7. Recap & what's next — Milestone M7
+
+`map` / `filter` / `reduce` are **one shape**: a counted loop over the buffer that calls a closure
+per element (`apply_value`), differing only in what the body does with the result — collect all
+(map), collect the kept (filter), fold into one (reduce). **No new SIL, no new runtime** — closures
+(29) plus the array buffer (31), exactly as `swiftc`'s `Sequence` default methods are `for`-loops.
+
+This **closes Milestone M7**: real-ish programs — closures over collections, error handling,
+`Array`/`String`, value semantics & copy-on-write — match `swiftc` on stdout and exit. **Phase 7 is
+complete.** Next is **Phase 8**, a whole new backend: `SIL → ARM64 isel → register allocation →
+machine code`, **without LLVM** — starting with **33-arm64-isel** (instruction selection) and
+building to a from-scratch native compiler with a graph-colouring register allocator (M8).
+
+## 8. Appendix — full solution
+
+```ocaml
+(* gen_array_hof: the shared counted-loop scaffold is given; these are the three bodies (32). *)
+match (m, args) with
+| "map", [ (_, fexpr) ] ->
+    let fv = gen_expr b fexpr in
+    let rty = match vty b fv with Types.TFunc (_, r) -> r | _ -> el in
+    let result =
+      emit b (Sil.Apply (emit b (Sil.Func_ref "rt.array_new") (Types.TArray rty), [])) (Types.TArray rty)
+    in
+    loop ~body_fill:(fun elt ->
+        let mapped = emit b (Sil.Apply_value (fv, [ elt ])) rty in
+        ignore (rt_call b "rt.array_push" [ result; mapped ] Types.TVoid));
+    result
+| "filter", [ (_, fexpr) ] ->
+    let fv = gen_expr b fexpr in
+    let result =
+      emit b (Sil.Apply (emit b (Sil.Func_ref "rt.array_new") (Types.TArray el), [])) (Types.TArray el)
+    in
+    loop ~body_fill:(fun elt ->
+        let keep = emit b (Sil.Apply_value (fv, [ elt ])) Types.TBool in
+        let keep_b = new_block b and skip_b = new_block b in
+        terminate b (Sil.Cond_br (keep, (keep_b.Sil.bid, []), (skip_b.Sil.bid, [])));
+        switch_to b keep_b;
+        ignore (rt_call b "rt.array_push" [ result; elt ] Types.TVoid);
+        terminate b (Sil.Br (skip_b.Sil.bid, []));
+        switch_to b skip_b);
+    result
+| "reduce", [ (_, initexpr); (_, fexpr) ] ->
+    let init = gen_expr b initexpr in
+    let rty = vty b init in
+    let acc = emit b (Sil.Alloc_stack "$acc") rty in
+    ignore (emit b (Sil.Store (init, acc)) Types.TVoid);
+    let fv = gen_expr b fexpr in
+    loop ~body_fill:(fun elt ->
+        let a = emit b (Sil.Load acc) rty in
+        let next = emit b (Sil.Apply_value (fv, [ a; elt ])) rty in
+        ignore (emit b (Sil.Store (next, acc)) Types.TVoid));
+    emit b (Sil.Load acc) rty
+| _ -> assert false
+```
+
+## 9. Exercise solutions
+
+### 1 — trailing closures & `$0`
+In the parser, after a call's `)` (or directly after a member name), if the next token is `{`,
+parse a closure and append it as the last argument — that's the trailing-closure desugaring. For
+`$0`/`$1`, a closure with no explicit parameter list binds `$0`, `$1`, … to its arguments; the
+types are inferred from the call context (here, the array's element type). Lowering is untouched.
+
+### 2 — more Sequence
+`forEach` is `map` without collecting. `contains(where:)`/`first(where:)` are the loop with an
+**early exit**: branch out of the loop the first time the predicate is true (a `Br` to the exit
+block from inside the body). `allSatisfy` early-exits on the first false. `enumerated` pushes
+`(i, elt)` pairs — needs tuples (or a two-field struct).
+
+### 3 — reduce(into:)
+The accumulator is a `var` mutated in place rather than replaced: the closure takes `(inout R, E)`.
+In our model, pass the accumulator *slot address* (not its value) so the closure's `append` mutates
+it — i.e. the accumulator participates in CoW like any other array `var`.
+
+### 4 — sorted(by:)
+Lower to an in-place sort over a `make_unique`d copy of the buffer, calling the comparator closure
+(`(E, E) -> Bool`) at each compare. Insertion sort is fine for v0; the lesson is a closure driving
+an *algorithm*, not just a traversal.
+
+### 5 — Dictionary & Set
+A `Dictionary<K, V>` is a hash table: a buffer of buckets, each `{ hashState, key, value }`,
+probed by `hash(key) % capacity`. Hashing `Int` is identity-ish; hashing `String` is a byte FNV/DJB2
+walk. `Set<K>` is a `Dictionary<K, ()>`. Conform both to `Sequence` (an iterator over occupied
+buckets) and the *same* `map`/`filter`/`reduce` loop works over them — proving the trio was never
+about arrays, but about `Sequence`.
+```

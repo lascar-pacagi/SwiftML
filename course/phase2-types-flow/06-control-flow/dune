@@ -1,0 +1,10 @@
+; Concept 06 — the Phase-2 front-end + type checker, now with control flow.
+; Contracts: token diagnostics types ast driver. Skeletons (you edit): lexer parser sema.
+(library
+ (name swiftml_flow)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema driver)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

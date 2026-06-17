@@ -1,0 +1,10 @@
+; Concept 09 — front-end + SIL + SILGen (given, complete) + IRGen.
+; Skeleton (you edit): irgen. Everything else is a given contract or carried-forward.
+(library
+ (name swiftml_llvm)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen irgen driver)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

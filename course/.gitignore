@@ -1,0 +1,23 @@
+_build/
+*.install
+*.merlin
+.DS_Store
+
+# build artifacts from compiling .swift programs
+*.ll
+*.s
+*.o
+a.out
+/tmp-*
+
+# rendered explainers
+*_files/
+explainer.pdf
+explainer.html
+.quarto/
+
+# opam local switch (if used)
+_opam/
+
+/.quarto/
+**/*.quarto_ipynb

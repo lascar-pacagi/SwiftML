@@ -1,0 +1,9 @@
+; Concept 26 — the ARC runtime: retain/release, deinit timing, destructor synthesis.
+(library
+ (name swiftml_arc)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen driver)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

@@ -1,0 +1,5 @@
+; Concept 33 — instruction selection: SIL -> ARM64 (Backend B, the from-scratch native backend).
+(library (name swiftml_isel) (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen arm64 isel driver)
+ (flags (:standard -warn-error -a)))
+(dirs :standard \ solution)

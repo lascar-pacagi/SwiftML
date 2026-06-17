@@ -1,0 +1,5 @@
+; Concept 36 — peephole optimization + (light) instruction scheduling over the final ARM64 stream.
+(library (name swiftml_peephole) (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen arm64 isel regalloc peephole driver)
+ (flags (:standard -warn-error -a)))
+(dirs :standard \ solution)

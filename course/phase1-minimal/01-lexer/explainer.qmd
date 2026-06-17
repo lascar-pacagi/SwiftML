@@ -1,0 +1,476 @@
+---
+title: "01 · The Lexer"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+You'll hand-write the **lexer** (a.k.a. scanner): the function that reads raw Swift source text and
+produces a flat list of **tokens** — `print`, `(`, `1`, `+`, `2`, `)`, newline, eof. Everything
+downstream (parser, type checker, codegen) works on tokens, never on characters.
+
+- **You implement:** `lexer.ml : next` (in this concept dir) — return the next token from the cursor.
+- **Outcome:** `swiftml --emit-tokens arith.swift` prints the correct token stream; the parser in
+  concept 02 consumes it.
+- **Out of scope (Phase 1):** string/float literals, interpolation, most keywords/operators,
+  Unicode identifiers — added in later phases.
+
+We hand-write it (rather than use `ocamllex`) for two reasons: it's how the **real Swift compiler**
+does it (`swift/lib/Parse/Lexer.cpp` is a hand-written DFA), and it gives us full control over
+source positions, error recovery, and Swift's quirks (significant newlines, nesting comments).
+
+### The Phase-1 Swift subset (the whole picture)
+
+Phase 1 is a *complete* compiler for a deliberately tiny slice of Swift — just enough to print
+integer arithmetic. The entire phase (lexer → parser → sema → codegen) targets exactly this subset:
+
+- **Integer arithmetic** — `Int` literals (decimal), the binary operators `+ - * / %` with C-like
+  precedence and associativity, parentheses, and unary `-`.
+- **Bindings** — `let` (constant) and `var` (mutable), plus reassignment of a `var` via `=`.
+- **Output** — `print(_:)`. In Swift `print` is *just an identifier*; `print(x)` is an ordinary call.
+- **Program structure** — a sequence of top-level statements, one per line. **Newlines terminate
+  statements** (no semicolons).
+- **Trivia** — spaces/tabs, `//` line comments, and `/* … */` block comments (which *nest*).
+
+Everything else is out of scope until later phases: `String`/`Double`/`Bool`, `if`/`while`/`for`,
+`func`, structs/enums, generics, Unicode identifiers, string/float literals, interpolation, …
+
+> **Swift notes** — you know systems languages but not Swift yet, so here's what's non-obvious about
+> this subset. (The lexer only *tokenizes*; the semantics below land in `03-sema`/`04-codegen`, but
+> they're worth knowing now because matching them is what "parity with `swiftc`" means.)
+>
+> - **`let` vs `var` are bindings, not `const`.** Think Rust's `let` / `let mut`: `let` is an
+>   immutable binding checked at compile time, `var` is reassignable. The lexer just recognizes them
+>   as keywords; the "can't reassign a `let`" rule is enforced later in sema.
+> - **`Int` is the default integer** — 64-bit signed, pointer-width (like Rust's `isize`). A bare
+>   literal like `8` is an `Int`. The lexer emits `Int(8)`; it never evaluates anything.
+> - **Arithmetic traps on overflow.** Unlike C's silent wraparound, Swift's `+ - *` *trap* (crash
+>   with a runtime diagnostic) on `Int` overflow in `-Onone`; the wrapping forms are the explicit
+>   `&+ &- &*` (not in our subset yet). Reproducing this trap is a `04-codegen` parity gotcha.
+> - **`/` and `%` are integer ops that also trap.** `1 / 0` and `x % 0` trap; `%`'s result takes the
+>   sign of the dividend (C99-style, *unlike* Python's floored `%`). Lexer emits `/` `%`; the
+>   trap-and-sign behavior is codegen's job.
+> - **Newlines are significant.** Swift ends statements at line breaks (like Python/Go, unlike
+>   C/Java's `;`). That's *why* the lexer emits a real `Newline` token instead of discarding `\n`:
+>   the parser needs it to find statement boundaries.
+
+Here is a program that exercises essentially everything Phase 1 supports — your lexer must turn it
+into a clean token stream (we'll trace it in §2):
+
+```swift
+// area of a rectangle
+let width  = 8
+var height = 5
+print(width * height - 3)   /* prints 37 */
+```
+
+## 2. Concepts in depth
+
+### The grammar: what the lexer recognizes, and where the tokens go
+
+Two grammars orient the whole phase. The first is the one **you implement here** — the *lexical*
+grammar, i.e. the set of tokens. The second (the *syntactic* grammar) is what concept **02-parser**
+builds from those tokens; the lexer doesn't enforce it, but seeing it tells you what each token is
+*for*. Notation: `::=` defines a rule, `|` is choice, `*` zero-or-more, `?` optional, `()` groups,
+`"x"` is literal text.
+
+**Lexical grammar — the lexer's contract (this concept).** Each rule below produces one
+`Token.kind` (see `token.ml`); trivia is consumed but never emitted.
+
+```
+token         ::= Int | Ident | keyword | operator | punct | Newline    # then finally Eof
+
+Int           ::= digit+                          # decimal only in Phase 1  -> Token.Int
+Ident         ::= id-head id-tail*                # -> Token.Ident (unless a keyword, below)
+keyword       ::= "let" | "var"                   # an Ident whose spelling is in the keyword table
+operator      ::= "+" | "-" | "*" | "/" | "%" | "="
+punct         ::= "(" | ")" | ","
+Newline       ::= "\n"                            # SIGNIFICANT: terminates a statement
+
+id-head       ::= "A"…"Z" | "a"…"z" | "_"
+id-tail       ::= id-head | digit
+digit         ::= "0"…"9"
+
+# Trivia — consumed by the lexer, NOT emitted as tokens:
+whitespace    ::= " " | "\t"
+line-comment  ::= "//" (any-char-except-newline)*
+block-comment ::= "/*" ( block-comment | any-char )* "*/"    # note: nests, unlike C
+```
+
+That's the complete set: the `,` (`Token.Comma`) is Swift's general argument separator — it's
+tokenized for forward-compatibility even though the Phase-1 corpus only ever calls single-argument
+`print`. `=` is `Token.Eq`; there is no `==` yet.
+
+**Syntactic grammar — the Phase-1 subset (orientation; built in 02-parser).** This is where the
+tokens are headed. The lexer is blind to it — it never decides whether a `-` is unary or binary, or
+whether a `var` may be reassigned; that's the parser's and sema's job. It's here so the token set
+makes sense.
+
+```
+program    ::= ( Newline | statement Newline )* Eof    # blank/comment-only lines are bare Newlines
+statement  ::= "let" Ident "=" expr            # constant binding
+             | "var" Ident "=" expr            # mutable binding
+             | Ident "=" expr                  # reassignment (var only — checked in sema)
+             | expr                            # an expression statement, e.g. print(...)
+
+expr       ::= add
+add        ::= mul ( ("+" | "-") mul )*        # lowest precedence, left-assoc
+mul        ::= unary ( ("*" | "/" | "%") unary )*
+unary      ::= "-" unary | primary             # unary minus
+primary    ::= Int
+             | Ident
+             | Ident "(" args? ")"             # call — Phase 1 only ever calls print
+             | "(" expr ")"
+args       ::= expr ( "," expr )*
+```
+
+**Tracing the example.** Run `swiftml --emit-tokens` on the §1 program and you get the stream below.
+Watch three things: the comment-only first line still yields a `newline`; multi-digit `8` is one
+`int(8)` (maximal munch); and the trailing `/* prints 37 */` is dropped, but its line's `\n` is not.
+
+```
+newline          # line 1 was only `// area of a rectangle` — the comment is skipped, the line break is a token
+let              # `let` matched the keyword table, so Kw_let, not ident(let)
+ident(width)
+=
+int(8)
+newline
+var
+ident(height)
+=
+int(5)
+newline
+ident(print)     # `print` is a plain identifier
+(
+ident(width)
+*
+ident(height)
+-                # the lexer emits `-`; whether it's unary/binary is the parser's call
+int(3)
+)
+newline
+eof
+```
+
+### A lexer is a state machine over a character cursor
+
+The lexer holds a cursor into the source string and, on each call to `next`, classifies the
+upcoming characters into exactly one token. The shape is always the same:
+
+```
+skip whitespace/comments  ->  look at the first significant char  ->  dispatch:
+   digit         => scan an integer literal
+   letter / '_'  => scan an identifier, then check if it's a keyword
+   operator char => emit that operator token
+   '\n'          => emit a Newline token   (significant in Swift!)
+   end of input  => emit Eof
+```
+
+Each branch consumes characters with `bump` (which also advances line/column) and builds a token
+spanning `[start, here)` so later stages can point diagnostics at exact source ranges.
+
+### Maximal munch
+
+When several tokens could start here, take the **longest** one. `123` is one `Int(123)`, not three
+digit tokens; `print` is one identifier, not five. You implement this by *looping while the next
+char still belongs to the current token* (all digits; all identifier chars).
+
+### Three Swift-specific subtleties (read the oracle)
+
+1. **Newlines are tokens.** Swift uses line breaks to terminate statements (no semicolons needed),
+   so we emit `Token.Newline` rather than silently skipping `\n`. Other whitespace (spaces, tabs)
+   *is* skipped.
+2. **Block comments nest.** `/* a /* b */ c */` is one comment. Track a depth counter, unlike C.
+3. **Keywords are identifiers that match a table.** Scan the identifier, then call
+   `Token.keyword_or_ident` — exactly how `swift/lib/Parse/Lexer.cpp` separates `kw_let` from a
+   plain identifier.
+
+> Compare with the oracle: open `../../swift/lib/Parse/Lexer.cpp` and find `Lexer::lexImpl` — it's
+> a big `switch` on the current character, with `lexNumber`, `lexIdentifier`, `skipToEndOfLine`,
+> and nesting `/* */` handling. Ours is the same shape, much smaller.
+
+![The lexer DFA: skip trivia, then dispatch on the first character.](figs/dfa.png)
+
+*(regenerate: `make figs C=phase1-minimal/01-lexer`)*
+
+## 3. Build it, step by step
+
+Open `lexer.ml` in this directory. The cursor type, `create`, and the helpers `here`, `at_end`, `peek_char`,
+`bump`, `make`, plus the `tokenize` driver are **already written**. You implement **`next`**.
+
+1. **Skip trivia.** Loop: while `peek_char lx` is a space or tab, `bump`. Then handle comments:
+   if you see `//`, `bump` to end of line (but *don't* consume the `\n` — it's a token). If you see
+   `/*`, consume a **nesting** block comment (track depth). After skipping, you may need to loop
+   again (comment followed by spaces).
+2. **Capture the start** with `let lo = here lx in`.
+3. **End of input:** `if at_end lx then make lo lx Token.Eof`.
+4. **Dispatch** on `peek_char lx`:
+   - `'0'..'9'`: scan digits into a substring, `int_of_string` it, `make lo lx (Token.Int n)`.
+     ```ocaml
+     let start = lx.pos in
+     while (not (at_end lx)) && (let c = peek_char lx in c >= '0' && c <= '9') do ignore (bump lx) done;
+     let n = int_of_string (String.sub lx.src start (lx.pos - start)) in
+     make lo lx (Token.Int n)
+     ```
+   - letter or `'_'`: scan an identifier the same way (first char letter/`_`, rest
+     letters/digits/`_`), then `make lo lx (Token.keyword_or_ident text)`.
+   - `'+'` → `Plus`, `'-'` → `Minus`, `'*'` → `Star`, `'/'` → `Slash` (only if not a comment, which
+     you already handled), `'%'` → `Percent`, `'='` → `Eq`, `'('` → `LParen`, `')'` → `RParen`,
+     `','` → `Comma`. Each: `ignore (bump lx); make lo lx <kind>`.
+   - `'\n'`: `ignore (bump lx); make lo lx Token.Newline`.
+   - anything else: report a diagnostic (unknown character) and skip it, or `failwith` for now.
+
+**Tip:** factor the "scan while predicate" into a local helper:
+```ocaml
+let take_while lx pred =
+  let start = lx.pos in
+  while (not (at_end lx)) && pred (peek_char lx) do ignore (bump lx) done;
+  String.sub lx.src start (lx.pos - start)
+```
+
+Don't peek at §8 until you've tried it.
+
+## 4. Test it
+
+```bash
+make lab C=phase1-minimal/01-lexer
+```
+
+The cram test in `tests/` runs `swiftml --emit-tokens` on a tiny program and diffs the token
+stream. Because the exact stream is deterministic from `token.ml`, you can record/refresh the
+golden output with `dune promote` once your `next` is correct. Expected for `print(1 + 2)`:
+
+```
+ident(print)
+(
+int(1)
++
+int(2)
+)
+newline
+eof
+```
+
+## 5. Benchmark it
+
+```bash
+make bench C=phase1-minimal/01-lexer      # lexer throughput in MB/s, v0 vs v1
+```
+
+`bench/bench.ml` generates ~3 MB of representative Swift source and lexes it 20×, reporting MB/s for
+two rungs. The bench **first asserts the fast rung produces the identical token stream** (kinds *and*
+line/col spans) — a faster lexer that changes the output is a bug, not a win — then times both:
+
+```
+  equivalence: v1_fast == v0_naive  (kinds + line/col spans) OK
+  v0_naive      42.5 MB/s   (750001 tokens/lex)
+  v1_fast      353.0 MB/s   (750001 tokens/lex)
+  => v1_fast is 8.3x v0_naive
+```
+
+So we go from ~42 MB/s to **~350 MB/s — squarely in swiftc's "hundreds of MB/s" band**. Here's the
+whole story, because *how* you get there is the lesson.
+
+### Why v0 is slow: it's allocation-bound, not scan-bound
+
+Profile `v0_naive` and the surprise is that the character scanning is a rounding error. The cost is
+**allocation**. Look at what one token is:
+
+```ocaml
+{ kind; span = { lo = { line; col; offset }; hi = { line; col; offset } } }
+```
+
+That's **four heap records per token** — the token, its `span`, and two `pos`es — plus the list cons
+cell. At ~750k tokens that's ~3.75 *million* allocations, and the GC churns through all of them. The
+inner `while` loop that actually reads bytes? A few percent. **Lesson #1: measure before you optimize
+— the bottleneck is almost never where the code "looks busy."** (This is why the earlier instinct to
+micro-optimize the scan loop with `unsafe_get` barely helped: it shaved the 3 %, not the 97 %.)
+
+### How v1_fast gets 8× — the exact moves swiftc makes
+
+`bench/lexer_v1_fast.ml` attacks the representation, not the loop. Three changes, all of which mirror
+`swift/lib/Parse/Lexer.cpp` + `SourceManager`:
+
+1. **Offset-only positions (Swift's `SourceLoc`).** A token stores just two `int` byte offsets —
+   *start* and *end*. It does **not** carry line/col. Line and column are derived **lazily** from a
+   one-time *line-start table* (`pos_of` binary-searches the offsets of line beginnings) only when
+   something — a diagnostic — actually asks. The hot loop no longer touches line/col at all (v0
+   bumped them on *every character*). swiftc does exactly this: a `SourceLoc` is a pointer/offset;
+   `line:col` is computed on demand by the `SourceManager`.
+2. **Struct-of-arrays "token soup".** Instead of a `Token.t list`, tokens go into three parallel
+   growable `int array`s — `tags`, `starts`, `ends`. A constant kind (`+`, `(`, `let`) is just a
+   small `int` tag (an *unboxed*, allocation-free value). There is **no per-token record and no
+   per-token `span`/`pos`** — the per-token allocation is gone, replaced by a few array doublings
+   amortized across the whole file.
+3. **Defer the data work.** `Int` literals aren't `int_of_string`'d and identifiers aren't
+   `String.sub`'d in the scan; we keep their offset range and resolve them **on demand** in
+   `to_tokens` / `kind_of`. Even the keyword check (`let`/`var`) compares bytes in place rather than
+   allocating a substring.
+
+Net effect: the scanning pass allocates *essentially nothing per token*. That's the 8×.
+
+### "Is that a fair comparison?" — yes, and here's the honest caveat
+
+v1_fast does **less eagerly**: it defers line/col and literal/identifier materialization. That's not
+cheating — it's the point. In a real compiler the parser pulls from this token buffer and only pays
+for a position when it emits a diagnostic (rare), so the deferred work is mostly never done. The
+`to_tokens` function proves we *can* reconstruct v0's exact output (the bench asserts it), but you'd
+rarely call it. The Phase-1 **reference `Lexer` deliberately keeps the simple `Token.t list`** — it's
+far easier to learn from, and Phase 1 isn't perf-critical; v1_fast shows the design you'd actually
+ship (and that Phase 2's parser could consume directly). The `v1_fast` rung lives in `bench/` (not
+`solution/`) so it's compiled into the build. See §6 for further perf exercises.
+
+## 6. Exercises
+
+1. Add `_` as a digit separator inside integer literals (`1_000_000`), as Swift allows.
+2. Make unterminated `/* …` report a good diagnostic with the start position.
+3. Add `--emit-tokens` output that includes each token's `line:col` span; update the golden file.
+
+## 7. Recap & what's next
+
+You built a hand-written DFA lexer with source positions, significant newlines, and nesting
+comments — the same architecture as `swift/lib/Parse/Lexer.cpp`. Next, **02-parser** consumes this
+token stream with recursive descent + a Pratt expression parser to build the AST.
+
+## 8. Appendix — full solution
+
+The complete `next` (and the small helpers it uses) below — mirrors `solution/lexer.ml`. The cursor
+type and `create`/`here`/`at_end`/`peek_char`/`bump`/`make`/`tokenize` are the given scaffolding; the
+code here is the part you fill in. **Try §3 first — this is the answer.**
+
+```ocaml
+(* Two-char lookahead, for the comment forms `//`, `/*`, `*/`. *)
+let peek2 (lx : t) : char = if lx.pos + 1 < lx.len then lx.src.[lx.pos + 1] else '\000'
+
+(* Swift identifier/number character classes (ASCII subset for Phase 1). *)
+let is_digit (c : char) : bool = c >= '0' && c <= '9'
+let is_ident_head (c : char) : bool = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c = '_'
+let is_ident_cont (c : char) : bool = is_ident_head c || is_digit c
+
+let next (lx : t) : Token.t =
+  (* 1. Skip trivia: non-newline whitespace and //, /* */ comments. Loop, because a
+     comment can be followed by more whitespace/comments. Newlines are NOT trivia. *)
+  let rec skip_trivia () =
+    if at_end lx then ()
+    else
+      let c = peek_char lx in
+      if c = ' ' || c = '\t' || c = '\r' then (ignore (bump lx); skip_trivia ())
+      else if c = '/' && peek2 lx = '/' then (
+        (* line comment: consume to end of line, but leave the '\n' (it's a token). *)
+        ignore (bump lx); ignore (bump lx);
+        while (not (at_end lx)) && peek_char lx <> '\n' do ignore (bump lx) done;
+        skip_trivia ())
+      else if c = '/' && peek2 lx = '*' then (
+        (* block comment: nests, unlike C. Track depth until it returns to 0. *)
+        ignore (bump lx); ignore (bump lx);
+        let depth = ref 1 in
+        while !depth > 0 && not (at_end lx) do
+          if peek_char lx = '/' && peek2 lx = '*' then (ignore (bump lx); ignore (bump lx); incr depth)
+          else if peek_char lx = '*' && peek2 lx = '/' then (ignore (bump lx); ignore (bump lx); decr depth)
+          else ignore (bump lx)
+        done;
+        (* depth > 0 here ⇒ unterminated; no sink yet, so stop silently (Exercise 2). *)
+        skip_trivia ())
+      else ()
+  in
+  skip_trivia ();
+  (* 2. Capture the start position. 3. End of input. *)
+  let lo = here lx in
+  if at_end lx then make lo lx Token.Eof
+  else
+    let c = peek_char lx in
+    (* 4. Dispatch on the first significant character. *)
+    if is_digit c then (
+      (* integer literal — maximal munch over the run of digits *)
+      let start = lx.pos in
+      while (not (at_end lx)) && is_digit (peek_char lx) do ignore (bump lx) done;
+      let n = int_of_string (String.sub lx.src start (lx.pos - start)) in
+      make lo lx (Token.Int n))
+    else if is_ident_head c then (
+      (* identifier — head then run of ident chars; then the keyword table *)
+      let start = lx.pos in
+      while (not (at_end lx)) && is_ident_cont (peek_char lx) do ignore (bump lx) done;
+      let text = String.sub lx.src start (lx.pos - start) in
+      make lo lx (Token.keyword_or_ident text))
+    else
+      match c with
+      | '+' -> ignore (bump lx); make lo lx Token.Plus
+      | '-' -> ignore (bump lx); make lo lx Token.Minus
+      | '*' -> ignore (bump lx); make lo lx Token.Star
+      | '/' -> ignore (bump lx); make lo lx Token.Slash
+      | '%' -> ignore (bump lx); make lo lx Token.Percent
+      | '=' -> ignore (bump lx); make lo lx Token.Eq
+      | '(' -> ignore (bump lx); make lo lx Token.LParen
+      | ')' -> ignore (bump lx); make lo lx Token.RParen
+      | ',' -> ignore (bump lx); make lo lx Token.Comma
+      | '\n' -> ignore (bump lx); make lo lx Token.Newline
+      | _ -> failwith (Printf.sprintf "lex error %d:%d: unexpected character %C" lx.line lx.col c)
+```
+
+Why it's shaped this way:
+
+- **Maximal munch** is the `while … is_digit …` / `while … is_ident_cont …` loops: keep consuming
+  while the next char still belongs to the token, so `123` is one `Int` and `print` one identifier.
+- **Newlines are emitted, not skipped** — they're significant (statement terminators), so `'\n'`
+  falls through to a real `Token.Newline` while spaces/tabs are trivia.
+- **Block comments nest** via the `depth` counter — `/* a /* b */ c */` is one comment.
+- The stray-character `failwith` is a placeholder: there's no `Diagnostics.sink` threaded into the
+  lexer yet (Exercise 2 / later phases add one). Factoring the two munch loops into a `take_while
+  lx pred` helper (see §3) is an equally good style — the solution inlines them for directness.
+
+## 9. Exercise solutions
+
+### 1 — `_` digit separators
+
+Swift lets `_` appear *after the first digit* of an integer literal — `1_000_000`, `1_0`, even a
+trailing `1_` or doubled `1__0` are all valid (verified with the oracle); only `_1` is different,
+and that's an *identifier* (a number must start with a digit). So extend the digit branch of `next`
+to consume `_` along with digits, then strip the `_`s before converting:
+
+```ocaml
+if is_digit c then (
+  let start = lx.pos in
+  while (not (at_end lx)) && (let d = peek_char lx in is_digit d || d = '_') do ignore (bump lx) done;
+  let raw = String.sub lx.src start (lx.pos - start) in
+  let digits = String.concat "" (String.split_on_char '_' raw) in
+  make lo lx (Token.Int (int_of_string digits)))
+```
+
+Because only a leading digit enters this branch, `_1` still lexes as `Ident "_1"` — matching swiftc,
+which then reports `cannot find '_1' in scope`.
+
+### 2 — diagnostic for an unterminated `/* …`
+
+The Phase-1 lexer has no diagnostics sink, which is why the base solution stops silently. The real
+fix is to thread a `Diagnostics.sink` into the cursor (add a `diags` field, set it in `create`),
+remember where the comment opened, and report if we hit end-of-input with `depth > 0`:
+
+```ocaml
+(* just before consuming "/*": *)
+let bc_lo = here lx in
+...
+done;  (* the depth loop *)
+if !depth > 0 then
+  Diagnostics.error lx.diags { Token.lo = bc_lo; hi = here lx } "unterminated '/*' comment"
+```
+
+This is exactly how `swift/lib/Parse/Lexer.cpp` reports it (`diagnose(... unterminated_block_comment)`);
+we wire a real lexer sink in Phase 2 when the front end threads diagnostics everywhere.
+
+### 3 — `line:col` in `--emit-tokens`
+
+Each token already carries its span, so this is a driver-output change, not a lexer change. Print the
+start position alongside the kind:
+
+```ocaml
+(* driver.ml, the Tokens case *)
+|> List.iter (fun (t : Token.t) ->
+     Printf.printf "%d:%d\t%s\n"
+       t.Token.span.Token.lo.Token.line t.Token.span.Token.lo.Token.col
+       (Token.string_of_kind t.Token.kind))
+```
+
+Then refresh the golden output with `dune promote`. (Our span tests in `tests/test_lexer.ml`
+already pin these positions, so you can check them before touching the golden file.)

@@ -1,0 +1,7 @@
+; The M6 benchmark: does copy propagation erase the borrow-copy ARC traffic?
+; `make bench C=phase6-classes-arc/28-arc-optimization`
+(executable
+ (name bench)
+ (libraries swiftml_arcopt unix)
+ (flags
+  (:standard -warn-error -a)))

@@ -1,0 +1,5 @@
+; Concept 35 — machine code & the AAPCS64/Apple ABI: stack-passed arguments (>8 params), frames.
+(library (name swiftml_abi) (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen arm64 isel regalloc driver)
+ (flags (:standard -warn-error -a)))
+(dirs :standard \ solution)

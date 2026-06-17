@@ -1,0 +1,323 @@
+---
+title: "02 · The Parser (recursive descent + Pratt)"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+You'll turn the flat token list into a **tree** — the AST — that captures structure: that
+`1 + 2 * 3` means `1 + (2 * 3)`, not `(1 + 2) * 3`. Two techniques, combined:
+
+- **Recursive descent** for the outer grammar (a program is a list of statements; a statement is a
+  `let`/`var` binding, a reassignment `x = e`, or a bare expression). One function per grammar rule.
+- **Pratt parsing** (precedence climbing) for expressions, which handles operator precedence and
+  associativity cleanly without a function-per-precedence-level explosion.
+
+- **You implement:** `parse_expr_bp`, `parse_stmt`, `parse_program` in `parser.ml` (this dir).
+- **Outcome:** `swiftml --emit-ast arith.swift` prints the correct tree; Sema (03) and IRGen (04)
+  consume it.
+
+## 2. Concepts in depth
+
+### Recursive descent
+
+Each grammar rule becomes a function that consumes the tokens it expects and returns an AST node,
+calling sub-rule functions for sub-parts. `parse_program` loops calling `parse_stmt` until `Eof`;
+`parse_stmt` peeks: a `let`/`var` keyword ⇒ parse a binding; an identifier immediately followed by
+`=` ⇒ a reassignment (`Ast.Assign`); otherwise ⇒ parse an expression statement. Telling the last two
+apart needs **one token of lookahead** past the identifier. The token cursor (`peek`, `advance`,
+`expect`) is your input.
+
+### Pratt parsing / precedence climbing
+
+The elegant core. `parse_expr_bp p min_bp` parses an expression whose operators all bind at least
+as tightly as `min_bp`:
+
+```
+1. parse a PREFIX (a "nud" — null denotation): a literal, a variable, a parenthesized expr,
+   a unary minus, or a call. This is the left operand.
+2. LOOP: peek the next token. If it's an infix operator with binding power bp >= min_bp:
+     - consume it,
+     - parse the RIGHT operand with parse_expr_bp p (bp + 1)   <- the +1 gives LEFT associativity,
+     - fold:  left := Binary(op, left, right).
+   Otherwise stop and return left.
+```
+
+Why it works: a higher `min_bp` on the recursive call means "only grab operators tighter than me,"
+so `*` (bp 20) pulls its operands together before `+` (bp 10) ever sees them. Using `bp + 1` for the
+right recursion makes `-` left-associative (`10 - 4 - 3` ⇒ `(- (- 10 4) 3)`); using `bp` would make
+it right-associative. Our `infix_bp` table (already in `parser.ml`) gives `+ -` → 10, `* / %` → 20.
+
+![Pratt parsing of `1 + 2 * 3`: `*` binds tighter, so it forms a subtree first.](figs/pratt.png)
+
+*(regenerate: `make figs C=phase1-minimal/02-parser`)*
+
+> Oracle: `../../swift/lib/Parse/ParseExpr.cpp` — `parseExprSequence` collects a flat sequence of
+> operands and operators, then folds by precedence group. Same idea; Swift's version handles
+> user-defined operators and precedence groups, which we don't (yet).
+
+## 3. Build it, step by step
+
+Open `parser.ml` in this directory. Helpers `peek`, `peek_kind`, `advance`, `expect`, `infix_bp`,
+`binop_of_kind` are written.
+
+1. **`parse_prefix`** (write it as a local function or inline at the top of `parse_expr_bp`):
+   match `peek_kind p`:
+   - `Token.Int n` ⇒ `advance`, return `Ast.Int_lit (n, span)`.
+   - `Token.Ident name` ⇒ `advance`; if the next token is `LParen`, parse a call:
+     consume `(`, parse a comma-separated argument list, `expect RParen`, return
+     `Ast.Call (name, args, span)`. Otherwise return `Ast.Var (name, span)`.
+   - `Token.LParen` ⇒ `advance`, `let e = parse_expr_bp p 0 in`, `expect RParen`, return `e`.
+   - `Token.Minus` ⇒ `advance`, `let e = parse_expr_bp p 100 in` (unary binds tight),
+     return `Ast.Unary (Neg, e, span)`.
+   - anything else ⇒ diagnostic ("expected expression") and return a placeholder.
+2. **The infix loop** completes `parse_expr_bp`. Starting from the `left` that `parse_prefix`
+   returned, repeat until the next token is no longer an operator you may take:
+   - look up `infix_bp (peek_kind p)`;
+   - if it's `Some bp` with `bp >= min_bp`, you have one to fold: read the `Ast.binop` via
+     `binop_of_kind`, `advance` past the operator, parse the right operand with
+     `parse_expr_bp p (bp + 1)` — the **`+ 1`** is exactly what makes `-` left-associative (§2) —
+     then combine into `Ast.Binary (op, left, right, span)` and keep going;
+   - otherwise stop and return `left`.
+
+   Shape it however you like — a `left` ref with a `while`, or a tail-recursive helper. The skeleton
+   you're filling in:
+   ```ocaml
+   let rec parse_expr_bp (p : t) (min_bp : int) : Ast.expr =
+     let left = parse_prefix p in
+     (* TODO: while the next token is an infix op with bp >= min_bp, fold it into
+        [left] as above (advance, recurse with bp + 1, build Ast.Binary); then: *)
+     left
+   ```
+   For the combined span, reusing the operator's (or either operand's) span is fine for now. The
+   complete version lives in `solution/parser.ml` (and §8) — try it before you peek.
+3. **`parse_stmt`:** if `peek_kind` is `Kw_let`/`Kw_var`, consume it, read the `Ident` name,
+   `expect Eq`, parse the initializer expression, return `Ast.Let {…}`. Else if the next token is an
+   `Ident` *and the one after it is* `Eq` (one-token lookahead — add a small `peek_kind_at p 1`
+   helper), it's a reassignment ⇒ consume both, parse the expression, return `Ast.Assign {…}`.
+   Otherwise parse an expression and wrap it in `Ast.Expr_stmt`. (`Ident` carries a string, so read
+   the name by matching `peek_kind` rather than `expect`, which compares whole kinds.)
+4. **`parse_program`:** skip leading `Newline`s; loop until `Eof`: parse a statement, then consume
+   the terminating `Newline` (or stop at `Eof`); collect into `Ast.program`.
+
+## 4. Test it
+
+```bash
+make lab C=phase1-minimal/02-parser
+```
+
+The cram test checks `--emit-ast`. Precedence and associativity are the whole point:
+
+```
+1 + 2 * 3     =>  (+ 1 (* 2 3))
+(1 + 2) * 3   =>  (* (+ 1 2) 3)
+10 - 4 - 3    =>  (- (- 10 4) 3)
+-5 + 8        =>  (+ (- 5) 8)
+```
+
+Record golden output with `dune promote` once correct.
+
+## 5. Benchmark it
+
+Not perf-critical in Phase 1. (Parsing throughput becomes interesting at stdlib scale, Phase 7.)
+
+## 6. Exercises
+
+1. Make `parse_prefix` report a *good* error (with the offending token) instead of a placeholder,
+   then implement `v1_recovery`: skip to the next `Newline` and keep parsing, so multiple errors
+   are reported in one run.
+2. Add right-associative exponentiation `**` at a higher precedence and verify `2 ** 3 ** 2`
+   parses as `(** 2 (** 3 2))` (use `bp` instead of `bp + 1` for the right recursion).
+
+## 7. Recap & what's next
+
+You built the parser: recursive descent for the outer grammar, Pratt for expressions with correct
+precedence/associativity. Next, **03-sema** walks this AST to resolve names and (trivially, for now)
+type-check it.
+
+## 8. Appendix — full solution
+
+Mirrors `solution/parser.ml`. `type t`, `create`, `peek`/`peek_kind`, `advance`, `expect`,
+`infix_bp`, `binop_of_kind` are the given scaffolding; below are the helpers and functions you add.
+**Try §3 first — this is the answer.**
+
+```ocaml
+(* One-token lookahead — distinguishes `c = …` (assignment) from `c + …`. *)
+let peek_kind_at (p : t) (n : int) : Token.kind =
+  let i = p.pos + n in
+  if i < Array.length p.toks then p.toks.(i).Token.kind else Token.Eof
+
+let unary_bp = 100 (* unary minus binds tighter than any binary operator *)
+
+let span_between (lo : Token.span) (hi : Token.span) : Token.span =
+  { Token.lo = lo.Token.lo; hi = hi.Token.hi }
+
+(* Pratt: a prefix ("nud") then an infix-folding loop. *)
+let rec parse_expr_bp (p : t) (min_bp : int) : Ast.expr =
+  let lhs =
+    match peek_kind p with
+    | Token.Int n -> let t = advance p in Ast.Int_lit (n, t.Token.span)
+    | Token.Ident name ->
+        let t = advance p in
+        if peek_kind p = Token.LParen then (
+          ignore (advance p (* '(' *));
+          let args = parse_call_args p in
+          let rp = expect p Token.RParen "')'" in
+          Ast.Call (name, args, span_between t.Token.span rp.Token.span))
+        else Ast.Var (name, t.Token.span)
+    | Token.LParen ->
+        ignore (advance p (* '(' *));
+        let e = parse_expr_bp p 0 in
+        ignore (expect p Token.RParen "')'");
+        e
+    | Token.Minus ->
+        let t = advance p in
+        let operand = parse_expr_bp p unary_bp in
+        Ast.Unary (Ast.Neg, operand, span_between t.Token.span (Ast.expr_span operand))
+    | _ ->
+        let t = peek p in
+        Diagnostics.error p.diags t.Token.span "expected expression";
+        ignore (advance p);
+        Ast.Int_lit (0, t.Token.span) (* recovery placeholder *)
+  in
+  let rec loop lhs =
+    match infix_bp (peek_kind p) with
+    | Some bp when bp >= min_bp ->
+        let op_tok = advance p in
+        let op = match binop_of_kind op_tok.Token.kind with Some o -> o | None -> assert false in
+        let rhs = parse_expr_bp p (bp + 1) in (* bp + 1 ⇒ left-associative *)
+        loop (Ast.Binary (op, lhs, rhs, span_between (Ast.expr_span lhs) (Ast.expr_span rhs)))
+    | _ -> lhs
+  in
+  loop lhs
+
+and parse_call_args (p : t) : Ast.expr list =
+  if peek_kind p = Token.RParen then []
+  else
+    let rec loop acc =
+      let e = parse_expr_bp p 0 in
+      if peek_kind p = Token.Comma then (ignore (advance p); loop (e :: acc))
+      else List.rev (e :: acc)
+    in
+    loop []
+
+let parse_expr (p : t) : Ast.expr = parse_expr_bp p 0
+
+(* `Ident` carries a string, so read the name by matching `peek_kind`, not `expect`. *)
+let parse_ident (p : t) (what : string) : string * Token.span =
+  match peek_kind p with
+  | Token.Ident s -> let t = advance p in (s, t.Token.span)
+  | _ ->
+      let t = peek p in
+      Diagnostics.error p.diags t.Token.span (Printf.sprintf "expected %s" what);
+      ("_", t.Token.span)
+
+let parse_stmt (p : t) : Ast.stmt =
+  match peek_kind p with
+  | Token.Kw_let | Token.Kw_var ->
+      let kw = advance p in
+      let is_var = kw.Token.kind = Token.Kw_var in
+      let name, _ = parse_ident p "identifier" in
+      ignore (expect p Token.Eq "'='");
+      let value = parse_expr p in
+      Ast.Let { name; is_var; value; span = span_between kw.Token.span (Ast.expr_span value) }
+  | Token.Ident name when peek_kind_at p 1 = Token.Eq ->
+      let id = advance p in
+      ignore (advance p (* '=' *));
+      let value = parse_expr p in
+      Ast.Assign { name; value; span = span_between id.Token.span (Ast.expr_span value) }
+  | _ ->
+      let e = parse_expr p in
+      Ast.Expr_stmt (e, Ast.expr_span e)
+
+let parse_program (p : t) : Ast.program =
+  let rec skip_newlines () =
+    if peek_kind p = Token.Newline then (ignore (advance p); skip_newlines ())
+  in
+  let rec loop acc =
+    skip_newlines ();
+    match peek_kind p with
+    | Token.Eof -> { Ast.stmts = List.rev acc }
+    | _ ->
+        let s = parse_stmt p in
+        (match peek_kind p with
+        | Token.Newline -> ignore (advance p)
+        | Token.Eof -> ()
+        | _ -> Diagnostics.error p.diags (peek p).Token.span "expected newline or end of statement");
+        loop (s :: acc)
+  in
+  loop []
+```
+
+Why it's shaped this way:
+
+- **Precedence falls out of `min_bp`.** The infix loop only folds operators with `bp >= min_bp`;
+  recursing the right operand with `bp + 1` keeps `-` **left**-associative (use plain `bp` for
+  right-assoc, e.g. exponentiation in §6). `*`/`%`/`/` (bp 20) thus bind before `+`/`-` (bp 10).
+- **Unary minus** uses `unary_bp = 100` so `-2 * 3` is `(-2) * 3`, tighter than any binary op.
+- **Reassignment** needs the **one-token lookahead** `peek_kind_at p 1 = Token.Eq` to tell `c = …`
+  (an `Ast.Assign`) from `c + …` (an expression statement) — both start with an `Ident`.
+- **`parse_program`** skips blank/comment-only `Newline`s and consumes the terminator after each
+  statement, so a comment-only first line (which the lexer emits as a leading `Newline`) is fine.
+
+## 9. Exercise solutions
+
+### 1 — a good prefix error + `v1_recovery`
+
+First, name the offending token in the prefix error instead of a bare placeholder:
+
+```ocaml
+| _ ->
+    let t = peek p in
+    Diagnostics.error p.diags t.Token.span
+      (Printf.sprintf "expected an expression, found '%s'" (Token.string_of_kind t.Token.kind));
+    ignore (advance p);
+    Ast.Int_lit (0, t.Token.span)
+```
+
+Then make `parse_program` *recover* so one run reports several errors: when the token after a
+statement isn't a `Newline`/`Eof`, skip forward to the next `Newline` before continuing (a classic
+"panic-mode to a synchronizing token" recovery):
+
+```ocaml
+| _ ->
+    Diagnostics.error p.diags (peek p).Token.span "expected newline or end of statement";
+    while (match peek_kind p with Token.Newline | Token.Eof -> false | _ -> true) do
+      ignore (advance p)
+    done
+```
+
+Now `1 +\nx === 5\nprint(2)` reports the two broken lines yet still parses `print(2)`. A unit test:
+assert `ndiags` ≥ 2 *and* that the good statement still appears in the program.
+
+### 2 — right-associative `**`
+
+`**` needs (a) a token, (b) an `infix_bp` above `*`, and (c) right-recursion with `bp` (not `bp + 1`).
+First lex two `*` as one token — in the lexer's `'*'` case, peek for a second star:
+
+```ocaml
+| '*' ->
+    ignore (bump lx);
+    if peek_char lx = '*' then (ignore (bump lx); make lo lx Token.StarStar)
+    else make lo lx Token.Star
+```
+
+(add `StarStar` to `token.ml` and a `Pow` constructor to `Ast.binop`). Then in the parser:
+
+```ocaml
+let infix_bp = function
+  | Token.Plus | Token.Minus -> Some 10
+  | Token.Star | Token.Slash | Token.Percent -> Some 20
+  | Token.StarStar -> Some 30
+  | _ -> None
+
+(* in the infix loop, recurse with bp (not bp + 1) for the right-associative ** : *)
+let right_min = if op_tok.Token.kind = Token.StarStar then bp else bp + 1 in
+let rhs = parse_expr_bp p right_min in
+```
+
+`2 ** 3 ** 2` then parses as `(** 2 (** 3 2))` — using `bp` keeps grabbing same-level `**` on the
+right, which is what right-associativity means. Note there's **no oracle** here: real Swift has no
+`**` operator (exponentiation is `pow(_:_:)`), so this is a pure parsing exercise.

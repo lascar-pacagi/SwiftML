@@ -1,0 +1,195 @@
+---
+title: "17 · Constant folding & dead-code elimination"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+In concept 15 you wrote a constant folder that could only fold literal integer arithmetic, and it was
+nearly useless — `let x = 5; print(x + 1)` wouldn't simplify, because `x` was a `load` from a slot.
+Concept 16 fixed that: after **mem2reg**, `x` is the SSA value `5`. Now the same passes are *powerful*.
+This concept cashes that in — generalize folding to comparisons and bools, and add **CFG
+simplification**: once you can fold a *condition* to `true`/`false`, you can fold the **branch**, and a
+whole block of code can disappear.
+
+- **You implement:** `fold_binop` (the constant lattice) and `simplify_cfg` (branch + dead-block
+  elimination).
+- **Outcome:** constant programs collapse, dead branches vanish, and `-O` still matches `swiftc`.
+
+## 2. Concepts in depth
+
+### Folding propagates through SSA
+
+The folder walks the instructions tracking which SSA values are **constants** — a tiny lattice with
+two flavours, `CInt n` and `CBool b`. When a `binop` or `unop` has all-constant operands, it computes
+the result and rewrites the instruction to a literal, *recording the new constant* so a chain folds:
+`1 + 2 + 3` becomes `3 + 3` becomes `6`. The key is that — on SSA — a `let` *is* a value, so this same
+local folding does **constant propagation** for free: a constant flows to every use because the use
+references the one value that defined it. (Generalizing `fold_binop` to the six comparisons — which
+produce a `Bool`, not an `Int` — and to `&&`/`||` is the small step that unlocks the next one.) One
+rule we keep: **`÷0` and `%0` are never folded** — they must still trap at runtime, exactly like
+`swiftc`, so the folder returns "not a constant" for them.
+
+### Folding a condition folds the branch
+
+Here's the payoff. Once `3 < 5` folds to the constant `true`, the `cond_br` that tests it has a known
+outcome — so it becomes an **unconditional** `br` to the taken side, and the other side is no longer
+reachable:
+
+![After folding, the condition is the constant `true`, so the `cond_br` becomes `br bb1` and the `else` block (bb2) is unreachable. simplify-cfg deletes it — a whole block of code, gone.](figs/branch_fold.png)
+
+That's `simplify_cfg`: (a) for each `cond_br %c, (t, ta), (e, ea)` whose `%c` is a constant, replace it
+with `br (t, ta)` or `br (e, ea)` — keeping the taken side's *block arguments*; (b) then do
+**dead-block elimination** — a DFS from the entry, deleting every block it doesn't reach. Deleting a
+block also deletes its branches, so any φ in a surviving block simply loses that incoming edge (with
+basic-block arguments, the incoming lived *on the branch*, so removing the branch removes the operand —
+no φ-list surgery needed). This is where block arguments pay off again over classic φ-nodes.
+
+### Passes enable passes — so iterate
+
+`simplify_cfg` can expose new constants: after a branch folds and a block merges, a value that was a
+φ of two different things might now be a φ of one — i.e., a constant. So the `-O` pipeline runs
+**fold → simplify → fold → simplify → DCE**, letting the cascade play out. (Real compilers run the
+whole pipeline to a fixed point; we unroll a couple of rounds, which covers the common cases. Doing it
+properly — pass change-flags + a fixed-point loop — is an exercise.)
+
+### Dead code, and what stays
+
+`dead_instr_elim` (from concept 15) sweeps up: after folding, the original literals and binops have no
+users, so they go. But it must keep anything **observable** — a `store`, an `apply`, a `print` — even
+if the *result* is unused, because those *do* something. That side-effect rule is the line between
+"unused" and "dead": only a pure instruction with no uses is truly dead.
+
+> Oracle: swiftc's `SILCombine`/`SimplifyCFG`/`DCE` and the SCCP pass do exactly this on SIL; LLVM's
+> `instcombine` + `simplifycfg` do it on LLVM IR. The ideas are identical at both levels — which is why
+> a compiler optimizes the *same program* twice (once on its own IR, once on LLVM's): each level sees
+> things the other can't.
+
+## 3. Build it, step by step
+
+In `opt.ml`:
+
+- `fold_binop op a b` — `TODO(17)`: match on the two constants. `CInt x, CInt y`: arithmetic →
+  `Some (CInt …)` (but `None` for `Div`/`Mod` by zero); the six comparisons → `Some (CBool …)`.
+  `CBool p, CBool q`: `Eq`/`Ne` → `CBool`; `And`/`Or` → `CBool`. Else `None`. (`constant_fold` and
+  `fold_unop` already use it.)
+- `simplify_cfg f` — `TODO(17)`: collect the `Bool_lit` values; rewrite each `Cond_br` on a constant
+  to the taken `Br` (keeping its args); then DFS from block `0` over `succs` and keep only reachable
+  blocks.
+
+Reference: `solution/opt.ml`.
+
+## 4. Test it
+
+```bash
+make lab C=phase4-optimizer/17-constfold-dce
+```
+
+cram checks that `3 < 5` folds to a `Bool` literal, that `if 10 > 3 { … } else { … }` loses its
+`cond_br` and dead block, and that `-O` programs still match `swiftc`. alcotest checks `fold_binop`
+directly (comparisons, bools, the `÷0` guard), the folding pass, branch+dead-block elimination, and
+that the passes keep the SIL valid.
+
+## 5. Benchmark it
+
+A program full of compile-time-known control flow (config flags, `if true`, constant bounds) collapses
+to almost nothing under `-O`. Diff the instruction/block counts in `--emit-sil` vs `--sil-opt`. This
+compounds with mem2reg: more values are constant *because* they're no longer loads, so more branches
+fold, so more code dies.
+
+## 6. Exercises
+
+1. **SCCP.** Sparse Conditional Constant Propagation interleaves constant propagation with
+   reachability — so a value is only "not constant" if it's reached on paths giving different values.
+   It folds strictly more than fold-then-simplify (e.g. a φ whose only *reachable* inputs agree).
+2. **Algebraic identities.** `x + 0 → x`, `x * 1 → x`, `x * 0 → 0`, `x - x → 0`, `b && true → b`. These
+   don't need both operands constant — a different, complementary peephole.
+3. **Dead-store elimination.** For a *non-promoted* slot (a struct field), a `store` whose value is
+   overwritten before any `load`, or never loaded, is dead. Remove it (a small backward pass).
+4. **Block merging + fixed point.** Merge a block with a single predecessor whose only successor it is
+   (straight-line fusion), and run the whole pipeline to a real fixed point with change flags.
+
+## 7. Recap & what's next
+
+The toy passes from concept 15 are now real: constant folding reaches comparisons and bools and
+propagates through SSA, and `simplify_cfg` folds constant branches and deletes the dead blocks — with
+behavior preserved. The optimizer is starting to *change the shape* of the code, not just tidy it.
+
+Next, **18-cse-gvn**: common-subexpression elimination and global value numbering — recognizing that
+two computations produce the *same* value and keeping only one. Then **19-inlining** and the LLVM
+hand-off (20), closing in on `swiftc -O` (**Milestone M4**).
+
+## 8. Appendix — full solution
+
+```ocaml
+let fold_binop (op : Ast.binop) (a : cst) (b : cst) : cst option =
+  match (a, b) with
+  | CInt x, CInt y -> (
+      match op with
+      | Ast.Add -> Some (CInt (x + y)) | Ast.Sub -> Some (CInt (x - y)) | Ast.Mul -> Some (CInt (x * y))
+      | Ast.Div -> if y = 0 then None else Some (CInt (x / y))
+      | Ast.Mod -> if y = 0 then None else Some (CInt (x mod y))
+      | Ast.Eq -> Some (CBool (x = y)) | Ast.Ne -> Some (CBool (x <> y))
+      | Ast.Lt -> Some (CBool (x < y)) | Ast.Le -> Some (CBool (x <= y))
+      | Ast.Gt -> Some (CBool (x > y)) | Ast.Ge -> Some (CBool (x >= y))
+      | Ast.And | Ast.Or -> None)
+  | CBool p, CBool q -> (
+      match op with
+      | Ast.Eq -> Some (CBool (p = q)) | Ast.Ne -> Some (CBool (p <> q))
+      | Ast.And -> Some (CBool (p && q)) | Ast.Or -> Some (CBool (p || q))
+      | _ -> None)
+  | _ -> None
+
+let simplify_cfg (f : Sil.func) : Sil.func =
+  let bcst = Hashtbl.create 64 in
+  List.iter (fun (b : Sil.block) ->
+    List.iter (fun (v, i) -> match i with Sil.Bool_lit x -> Hashtbl.replace bcst v x | _ -> ()) b.Sil.instrs) f.Sil.blocks;
+  List.iter (fun (b : Sil.block) -> match b.Sil.term with
+    | Sil.Cond_br (c, (t, ta), (e, ea)) -> (match Hashtbl.find_opt bcst c with
+        | Some true -> b.Sil.term <- Sil.Br (t, ta)
+        | Some false -> b.Sil.term <- Sil.Br (e, ea)
+        | None -> ())
+    | _ -> ()) f.Sil.blocks;
+  let by_id = Hashtbl.create 16 in
+  List.iter (fun (b : Sil.block) -> Hashtbl.replace by_id b.Sil.bid b) f.Sil.blocks;
+  let reach = Hashtbl.create 16 in
+  let rec dfs n = if not (Hashtbl.mem reach n) then begin
+    Hashtbl.replace reach n ();
+    match Hashtbl.find_opt by_id n with Some b -> List.iter dfs (succs b) | None -> () end in
+  dfs 0;
+  f.Sil.blocks <- List.filter (fun (b : Sil.block) -> Hashtbl.mem reach b.Sil.bid) f.Sil.blocks;
+  f
+```
+
+## 9. Exercise solutions
+
+### 1 — SCCP
+
+Maintain two worklists — reachable CFG edges and SSA values whose constant status changed — and a
+lattice cell per value (`⊤` unknown / a constant / `⊥` overdefined). Only evaluate an instruction on
+*reachable* paths; a `cond_br` on a constant marks only the taken edge reachable. A φ is the *meet* of
+its reachable inputs — so a φ of `5` (reachable) and `6` (unreachable) is `5`. This folds cases
+fold-then-simplify can't, because it reasons about constants and reachability *together*.
+
+### 2 — algebraic identities
+
+Add a peephole that, for `x + 0`/`0 + x`/`x - 0`, replaces the result's uses with `x`; for `x * 1`,
+likewise; for `x * 0`, with the literal `0`; for `b && true`, with `b`. These rewrite *uses* (a copy
+propagation) rather than producing a literal, so pair them with DCE to remove the now-dead op.
+
+### 3 — dead-store elimination
+
+For each non-promoted slot, walk each block: a `store` to it is dead if, before the next `load` of that
+slot (or to the end of the block with no later load anywhere), another `store` overwrites it — or it's
+never loaded at all. Remove the dead stores. (mem2reg already removed the *promotable* slots' stores;
+this catches the aggregates it left behind.)
+
+### 4 — block merging + fixed point
+
+If block `B` has exactly one predecessor `P`, and `P`'s only successor is `B` (an unconditional `br`),
+splice `B`'s instructions onto the end of `P` and rewire `P`'s terminator to `B`'s. Make every pass
+return `Sil.func * bool` (changed?), and loop `[fold; simplify; merge; dce]` until a full sweep reports
+no change — a real fixed-point pass manager.
+```

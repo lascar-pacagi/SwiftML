@@ -1,0 +1,7 @@
+; The M5 benchmark: does specialization erase the generic abstraction cost?
+; `make bench C=phase5-generics/24-specialization`
+(executable
+ (name bench)
+ (libraries swiftml_spec unix)
+ (flags
+  (:standard -warn-error -a)))

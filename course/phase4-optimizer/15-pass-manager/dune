@@ -1,0 +1,10 @@
+; Concept 15 — the full language compiler (given) + the SIL optimizer.
+; New work: `opt.ml` — the pass manager and a couple of small passes.
+(library
+ (name swiftml_passes)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen driver)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

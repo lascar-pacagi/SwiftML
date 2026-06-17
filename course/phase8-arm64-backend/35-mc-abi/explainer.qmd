@@ -1,0 +1,213 @@
+---
+title: "35 · Machine code & the AAPCS64 / Apple ABI"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+A backend that only handles the easy cases isn't a backend — it's a demo. Concepts 33–34 passed
+arguments in registers and assumed they always fit in `x0`–`x7`. They don't: a function with nine
+or more arguments must pass the extras **on the stack**, in a layout the caller and callee both
+agree on down to the byte. This concept makes Backend B **ABI-conformant** — it follows the same
+*procedure call standard* (AAPCS64, with Apple's tweaks) that `swiftc` and `clang` follow, which is
+exactly what lets compiled code interoperate at all.
+
+It also fixes a real bug concepts 33–34 had been hiding: their single-`sub` stack frame put the
+saved `fp`/`lr` at `[sp, #frame-16]`, and on a 12-argument function (a big frame) that offset
+overflowed `stp`'s immediate range — the assembler rejected it. The fix is the standard frame shape.
+
+- **You implement:** the stack-argument placement — storing the 9th+ argument at the call, and
+  loading the 9th+ parameter on entry.
+- **Outcome:** 10- and 12-argument functions run and match `swiftc`, on every register-allocation
+  rung.
+
+> **What's an ABI?** An *Application Binary Interface* is the contract two pieces of compiled code
+> follow so they can call each other: which register holds argument 1, where the return value goes,
+> who saves which registers, how the stack is aligned, where overflow arguments live. It's not a
+> language feature — it's a platform convention. Get one detail wrong and calls silently corrupt
+> data. That's why we test against `swiftc`: it's the reference for the exact same ABI.
+
+## 2. Concepts in depth
+
+### Argument classification: registers, then the stack
+
+![AAPCS64 argument passing. The first 8 integer arguments go in x0–x7; arguments 9+ go on the stack — the caller writes them to its outgoing area (just above its sp at the call), and the callee reads them via x29 (its incoming sp), past the saved fp/lr at [x29, #16+8j]. The frame pushes fp/lr first (a small in-range adjustment), then allocates the locals, so stp/ldp stay within their immediate range on any frame size.](figs/abi.png)
+
+The rule is simple to state: walk the arguments left to right; the first eight integer-typed ones go
+in `x0`, `x1`, …, `x7`; every argument after that is **passed on the stack**. The subtlety is *where*
+on the stack, and that the caller and callee see it from opposite sides:
+
+- **Caller side.** Before the `bl`, the caller writes the overflow arguments into an **outgoing
+  area** at the very bottom of its own frame: argument 9 at `[sp, #0]`, argument 10 at `[sp, #8]`,
+  and so on. Because our `sp` is fixed for the body (concept 33's choice), `[sp, #0]` is a stable,
+  reserved spot — we just size the outgoing area to the widest call the function makes.
+- **Callee side.** At entry, those stack arguments sit just above the callee's incoming `sp`. After
+  the callee's prologue, it reads them relative to `x29` (which we point at the frame record): the
+  (8+j)-th parameter is at `[x29, #16 + 8*j]`. The `+16` skips the saved `fp`/`lr` that sit between
+  `x29` and the incoming arguments.
+
+The caller's `[sp, #8*j]` and the callee's `[x29, #16 + 8*j]` are **the same byte** — the caller's
+`sp` at the call *is* the callee's incoming `sp`, and the callee's `x29` is 16 below it. That
+agreement, between two functions that never see each other's code, is the whole point of an ABI.
+
+### Why `x29` and not `sp`?
+
+The callee could in principle read a stack parameter at `[sp, #frame + 16 + 8*j]` — but `frame`
+isn't known when we select instructions (it depends on register allocation and spills, computed
+later in `finalize`). `x29` gives us a **frame-size-independent** handle: we set it once in the
+prologue to a fixed point (the frame record), and stack-parameter offsets are constant regardless of
+how big the locals turn out to be. This is precisely why the AAPCS64 has a *frame pointer*.
+
+### The frame, made large-frame-safe
+
+Concepts 33–34 built the frame in one shot: `sub sp, sp, #FRAME; stp x29, x30, [sp, #FRAME-16]`.
+That's fine until `FRAME-16` exceeds `stp`'s signed scaled immediate range (±512). A 12-argument
+function has enough values that the frame blew past it — and the assembler refused. The fix is the
+**standard** shape:
+
+```
+sub  sp, sp, #16            ; reserve the frame record
+stp  x29, x30, [sp, #0]     ; save fp/lr — offset 0, always in range
+mov  x29, sp                ; x29 = the frame record (a fixed handle)
+sub  sp, sp, #locals        ; THEN allocate the big locals area
+```
+
+with the mirror image in the epilogue. Now `stp`/`ldp` always use offset 0, no matter how large the
+locals area is, and `x29` is the stable base for stack-parameter access. This is what every real
+AArch64 prologue looks like — we'd merely been cutting a corner.
+
+### What's given, what you write
+
+The frame layout (the outgoing-area sizing in isel, the large-frame-safe prologue/epilogue and the
+`x29` setup in `finalize`) is given — it's plumbing. **You** write the two lines that embody the
+ABI rule: at a call, the 9th+ argument is a `str` into the outgoing area; on entry, the 9th+
+parameter is a `ldr` from `[x29, #16 + 8*j]`. Two small edits, but they're the difference between a
+conformant backend and one that corrupts every wide call.
+
+> Oracle: Apple's *Writing ARM64 Code for Apple Platforms* — the "Pass Arguments to Functions
+> Correctly" section is exactly this rule, including the Apple-specific notes (the variadic case
+> from concept 33, and that arguments are *not* widened the way the generic AAPCS64 allows).
+
+## 3. Build it, step by step
+
+In `isel.ml`:
+
+1. **`TODO(35a)` — call arguments.** In the `Apply` lowering, arguments `0..7` are already moved to
+   `x0..x7`. For argument `k ≥ 8`, store it into the outgoing area:
+   `emit (Arm64.Str (v a, Arm64.SP, stackarg_off (k-8)))`.
+2. **`TODO(35b)` — parameters.** In the entry parameter setup, parameters `0..7` already come from
+   `x0..x7`. For parameter `k ≥ 8`, load it from the incoming area via `x29`:
+   `emit (Arm64.Ldr (v pv, x 29, 16 + stackarg_off (k-8)))`.
+
+The outgoing-area sizing, the frame, and the prologue/`x29` setup are given. Reference:
+`solution/isel.ml`. Run with `make lab C=phase8-arm64-backend/35-mc-abi`.
+
+## 4. Test it
+
+```bash
+make lab C=phase8-arm64-backend/35-mc-abi
+```
+
+cram: a 10- and a 12-argument function run and match `swiftc` (across all three regalloc rungs); the
+asm shows the outgoing `str`s, the `x29`-relative parameter `ldr`s, and the offset-0 `stp` prologue;
+≤ 8-argument programs are unchanged. alcotest: stack-argument stores and incoming loads are emitted
+for a 10-arg call but *not* for a 2-arg call; the finalized frame uses the large-frame-safe prologue
+and sets `x29`; no virtual register survives allocation.
+
+## 5. Benchmark it
+
+There's no new perf lever here — it's a correctness/conformance concept. The interesting measurement
+is the *overhead* of stack arguments: a call with 12 arguments does four extra `str`/`ldr` pairs
+versus an 8-argument call. Time both; the gap is the cost of spilling arguments to memory, which is
+why ABIs put the first several in registers. (It's also an argument for keeping function arities
+small — the same lesson the SIL-level inliner reinforces.)
+
+## 6. Exercises
+
+1. **Float arguments.** `Double` arguments use the *floating-point* registers `d0`–`d7`, a separate
+   sequence from the integer ones, before overflowing to the stack. Add a parallel classifier.
+2. **Mixed and aggregate arguments.** A `struct` argument larger than 16 bytes is passed *by
+   reference* (a hidden pointer); 16-or-fewer is passed in up to two registers. Classify by size.
+3. **Stack-argument alignment.** The standard requires the stack-argument area to be 16-byte
+   aligned and each argument aligned to its type; with mixed sizes you must pad. Implement the
+   alignment walk (it's concept 14's layout rule, applied to the argument area).
+4. **Tail calls.** When a call is in tail position, reuse the current frame (and its outgoing area)
+   instead of building a new one — `b` instead of `bl`. Watch the stack-argument overlap.
+5. **Real machine code.** Encode the instructions to 32-bit words and emit a Mach-O object directly
+   (concept 33's exercise 5) — the literal "machine code" half of "mc-abi."
+
+## 7. Recap & what's next
+
+The ABI is the contract that lets compiled code call compiled code. AAPCS64 passes the first eight
+integer arguments in `x0`–`x7` and the rest **on the stack** — the caller writes them to its
+outgoing area, the callee reads them via the frame pointer `x29`, and the two agree on every byte.
+The frame pushes the record first and allocates locals second, so it works at any size. Backend B is
+now conformant: it can pass any number of arguments correctly.
+
+Next, **36-peephole-sched** — a peephole pass (which would finally delete the redundant `str`/`ldr`
+pairs the stack machine still emits) plus instruction scheduling over a dependence DAG — then
+**37-debug-info** (a DWARF-lite line table, `lldb` stepping) to reach **M8-core**.
+
+## 8. Appendix — full solution
+
+```ocaml
+(* 35a — call: arguments 9+ on the stack *)
+| Sil.Apply (callee, args) ->
+    List.iteri
+      (fun k a ->
+        if k < 8 then emit (Arm64.Mov (x k, Arm64.R (v a)))
+        else emit (Arm64.Str (v a, Arm64.SP, stackarg_off (k - 8))))   (* <- 35a *)
+      args;
+    emit (Arm64.Bl ("_" ^ Hashtbl.find funcrefs callee));
+    emit (Arm64.Mov (v vr, Arm64.R (x 0)))
+
+(* 35b — entry: parameters 9+ from the stack, via x29 (= incoming sp) *)
+List.iteri
+  (fun k (pv, _) ->
+    if k < 8 then emit (Arm64.Mov (v pv, Arm64.R (x k)))
+    else emit (Arm64.Ldr (v pv, x 29, 16 + stackarg_off (k - 8))))      (* <- 35b *)
+  f.Sil.params;
+```
+
+The given `finalize` builds the large-frame-safe frame:
+
+```ocaml
+let prologue =
+  [ Sub (SP, SP, Imm 16); Stp (X 29, X 30, SP, 0); Mov (X 29, R SP); Sub (SP, SP, Imm locals) ]
+  @ List.mapi (fun i r -> Str (X r, SP, cs_off i)) used_cs
+```
+
+## 9. Exercise solutions
+
+### 1 — float arguments
+Keep two counters as you classify: `ngrn` (next general register, 0..7) and `nsrn` (next SIMD/FP
+register, 0..7). An `Int`/`Bool`/pointer argument consumes `x[ngrn++]`; a `Double` consumes
+`d[nsrn++]`. When either runs out, that argument (and the rest of its class) goes on the stack. The
+isel needs an FP-register move (`fmov`) and FP load/store for the spilled ones.
+
+### 2 — aggregates
+By the standard: an aggregate ≤ 16 bytes is passed in 1–2 consecutive registers (use concept 14's
+size to decide); a larger one is passed *by reference* — the caller copies it to its frame and
+passes a pointer. The hidden first parameter for a large struct *return* (`x8`, the indirect result
+register) is the dual; we sidestepped both by keeping the corpus scalar.
+
+### 3 — stack-argument alignment
+The outgoing area must be 16-byte aligned, and each stack argument aligned to its natural alignment
+(concept 14). Walk the stack arguments accumulating an offset, rounding up before each per its
+alignment — exactly the struct-layout padding walk, applied to the argument list.
+
+### 4 — tail calls
+When a `return f(args)` is the last thing a function does, you can pop the current frame and `b _f`
+(not `bl`), so `f` returns directly to the original caller — constant stack instead of growing it.
+The catch is the outgoing stack arguments: they must be written into the *current* frame's incoming
+area, which may overlap the arguments you're still reading — a shuffle the implementation must
+order carefully.
+
+### 5 — real machine code
+Each instruction is a 32-bit word with fixed fields. Build an encoder (`add`/`sub`/`ldr`/`str`/`b`/
+`bl`/`ret` cover most of the corpus), assemble a minimal Mach-O object with a `__text` section and
+relocations for the `bl`/`adrp` symbols, and link with `ld`. Now "assembly text" becomes bytes —
+the bottom of the backend.
+```

@@ -1,0 +1,300 @@
+---
+title: "31 · Array & String — the standard library begins"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+Every program so far has computed with *fixed-shape* data: an `Int`, a `struct` with a known set
+of fields, an `enum` with a known set of cases. Real programs need **collections** — a list whose
+length isn't known until runtime — and **strings**. This concept builds the two foundational ones,
+`Array<Int>` and `String`, **in our own subset**, on the **heap**, and confronts the question that
+makes Swift's collections interesting: an array is *backed by a heap buffer* (a reference), yet it
+*behaves like a value* (`var b = a` gives `b` its own logical copy). How? **Copy-on-write.**
+
+This is also the first time the runtime library matters. Like concept 30's error register, the
+whole feature lowers to **runtime intrinsics** (`rt.array_new`, `rt.array_push`, `rt.str_concat`,
+…) — ordinary `apply`s of named runtime functions — so we add `Array` and `String` **without a
+single new SIL instruction**. The compiler emits calls; a small hand-written LLVM runtime (given)
+implements the buffer.
+
+- **You implement:** the **copy-on-write dance** for the two mutators — `a.append(x)` and
+  `a[i] = e` — the load / `make_unique` / store-back / mutate sequence that is the beating heart of
+  Swift value semantics.
+- **Outcome:** array and string programs — literals, `count`, subscript read/write, `append`,
+  `for`-`in`, `+`, the out-of-bounds trap — matching `swiftc` byte-for-byte, with **`var b = a`
+  then mutating `b` leaving `a` untouched**.
+
+> **New to Swift?** In Swift, `Array`, `String`, `Dictionary`, every `struct`, and every `enum`
+> are **value types**: assignment and parameter-passing behave as if they *copy*. Classes (concept
+> 25) are the only **reference types**. So `var b = a; b.append(4)` must not change `a` — even
+> though copying a million-element array on every assignment would be absurd. Copy-on-write is how
+> Swift gets value *semantics* at reference *speed*.
+
+## 2. Concepts in depth
+
+### The buffer: a reference type wearing a value type's clothes
+
+An `Array<Int>` value is a **pointer** to a heap **buffer**. Our buffer is a 32-byte header
+followed (indirectly) by the elements:
+
+```
+buffer:  { i64 refcount; i64 count; i64 capacity; ptr data }
+                  |            |          |          |
+            how many      logical    allocated    -> [ e0, e1, …, e(cap-1) ]   (i64 × capacity)
+            arrays share   length     slots
+```
+
+`count` is how many elements you've stored; `capacity` is how many the `data` block can hold
+before it must grow. `append` past capacity **doubles** it (`max(4, 2·cap)`), `malloc`s a bigger
+`data`, copies the old elements, and frees the old block — *amortized O(1)* push, the classic
+growable-array trick. `data` is a *separate* allocation from the header so the header pointer
+(the array value) stays stable across regrows.
+
+A value of type `[Int]` is just that header pointer — 8 bytes, cheap to copy. Which is exactly the
+problem: if `var b = a` copies the *pointer*, then `b` and `a` share one buffer, and `b.append(4)`
+would be visible through `a`. That's reference semantics — wrong for a Swift value type.
+
+### Copy-on-write: share until the first write
+
+The fix is the **`refcount`** field and three operations:
+
+- **retain** — *"another binding now shares this buffer."* `var b = a` bumps `refcount` (1 → 2).
+  Both `a` and `b` point at the same buffer. No copy yet — reads are safe to share.
+- **make_unique** — *the copy-on-write check.* Before any **mutation**, ask: is this buffer
+  shared (`refcount > 1`)? If **no**, it's already mine — mutate in place. If **yes**, *make a
+  fresh private copy* (and drop my share of the original, `refcount` → 1), then mutate the copy.
+- the mutation itself (**push** / **set**) then runs on a buffer it is guaranteed to own alone.
+
+![Copy-on-write: `var b = a` shares the buffer (refcount 2); `b.append(4)` sees refcount > 1, copies the buffer, and mutates the copy — so `a` still reads `[1,2,3]`. Value semantics from a reference, paid for by one refcount check per mutation.](figs/cow.png)
+
+The figure is the whole idea. The cost of value semantics drops from *"copy on every assignment"*
+to *"copy on the first mutation of a shared buffer"* — and a buffer that's never mutated while
+shared (the overwhelmingly common case: pass an array to a function that only reads it) is **never
+copied at all**. One `refcount` load + compare per mutation buys you safe, cheap sharing.
+
+### How swiftc does exactly this
+
+This is not a toy model — it is *literally* how Swift's `Array` works. Open
+`stdlib/public/core/ContiguousArrayBuffer.swift`: every mutating method begins with a call to
+**`isKnownUniquelyReferenced(&buffer)`** (or `_makeUniqueAndReserveCapacityIfNotUnique`), and
+copies the storage only when it returns `false`. The storage object is a real Swift class with a
+real ARC refcount — the same `refcount` word, the same retain on copy, the same
+"unique-or-copy" check before a write. Our `rt.array_make_unique` *is*
+`isKnownUniquelyReferenced` + the copy, fused. We use a hand-written i64 buffer where swiftc uses a
+managed class; the *discipline* is identical.
+
+> Oracle: `Array.swift` (the public API), `ContiguousArrayBuffer.swift` /
+> `_ContiguousArrayBuffer` (the CoW storage + `isKnownUniquelyReferenced`), and
+> `Builtin.isUnique` (the compiler intrinsic behind the check). Read a mutating method like
+> `append` top-to-bottom — the uniqueness check is the first thing it does.
+
+### The mutator's lowering — load, make_unique, store **back**, mutate
+
+In SILGen, `a.append(x)` and `a[i] = e` both lower to the same four-step dance on the variable's
+slot (`a`'s `alloc_stack`, which holds the buffer pointer):
+
+```
+%p   = load %slot                          ; the current buffer pointer
+%uq  = apply @rt.array_make_unique(%p)     ; copies iff shared; returns a uniquely-owned pointer
+store %uq to %slot                         ; <-- CRUCIAL: write the (maybe new) pointer back
+%_   = apply @rt.array_push(%uq, %x)       ; mutate the buffer we now own alone
+```
+
+The **store-back** (step 3) is the step learners forget — and it's the subtle bug: if
+`make_unique` copied, but you keep mutating through the *old* `%p` (or never write `%uq` back into
+the slot), then `a` silently points at the un-mutated original and your write vanishes. Writing the
+fresh pointer back into the slot is what makes the variable adopt its private copy. (`a[i] = e` is
+identical, ending in `rt.array_set(%uq, %i, %x)`.)
+
+By contrast, a **read** (`a[i]`, `a.count`, `for x in a`) never mutates, so it needs no
+`make_unique` — it just `load`s the pointer and calls `rt.array_get` / `rt.array_count`. And
+**construction** (`[1,2,3]`) makes a fresh buffer (`rt.array_new` + a `push` per element) that is
+born uniquely owned (`refcount` 1), so it needs no retain. Only an **alias** (`var b = a`, where
+the right-hand side is an existing array variable) retains.
+
+### Bounds checking and the trap
+
+`rt.array_get`/`rt.array_set` compare the index against `count`; out of range, they write
+`Fatal error: Index out of range` to stderr and execute `llvm.trap` — **SIGTRAP, exit 133**, the
+same crash (and message) `swiftc` produces. This reuses the trap mechanism from concept 13's
+force-unwrap; an array access is a *checked* operation, and the check is part of the language's
+memory-safety guarantee, not optional.
+
+### String — a C-string, for now
+
+`String` we keep deliberately simple: a value of type `String` is a `ptr` to a NUL-terminated
+byte buffer (a literal is a private global; `s + t` `malloc`s `strlen(s)+strlen(t)+1` bytes and
+copies both halves via `rt.str_concat`; `.count` is `strlen`; `print` is `printf("%s")`). For
+ASCII this matches `swiftc` exactly. Swift's real `String` is far richer — UTF-8 storage,
+small-string inlining, grapheme-cluster `count` — so for non-ASCII our byte `count` diverges from
+swiftc's grapheme `count`. That's the documented boundary; concept 32 and beyond could close it.
+
+### The v0 scope, honestly
+
+Our buffer is a homogeneous **`i64`** store, so v0 supports **`[Int]`** only. `[String]` or
+`[Bool]` would need the buffer to hold pointers / i1s — an element-generic buffer with a
+zext/ptr-cast at the boundary (exercise 1). Rather than miscompile them, sema **rejects**
+non-`Int` element types with a clear message. Likewise, full ARC release of a buffer on scope exit
+is elided (we leak — observably harmless, since stdout is unaffected); wiring arrays into concept
+26's scope-release machinery is exercise 4.
+
+## 3. Build it, step by step
+
+You implement the two **copy-on-write mutators** in `silgen.ml`. Everything else — the `[T]`
+parser/typing, literals, subscript *reads*, `count`/`isEmpty`, `for`-`in`, String, the retain on
+`var b = a`, and the entire `rt.*` runtime in `irgen.ml` — is given.
+
+1. **`TODO(31a)` — `a.append(x)`** (in the `Method_call` arm guarded by `is_array_recv`). You're
+   given `slot` (the array variable's `alloc_stack`), `elt` (the element type), and `xv` (the
+   lowered argument). Emit the dance:
+   - `load` the buffer pointer from `slot` (type `vty b slot`);
+   - `apply` `Func_ref "rt.array_make_unique"` to it (result typed `vty b slot`) — the CoW check;
+   - `store` that result **back** into `slot`;
+   - `apply` `Func_ref "rt.array_push"` to `[uniquePtr; xv]`, typed `TVoid` — the case's result.
+
+   The `emit b (Sil.Apply (emit b (Sil.Func_ref name) ty, args)) ty` idiom is used throughout the
+   file — grep for `rt.error_get` in the given code for the shape.
+
+2. **`TODO(31b)` — `a[i] = e`** (the `Set_subscript` statement). The *same* dance — you're given
+   `slot`, `elt`, `iv` (index), `xv` (value) — ending in `rt.array_set(uniquePtr, iv, xv)` instead
+   of a push.
+
+Reference: `solution/silgen.ml`. Build & run with `make lab C=phase7-closures-stdlib/31-stdlib-array-string`.
+
+## 4. Test it
+
+```bash
+make lab C=phase7-closures-stdlib/31-stdlib-array-string
+```
+
+cram: a full array+String program (literal, `count`, subscript r/w, `append`, `for`-`in`,
+`isEmpty`, concat) matching `swiftc` at `-Onone` **and** `-O`; the **CoW value-semantics** program
+(`var b = a`, mutate `b`, `a` unchanged); the SIL desugaring (`rt.array_*` / `rt.str_*`, one
+`make_unique` per mutation, one `retain` per share); the **out-of-bounds trap** (exit 133); and the
+`[String]` rejection. alcotest: the literal → `array_new`+`push` shape, concat/length intrinsics,
+the **retain-once / make_unique-per-mutation** counts, *no* retain for a fresh literal, the
+diagnostic, and `-O` validity.
+
+## 5. Benchmark it
+
+The CoW payoff is measurable. Pass a large array to a function that only **reads** it (`for x in a
+{ … }`): zero copies, because nothing mutates while shared. Now `var b = a; b.append(x)` inside the
+loop: exactly one copy, on the first mutation. Compare against an eager-copy model (copy on every
+assignment) — the difference is O(reads) copies avoided. swiftc's `Array` makes the same trade; the
+microcost is one `refcount` load + compare per mutation, which the optimizer often hoists out of a
+loop when it can prove uniqueness.
+
+## 6. Exercises
+
+1. **Element-generic buffers.** Make `[String]`/`[Bool]`/`[T]` work: keep the i64 buffer but
+   `zext`/`ptrtoint` on push and `trunc`/`inttoptr` on get, driven by the element type. Lift the
+   sema restriction. (This is the single most useful extension — it unlocks concept 32.)
+2. **More `Array` API.** `remove(at:)`, `insert(_:at:)`, `first`/`last`, `+` (concatenate two
+   arrays), `contains`. Each mutator reuses the make_unique dance; each reader is a new intrinsic.
+3. **Reserve & uniqueness-hoisting.** Add `reserveCapacity(_:)` and, in `-O`, hoist a
+   `make_unique` out of a loop when the array provably isn't aliased inside it — swiftc's
+   "uniqueness propagation" optimization.
+4. **Proper ARC for buffers.** Wire the buffer into concept 26's scope-release machinery: a
+   `release` at scope exit that frees `data`+header at `refcount` 0. Verify no leaks with a
+   counting allocator.
+5. **A real `String`.** Move from C-string to a length-prefixed UTF-8 buffer; make `.count` count
+   **graphemes** (or at least Unicode scalars) so non-ASCII matches `swiftc`.
+
+## 7. Recap & what's next
+
+An array is a **refcounted heap buffer** behind a pointer; **copy-on-write** — retain on share,
+`make_unique` (copy iff `refcount > 1`) before a mutation, store the unique pointer **back** —
+gives it **value semantics at reference speed**, exactly as `swiftc`'s `Array` does with
+`isKnownUniquelyReferenced`. Reads share freely; only a write to a *shared* buffer pays a copy.
+String is (for now) a C-string with concat and length. All of it lowers to **runtime intrinsics**
+— no new SIL.
+
+Next, **32-stdlib-collections** adds `Dictionary`/`Set`, the `Sequence`/`Collection` protocols,
+and the higher-order trio **`map` / `filter` / `reduce`** — where concept-29 closures finally meet
+concept-31 containers, **closing Milestone M7** (real-ish programs: closures over collections,
+errors, value semantics, all matching `swiftc`).
+
+## 8. Appendix — full solution
+
+```ocaml
+(* 31a — a.append(x): the copy-on-write WRITE path *)
+| Ast.Method_call (recv, m, args, _) when is_array_recv b recv && m = "append" ->
+    let slot = array_slot b recv in
+    let elt = (match vty b slot with Types.TArray el -> el | _ -> Types.TInt) in
+    let xv = gen_expr_as b (snd (List.hd args)) elt in
+    let p = emit b (Sil.Load slot) (vty b slot) in
+    let uq =
+      emit b (Sil.Apply (emit b (Sil.Func_ref "rt.array_make_unique") (vty b slot), [ p ])) (vty b slot)
+    in
+    ignore (emit b (Sil.Store (uq, slot)) Types.TVoid);
+    let fr = emit b (Sil.Func_ref "rt.array_push") Types.TVoid in
+    emit b (Sil.Apply (fr, [ uq; xv ])) Types.TVoid
+
+(* 31b — a[i] = e: the same dance, ending in array_set *)
+| Ast.Set_subscript { arr; index; value; _ } ->
+    let slot = Hashtbl.find b.vars arr in
+    let elt = (match vty b slot with Types.TArray el -> el | _ -> Types.TInt) in
+    let iv = gen_expr b index in
+    let xv = gen_expr_as b value elt in
+    let p = emit b (Sil.Load slot) (vty b slot) in
+    let uq =
+      emit b (Sil.Apply (emit b (Sil.Func_ref "rt.array_make_unique") (vty b slot), [ p ])) (vty b slot)
+    in
+    ignore (emit b (Sil.Store (uq, slot)) Types.TVoid);
+    let fr = emit b (Sil.Func_ref "rt.array_set") Types.TVoid in
+    ignore (emit b (Sil.Apply (fr, [ uq; iv; xv ])) Types.TVoid)
+```
+
+The given `rt.array_make_unique` (in `irgen.ml`) is the CoW check itself:
+
+```llvm
+define private ptr @rt.array_make_unique(ptr %h) {
+  %r = load i64, ptr %h            ; the refcount
+  %shared = icmp sgt i64 %r, 1
+  br i1 %shared, label %copy, label %keep
+keep:
+  ret ptr %h                       ; uniquely owned already — mutate in place
+copy:
+  %r1 = sub i64 %r, 1              ; drop our share of the original
+  store i64 %r1, ptr %h
+  ; … malloc a fresh header+data, copy `count` elements, refcount 1 …
+  ret ptr %nh
+}
+```
+
+## 9. Exercise solutions
+
+### 1 — element-generic buffers
+Keep the i64 `data`, but convert at the SIL→LLVM boundary by the SIL element type: on `array_push`
+`zext i1`/`ptrtoint ptr` the element to i64; on `array_get` `trunc`/`inttoptr` back. The runtime is
+unchanged (still an i64 store); only the `Apply` lowering for `rt.array_*` grows a per-element-type
+cast, and the sema restriction (`check_array_elt`) is dropped. Now `[String]` stores pointers and
+`for s in names` works — which is precisely what concept 32's `map`/`filter` need.
+
+### 2 — more Array API
+Each *reader* (`first`, `contains`) is a new `rt.array_*` intrinsic + a sema rule. Each *mutator*
+(`remove`, `insert`) reuses `array_slot` + the make_unique dance, differing only in the final
+runtime call (which shifts elements). `a + b` (array concat) is a reader of both plus a fresh
+buffer — no mutation, no make_unique.
+
+### 3 — reserve & uniqueness hoisting
+`reserveCapacity(n)` is make_unique then a runtime grow-to-`n`. The optimization: in a loop whose
+body mutates `a` but where `a` is provably not aliased across iterations (no `var b = a` reaches
+the loop), the `make_unique` is loop-invariant — hoist it to the preheader so the refcount check
+runs once, not per iteration. This is LICM (a concept-18-adjacent pass) gated on an aliasing fact.
+
+### 4 — proper ARC for buffers
+Treat the buffer like a concept-26 managed value: `register_local` the slot, and at scope exit emit
+`rt.array_release(p)` which decrements `refcount` and, at 0, frees `data` then the header. The
+retain on `var b = a` (already emitted) now balances against these releases; a counting allocator
+should report zero leaked blocks.
+
+### 5 — a real String
+Replace the C-string with `{ i64 count; i64 capacity; ptr utf8 }` (itself CoW, reusing this
+concept's machinery). `.count` walks the UTF-8 grapheme boundaries (or, as a first step, counts
+Unicode scalars). Now `"é".count == 1` and emoji count as one — matching `swiftc`'s
+grapheme-cluster semantics instead of raw bytes.
+```

@@ -1,0 +1,10 @@
+; Concept 12 — the enum compiler (given) + pattern matching (`switch`).
+; New work threads `switch` through every stage; the dispatch lowering is the skeleton.
+(library
+ (name swiftml_match)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen irgen driver)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

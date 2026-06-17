@@ -1,0 +1,9 @@
+; Concept 29 — closures: function types, capture, the thin/thick ABI.
+(library
+ (name swiftml_closures)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen driver)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

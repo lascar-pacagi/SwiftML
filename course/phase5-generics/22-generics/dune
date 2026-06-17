@@ -1,0 +1,9 @@
+; Concept 22 — generic functions: type parameters, constraints, the unspecialized lowering.
+(library
+ (name swiftml_generics)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema sil silgen opt irgen driver)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

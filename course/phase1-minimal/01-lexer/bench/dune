@@ -1,0 +1,9 @@
+; Lexer throughput benchmark.  Run:  make bench C=phase1-minimal/01-lexer
+; Modules: bench (driver) + lexer_v1_fast (the optimized rung, compared against the
+; library `Lexer` = v0). v0 is the real lexer, so the bench needs it implemented.
+(executable
+ (name bench)
+ (modules bench lexer_v1_fast)
+ (libraries swiftml_lexer)
+ (flags
+  (:standard -warn-error -a)))

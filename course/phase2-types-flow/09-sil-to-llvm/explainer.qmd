@@ -1,0 +1,223 @@
+---
+title: "09 · SIL → LLVM (IRGen)"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+This is the last hop, and the payoff. You'll write **IRGen** — lower the SIL module to **LLVM IR** —
+and `clang` turns that into a native executable. For the first time since Phase 1, programs **run**:
+`if`/`while`/`for`, functions, recursion all execute, and `swiftml2`'s output matches `swiftc`
+byte-for-byte. That's **Milestone M2**, and the end of Phase 2.
+
+- **You implement:** the SIL-instruction and terminator lowering in `irgen.ml` (`gen_instr`,
+  `gen_term`). Everything upstream (front-end, SIL, SILGen) is given and complete.
+- **Outcome:** `swiftml2 build foo.swift -o foo && ./foo` produces the same output as `swiftc`.
+
+## 2. Concepts in depth
+
+### The easy hop — because SIL did the hard work
+
+IRGen is the shortest pass in the compiler, and that's the point: **SILGen already built the
+control-flow graph, so IRGen is almost a one-to-one transliteration.** SIL is raw and memory-based;
+LLVM IR is also memory-capable (it has `alloca`/`load`/`store`) and block-structured. So:
+
+| SIL | LLVM IR |
+|---|---|
+| basic block `bbN:` | basic block `bbN:` |
+| `alloc_stack $Int` | `%t = alloca i64` |
+| `load`/`store` | `load`/`store` |
+| `binop "+" … : $Int` | `add i64 …` |
+| `binop "<" … : $Bool` | `icmp slt i64 …` |
+| `cond_br %c, bbT, bbF` | `br i1 %c, label %bbT, label %bbF` |
+| `br bbN` / `return %v` | `br label %bbN` / `ret <ty> %v` |
+| `apply %f(%a)` | `call <ty> @f(<ty> %a)` |
+| `apply @print(%x)` | `call @printf(@.fmt, %x)` |
+
+One LLVM rule is worth learning right now: **every `alloca` goes at the top of the entry block**
+(the given `gen_allocas` does this for you). An `alloca` reserves stack space that is only returned
+when the *function exits* — not at the end of a scope — so an `alloca` emitted inside a loop body
+would grow the stack on every iteration until it overflowed. Hoisting them all to the entry block
+makes the stack frame fixed-size, and it's also what LLVM's own `mem2reg` pass requires before it
+will promote a slot to a register. (Concept 20's benchmark shows exactly how this bites at a few
+million iterations.)
+
+All the *thinking* — turning a tree into a graph, threading `break`/`continue` to the right blocks —
+happened in SILGen. IRGen just walks the finished graph and prints LLVM. That separation is the whole
+reason for having SIL.
+
+### The one real job: a value map, and *types*
+
+IRGen threads one table: each **SIL value `%n` → an LLVM operand**. A constant maps to itself (`Int_lit 5`
+→ the operand `5`); a `string_literal` maps to a global; every other instruction emits an LLVM line
+and maps the SIL value to a fresh `%tK`. The only subtlety is **types**: LLVM is strongly typed, so an
+`add` on `Int` is `add i64` but on `Double` is `fadd double`, and a comparison is `icmp slt i64`
+(integers) vs `fcmp olt double` (floats) — producing an `i1` (LLVM's Bool). The SIL function's
+`val_ty` map gives you each value's type; the given `gen_binop` table picks the right opcode.
+
+`print` lowers to a `printf` call keyed on the argument's type: `%lld` for `Int`, a `select` between
+`"true"`/`"false"` globals for `Bool`, `%s` for a `String`. And `@main` returns `i32` (the C entry
+point: `return` → `ret i32 0`), while other functions return their declared LLVM type.
+
+![The complete Phase-2 pipeline: source → tokens → AST → typed AST → SIL → LLVM IR → native. IRGen (concept 09) is the last hop; then `clang` links it and the program runs.](figs/pipeline.png)
+
+### Running reveals bugs that `--emit-sil` cannot
+
+Concept 08 could *emit* SIL but not run it, so a whole class of bug was invisible — and one was
+hiding. The `for` loop's `continue` branched straight to the loop header, **skipping the `v = v + 1`
+increment**, so `for i in 0..<10 { if i == 2 { continue } }` *looped forever*. The `--emit-sil`
+output looked plausible; the structural tests passed; only **running it** (and the program hanging)
+exposed it. The fix is a separate **latch** block that owns the increment, which `continue` targets.
+
+This is the lesson behind the whole project's testing strategy: structural checks (FileCheck on the
+IR shape) catch *shape* bugs, but only **behavioral parity against `swiftc`** — compile both, run
+both, diff the output — catches *semantic* ones. It's why the cram test here doesn't just inspect the
+LLVM; it **builds the program and runs it**.
+
+### Handing off to LLVM (and what we're not doing yet)
+
+We emit *unoptimized* LLVM IR and let `clang` assemble and link it. `clang` runs LLVM's own optimizer
+and backend — so even our naive, load/store-heavy IR comes out as decent native code. swiftc does the
+same handoff, but only after its **own** SIL optimizer runs first (that's Phase 4 for us). Two things
+we deliberately scope out, all documented:
+
+- **`Double` printing** isn't matched to swiftc (Swift prints the shortest round-tripping decimal;
+  C's `%g` doesn't), and **`String`** concatenation/comparison need a runtime we haven't built — so
+  the parity corpus is `Int`/`Bool`/control-flow/functions.
+- **Definite initialization** — Swift's mandatory "variable used before being initialized" pass on
+  the SIL CFG — is *vacuous* for us, because every `let`/`var` is initialized at its declaration.
+  Adding uninitialized `var x: Int` and a DI dataflow pass (Exercise 1) is the genuine version, and a
+  direct sequel to the "missing return" analysis from concept 07.
+
+> Oracle: `swift/lib/IRGen/IRGenSIL.cpp` is `visitSILInstruction` for each SIL opcode — the analogue
+> of your `gen_instr`. swiftc's IRGen is far larger because it also lowers ARC, generics, and value
+> witnesses; ours handles the Phase-2 subset.
+
+## 3. Build it, step by step
+
+Open `irgen.ml`. The constants in `gen_instr` are given as the pattern (a `Int_lit` maps a SIL value
+to an operand). Fill the `TODO(09)` holes:
+
+- **`gen_instr`**: for the remaining instructions, emit an LLVM line with `p "..."` and record the
+  result with `Hashtbl.replace opnd v (fresh ())`. `Load`/`Store` →
+  `load`/`store` (use `llty (vty …)` for the type); `Binop` → the given `gen_binop v op l r`;
+  `Unop (Neg)` → `sub i64 0, x`; `Func_ref name` → operand `"@name"`; `Apply` → `call <ret> <fr>(args)`
+  (a `void` call emits no result); `Print` → the given `gen_print x`.
+  (`Alloc_stack` is already handled: the given `gen_allocas` emits every alloca at the top of the
+  entry block — see §2 for why placement matters — so your `gen_instr` case for it is a no-op.)
+- **`gen_term`**: `Br n` → `br label %bbN`; `Cond_br` → `br i1 <c>, label %bbT, label %bbE`;
+  `Return None` → `ret i32 0` in `@main` else `ret void`; `Return (Some v)` → `ret <ret> <v>`;
+  `Unreachable` → `unreachable`.
+
+Reference: `solution/irgen.ml`.
+
+## 4. Test it
+
+```bash
+make lab C=phase2-types-flow/09-sil-to-llvm
+```
+
+The cram test **compiles and runs** real programs (`swiftml2 build a.swift -o a && ./a`) and checks
+their stdout — self-contained, but every expected value also matches `swiftc`. It additionally
+FileChecks the IR shape (`define i64 @sq`, `mul i64`). The alcotest pins the emitted IR (the preamble,
+`alloca`/`load`/`store`, typed opcodes, `br`, `call`).
+
+## 5. Benchmark it
+
+Run a tight integer loop compiled by `swiftml2 build` and by `swiftc -O` and compare. Ours will be
+**slower** — the raw SIL became raw LLVM, full of `alloca`/`load`/`store`, and we ran no SIL passes.
+That gap is exactly what **Phase 4** closes: **mem2reg** promotes those slots to registers (SSA),
+then constant folding, CSE, and inlining take it the rest of the way toward `swiftc -O`.
+
+## 6. Exercises
+
+1. **Definite initialization.** Add uninitialized `var x: Int` (a `var` with a type annotation and no
+   initializer): parser, an `Ast` node, sema binds it, SILGen `alloc_stack`s but does not `store`.
+   Then write a **forward dataflow pass on the SIL CFG**: a slot is "initialized on entry to a block"
+   iff it's initialized on exit of *all* predecessors; a `load` from an uninitialized slot is
+   "variable '…' used before being initialized." Match `swiftc`.
+2. **`Double` output parity.** Implement Swift's shortest-round-trip `Double` formatting (the Ryū /
+   Grisu algorithm, or shell out) so `print(0.1 + 0.2)` matches `swiftc`.
+3. **A tiny runtime.** Add a `runtime.c` (compiled and linked by the driver) with `swiftml_print_int`
+   etc., instead of inlining `printf` calls — the seed of a real standard library (Phase 7).
+
+## 7. Recap & what's next — **Milestone M2**
+
+Phase 2 is complete. You turned a type checker into a **compiler**: bidirectional types (05), control
+flow (06), functions (07), the **SIL** middle (08), and now **IRGen** (09) lowering it to LLVM and
+running it. The pipeline is swiftc's: `Parse → Sema → SILGen → SIL → IRGen → LLVM → native`, and the
+output matches `swiftc` byte-for-byte.
+
+Two directions open up. **Phase 3** grows the *language* — `struct`, `enum` (ADTs), pattern matching,
+`Optional` — the value types Swift is built from. **Phase 4** grows the *compiler* — the SIL
+**optimizer**, starting with **mem2reg**, where the raw, load/store-heavy SIL you've been emitting is
+promoted to **SSA** and you learn SSA properly, by watching it happen. That's the deliberate payoff of
+choosing memory-based SIL back in concept 08.
+
+## 8. Appendix — full solution
+
+Mirrors `solution/irgen.ml`. The shape: a constant maps a SIL value to an LLVM operand; an instruction
+emits a line and maps its result to a fresh `%tK`; types come from the function's `val_ty`.
+
+```ocaml
+let gen_instr (v, i) =
+  match (i : Sil.instr) with
+  | Sil.Int_lit n -> Hashtbl.replace opnd v (string_of_int n)
+  | Sil.Bool_lit b -> Hashtbl.replace opnd v (if b then "1" else "0")
+  | Sil.Float_lit x -> Hashtbl.replace opnd v (Printf.sprintf "0x%016LX" (Int64.bits_of_float x))
+  | Sil.String_lit s -> Hashtbl.replace opnd v (add_string_const s)
+  | Sil.Alloc_stack _ -> () (* emitted in the entry block by the given gen_allocas — see §2 *)
+  | Sil.Load a -> let r = fresh () in p (Printf.sprintf "  %s = load %s, ptr %s\n" r (llty (vty v)) (op a));
+      Hashtbl.replace opnd v r
+  | Sil.Store (x, a) -> p (Printf.sprintf "  store %s %s, ptr %s\n" (llty (vty x)) (op x) (op a))
+  | Sil.Binop (op0, l, r) -> gen_binop v op0 l r
+  | Sil.Unop (Ast.Neg, x) -> let r = fresh () in
+      (if vty x = Types.TDouble then p (Printf.sprintf "  %s = fneg double %s\n" r (op x))
+       else p (Printf.sprintf "  %s = sub i64 0, %s\n" r (op x)));
+      Hashtbl.replace opnd v r
+  | Sil.Func_ref name -> Hashtbl.replace opnd v ("@" ^ name)
+  | Sil.Apply (fr, args) ->
+      let argstr = String.concat ", " (List.map (fun a -> Printf.sprintf "%s %s" (llty (vty a)) (op a)) args) in
+      let rt = vty v in
+      if rt = Types.TVoid then p (Printf.sprintf "  call void %s(%s)\n" (op fr) argstr)
+      else (let r = fresh () in p (Printf.sprintf "  %s = call %s %s(%s)\n" r (llty rt) (op fr) argstr);
+            Hashtbl.replace opnd v r)
+  | Sil.Print x -> gen_print x
+
+let gen_term (t : Sil.term) =
+  match t with
+  | Sil.Br n -> p (Printf.sprintf "  br label %%bb%d\n" n)
+  | Sil.Cond_br (c, th, el) -> p (Printf.sprintf "  br i1 %s, label %%bb%d, label %%bb%d\n" (op c) th el)
+  | Sil.Return None -> p (if is_main then "  ret i32 0\n" else "  ret void\n")
+  | Sil.Return (Some v) -> p (Printf.sprintf "  ret %s %s\n" (llty f.Sil.ret) (op v))
+  | Sil.Unreachable -> p "  unreachable\n"
+```
+
+## 9. Exercise solutions
+
+### 1 — definite initialization (a SIL dataflow pass)
+
+With `var x: Int` lowering to an `alloc_stack` and no `store`, run a forward dataflow over the SIL
+CFG. For each block compute `in[b] = ⋂ out[p]` over predecessors `p` (the entry's `in` is the empty
+set; a parameter slot starts initialized); walk the block updating the set on each `Store`, and on a
+`Load` of a slot **not** in the set, report "variable '…' used before being initialized." Iterate to a
+fixed point (a worklist). This is the same forward-meet-over-paths shape you'll reuse for liveness and
+reaching-definitions in Phase 4 — DI is the gentlest instance, and it's *mandatory* in swiftc because
+it's a soundness guarantee, not an optimization.
+
+### 2 — Double output parity
+
+`print(d)` currently emits `printf("%g\n", d)`, which rounds to 6 significant figures. Swift prints
+the *shortest* decimal string that round-trips back to the same `Double`. Implement Ryū (or Grisu),
+or call into a C helper; format the result and pad/trim to Swift's rules (e.g. `1.0` prints as `1.0`,
+`0.1` as `0.1`). This is a self-contained, surprisingly deep numerics exercise.
+
+### 3 — a runtime.c
+
+Have the driver also compile a small `runtime.c` (declaring `void swiftml_print_int(long long)` etc.)
+and link it in, and make IRGen `call @swiftml_print_int` instead of inlining `printf`. Now the
+print/format logic lives in C you control — the first brick of a standard library, which Phase 7
+turns into `Array`/`String`/`Dictionary`.
+```

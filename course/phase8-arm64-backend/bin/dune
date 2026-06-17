@@ -1,0 +1,7 @@
+; The Phase-8 `swiftml8` binary — links the phase's LATEST concept library (Backend B: ARM64).
+(executable
+ (name main)
+ (public_name swiftml8)
+ (libraries swiftml_debuginfo)
+ (flags
+  (:standard -warn-error -a)))

@@ -1,0 +1,204 @@
+---
+title: "10 · Structs (value types)"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+Phase 3 grows the *language*. We start with `struct` — Swift's fundamental building block and your
+first **value type**. A struct bundles named **stored properties** into one aggregate, with a
+**memberwise initializer** Swift gives you for free. Its defining behaviour is **value semantics**:
+assigning a struct **copies** it, so changing the copy never affects the original. `Int`, `Bool`,
+`Double`, `Array`, `String`, `Dictionary` — almost everything in Swift is a value type. This is the
+single biggest design difference from most languages, and you're about to make it real.
+
+- **You implement:** the value-type *lowering* — member **read** (`p.x`) and **write** (`p.x = e`)
+  in SILGen, and the struct instructions in IRGen. The front-end (parser, sema) is given.
+- **Outcome:** struct programs **run and match swiftc**, value semantics included.
+
+## 2. Concepts in depth
+
+### A struct is an aggregate
+
+`struct Point { var x: Int; var y: Int }` declares a type whose values are two `Int`s laid out
+side by side — an **aggregate**. In LLVM that's a named type, `%Point = type { i64, i64 }`; a
+`Point` variable is an `alloc_stack` slot big enough to hold both fields. Sema records each struct's
+**layout** (its fields, in order) in a registry that SILGen and IRGen consult to turn a field *name*
+into an *index*.
+
+### Value semantics — the whole point
+
+Watch what `var q = p` does:
+
+![Value semantics: `var q = p` copies the whole aggregate into q's own slot, so `q.x = 99` changes only q — p still reads 1.](figs/value_semantics.png)
+
+`q` gets its **own slot**, and the assignment **copies p's bytes into it**. From then on `p` and `q`
+are completely independent: `q.x = 99` writes into q's slot and leaves p's slot alone. In our
+memory-based SIL this falls out *for free* — `var q = p` lowers to `load` the whole aggregate out of
+p's slot and `store` it into q's, and a field write goes through q's own address. There's no sharing
+to begin with, so there's nothing to alias. (Contrast a **reference** type — a `class`, coming in a
+later phase — where `q = p` copies a *pointer*, and both names see the same object. Value vs. reference
+is *the* Swift distinction, and it's a property of how the type is copied, which is exactly what you
+implement here.)
+
+### Reading vs. writing a field — value vs. address
+
+The two halves of member access are deliberately asymmetric, and the reason is lvalues:
+
+- **Read `p.x`** wants a *value*. Lower `p` to a struct **value** (a `load`) and pull field `i` out
+  with **`struct_extract`** (LLVM `extractvalue`). This works on *any* struct expression — a variable,
+  a function result, a freshly built `Point(…)`.
+- **Write `p.x = e`** must change `p` *in place*. You can't extract-modify-reinsert a copy; you need
+  the **address** of the field inside p's slot. Take it with **`struct_element_addr`** (LLVM
+  `getelementptr`) and `store` into it. This is only meaningful for an **lvalue** — a `var`-bound
+  variable with a slot — which is exactly why `let`-bound structs reject field assignment, and why
+  writing `q.x` can't possibly disturb `p`.
+
+That read-uses-a-value / write-uses-an-address split is the lvalue/rvalue distinction every compiler
+draws, made concrete.
+
+### The memberwise initializer
+
+`Point(x: 1, y: 2)` is the initializer Swift synthesizes from the stored properties — one labelled
+argument per field, **in declaration order, labels required** (sema checks the labels and types; a
+missing or wrong label is an error, just like swiftc). It lowers to a **`struct`** instruction that
+builds the aggregate value from its fields (LLVM `insertvalue` from `undef`). Construction is given;
+you build the access.
+
+### The three new SIL instructions (swiftc's exact names)
+
+| SIL | meaning | LLVM |
+|---|---|---|
+| `struct (%a, %b)` | build an aggregate from fields | `insertvalue` chain |
+| `struct_extract %v, #i` | read field *i* from a struct **value** | `extractvalue` |
+| `struct_element_addr %p, #i` | address of field *i* of a struct **address** | `getelementptr` |
+
+swiftc emits these same instructions; the value/address split (`struct_extract` vs.
+`struct_element_addr`) is straight from real SIL — read `swift/lib/SILGen/SILGenConstructor.cpp` for
+the synthesized initializer and `swift/docs/SIL.rst` for the instructions.
+
+## 3. Build it, step by step
+
+Front-end is done; fill the lowering.
+
+- **`silgen.ml`** — `TODO(10)`: in `gen_expr`, the `Member (e0, fld, _)` case: `gen_expr` the
+  sub-expression to a struct value, get its `Types.TStruct sn`, look up the layout
+  (`Hashtbl.find b.structs sn`), and emit `Sil.Struct_extract (value, Types.field_index sl fld)` of
+  type `Types.field_type sl fld`. In `gen_stmt`, the `Set_member { obj; field; value }` case: get
+  `obj`'s slot (`Hashtbl.find b.vars obj`), emit `Sil.Struct_element_addr (slot, index)`, then
+  `Sil.Store (value, addr)`.
+- **`irgen.ml`** — `TODO(10)`: lower `Struct` (a chain of `insertvalue`), `Struct_extract`
+  (`extractvalue`), and `Struct_element_addr` (`getelementptr … i32 0, i32 i`). The struct type is
+  `llty (vty …)`.
+
+Reference: `solution/`.
+
+## 4. Test it
+
+```bash
+make lab C=phase3-value-types/10-structs
+```
+
+The cram test **builds and runs** struct programs and checks output — including the value-semantics
+program (`q.x = 99` → `p.x` still `1`), proving copies are independent — and FileChecks the aggregate
+IR. The alcotest pins the sema rules (init labels/arity, member typing, `let`-field assignment) and
+the emitted `insertvalue`/`extractvalue`/`getelementptr`.
+
+## 5. Benchmark it
+
+Value semantics has a cost: passing or assigning a big struct **copies every field**. Time a program
+that copies a 6-field struct in a tight loop vs. swiftc. Swift's real answer for large aggregates is
+**copy-on-write** (`Array`/`String` share storage until a mutation) — a Phase-7 optimization — and the
+SIL optimizer (Phase 4) elides many copies outright. Our naive per-field copy is the honest baseline.
+
+## 6. Exercises
+
+1. **Methods + `mutating`.** Lower `struct Point { … func dist() -> Int { … } }` to a function with an
+   implicit `self` parameter (read-only); a `mutating func` takes `self` by **address**
+   (`struct_element_addr` territory) so it can write fields. This is how Swift threads `self`.
+2. **Computed properties.** `var area: Int { return w * h }` — a property with a getter, lowered to a
+   call, not a stored field. Distinguish stored vs. computed in the layout.
+3. **`Equatable`.** Synthesize `==` for a struct (compare fields pairwise) — a first taste of Swift's
+   protocol-conformance synthesis (full protocols are Phase 6).
+
+## 7. Recap & what's next
+
+You added `struct` — a whole new **type kind** — through every stage, and made **value semantics**
+real: structs are aggregates copied on assignment, with reads via `struct_extract` (a value) and
+writes via `struct_element_addr` (an address into the variable's own slot). Programs run and match
+swiftc.
+
+Next, **11-enums-adts**: `enum` with associated values — **tagged unions**, the other half of
+algebraic data types. Where a struct is "all of these fields at once" (a product), an enum is "exactly
+one of these cases" (a sum), laid out as a **tag + payload**. Then **12-pattern-matching** gives you
+`switch` to take them apart — and **13-optionals** reveals that `Optional` was just an enum all along.
+
+## 8. Appendix — full solution
+
+From `solution/silgen.ml` (the access) and `solution/irgen.ml` (the LLVM):
+
+```ocaml
+(* SILGen — member read is a value; member write is an address *)
+| Ast.Member (e0, fld, _) ->
+    let sv = gen_expr b e0 in
+    let sn = match vty b sv with Types.TStruct sn -> sn | _ -> assert false in
+    let sl = Hashtbl.find b.structs sn in
+    emit b (Sil.Struct_extract (sv, Option.get (Types.field_index sl fld)))
+      (Option.get (Types.field_type sl fld))
+
+| Ast.Set_member { obj; field; value; _ } ->
+    let v = gen_expr b value in
+    let slot = Hashtbl.find b.vars obj in                 (* p's OWN slot — value semantics *)
+    let sn = match vty b slot with Types.TStruct sn -> sn | _ -> assert false in
+    let sl = Hashtbl.find b.structs sn in
+    let faddr = emit b (Sil.Struct_element_addr (slot, Option.get (Types.field_index sl field)))
+                  (Option.get (Types.field_type sl field)) in
+    ignore (emit b (Sil.Store (v, faddr)) Types.TVoid)
+```
+
+```ocaml
+(* IRGen — aggregates in LLVM *)
+| Sil.Struct fields ->
+    let sty = llty (vty v) in
+    let acc = ref "undef" in
+    List.iteri (fun idx fv ->
+      let r = fresh () in
+      p (Printf.sprintf "  %s = insertvalue %s %s, %s %s, %d\n" r sty !acc (llty (vty fv)) (op fv) idx);
+      acc := r) fields;
+    Hashtbl.replace opnd v !acc
+| Sil.Struct_extract (a, idx) ->
+    let r = fresh () in
+    p (Printf.sprintf "  %s = extractvalue %s %s, %d\n" r (llty (vty a)) (op a) idx);
+    Hashtbl.replace opnd v r
+| Sil.Struct_element_addr (a, idx) ->
+    let r = fresh () in
+    p (Printf.sprintf "  %s = getelementptr %s, ptr %s, i32 0, i32 %d\n" r (llty (vty a)) (op a) idx);
+    Hashtbl.replace opnd v r
+```
+
+## 9. Exercise solutions
+
+### 1 — methods and `mutating`
+
+Parse a `func` inside a `struct` body; lower it to a SIL function named e.g. `Point.dist` with an
+extra first parameter `self`. A **non-mutating** method takes `self` by value (a copy — reads only); a
+**`mutating`** method takes `self` by **address** (a pointer to the caller's slot) so its
+`self.x = …` writes back via `struct_element_addr`. A call `p.dist()` passes `p` (by value) or `&p`
+(its address, for mutating) as the first argument. This is exactly how Swift desugars methods.
+
+### 2 — computed properties
+
+Add a `computed` flag (or a separate list) to the layout: a computed property has a getter body, not a
+slot. Member access on a computed property lowers to a **call** to the getter, not a `struct_extract`.
+Stored and computed properties read the same at the call site (`p.area`), which is the point — uniform
+access.
+
+### 3 — `Equatable`
+
+When a struct is used with `==`, synthesize a function that returns the `&&` of `a.fᵢ == b.fᵢ` over all
+fields. Register it so `infer_binary`'s `Eq` case accepts two `TStruct sn` operands. This is the
+gentlest case of Swift's *derived conformances*; the general mechanism (protocols + witness tables) is
+Phase 6.
+```

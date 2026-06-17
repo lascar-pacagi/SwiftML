@@ -1,0 +1,7 @@
+; Phase 0 — the self-contained M0 compiler. Builds the `swiftml-m0` binary.
+(executable
+ (name main)
+ (public_name swiftml-m0)
+ (package swiftml)
+ (flags
+  (:standard -warn-error -a)))

@@ -1,0 +1,235 @@
+---
+title: "24 · Specialization & devirtualization — Milestone M5"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+Phase 5 built beautiful abstractions and honestly priced them: every existential wraps, every
+`p.area()` chases a table, every generic call crosses an erased boundary the inliner can't see
+through. You *measured* that price in concept 22's benchmark. This concept builds the two passes
+that refund it — **devirtualization** and **generic specialization** — and ends with monomorphic
+machine code generated from protocol-oriented source: Milestone **M5**.
+
+The deep idea: concepts 21–23 kept *static knowledge* the runtime machinery doesn't need —
+sema knows `s` holds a `Circle`; the call site knows `T = A`. The optimizer's job is to find
+places where that knowledge survives into SIL and **collapse the dynamic machinery it makes
+redundant**.
+
+- **You implement:** the devirtualization folds and the call-site specializer.
+- **Outcome:** `swiftml -O` at ~104% of `swiftc -O` on generic/existential hot loops.
+
+## 2. Concepts in depth
+
+### Devirtualization: proof, then collapse
+
+After mem2reg, SIL is SSA — every value has one visible definition. So when a dispatch site's
+existential operand is *defined right there* by an `init_existential`, the "unknown type" is a
+fiction:
+
+```
+%e = init_existential %c : $Circle, $any Shape
+%r = witness_method %e, #0 ; apply()          // but we can SEE it's a Circle!
+```
+
+The fold replaces dynamic machinery with what the proof licenses:
+
+- `witness_method %e, #slot` → a **direct call** to the witness implementation (looked up in the
+  module's tables at *compile* time — the same lookup the CPU would have done at runtime);
+  `self` is the pre-wrap payload `%c`, no open needed.
+- `open_existential %e : $Circle` → just `%c` (an alias; the instruction disappears).
+- `same_witness %e, $T` → a constant `Bool` — which then feeds concept 17's `simplify_cfg`, so a
+  *provable* `as?` deletes its entire failure branch.
+
+There's a second proof source: inside a specialized clone (next section), the "existential" is
+*already* a concrete struct — no `init_existential` def needed, but the protocol must be
+recovered from the type's conformances (we bail if it conforms to more than one protocol — the
+slot number would be ambiguous; honest bails are part of the craft).
+
+### Specialization: clone per proven type
+
+Devirtualization is local; it can't help `dbl<T: P>` — the body was compiled once, erased, and
+*inside* it nothing is provable. The fix is the flagship generics optimization in swiftc and
+every ML-family compiler: **clone the function for the concrete type**.
+
+When a call `dbl(A(x: 10))` proves `T = A` (the argument's def is `init_existential (_, A, P)`),
+the specializer:
+
+1. **clones** `dbl` as `dbl$A`, retyping every erased value (`any P` → `A`) — params, block
+   arguments, return, all of `val_ty`;
+2. **rewrites the call**: arguments pass the raw payloads, the `func_ref` retargets to the
+   clone, and the result — if it was erased — is retyped concrete, so the caller's
+   `open_existential` folds away;
+3. leaves the **erased original** untouched for unprovable callers — both worlds coexist,
+   which is exactly swiftc's model (a public generic keeps its erased entry point forever).
+
+Soundness needs one care: retyping *every* `any P` value in the body is only valid if the body
+doesn't build its **own** existentials of `P` (an unrelated `let e: P = B()` local must stay a
+real existential). `retypable` detects that and bails — conservative, correct, and the corpus
+rarely hits it. Recursion needs nothing special: inside `rep$A`, the recursive call's argument
+is already a concrete `A`, so the worklist specializes it to itself.
+
+### The cascade is the optimization
+
+Neither pass produces fast code *by itself* — they produce **opportunities**:
+
+```
+specialize:   dbl$A(t: A) { witness_method t … }     // concrete param
+devirt:       dbl$A(t: A) { apply @A.v(t) … }        // direct calls
+inline #2:    dbl$A(t: A) { struct_extract t … }     // bodies gone
+GVN:          one struct_extract (t.v() + t.v() computed once)
+```
+
+That's why the `-O` pipeline runs **inline → SSA → specialize → devirt → inline again →
+scalars**: the second inline round is where the abstraction actually dies. Run `--sil-opt` on
+the cram's program and read the output — `main` contains *no* protocol machinery at all.
+
+### The measurement (M5)
+
+![The M5 run (real numbers, log scale): three protocol/generic hot loops. `swiftml -O` matches `swiftc -O` (geomean 104%); the gap to `-Onone` is the erased abstraction. swiftc's huge `-Onone` bars are its unoptimized dispatch + ARC traffic — ours is leaner because our `-Onone` has no ARC to pay for.](figs/m5_bench.png)
+
+Two honest readings. First, the headline: **monomorphic-grade code from generic source,
+matching swiftc -O** (with M4's standing caveat — we don't pay Swift's overflow checks).
+Second, the `exloop` column teaches a subtler lesson: its dispatches go through existential
+*parameters* of a plain function — unprovable by our analysis *and* largely by swiftc's — so
+both compilers keep real dynamic dispatch and the times still match. Erasing abstraction isn't
+always possible; *pricing it the same as the reference compiler* is the parity that matters.
+
+> Oracle: `Generics.cpp` (`GenericSpecializer` — including the same "keep the generic original"
+> structure), `SpeculativeDevirtualizer.cpp` (the guess-and-guard variant we leave as an
+> exercise), and `OptimizationTips.rst` — whole-module optimization exists precisely to make
+> more call sites provable.
+
+## 3. Build it, step by step
+
+1. **`opt.ml` — `TODO(24a)`, the devirt folds** in `devirt_module`'s `concat_map`: use the
+   given `wrap_of` (the proof) and `impl_of` (the table lookup). `Apply_witness` → two
+   instructions (`fresh` `Func_ref` + direct `Apply` with self prepended); `Open_existential` →
+   record an `alias` and drop; `Same_witness` → `Bool_lit`. Unproven → unchanged.
+2. **`opt.ml` — `TODO(24b)`, the call-site specializer**: prove every erased position (an
+   `init_existential` def, or an already-concrete `TStruct` — that's clone recursion), require
+   one consistent `sn` and `retypable`, create the clone once (`clone_specialized`, append,
+   `changed := true`), then rewrite: payload args, retargeted `func_ref` (via `def` + the
+   commit step below), retyped erased result.
+
+Reference: `solution/opt.ml`.
+
+## 4. Test it
+
+```bash
+make lab C=phase5-generics/24-specialization
+make bench C=phase5-generics/24-specialization   # the M5 gate
+```
+
+cram: `dbl$A` exists; zero `witness_method`/`init_existential` in provable code; two types ⇒
+two clones; recursion ⇒ a self-recursive clone; the unprovable program keeps dynamic dispatch
+and still runs right. alcotest: the same four properties unit-level, plus non-generic functions
+are never cloned.
+
+## 5. Benchmark it
+
+The bench *is* the milestone: three hot loops (generic, existential, generic-with-aggregates),
+four compilers. Gate: `-O` beats `-Onone` on all three and lands within the band of
+`swiftc -O`. Measured here: **101% / 104% / 108%, geomean 104%**.
+
+## 6. Exercises
+
+1. **Speculative devirtualization.** When a type is *likely* but not proven (e.g. only one
+   conformer exists in the module), emit `if same_witness e, $A { direct } else { dynamic }` —
+   swiftc's `SpeculativeDevirtualizer`. Measure when the guard pays for itself.
+2. **Drop dead erased originals.** After specialization, a generic with no remaining callers
+   still lingers (witness tables don't reference it). Extend dead-function removal to drop it
+   and watch binary size.
+3. **Specialization caps.** Each (generic × type) pair costs code size. Add a budget (max
+   clones per generic) with a `log` of what was skipped — the cost model swiftc's specializer
+   has and ours doesn't.
+4. **Cross-clone GVN.** `g$A` and `h$A` may share subcomputations after inlining. Measure
+   whether your dominance-scoped GVN already catches them (hint: only within one function —
+   why? what would it take to fix?).
+
+## 7. Recap & what's next
+
+Two passes, one principle: **collapse dynamic machinery that static knowledge makes
+redundant**. Devirtualization folds proven dispatch, opens, and identity tests;
+specialization clones generics so their *insides* become provable; the inliner and the
+Phase-4 scalars finish the demolition. Where nothing is provable, the erased path remains —
+priced the same as swiftc's. **Milestone M5: protocol-oriented Swift at monomorphic speed.
+Phase 5 complete.**
+
+Next, per `PLAN.md`: **Phase 6 — reference types & ARC**: classes, vtables, `init`/`deinit`,
+a real reference-counting runtime — and the value witness tables from concept 23 finally get
+their copy/destroy entries.
+
+## 8. Appendix — full solution
+
+```ocaml
+(* 24a: the devirt folds *)
+| Sil.Apply_witness (ex, slot, args) -> (
+    match wrap_of ex with
+    | Some (payload, sn, pn) -> (
+        match impl_of pn sn slot with
+        | Some impl ->
+            let selfv = match payload with Some pv -> pv | None -> ex in
+            let fr = fresh (Option.value (vty v) ~default:Types.TVoid) in
+            [ (fr, Sil.Func_ref impl); (v, Sil.Apply (fr, selfv :: args)) ]
+        | None -> [ (v, i) ])
+    | None -> [ (v, i) ])
+| Sil.Open_existential (ex, sn) -> (
+    match wrap_of ex with
+    | Some (Some pv, sn', _) when sn' = sn -> Hashtbl.replace alias v pv; []
+    | Some (None, sn', _) when sn' = sn -> Hashtbl.replace alias v ex; []
+    | _ -> [ (v, i) ])
+| Sil.Same_witness (ex, sn) -> (
+    match wrap_of ex with
+    | Some (_, sn', _) -> [ (v, Sil.Bool_lit (sn' = sn)) ]
+    | None -> [ (v, i) ])
+
+(* 24b: the call-site specializer (inside the Apply match; see solution/opt.ml for the
+   full context with `resolve`, `infos`, the bail conditions, and the commit step) *)
+let resolve arg pty = match pty with
+  | Types.TProto c -> (
+      match Hashtbl.find_opt def arg with
+      | Some (Sil.Init_existential (pv, sn, _)) -> Some (Some (pv, sn, c))
+      | _ -> (
+          match Hashtbl.find_opt f.Sil.val_ty arg with
+          | Some (Types.TStruct sn) -> Some (Some (arg, sn, c))
+          | _ -> Some None))
+  | _ -> None
+in
+(* … all-same-sn + retypable gf c → ensure clone, unwrap args, retarget fr, retype result *)
+```
+
+## 9. Exercise solutions
+
+### 1 — speculative devirtualization
+
+At an unproven `apply_witness %e, #k`: if the module has exactly one conformer `A` of the
+protocol (count the wtables), rewrite to `cond_br (same_witness %e, $A)` with the direct call
+in the hot arm and the original dispatch in the cold one. The guard is one compare; the win is
+inlining in the hot arm. It loses when the guess misses often or the body is tiny — which is
+why swiftc drives it with profile data and a conformer census.
+
+### 2 — dead originals
+
+Track which functions were specialized away: after the final inline round, a `generic = true`
+function with zero `Apply` references and zero witness-table mentions is unreachable (no
+dynamic path can call a generic — only direct applies can). Extend `inline_module`'s
+dead-function sweep with that rule.
+
+### 3 — caps
+
+`specializations : (string, int) Hashtbl` — refuse to clone past N per generic, `log` the
+skip. The interesting policy question is *which* N sites win: call frequency beats source
+order, which is why real compilers want profiles (or at least loop-depth as a proxy —
+specialize call sites inside loops first).
+
+### 4 — cross-clone GVN
+
+Our GVN is per-function by construction (the dominator tree is). Cross-function redundancy
+needs either (a) inlining both into a common caller — which is what actually happens in hot
+paths — or (b) interprocedural value numbering over an SSA call graph, which is research-grade
+machinery for marginal wins. The honest answer: let inlining create the locality and the
+existing GVN harvest it — measure first.
+```

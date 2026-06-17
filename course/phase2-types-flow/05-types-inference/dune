@@ -1,0 +1,10 @@
+; Concept 05 — the Phase-2 front-end + type checker, one stage library.
+; Contracts (given): token diagnostics types ast driver. Skeletons (you edit): lexer parser sema.
+(library
+ (name swiftml_types)
+ (wrapped false)
+ (modules token diagnostics types lexer ast parser sema driver)
+ (flags
+  (:standard -warn-error -a)))
+
+(dirs :standard \ solution)

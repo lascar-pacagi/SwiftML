@@ -1,0 +1,3 @@
+(executable (name lab) (modules lab) (libraries swiftml_peephole) (flags (:standard -warn-error -a)))
+(cram (deps lab.exe))
+(tests (names test_peephole) (modules test_peephole) (libraries alcotest swiftml_peephole) (flags (:standard -warn-error -a)))

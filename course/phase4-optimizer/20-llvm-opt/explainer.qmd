@@ -1,0 +1,208 @@
+---
+title: "20 · LLVM -O2 & the M4 benchmark"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+Phase 4 built a real SIL optimizer: SSA, constant folding, CFG simplification, GVN, inlining. But our
+`build` step still compiled the emitted LLVM IR with plain `clang` — i.e. `-O0`, the *naive* backend.
+This concept flips the last switch: `-O` now hands our IR to **LLVM's optimizer** (`clang -O2`), and
+then we do what Phase 4 was always heading toward — **measure** the generated code against
+`swiftc -O` on a microbench suite. That measurement is **Milestone M4**.
+
+- **You implement:** the one-line wiring (`-O` → `clang -O2`) — then you run, read, and *explain* the
+  benchmark.
+- **Outcome:** `swiftml -O` in the band of `swiftc -O` — with eyes open about why.
+
+## 2. Concepts in depth
+
+### Two optimizers, two levels — why both?
+
+swiftc optimizes the *same program twice*, at two levels, and now so do we:
+
+- **SIL level (ours, concepts 15–19).** Language-level semantics still exist here: we know what a
+  Swift `struct` is, what an `enum` tag means, which `apply` is a call to a tiny leaf. Inlining,
+  mem2reg over our slots, folding our enum tags — these are easy *here* and hard later.
+- **LLVM level (`-O2`).** Machine-level facts live here: instruction selection (`%` and `/` by a
+  constant become multiply-shift tricks), **register allocation** (SSA values → physical registers,
+  the single biggest -O0→-O2 win), **instruction scheduling**, loop transforms driven by **SCEV**
+  (scalar evolution — closed forms for induction variables), **LICM** (hoist loop-invariant code),
+  vectorization, and another full round of GVN/instcombine/DCE on its own IR.
+
+The division of labor is the lesson: each level sees things the other can't. Our GVN can merge two
+`enum_tag`s; LLVM's can't know they were tags, but it *can* know the target's multiply latency. This
+is why "just emit LLVM and let -O2 do everything" doesn't reach `swiftc -O` for real Swift — swiftc's
+SIL passes (generic specialization, ARC optimization, devirtualization) remove *language* overhead
+LLVM can't see. Our subset is small enough that the overlap is large — see the numbers below.
+
+### What -O2 actually did to our IR
+
+Take a loop we've already SSA-promoted and look at the difference (`clang -O2 -S` on our `.ll`):
+at `-O0`, every `%vN` lives in a register *briefly* and the CFG is exactly ours. At `-O2`, LLVM has:
+turned our `i % 2 == 0` into a bit test; strength-reduced `i / 2` to a shift; unrolled small loops;
+and register-allocated everything (no stack traffic at all). For `fib`, LLVM even **partially inlines
+the recursion into itself**, cutting the call count several-fold. None of that was worth hand-building
+at the SIL level — that's the point of the hand-off.
+
+### The benchmark — and how to time honestly
+
+The M4 suite is five programs chosen to *resist* constant-folding (data-dependent loop counts,
+recursion): `fib(37)`, `collatz` totals to 1M, trial-division `primes` to 3M, a `structs` kernel, an
+`enums` state machine. The runner compiles each **four ways** (`swiftml`/`swiftc` × `-Onone`/`-O`),
+**checks all four print the same answer** (a benchmark of wrong code is worthless), then times them.
+Methodology that mattered in practice:
+
+- **Warm-up run first.** On macOS, the *first* exec of a freshly linked binary stalls ~300 ms in
+  code-signature verification — wall-clock without a warm-up measures the kernel, not your code.
+- **Best-of-N (not mean).** The minimum is the run with the least scheduler noise; means smear noise
+  *into* the result.
+- **Spawn directly** (no `sh -c` wrapper), stdout to `/dev/null`, workloads ≥ tens of milliseconds so
+  process startup (~3 ms) is in the noise.
+
+![The M4 run (real numbers, log scale). `swiftml -O` beats `-Onone` everywhere and lands at 92–157% of `swiftc -O` per bench — geomean 129%. See the honesty section for why "faster than swiftc" needs an asterisk.](figs/m4_bench.png)
+
+### Reading the numbers honestly
+
+`swiftml -O` at **129% of `swiftc -O`** (geomean) does *not* mean we out-optimized Apple. Three
+asterisks, in decreasing size:
+
+1. **We skip Swift's overflow checks.** Swift's `+`, `*`, `-` **trap on overflow**; swiftc emits
+   `llvm.sadd.with.overflow` + a branch wherever it can't prove safety, and that costs real time in
+   tight integer loops (`collatz`: 157%). Our compiler emits plain `add` — wrap-around semantics.
+   That's a *language semantics gap* (documented since Phase 1), not an optimization win. Implementing
+   checked arithmetic and re-measuring is the first exercise — expect several points of the edge to
+   evaporate.
+2. **No ARC, no exclusivity checks.** Our value types never touch a refcount. swiftc's `-O` removes
+   most ARC traffic in these kernels, but `-Onone` doesn't — that's why `swiftc -Onone` is 25–130×
+   slower than ours on `structs`/`enums` (ours is just C-like `-O0` code).
+3. **The subset is flattering.** Int/Bool/struct/enum kernels are exactly what LLVM digests best. Add
+   strings, generics, protocols, closures — the language features where swiftc's SIL passes earn
+   their keep — and the picture changes. That's later phases' work.
+
+The honest claim, stated precisely: *for this subset, with wrap-around arithmetic, our SIL pipeline
+plus LLVM -O2 generates code in the same performance class as swiftc -O.* That's Milestone **M4**.
+
+### A real bug, caught only by the benchmark
+
+When this concept was first built, the very first bench run **segfaulted** on `structs` at
+`-Onone` — 3 million iterations of a loop with a `let p = P(...)` inside. The cause: IRGen at the
+time emitted each `alloca` in the block where its `alloc_stack` appeared — *inside the loop body*.
+In LLVM, an `alloca` reserves stack space that is only reclaimed when the *function returns*, so
+each iteration leaked 32 bytes and the stack blew up ~250k iterations in. The bug had been latent
+since Phase 2, and no correctness test ever caught it, because no correctness test loops millions
+of times. The fix (what clang itself does): **hoist every alloca to the entry block** — the frame
+is then fixed-size, allocated once. It now lives in the given `gen_allocas` of every irgen since
+concept 09, and this concept's alcotest pins it so it can't quietly regress. Two morals: *allocas
+belong in the entry block* (LLVM's mem2reg won't even look at them otherwise), and *a benchmark is
+a test* — it exercises scale that FileCheck never will.
+
+> Oracle: this two-level architecture *is* swiftc's: `swift/lib/SILOptimizer/` then LLVM. Our whole
+> Phase 4 is a miniature of that design.
+
+## 3. Build it, step by step
+
+In `driver.ml`, fill `TODO(20)` in `run_clang`: choose clang's flag from `opt` — `"-O2"` when true,
+`"-O0"` when false. (Yes, it's one line — the concept's work is running and *understanding* the
+benchmark.) Then:
+
+```bash
+make bench C=phase4-optimizer/20-llvm-opt
+```
+
+Read the table. For each program, explain to yourself: why did `-O` help (or barely help — `primes`
+is division-bound; nothing removes the `%`)? Where does `swiftc -Onone` lose 100×? Then do Exercise 1
+and watch the overflow asterisk become concrete.
+
+Reference: `solution/driver.ml`.
+
+## 4. Test it
+
+```bash
+make lab C=phase4-optimizer/20-llvm-opt
+```
+
+cram: `-Onone` builds work on the skeleton; `-O` builds are RED until the TODO; the hot-loop alloca
+program runs (3M iterations, no segfault); a composite program exercises the whole Phase-4 pipeline.
+alcotest: every `alloca` is in the entry block (pins the bug fix), and the full `-O` SIL pipeline
+leaves a call-in-loop program fully SSA-promoted and valid.
+
+## 5. Benchmark it
+
+This concept *is* the benchmark. The gate: `-O` beats `-Onone` on every program, and `swiftml -O` is
+within the band of `swiftc -O` (we measured geomean **129%**, range 92–157%). Report your numbers with
+the caveats from §2 — the honesty *is* the deliverable.
+
+## 6. Exercises
+
+1. **Checked arithmetic.** Emit `llvm.sadd.with.overflow.i64` (+ branch to a trap block) for `+`, `-`,
+   `*` like swiftc does. Verify the trap message/exit code against swiftc on an overflowing program,
+   then re-run the bench and quantify the cost (and how much of our edge it explains).
+2. **Read the asm.** `clang -O2 -S` our `collatz.ll` vs `-O0 -S`. Find: the division-by-2 as a shift,
+   the register-allocated loop (no stack traffic), and the branch layout. Annotate ten lines.
+3. **-O2 vs -O2 + our passes off.** Build with `-O` but an empty SIL pipeline (just LLVM -O2 on raw
+   memory SIL) and compare. How much did *our* passes matter once LLVM runs? (Expect: less than you
+   hope on scalars — LLVM has its own mem2reg — but inlining still wins where LLVM can't see SIL-level
+   calls are cheap.)
+4. **Compile-time benchmark.** Time `swiftml build -O` itself vs `swiftc -O` over the suite — the
+   *other* axis of compiler performance. Where does our time go (hint: `clang` subprocess)?
+
+## 7. Recap & what's next
+
+`-O` is now the full pipeline: **inline → mem2reg/SSA → fold → simplify-CFG → GVN → DCE → LLVM -O2**,
+and the M4 benchmark says the generated code is in `swiftc -O`'s class on our subset — measured, with
+the caveats named. **Phase 4 is complete.**
+
+Next: Phase 5 (per `PLAN.md`) — the language grows again (strings, arrays, closures…), and each new
+feature gets to ride the optimizer you just built.
+
+## 8. Appendix — full solution
+
+```ocaml
+let run_clang ~(opt : bool) ~(ll_path : string) ~(out : string) : unit =
+  let oflag = if opt then "-O2" else "-O0" in
+  let cmd = Printf.sprintf "clang %s -Wno-override-module %s -o %s"
+              oflag (Filename.quote ll_path) (Filename.quote out) in
+  if Sys.command cmd <> 0 then failwith (Printf.sprintf "clang failed on %s" ll_path)
+```
+
+(And the alloca-hoist in `irgen.ml`: collect every `Alloc_stack` in the function and emit them at the
+top of the entry block; the per-instruction case becomes a no-op.)
+
+## 9. Exercise solutions
+
+### 1 — checked arithmetic
+
+In IRGen's `gen_binop`, for `+`: `%t = call { i64, i1 } @llvm.sadd.with.overflow.i64(i64 %a, i64 %b)`,
+extract value (`extractvalue %t, 0`) and flag (`, 1`), then `br i1 %ovf, label %trap, label %cont`
+with a per-function trap block (`Swift runtime failure: arithmetic overflow` + `llvm.trap`). Declare
+the intrinsics once. swiftc's exit code for overflow is the same SIGTRAP/133 we already match for
+force-unwrap. On the bench, expect mid-single-digit % cost on `collatz`/`fib` — LLVM proves many
+checks redundant but not all (loop-carried sums with unknown bounds keep theirs).
+
+### 2 — reading the asm
+
+At `-O2` you'll find: `n / 2` as `asr`/`lsr` (shift), `n % 2 == 0` as `tbz` (test-bit-and-branch on
+arm64), the loop body with zero `ldr`/`str` to the stack (registers only), the loop rotated so the
+condition sits at the bottom (one branch per iteration), and small constants materialized with
+`mov`/`madd`. At `-O0` every SIL value round-trips through a stack slot — that contrast *is* register
+allocation.
+
+### 3 — LLVM-only -O
+
+Empty `default_pipeline`, keep `-O2`. Scalars (fib/collatz/primes) come out nearly identical — LLVM's
+own mem2reg+GVN redo our work on its IR. The gap appears where SIL-level knowledge mattered: our
+inliner flattens `step`/`dot` calls *before* LLVM sees them, and on `structs`/`enums` kernels the
+SIL-inlined version gives LLVM a single flat loop it optimizes measurably better. Conclusion: levels
+overlap on scalars, and the higher level earns its keep exactly where language structure (calls,
+aggregates) is involved.
+
+### 4 — compile time
+
+`swiftml build -O` ≈ a few ms of OCaml (lex→SIL→opt→print IR) + ~100–300 ms of `clang -O2` — the
+subprocess dominates. `swiftc -O` is heavier (type inference, SIL passes, whole-module work). Honest
+comparison needs the same measurement discipline as runtime: warm runs, best-of-N, and reporting the
+clang share separately (it's LLVM's time, not ours).
+```
