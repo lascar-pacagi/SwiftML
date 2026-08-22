@@ -84,9 +84,14 @@ dune exec swiftml8 -- build --native demo.swift -o demo && ./demo
 **Work a concept** (RED on the skeleton, GREEN with the solution swapped in):
 
 ```sh
-make lab C=phase4-optimizer/16-mem2reg-ssa            # a concept's tests
+make setup-hooks                                      # keep your solutions out of commits
+make claim C=phase1-minimal/01-lexer                  # before starting a concept
+make lab C=phase4-optimizer/16-mem2reg-ssa            # a concept's tests (RED until you fill it)
+make exercises C=phase1-minimal/01-lexer              # the §6 exercises
 make oracle F=tests/programs/arith.swift B=swiftml4   # diff a program vs swiftc
+make bench|profile|profile-cpu C=phase1-minimal/01-lexer   # how fast / slow where
 make explainer-pdf C=phase2-types-flow/08-sil-silgen  # render its lesson
+make check-pristine                                   # HEAD ships no pre-solved skeleton
 ```
 
 **Run the whole-program comparison suite** (31 classical programs vs `swiftc`, `-Onone` and `-O`):
