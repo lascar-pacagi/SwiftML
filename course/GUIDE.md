@@ -80,27 +80,35 @@ you build, not a separate folder.
 
 For each concept, in order:
 
-1. **Read the `README.md`** (1 min) and the **explainer** §1–2 for the mental model — render it
+1. **Claim it** (one command, if you might ever share this repo — see §7b):
+   ```bash
+   make claim C=phase1-minimal/01-lexer
+   ```
+   The stage files of that concept become *yours*: the pre-commit hook will refuse to commit
+   them, so your answers cannot leak into a branch other people clone.
+2. **Read the `README.md`** (1 min) and the **explainer** §1–2 for the mental model — render it
    (§5) or just read the `.qmd`.
-2. **Fill in the skeleton.** Open the `.ml` file in the concept dir (the functions that
+3. **Fill in the skeleton.** Open the `.ml` file in the concept dir (the functions that
    `failwith "TODO (NN): …"`), and implement them following the explainer's **"Build it"** section
    — it gives the types, APIs, examples, and tips, *not* the answer.
-3. **Test your work** — red turns green as you implement:
+4. **Test your work** — red turns green as you implement:
    ```bash
    make lab C=phase1-minimal/01-lexer
    ```
-4. **Check parity** against the real compiler:
+5. **Check parity** against the real compiler:
    ```bash
    make oracle F=tests/programs/arith.swift
    ```
-5. **Stuck?** Read the explainer's **Appendix** (full commented solution) or the matching
+6. **Stuck?** Read the explainer's **Appendix** (full commented solution) or the matching
    `../swift/lib/…` file, or `solution/`. Try first — the struggle is the learning.
-6. **Run the bench** (perf concepts) — see the payoff:
+7. **Run the bench** (perf concepts) — see the payoff, then ask where the time actually goes:
    ```bash
-   make bench C=phase4-optimizer/20-llvm-opt
+   make bench C=phase1-minimal/01-lexer      # how fast?
+   make profile C=phase1-minimal/01-lexer    # slow WHERE? per-construct cost, allocation sites
    ```
-7. **Move on** when the concept's *definition of done* (in its README) holds — `make lab` green,
-   parity matches `swiftc`, any perf gate met.
+8. **Move on** when the concept's *definition of done* (in its README) holds — `make lab` green,
+   parity matches `swiftc`, any perf gate met. The §6 **exercises** are optional and have their own
+   tests (`make exercises C=…`); each one stays skipped until you start it.
 
 > The tests are the spec. If you're unsure what a function should do, read its test. `solution/`
 > is the answer key; `../swift/lib/…` is how the professionals did it.
