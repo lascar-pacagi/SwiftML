@@ -173,6 +173,44 @@ they go green when *your* code in that directory is correct
 
 ---
 
+## 7b. Your work vs the course (if you'll share this repo)
+
+You edit the skeletons **in place**, so your solutions live as uncommitted changes to tracked
+files. That is fine on your own machine and a problem the moment someone else clones the repo:
+they must get the skeletons, not your answers. One command sets that up, once:
+
+```bash
+make setup-hooks                          # installs the pre-commit guard
+make claim C=phase1-minimal/01-lexer      # "these files are mine" — before you start a concept
+```
+
+`claim` records the concept's stage files in `course/work/.mine` (gitignored) and the hook then
+**refuses any commit that touches them**. Everything else — tests, explainers, tooling, other
+concepts — commits normally, so course corrections you make while working still flow to `main`
+with no branch juggling.
+
+The one case that needs a word: sometimes a correction belongs to the *given* part of a file you
+have claimed (a helper, a comment, a signature). Stage just those hunks and say so explicitly:
+
+```bash
+git add -p course/phase1-minimal/01-lexer/lexer.ml
+SKELETON_FIX=1 git commit -m "01-lexer: fix the trivia comment"
+```
+
+Two more targets round it out:
+
+| command | what it does |
+|---|---|
+| `make save` | snapshots your claimed files into `course/work/` (gitignored) — cheap insurance against a stray `git restore` |
+| `make restore C=<dir>` | puts the shipped skeletons back in the tree |
+| `make check-pristine` | does `HEAD` ship any skeleton byte-identical to its `solution/`? |
+| `make check-shipped C=<dir>` | checks out `HEAD` into a throwaway worktree and asserts that concept's tests are **RED** there |
+
+Neither check is complete on its own — byte-identity misses a solution that was edited after being
+copied, and a RED result can be RED for an upstream reason (concept 02's tests fail while the
+*lexer* skeleton is unimplemented, whatever `parser.ml` contains). Run both before publishing, and
+treat `claim` + the hook as the thing that actually keeps your work out.
+
 ## 8. Knowing where you are (milestones)
 
 The big checkpoints, in order (full list in `../PLAN.md` §7):

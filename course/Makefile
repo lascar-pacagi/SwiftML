@@ -8,7 +8,7 @@ PY := $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
 # bare `dune` if opam isn't installed.
 DUNE := $(shell command -v opam >/dev/null 2>&1 && echo "opam exec -- dune" || echo dune)
 
-.PHONY: setup setup-hooks claim unclaim save restore check-pristine build test test-all lab exercises oracle bench profile profile-cpu fmt lint figs explainer docs preview clean
+.PHONY: setup setup-hooks claim unclaim save restore check-pristine check-shipped build test test-all lab exercises oracle bench profile profile-cpu fmt lint figs explainer docs preview clean
 
 # ---- Phase 0: toolchain bootstrap ------------------------------------------
 # Installs OCaml + dune + the test/format deps. Walks you through opam if missing.
@@ -88,11 +88,13 @@ setup-hooks:
 claim:
 	@test -n "$(C)" || { echo "usage: make claim C=phase1-minimal/01-lexer"; exit 1; }
 	@mkdir -p work
-	@for sol in $(C)/solution/*.ml; do \
-	  f=$(C)/$$(basename $$sol); \
-	  test -f $$f || continue; \
-	  grep -Fxq "course/$$f" work/.mine 2>/dev/null || echo "course/$$f" >> work/.mine; \
-	  echo "  claimed course/$$f"; \
+	@for f in $(C)/*.ml; do \
+	  test -f "$$f" || continue; \
+	  sol=$(C)/solution/$$(basename $$f); \
+	  if [ -f "$$sol" ] || grep -q 'TODO(' "$$f"; then \
+	    grep -Fxq "course/$$f" work/.mine 2>/dev/null || echo "course/$$f" >> work/.mine; \
+	    echo "  claimed course/$$f"; \
+	  fi; \
 	done
 	@echo "guarded files are listed in course/work/.mine"
 
@@ -116,6 +118,17 @@ restore:
 
 check-pristine:
 	@./tooling/check-pristine.sh
+
+# The real invariant, on what you would actually publish: check out HEAD into a throwaway
+# worktree and confirm the concept's tests FAIL there (a skeleton that passes is a spoiler).
+#   make check-shipped C=phase1-minimal/01-lexer
+check-shipped:
+	@test -n "$(C)" || { echo "usage: make check-shipped C=phase1-minimal/01-lexer"; exit 1; }
+	@w=$$(mktemp -d)/head; git -C .. worktree add -q --detach $$w HEAD; \
+	 if (cd $$w/course && $(DUNE) build @$(C)/runtest --force >/dev/null 2>&1); then \
+	   echo "SPOILED: $(C) tests PASS on HEAD — the skeleton ships solved"; rc=1; \
+	 else echo "ok — $(C) is RED on HEAD, as a skeleton should be"; rc=0; fi; \
+	 git -C .. worktree remove --force $$w; exit $$rc
 
 # ---- formatting ------------------------------------------------------------
 # Needs ocamlformat in the opam switch (`opam install ocamlformat` — `make setup` includes it).

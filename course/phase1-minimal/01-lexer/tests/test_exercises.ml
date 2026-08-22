@@ -142,9 +142,13 @@ let test_string_of_token () =
    rather than a silent skip. *)
 
 (* Exercise 1 is untouched while `1_000_000` still lexes as `1` followed by an identifier. *)
+let is_todo (m : string) = String.length m >= 4 && String.sub m 0 4 = "TODO"
+
 let ex1_started () =
   match kinds "1_000_000" with
   | [ Token.Int 1; Token.Ident "_000_000"; Token.Eof ] -> false
+  (* a lexer that is still the TODO skeleton has not started ANY exercise *)
+  | exception Failure m when is_todo m -> false
   | _ -> true
   | exception _ -> true
 
@@ -160,8 +164,8 @@ let ex2_started () =
 let ex3_started () =
   match Token.string_of_token (List.hd (lex "1")) with
   | _ -> true
-  | exception Failure m -> not (String.length m >= 4 && String.sub m 0 4 = "TODO")
-  | exception _ -> true
+  | exception Failure m -> not (is_todo m)
+  | exception _ -> false
 
 let skipped what () =
   Printf.printf "    (%s not started — this group activates as soon as it is)\n%!" what
