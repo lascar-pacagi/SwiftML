@@ -1,10 +1,15 @@
-(* FROZEN SOLUTION — concept 02-parser. Verified answer key for [parser.ml].
-   Kept out of the build by `(dirs :standard \ solution)`. Drop-in copy of the stage
-   module with the three TODO functions implemented. Verify by copying over
-   ../parser.ml and running `dune build @phase1-minimal/02-parser/runtest`.
+(* The parser: turn a token stream into an [Ast.program].
 
-   Hand-written recursive descent (statements) + Pratt / precedence-climbing
-   (expressions). Mirrors swift/lib/Parse/{Parser,ParseDecl,ParseStmt,ParseExpr}.cpp. *)
+   Hand-written recursive descent (statements) + Pratt / precedence climbing
+   (expressions), mirroring:
+     swift/lib/Parse/Parser.cpp      (the cursor + expect/consume helpers)
+     swift/lib/Parse/ParseStmt.cpp   (statement dispatch)
+     swift/lib/Parse/ParseExpr.cpp   (parseExprSequence — Swift's precedence folding)
+
+   >>> You build this in concept  phase1-minimal/02-parser. <<<
+   The cursor helpers, the binding-power table and the two small span/identifier
+   helpers are given; you write the three functions marked TODO(02...). See the
+   explainer §3 for a step-by-step walk-through, §2 for why Pratt parsing works. *)
 
 type t = {
   toks : Token.t array;
@@ -61,63 +66,34 @@ let span_between (lo : Token.span) (hi : Token.span) : Token.span =
 (* --- expressions: Pratt parser --------------------------------------------- *)
 
 let rec parse_expr_bp (p : t) (min_bp : int) : Ast.expr =
-  (* 1. prefix / "nud": literal, variable, call, parenthesised expr, or unary minus. *)
-  let lhs =
-    match peek_kind p with
-    | Token.Int n ->
-        let t = advance p in
-        Ast.Int_lit (n, t.Token.span)
-    | Token.Ident name ->
-        let t = advance p in
-        if peek_kind p = Token.LParen then (
-          (* a call — in Phase 1 this is only print(_:) *)
-          ignore (advance p (* '(' *));
-          let args = parse_call_args p in
-          let rp = expect p Token.RParen "')'" in
-          Ast.Call (name, args, span_between t.Token.span rp.Token.span))
-        else Ast.Var (name, t.Token.span)
-    | Token.LParen ->
-        ignore (advance p (* '(' *));
-        let e = parse_expr_bp p 0 in
-        ignore (expect p Token.RParen "')'");
-        e
-    | Token.Minus ->
-        let t = advance p in
-        let operand = parse_expr_bp p unary_bp in
-        Ast.Unary (Ast.Neg, operand, span_between t.Token.span (Ast.expr_span operand))
-    | _ ->
-        let t = peek p in
-        Diagnostics.error p.diags t.Token.span "expected expression";
-        ignore (advance p);
-        Ast.Int_lit (0, t.Token.span) (* recovery placeholder *)
-  in
-  (* 2. infix / "led": fold operators that bind at least [min_bp]. Left-assoc via
-     recursing on the right with [bp + 1]. *)
-  let rec loop lhs =
-    match infix_bp (peek_kind p) with
-    | Some bp when bp >= min_bp ->
-        let op_tok = advance p in
-        let op =
-          match binop_of_kind op_tok.Token.kind with Some o -> o | None -> assert false
-        in
-        let rhs = parse_expr_bp p (bp + 1) in
-        loop (Ast.Binary (op, lhs, rhs, span_between (Ast.expr_span lhs) (Ast.expr_span rhs)))
-    | _ -> lhs
-  in
-  loop lhs
+  (* TODO(02a): the Pratt loop — "parse an expression, absorbing only operators that
+     bind at least as tightly as [min_bp]".
+
+     1. PREFIX (Pratt's "nud"): match [peek_kind p] and build the left operand —
+          Int n        -> advance, Ast.Int_lit
+          Ident name   -> advance; if the next token is LParen it is a CALL (consume
+                          '(', [parse_call_args p], [expect p Token.RParen "')'"]),
+                          otherwise Ast.Var
+          LParen       -> advance, [parse_expr_bp p 0], expect ')', return the inner expr
+          Minus        -> advance, [parse_expr_bp p unary_bp], Ast.Unary (Ast.Neg, ...)
+          anything else-> [Diagnostics.error p.diags t.Token.span "expected expression"],
+                          advance past it and return a placeholder so parsing continues.
+     2. INFIX (Pratt's "led"): loop. Ask [infix_bp (peek_kind p)]; while it is
+        [Some bp] with [bp >= min_bp], read the operator with [binop_of_kind], advance,
+        parse the right operand with [parse_expr_bp p (bp + 1)] — the +1 is what makes
+        the operators LEFT-associative (§2) — fold into [Ast.Binary] and keep going.
+        Stop as soon as the next token is not an operator you may take.
+
+     Use [span_between] to cover both operands. *)
+  ignore (p, min_bp, parse_call_args);
+  failwith "TODO(02a): implement Parser.parse_expr_bp (the Pratt loop)"
 
 (* Zero-or-more comma-separated arguments, up to the closing ')'. *)
 and parse_call_args (p : t) : Ast.expr list =
-  if peek_kind p = Token.RParen then []
-  else
-    let rec loop acc =
-      let e = parse_expr_bp p 0 in
-      if peek_kind p = Token.Comma then (
-        ignore (advance p);
-        loop (e :: acc))
-      else List.rev (e :: acc)
-    in
-    loop []
+  (* TODO(02a): [] if the next token is already ')', otherwise parse expressions with
+     [parse_expr_bp p 0] separated by [Token.Comma], in source order. *)
+  ignore p;
+  failwith "TODO(02a): implement Parser.parse_call_args"
 
 let parse_expr (p : t) : Ast.expr = parse_expr_bp p 0
 
@@ -135,44 +111,25 @@ let parse_ident (p : t) (what : string) : string * Token.span =
       ("_", t.Token.span)
 
 let parse_stmt (p : t) : Ast.stmt =
-  match peek_kind p with
-  | Token.Kw_let | Token.Kw_var ->
-      let kw = advance p in
-      let is_var = kw.Token.kind = Token.Kw_var in
-      let name, _ = parse_ident p "identifier" in
-      ignore (expect p Token.Eq "'='");
-      let value = parse_expr p in
-      Ast.Let { name; is_var; value; span = span_between kw.Token.span (Ast.expr_span value) }
-  | Token.Ident name when peek_kind_at p 1 = Token.Eq ->
-      (* reassignment: `c = expr` *)
-      let id = advance p in
-      ignore (advance p (* '=' *));
-      let value = parse_expr p in
-      Ast.Assign { name; value; span = span_between id.Token.span (Ast.expr_span value) }
-  | _ ->
-      let e = parse_expr p in
-      Ast.Expr_stmt (e, Ast.expr_span e)
+  (* TODO(02b): one statement. Dispatch on [peek_kind p]:
+       Kw_let / Kw_var -> consume it, read the name with [parse_ident p "identifier"],
+                          [expect p Token.Eq "'='"], parse the initializer with
+                          [parse_expr p], return [Ast.Let { name; is_var; value; span }]
+       Ident, and [peek_kind_at p 1] is Eq
+                       -> a reassignment: consume both, parse the expression, return
+                          [Ast.Assign { name; value; span }]
+       otherwise       -> an expression statement: [Ast.Expr_stmt (e, Ast.expr_span e)]
+     Telling the last two apart is the one place a single token of lookahead is needed. *)
+  ignore p;
+  failwith "TODO(02b): implement Parser.parse_stmt"
 
 (* Whole file: skip blank lines, parse statements until Eof, consuming the Newline
    (or Eof) that terminates each. *)
 let parse_program (p : t) : Ast.program =
-  let rec skip_newlines () =
-    if peek_kind p = Token.Newline then (
-      ignore (advance p);
-      skip_newlines ())
-  in
-  let rec loop acc =
-    skip_newlines ();
-    match peek_kind p with
-    | Token.Eof -> { Ast.stmts = List.rev acc }
-    | _ ->
-        let s = parse_stmt p in
-        (match peek_kind p with
-        | Token.Newline -> ignore (advance p)
-        | Token.Eof -> ()
-        | _ ->
-            Diagnostics.error p.diags (peek p).Token.span
-              "expected newline or end of statement");
-        loop (s :: acc)
-  in
-  loop []
+  (* TODO(02c): the whole file. Skip blank lines (runs of [Token.Newline]), then loop:
+       - at [Token.Eof], you are done — return { Ast.stmts = ... } in source order;
+       - otherwise [parse_stmt p], then consume the [Newline] that terminates it (or
+         accept [Eof]); anything else is an error — report "expected newline or end of
+         statement" and keep going, so one run reports more than the first mistake. *)
+  ignore p;
+  failwith "TODO(02c): implement Parser.parse_program"

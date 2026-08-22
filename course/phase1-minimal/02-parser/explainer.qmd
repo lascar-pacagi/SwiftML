@@ -115,8 +115,8 @@ Open `parser.ml` in this directory. Helpers `peek`, `peek_kind`, `advance`, `exp
    complete version lives in `solution/parser.ml` (and §8) — try it before you peek.
 3. **`parse_stmt`:** if `peek_kind` is `Kw_let`/`Kw_var`, consume it, read the `Ident` name,
    `expect Eq`, parse the initializer expression, return `Ast.Let {…}`. Else if the next token is an
-   `Ident` *and the one after it is* `Eq` (one-token lookahead — add a small `peek_kind_at p 1`
-   helper), it's a reassignment ⇒ consume both, parse the expression, return `Ast.Assign {…}`.
+   `Ident` *and the one after it is* `Eq` (one token of lookahead — `peek_kind_at p 1`, given),
+   it's a reassignment ⇒ consume both, parse the expression, return `Ast.Assign {…}`.
    Otherwise parse an expression and wrap it in `Ast.Expr_stmt`. (`Ident` carries a string, so read
    the name by matching `peek_kind` rather than `expect`, which compares whole kinds.)
 4. **`parse_program`:** skip leading `Newline`s; loop until `Eof`: parse a statement, then consume
