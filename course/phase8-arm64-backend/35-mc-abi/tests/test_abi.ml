@@ -1,7 +1,7 @@
 (* Alcotest unit tests for concept-35: AAPCS64 argument passing (stack args) + the frame. *)
 let asm (src : string) : Arm64.func list =
   let d = Diagnostics.create () in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src)) d) in
+  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
   Sema.check p d;
   Alcotest.(check bool) "no sema errors" false (Diagnostics.has_errors d);
   fst (Isel.select (Silgen.lower p))

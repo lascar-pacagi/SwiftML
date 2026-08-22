@@ -3,7 +3,7 @@
 
 let llvm (src : string) : string =
   let d = Diagnostics.create () in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src)) d) in
+  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
   Sema.check p d;
   Irgen.emit_llvm (Silgen.lower p)
 

@@ -2,7 +2,7 @@
 
 let front (src : string) : Ast.program * Diagnostics.sink =
   let d = Diagnostics.create () in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src)) d) in
+  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
   Sema.check p d;
   (p, d)
 

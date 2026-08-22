@@ -3,7 +3,7 @@
 
 let prog (src : string) : Ast.program =
   let d = Diagnostics.create () in
-  Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src)) d)
+  Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d)
 
 let dump src = Ast.dump_program (prog src)
 let check name expected src = Alcotest.(check string) name expected (dump src)

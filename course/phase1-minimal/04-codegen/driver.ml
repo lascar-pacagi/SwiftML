@@ -23,7 +23,7 @@ let read_file (path : string) : string =
 
 (* Front end: source -> checked AST. Reports diagnostics into [diags]. *)
 let frontend (src : string) (diags : Diagnostics.sink) : Ast.program =
-  let toks = Lexer.tokenize (Lexer.create src) in
+  let toks = Lexer.tokenize (Lexer.create src diags) in
   let prog = Parser.parse_program (Parser.create toks diags) in
   Sema.check prog diags;
   prog
@@ -51,10 +51,11 @@ let compile_file ~(src_path : string) ~(out : string) ~(emit : emit) : unit =
   let diags = Diagnostics.create () in
   match emit with
   | Tokens ->
-      Lexer.tokenize (Lexer.create src)
-      |> List.iter (fun (t : Token.t) -> print_endline (Token.string_of_kind t.Token.kind))
+      let toks = Lexer.tokenize (Lexer.create src diags) in
+      bail_on_errors diags;
+      List.iter (fun (t : Token.t) -> print_endline (Token.string_of_kind t.Token.kind)) toks
   | Ast ->
-      let prog = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src)) diags) in
+      let prog = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src diags)) diags) in
       bail_on_errors diags;
       print_endline (Ast.dump_program prog)
   | Check ->

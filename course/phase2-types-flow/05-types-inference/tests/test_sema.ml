@@ -6,7 +6,7 @@
 
 let errors (src : string) : string list =
   let d = Diagnostics.create () in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src)) d) in
+  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
   Sema.check p d;
   Diagnostics.all d
   |> List.filter (fun (x : Diagnostics.t) -> x.Diagnostics.severity = Diagnostics.Error)

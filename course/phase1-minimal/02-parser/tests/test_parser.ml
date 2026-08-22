@@ -9,7 +9,7 @@
 
 let parse (src : string) : Ast.program * Diagnostics.sink =
   let diags = Diagnostics.create () in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src)) diags) in
+  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src diags)) diags) in
   (p, diags)
 
 let prog src = fst (parse src)

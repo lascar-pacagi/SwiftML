@@ -1,5 +1,6 @@
 ; Concept 01 — the lexer stage, as its own library.
-; Modules: token (contract) · diagnostics (contract) · lexer (you implement).
+; Modules: token (contract) · diagnostics (contract) · lexer (v0, you implement) ·
+;          lexer_v1_fast (v1, the fast rung — you implement it second).
 ; `wrapped false` keeps module names global (Token, Lexer, …) so later stages refer to
 ; them unqualified — the compiler is assembled stage by stage.
 (library

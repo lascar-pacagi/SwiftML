@@ -1,5 +1,6 @@
 ; Make the `swiftml` binary available to the cram tests in this directory.
 (cram
+ (applies_to lex)
  (deps
   (package swiftml)))
 
@@ -7,6 +8,24 @@
 ; token kinds/spans in-process. Runs under `dune build @runtest` alongside the cram test.
 (test
  (name test_lexer)
+ (modules test_lexer)
  (libraries alcotest swiftml_lexer)
  (flags
   (:standard -warn-error -a)))
+
+; The §6 EXERCISE tests. They run under `make lab` too, but each group probes whether you
+; have started that exercise and reports "skipped" if not — so they can never make `make lab`
+; red before you choose to work on them, and they are never forgotten once you have.
+(test
+ (name test_exercises)
+ (modules test_exercises)
+ (libraries alcotest swiftml_lexer)
+ (flags
+  (:standard -warn-error -a)))
+
+; …and a focused alias for when you are working on the exercises alone:
+;   make exercises C=phase1-minimal/01-lexer
+(rule
+ (alias exercises)
+ (action
+  (run ./test_exercises.exe)))

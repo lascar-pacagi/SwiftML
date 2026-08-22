@@ -1,9 +1,11 @@
 ; Lexer throughput benchmark.  Run:  make bench C=phase1-minimal/01-lexer
-; Modules: bench (driver) + lexer_v1_fast (the optimized rung, compared against the
-; library `Lexer` = v0). v0 is the real lexer, so the bench needs it implemented.
-(executable
- (name bench)
- (modules bench lexer_v1_fast)
- (libraries swiftml_lexer)
+; Modules: bench (driver) + profile. Both rungs — `Lexer` (v0) and `Lexer_v1_fast` (v1) —
+; come from the concept's library, so the bench measures exactly what the tests test.
+; `profile` (make profile C=phase1-minimal/01-lexer) answers "slow WHERE?" — per-construct
+; throughput, an ablation ladder, allocation accounting, and Gc.Memprof allocation sites.
+(executables
+ (names bench profile)
+ (modules bench profile)
+ (libraries unix swiftml_lexer)
  (flags
   (:standard -warn-error -a)))

@@ -1,7 +1,7 @@
 (* Alcotest unit tests for concept-30: the error-ABI desugaring + diagnostics. *)
 let front (src : string) =
   let d = Diagnostics.create () in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src)) d) in
+  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
   Sema.check p d; (p, d)
 let msgs d = List.rev_map (fun (e : Diagnostics.t) -> e.Diagnostics.message) d.Diagnostics.diags
 let lower s = let p, d = front s in

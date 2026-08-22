@@ -1,7 +1,7 @@
 (* Alcotest unit tests for concept-40: the compile-time macro expander. *)
 let parse (src : string) : Ast.program =
   let d = Diagnostics.create () in
-  Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src)) d)
+  Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d)
 
 let expand src = Macros.expand_program (parse src)
 

@@ -38,8 +38,39 @@ let is_digit c = c >= '0' && c <= '9'
 let is_ident_head c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c = '_'
 let is_ident_cont c = is_ident_head c || is_digit c
 
+(* --- lazy line/column, only ever needed by a DIAGNOSTIC ---------------------
+   Hoisted above the scanner because the error path below is its only caller in the hot
+   pass: no token pays for a position, but a complaint about one can still be precise.
+   That is swiftc's SourceLoc/SourceManager split, and why `lex` takes a sink. *)
+
+let line_starts (src : string) : int array =
+  let acc = ref [ 0 ] in
+  String.iteri (fun i c -> if c = '\n' then acc := (i + 1) :: !acc) src;
+  Array.of_list (List.rev !acc)
+
+let pos_of (ls : int array) (off : int) : Token.pos =
+  let lo = ref 0 and hi = ref (Array.length ls - 1) in
+  while !lo < !hi do
+    let mid = (!lo + !hi + 1) / 2 in
+    if ls.(mid) <= off then lo := mid else hi := mid - 1
+  done;
+  { Token.line = !lo + 1; col = off - ls.(!lo) + 1; offset = off }
+
+
 (* The single scanning pass: offsets only, no line/col, near-zero per-token allocation. *)
-let lex (src : string) : soup =
+let lex (src : string) (diags : Diagnostics.sink) : soup =
+  let ls = lazy (line_starts src) in
+  let error (lo : int) (hi : int) (msg : string) =
+    Diagnostics.error diags
+      { Token.lo = pos_of (Lazy.force ls) lo; hi = pos_of (Lazy.force ls) hi }
+      msg
+  in
+  let note (lo : int) (hi : int) (msg : string) =
+    Diagnostics.emit diags
+      { Diagnostics.severity = Note;
+        span = { Token.lo = pos_of (Lazy.force ls) lo; hi = pos_of (Lazy.force ls) hi };
+        message = msg }
+  in
   let len = String.length src in
   let cap = ref (max 16 (len / 4)) in
   let tags = ref (Array.make !cap 0) in
@@ -79,6 +110,7 @@ let lex (src : string) : soup =
         while !pos < len && g !pos <> '\n' do incr pos done;
         skip ())
       else if c = '/' && !pos + 1 < len && g (!pos + 1) = '*' then (
+        let opener = !pos in
         pos := !pos + 2;
         let depth = ref 1 in
         while !depth > 0 && !pos < len do
@@ -86,6 +118,18 @@ let lex (src : string) : soup =
           else if g !pos = '*' && !pos + 1 < len && g (!pos + 1) = '/' then (pos := !pos + 2; decr depth)
           else incr pos
         done;
+        (* Unterminated: the same three diagnostics v0 produces once §6 exercise 2 is done —
+           the error at end of input, a note at the OUTERMOST opener, and the repair. The two
+           rungs must agree about what is NOT lexable, not only about what is. Note how much
+           cheaper positions are here: the scan carried plain offsets, and `pos_of` turns them
+           into line/col only now, because someone finally asked. *)
+        if !depth > 0 then (
+          error !pos !pos "unterminated '/*' comment";
+          note opener (opener + 2) "comment started here";
+          let terminator = String.concat "" (List.init !depth (fun _ -> "*/")) in
+          note !pos !pos
+            (if !depth = 1 then Printf.sprintf "insert '%s' to close this comment" terminator
+             else Printf.sprintf "insert '%s' to close these %d nested comments" terminator !depth));
         skip ())
       else ()
   in
@@ -111,27 +155,12 @@ let lex (src : string) : soup =
           match c with
           | '+' -> t_plus | '-' -> t_minus | '*' -> t_star | '/' -> t_slash | '%' -> t_percent
           | '=' -> t_eq | '(' -> t_lparen | ')' -> t_rparen | ',' -> t_comma | '\n' -> t_newline
-          | _ -> failwith (Printf.sprintf "lex error at offset %d: unexpected character %C" s c)
+          | _ -> -1
         in
         incr pos;
-        push tag s !pos)
+        if tag < 0 then error s !pos "invalid character in source file" else push tag s !pos)
   done;
   { tags = !tags; starts = !starts; ends = !ends; n = !n; src }
-
-(* --- lazy line/column, only when positions are actually needed ------------- *)
-
-let line_starts (src : string) : int array =
-  let acc = ref [ 0 ] in
-  String.iteri (fun i c -> if c = '\n' then acc := (i + 1) :: !acc) src;
-  Array.of_list (List.rev !acc)
-
-let pos_of (ls : int array) (off : int) : Token.pos =
-  let lo = ref 0 and hi = ref (Array.length ls - 1) in
-  while !lo < !hi do
-    let mid = (!lo + !hi + 1) / 2 in
-    if ls.(mid) <= off then lo := mid else hi := mid - 1
-  done;
-  { Token.line = !lo + 1; col = off - ls.(!lo) + 1; offset = off }
 
 (* resolve a keyword without allocating a substring *)
 let kw_or_ident (src : string) (s : int) (e : int) : Token.kind =

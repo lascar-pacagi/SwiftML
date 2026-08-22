@@ -17,7 +17,7 @@ let read_file (path : string) : string =
   Fun.protect ~finally:(fun () -> close_in ic) (fun () -> really_input_string ic (in_channel_length ic))
 
 let frontend (src : string) (diags : Diagnostics.sink) : Ast.program =
-  let toks = Lexer.tokenize (Lexer.create src) in
+  let toks = Lexer.tokenize (Lexer.create src diags) in
   let prog = Parser.parse_program (Parser.create toks diags) in
   Sema.check prog diags;
   prog
@@ -84,10 +84,11 @@ let compile_file ?(out = "a.out") ?(opt = false) ?(native = false)
   match emit with
   | Asm -> print_string (emit_asm ~regalloc ~peephole ~source_path:src_path src diags)
   | Tokens ->
-      Lexer.tokenize (Lexer.create src)
-      |> List.iter (fun (t : Token.t) -> print_endline (Token.string_of_kind t.Token.kind))
+      let toks = Lexer.tokenize (Lexer.create src diags) in
+      bail_on_errors diags;
+      List.iter (fun (t : Token.t) -> print_endline (Token.string_of_kind t.Token.kind)) toks
   | Ast ->
-      let prog = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src)) diags) in
+      let prog = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src diags)) diags) in
       bail_on_errors diags;
       print_endline (Ast.dump_program prog)
   | Check ->

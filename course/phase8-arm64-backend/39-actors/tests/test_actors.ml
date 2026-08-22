@@ -1,7 +1,7 @@
 (* Alcotest unit tests for concept-39: actor isolation (the compile-time rule). *)
 let check (src : string) =
   let d = Diagnostics.create () in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src)) d) in
+  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
   Sema.check p d;
   d
 

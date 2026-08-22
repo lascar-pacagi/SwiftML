@@ -13,6 +13,9 @@ course/.tools/
 **/*.typ
 **/*.html
 
+# Your own work: `make save` snapshots filled-in skeletons here. Never committed.
+/course/work/
+
 # OS / editor junk
 .DS_Store
 **/.DS_Store

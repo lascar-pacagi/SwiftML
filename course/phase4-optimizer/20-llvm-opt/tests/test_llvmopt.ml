@@ -7,7 +7,7 @@
 
 let emit (src : string) : string =
   let d = Diagnostics.create () in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src)) d) in
+  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
   Sema.check p d;
   Irgen.emit_llvm (Silgen.lower p)
 
@@ -41,7 +41,7 @@ let test_opt_pipeline_end_to_end () =
   (* the full -O SIL pipeline (inline + mem2reg + fold + cfg + gvn + dce) on a composite program *)
   let d = Diagnostics.create () in
   let src = "func sq(_ x: Int) -> Int { return x * x }\nvar s = 0\nfor i in 0 ..< 10 { s = s + sq(i) }\nprint(s)" in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src)) d) in
+  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
   Sema.check p d;
   let m = Opt.optimize (Silgen.lower p) in
   Alcotest.(check (list string)) "optimized SIL verifies" [] (Sil.verify m);

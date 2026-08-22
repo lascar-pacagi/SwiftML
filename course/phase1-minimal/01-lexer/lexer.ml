@@ -13,9 +13,11 @@ type t = {
   mutable pos : int; (* byte offset of the next unread char *)
   mutable line : int;
   mutable col : int;
+  diags : Diagnostics.sink; (* where errors go — see [error] below *)
 }
 
-let create (src : string) : t = { src; len = String.length src; pos = 0; line = 1; col = 1 }
+let create (src : string) (diags : Diagnostics.sink) : t =
+  { src; len = String.length src; pos = 0; line = 1; col = 1; diags }
 
 (* --- small cursor helpers you'll want (already written) --------------------- *)
 
@@ -36,6 +38,13 @@ let bump (lx : t) : char =
 let make (lo : Token.pos) (lx : t) (kind : Token.kind) : Token.t =
   { Token.kind; span = { Token.lo; hi = here lx } }
 
+(* Report an error at [lo .. here], then KEEP LEXING. Mirrors `Lexer::diagnose` in
+   swift/lib/Parse/Lexer.cpp (its `Lexer` takes a `DiagnosticEngine *` for exactly this;
+   Lexer.cpp calls `diagnose` in 59 places). Recovery is the point: one run should report
+   every bad byte in the file, not die on the first. *)
+let error (lx : t) (lo : Token.pos) (msg : string) : unit =
+  Diagnostics.error lx.diags { Token.lo; hi = here lx } msg
+
 (* --- the part you implement ------------------------------------------------- *)
 
 (* Produce the next token. The scanning DFA, in order:
@@ -45,7 +54,8 @@ let make (lo : Token.pos) (lx : t) (kind : Token.kind) : Token.t =
      4. otherwise dispatch on [peek_char lx]:
           - digit            -> scan an integer literal      (Token.Int)
           - letter or '_'    -> scan an identifier, then     (Token.keyword_or_ident)
-          - '+'-'-'-'*'-'/'-'%' '=' '(' ')' ',' -> single-char operator/punct tokens
+          - '+' '-' '*' '/' '%' '=' '(' ')' ','
+                             -> single-char operator/punct tokens
           - '\n'             -> Token.Newline
      Use [here lx] to capture the start position, [bump]/[peek_char]/[at_end] to scan,
      and [make lo lx kind] to build the token with its span.

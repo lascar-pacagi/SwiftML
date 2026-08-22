@@ -94,3 +94,48 @@ its own token — unary vs binary is the parser's job, not the lexer's):
   int(5)
   )
   eof
+
+Comment shapes the scanner has to get exactly right. `/*/*/` is the interesting one:
+Swift's block comments nest, so that's *two* openers and one closer — unterminated —
+where C would read it as one finished comment. The forms below are all legal
+(`swiftc -typecheck` accepts every one of them):
+
+  $ printf '/**/1\n/*/ */ 2\n/* a **/ 3\n/*/**/*/ 4\n/* // x */ 5\n// /* x\n6\n' > shapes.swift
+  $ swiftml --emit-tokens shapes.swift
+  int(1)
+  newline
+  int(2)
+  newline
+  int(3)
+  newline
+  int(4)
+  newline
+  int(5)
+  newline
+  newline
+  int(6)
+  newline
+  eof
+
+A block comment that is never closed is an error, not a silent stop — and the lexer
+REPORTS it rather than dying: same wording and same position as `swiftc`
+(`diag::lex_unterminated_block_comment`, at end of input), on stderr, exit 1.
+
+  $ printf 'let x = 1\n/*/\n' > unterm.swift
+  $ swiftml --emit-tokens unterm.swift 2>&1 | grep 'error:'
+  3:1: error: unterminated '/*' comment
+  $ swiftml --emit-tokens unterm.swift > /dev/null 2>&1; echo "exit=$?"
+  exit=1
+
+(Filtered to `error:` on purpose: §6 exercise 2 adds two `note:` lines to this same
+diagnostic, and a base-behaviour golden should not break when you do an exercise the
+course invites you to do.)
+
+Same for a byte outside the alphabet — and because the lexer RECOVERS (drops the byte and
+keeps scanning), one run reports every bad character instead of only the first:
+
+  $ printf 'let x = `1 + `2\n' > stray.swift
+  $ swiftml --emit-tokens stray.swift
+  1:9: error: invalid character in source file
+  1:14: error: invalid character in source file
+  [1]

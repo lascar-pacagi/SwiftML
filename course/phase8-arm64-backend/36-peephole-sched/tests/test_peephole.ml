@@ -39,7 +39,7 @@ let test_block_boundary () =
    values; and never introduces a virtual register *)
 let backend src =
   let d = Diagnostics.create () in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src)) d) in
+  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
   Sema.check p d;
   let funcs, _ = Isel.select (Silgen.lower p) in
   List.map (fun f -> Regalloc.run Regalloc.Graphcolor f) funcs

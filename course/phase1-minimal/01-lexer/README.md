@@ -5,10 +5,11 @@ the compiler's mouth: every later stage eats tokens, not characters.
 
 **Prerequisites:** Phase 0 (toolchain builds).
 
-**You edit:** `lexer.ml` (in this directory) — the function `next` (the scanning DFA). `tokenize`
-(the driver loop) and the cursor helpers are already written; the token type lives in `token.ml`
-(this dir), and `diagnostics.ml` (also here) is the shared error sink. These three files make up
-the **lexer stage library** (`swiftml_lexer`); the parser stage depends on it.
+**You edit:** `lexer.ml` — the function `next` (the scanning DFA) — and then, as the second rung,
+`lexer_v1_fast.ml` (`lex` and `pos_of`). `tokenize` (the driver loop) and the cursor helpers are
+already written; the token type lives in `token.ml` (this dir), and `diagnostics.ml` (also here) is
+the shared error sink. Together they make up the **lexer stage library** (`swiftml_lexer`); the
+parser stage depends on it (and uses v0 — v1 is the performance rung, proven equivalent by tests).
 
 **Design oracle:** `../../swift/lib/Parse/Lexer.cpp` (`Lexer::lexImpl`, `lexNumber`,
 `lexIdentifier`, comment handling) and `../../swift/include/swift/Parse/Token.h`.
@@ -18,7 +19,7 @@ the **lexer stage library** (`swiftml_lexer`); the parser stage depends on it.
 | Version | What changes | Correctness | Perf |
 |---|---|---|---|
 | `v0_naive` | a clean `match peek_char` DFA: whitespace/comments, ints, idents/keywords, operators, newlines, eof | token-stream unit tests + `--emit-tokens` golden | — |
-| `v1_fast` *(optional)* | tighter inner loop (avoid re-scanning, fewer allocations); measure lexer throughput (MB/s) | same tokens | beats v0 MB/s |
+| `v1_fast` | offset-only positions + a struct-of-arrays "token soup"; line/col resolved lazily (swiftc's design) | the **same** alcotest suite runs against it, plus an equivalence test pinning it token-for-token to v0 | `make bench` **fails** if it isn't ≥3× v0 |
 
 ## Workflow
 
@@ -26,6 +27,10 @@ the **lexer stage library** (`swiftml_lexer`); the parser stage depends on it.
 make explainer C=phase1-minimal/01-lexer     # read the lesson
 # implement lexer.ml : next (in this directory)
 make lab C=phase1-minimal/01-lexer           # run this concept's tests
+make bench C=phase1-minimal/01-lexer         # throughput: how fast?
+make profile C=phase1-minimal/01-lexer       # where does the time/garbage go?
+make profile-cpu C=phase1-minimal/01-lexer   # sampled call tree (your code vs the GC)
+make exercises C=phase1-minimal/01-lexer     # just the §6 exercises (they also run in `make lab`)
 dune exec swiftml -- --emit-tokens tests/programs/arith.swift
 ```
 

@@ -1,7 +1,7 @@
 (* Alcotest unit tests for concept-37: source-line debug info (.loc / DWARF line table). *)
 let asm (src : string) : Arm64.func list =
   let d = Diagnostics.create () in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src)) d) in
+  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
   Sema.check p d;
   Alcotest.(check bool) "no sema errors" false (Diagnostics.has_errors d);
   fst (Isel.select (Silgen.lower p))
@@ -28,7 +28,7 @@ let test_loc_monotone_and_deduped () =
 let test_lines_threaded_through_sil () =
   (* SILGen stamps each value with its source line; a value defined on line 3 reports line 3 *)
   let d = Diagnostics.create () in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create prog)) d) in
+  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create prog d)) d) in
   let m = Silgen.lower p in
   let f = List.hd m.Sil.funcs in
   let any_line_3 = Hashtbl.fold (fun _ l acc -> acc || l = 3) f.Sil.lines false in
@@ -36,7 +36,7 @@ let test_lines_threaded_through_sil () =
 
 let test_loc_in_printed_asm () =
   let d = Diagnostics.create () in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create prog)) d) in
+  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create prog d)) d) in
   Sema.check p d;
   let funcs, cstrings = Isel.select (Silgen.lower p) in
   let s = Arm64.string_of_module (Regalloc.run_module ~source:"prog.swift" Regalloc.Graphcolor funcs cstrings) in

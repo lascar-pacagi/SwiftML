@@ -3,7 +3,7 @@
 
 let prog (src : string) : Ast.program =
   let d = Diagnostics.create () in
-  Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src)) d)
+  Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d)
 
 let expr_of src =
   match (prog src).Ast.stmts with

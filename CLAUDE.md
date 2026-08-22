@@ -121,6 +121,13 @@ Run from `course/`:
 - Differential vs swiftc: `make oracle F=tests/programs/arith.swift` (`B=swiftml4` to pick a
   later phase's binary).
 - Benchmark (concepts with a `bench/`: 01-lexer, 20-llvm-opt): `make bench C=phase4-optimizer/20-llvm-opt`.
+- Exercise tests (01-lexer): the §6 exercises run inside `make lab`, each group SKIPPING itself
+  until a probe sees the lexer behave differently from stock (a half-done attempt fails, it is
+  not skipped); `make exercises C=…` runs only those. Same skip-until-started convention makes
+  the `v1_fast` rung optional: `make lab`/`bench`/`profile` all work on v0 alone.
+- Profile (01-lexer has `bench/profile.ml`): `make profile C=phase1-minimal/01-lexer` — per-construct
+  cost, scan-vs-build ablation ladder, allocation accounting, `Gc.Memprof` allocation sites; and
+  `make profile-cpu C=…` (`tooling/profile-cpu.sh`) — macOS `sample` call tree, your code vs the GC.
 - Explainers: `make explainer C=<dir>` (HTML) · `make explainer-pdf C=<dir>` (Typst; both re-run
   `figs` first) · `make docs`. Formatting: `make fmt` (needs ocamlformat installed).
 
@@ -150,6 +157,18 @@ checkpoint each step.
 
 ## Status / honesty notes
 
+- **Lexer diagnostics (2026-08-22) — DONE, whole tree.** `Lexer.create : string -> Diagnostics.sink
+  -> t` in all **41** `lexer.ml` copies (skeletons + solutions, phases 1–8): the lexer REPORTS
+  (`invalid character in source file`, `unterminated '/*' comment`, `expected '&' after '&'`, …) and
+  RECOVERS — drop the byte / stop the comment, keep lexing — instead of `failwith`. Matches the
+  oracle: `Lexer.h:150` takes a `DiagnosticEngine *`, `Lexer.cpp` has 59 `diagnose` sites, and
+  `DiagnosticsParse.def` defines 35 `lex_*` diagnostics; wording copied from
+  `diag::lex_invalid_character` / `diag::lex_unterminated_block_comment`. Every driver bails right
+  after lexing, so a bad byte is `line:col: error: …` + **exit 1**, not an OCaml exception + exit 2.
+  157 call sites updated (drivers, tests, benches). Concept-01 tests assert wording+span+recovery and
+  that BOTH rungs emit identical diagnostics; §6 exercise 2 is now "add the `Note` at the opener"
+  (`diag::lex_comment_start`). Verified: clean build, comparison suite **31/31** at -Onone and -O,
+  concepts 05/16/26 green with solutions swapped in.
 - **Toolchain installed; M0 done.** ocaml 5.4.1 / dune 3.23.1 / opam 2.5.1 (brew). `dune build` is
   clean. Phase 0's self-contained `swiftml-m0` compiles a single integer to a real arm64 exe
   (verified). The Phase-1 stage modules (`lexer.ml`/`parser.ml`/`sema.ml`/`irgen.ml`) ship as

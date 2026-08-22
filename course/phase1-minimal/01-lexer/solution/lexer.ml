@@ -12,9 +12,11 @@ type t = {
   mutable pos : int; (* byte offset of the next unread char *)
   mutable line : int;
   mutable col : int;
+  diags : Diagnostics.sink; (* where errors go — see [error] below *)
 }
 
-let create (src : string) : t = { src; len = String.length src; pos = 0; line = 1; col = 1 }
+let create (src : string) (diags : Diagnostics.sink) : t =
+  { src; len = String.length src; pos = 0; line = 1; col = 1; diags }
 
 (* --- small cursor helpers --------------------------------------------------- *)
 
@@ -35,6 +37,13 @@ let bump (lx : t) : char =
 let make (lo : Token.pos) (lx : t) (kind : Token.kind) : Token.t =
   { Token.kind; span = { Token.lo; hi = here lx } }
 
+(* Report an error at [lo .. here], then KEEP LEXING. Mirrors `Lexer::diagnose` in
+   swift/lib/Parse/Lexer.cpp (its `Lexer` takes a `DiagnosticEngine *` for exactly this;
+   Lexer.cpp calls `diagnose` in 59 places). Recovery is the point: one run should report
+   every bad byte in the file, not die on the first. *)
+let error (lx : t) (lo : Token.pos) (msg : string) : unit =
+  Diagnostics.error lx.diags { Token.lo; hi = here lx } msg
+
 (* Look one char past the cursor (or '\000' past end) — for the two-char lookahead
    the comment forms need: `//`, `/*`, `*/`. *)
 let peek2 (lx : t) : char = if lx.pos + 1 < lx.len then lx.src.[lx.pos + 1] else '\000'
@@ -50,7 +59,7 @@ let is_ident_cont (c : char) : bool = is_ident_head c || is_digit c
 
 (* --- the scanning DFA ------------------------------------------------------- *)
 
-let next (lx : t) : Token.t =
+let rec next (lx : t) : Token.t =
   (* 1. Skip trivia: non-newline whitespace and //, /* */ comments. Loop, because a
      comment can be followed by more whitespace/comments. Newlines are NOT trivia. *)
   let rec skip_trivia () =
@@ -84,8 +93,11 @@ let next (lx : t) : Token.t =
             decr depth)
           else ignore (bump lx)
         done;
-        (* If [depth > 0] here the comment was unterminated; the Phase-1 lexer has no
-           diagnostics sink, so we stop silently. (Exercise 2 adds a real diagnostic.) *)
+        (* [depth > 0] means the comment was never closed. Same wording and same position
+           as swiftc (`diag::lex_unterminated_block_comment`, reported at end-of-file); we
+           then carry on and finish with Eof. Exercise 2 adds the NOTE swiftc also emits,
+           pointing back at the opener. *)
+        if !depth > 0 then error lx (here lx) "unterminated '/*' comment";
         skip_trivia ())
       else ()
   in
@@ -147,8 +159,12 @@ let next (lx : t) : Token.t =
           ignore (bump lx);
           make lo lx Token.Newline
       | _ ->
-          (* No diagnostics sink at this stage; a stray character is a hard error. *)
-          failwith (Printf.sprintf "lex error %d:%d: unexpected character %C" lx.line lx.col c)
+          (* swiftc's `diag::lex_invalid_character` — and, like swiftc, we RECOVER: drop the
+             byte and lex on, so one run reports every bad character in the file rather than
+             dying on the first. *)
+          ignore (bump lx);
+          error lx lo "invalid character in source file";
+          next lx
 
 (* Drive [next] to the end. *)
 let tokenize (lx : t) : Token.t list =

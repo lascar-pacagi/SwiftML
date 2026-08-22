@@ -32,8 +32,10 @@ apart needs **one token of lookahead** past the identifier. The token cursor (`p
 
 ### Pratt parsing / precedence climbing
 
-The elegant core. `parse_expr_bp p min_bp` parses an expression whose operators all bind at least
-as tightly as `min_bp`:
+The elegant core. **`bp` is *binding power*** — Pratt's name for precedence, from his 1973 paper
+*Top Down Operator Precedence*: how tightly an operator holds onto the operands either side of it
+(`*` binds tighter than `+`). So `parse_expr_bp p min_bp` reads "parse an expression here, but only
+absorb operators that bind at least as tightly as `min_bp`":
 
 ```
 1. parse a PREFIX (a "nud" — null denotation): a literal, a variable, a parenthesized expr,
@@ -57,6 +59,24 @@ it right-associative. Our `infix_bp` table (already in `parser.ml`) gives `+ -` 
 > Oracle: `../../swift/lib/Parse/ParseExpr.cpp` — `parseExprSequence` collects a flat sequence of
 > operands and operators, then folds by precedence group. Same idea; Swift's version handles
 > user-defined operators and precedence groups, which we don't (yet).
+
+### Errors: the sink, and why `expect` doesn't stop
+
+The parser takes the same error sink the lexer already carries (`diagnostics.ml`, introduced in
+01 §2):
+
+```ocaml
+Parser.create : Token.t list -> Diagnostics.sink -> t
+```
+
+It's stored as `p.diags`, and the given `expect` is the whole policy in five lines: on a mismatch it
+pushes a `Diagnostics.error` at the offending token's span and **returns that token anyway** instead
+of raising. Parsing continues, so one run reports several syntax errors rather than only the first.
+The AST built after an error may be nonsense — that's fine, because `Driver.bail_on_errors` checks
+`Diagnostics.has_errors`, prints them (`file:line:col: error: message`), and exits 1 before Sema ever
+sees the tree. `swiftc` makes the same trade in `lib/Parse` (its recursive-descent routines return a
+`ParserStatus` and keep going). Where it doesn't recover well yet — a bad *prefix* token — is
+Exercise 1.
 
 ## 3. Build it, step by step
 

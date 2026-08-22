@@ -1,7 +1,7 @@
 (* Alcotest unit tests for concept-14: the layout computation matches swiftc's MemoryLayout. *)
 let lower src =
   let d = Diagnostics.create () in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src)) d) in
+  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
   Sema.check p d; Silgen.lower p
 let info src ty = Layout.info_of (lower src) ty
 let test_scalars () =

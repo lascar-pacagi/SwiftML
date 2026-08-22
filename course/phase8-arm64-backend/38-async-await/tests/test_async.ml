@@ -1,7 +1,7 @@
 (* Alcotest unit tests for concept-38: async/await lowering to the cooperative-executor runtime. *)
 let lower (src : string) : Sil.modul =
   let d = Diagnostics.create () in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src)) d) in
+  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
   Sema.check p d;
   Alcotest.(check bool) "no sema errors" false (Diagnostics.has_errors d);
   Silgen.lower p

@@ -3,9 +3,17 @@
    Reference: solution/lexer.ml. Verify by copying solution/lexer.ml over this file and
    running the concept's runtest. *)
 
-type t = { src : string; len : int; mutable pos : int; mutable line : int; mutable col : int }
+type t = {
+  src : string;
+  len : int;
+  mutable pos : int;
+  mutable line : int;
+  mutable col : int;
+  diags : Diagnostics.sink; (* errors are REPORTED, not raised — see [error] below *)
+}
 
-let create (src : string) : t = { src; len = String.length src; pos = 0; line = 1; col = 1 }
+let create (src : string) (diags : Diagnostics.sink) : t =
+  { src; len = String.length src; pos = 0; line = 1; col = 1; diags }
 let here (lx : t) : Token.pos = { Token.line = lx.line; col = lx.col; offset = lx.pos }
 let at_end (lx : t) : bool = lx.pos >= lx.len
 let peek_char (lx : t) : char = if at_end lx then '\000' else lx.src.[lx.pos]
@@ -23,6 +31,11 @@ let bump (lx : t) : char =
 let make (lo : Token.pos) (lx : t) (kind : Token.kind) : Token.t =
   { Token.kind; span = { Token.lo; hi = here lx } }
 
+(* Report at [lo .. here] and KEEP LEXING, like `Lexer::diagnose` in
+   swift/lib/Parse/Lexer.cpp. Recovery is the point: one run reports every bad byte. *)
+let error (lx : t) (lo : Token.pos) (msg : string) : unit =
+  Diagnostics.error lx.diags { Token.lo; hi = here lx } msg
+
 let is_digit c = c >= '0' && c <= '9'
 let is_ident_head c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c = '_'
 let is_ident_cont c = is_ident_head c || is_digit c
@@ -34,7 +47,7 @@ let scan_string (lx : t) : string =
      (handle the n, t, quote, backslash escapes); bump past the closing quote; return contents. *)
   failwith "TODO(05): scan a string literal"
 
-let next (lx : t) : Token.t =
+let rec next (lx : t) : Token.t =
   (* trivia (given, Phase 1) *)
   let rec skip_trivia () =
     if at_end lx then ()
@@ -53,6 +66,8 @@ let next (lx : t) : Token.t =
           else if peek_char lx = '*' && peek2 lx = '/' then (ignore (bump lx); ignore (bump lx); decr depth)
           else ignore (bump lx)
         done;
+        (* swiftc's `diag::lex_unterminated_block_comment`, reported at end of input *)
+        if !depth > 0 then error lx (here lx) "unterminated '/*' comment";
         skip_trivia ())
       else ()
   in
@@ -88,7 +103,11 @@ let next (lx : t) : Token.t =
       | ')' -> ignore (bump lx); make lo lx Token.RParen
       | ',' -> ignore (bump lx); make lo lx Token.Comma
       | '\n' -> ignore (bump lx); make lo lx Token.Newline
-      | _ -> failwith (Printf.sprintf "lex error %d:%d: unexpected character %C" lx.line lx.col c)
+      | _ ->
+          (* swiftc's `diag::lex_invalid_character`; drop the byte and lex on *)
+          ignore (bump lx);
+          error lx lo "invalid character in source file";
+          next lx
 
 let tokenize (lx : t) : Token.t list =
   let rec loop acc =

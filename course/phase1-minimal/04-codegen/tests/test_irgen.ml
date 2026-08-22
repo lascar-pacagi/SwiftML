@@ -10,7 +10,7 @@
 
 let emit (src : string) : string =
   let diags = Diagnostics.create () in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src)) diags) in
+  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src diags)) diags) in
   Irgen.emit_llvm p
 
 let contains haystack needle =
