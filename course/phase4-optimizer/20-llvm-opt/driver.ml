@@ -41,10 +41,8 @@ let lower_sil ?(opt = false) (src : string) (diags : Diagnostics.sink) : Sil.mod
   if opt then Opt.optimize m else m
 
 let run_clang ~(opt : bool) ~(ll_path : string) ~(out : string) : unit =
-  (* TODO(20): engage LLVM's optimizer. When [opt] is true, pass "-O2" — clang then runs LLVM's
-     full pass pipeline (instcombine, GVN, LICM, SCEV/indvars, the vectorizer, …) and an optimizing
-     backend (isel, register allocation, scheduling) on the IR we emit. When false, "-O0"
-     (the -Onone path: compile fast, no LLVM optimization). *)
+  (* TODO(20): hand the IR to LLVM's optimizer — "-O2" when [opt], "-O0" otherwise. §2 lists what
+     -O2 adds on top of our own SIL passes, and §5 measures it. *)
   let oflag = if opt then failwith "TODO(20): pass -O2 to clang when -O is on" else "-O0" in
   let cmd = Printf.sprintf "clang %s -Wno-override-module %s -o %s" oflag (Filename.quote ll_path) (Filename.quote out) in
   if Sys.command cmd <> 0 then failwith (Printf.sprintf "clang failed on %s" ll_path)

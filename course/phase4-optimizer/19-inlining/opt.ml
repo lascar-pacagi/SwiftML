@@ -492,17 +492,10 @@ let inline_module (m : Sil.modul) : Sil.modul =
       match !found with
       | None -> ()
       | Some (b, rv, args, f) ->
-          (* TODO(19): inline this call. The callee `f` is a single-block leaf; `fb` is its block.
-               - `off = max_val g + 1` renumbers the callee's values to avoid clashing with the caller.
-               - `vmap`: a callee PARAMETER maps to its actual argument (zip `f.Sil.params` with `args`);
-                 any other callee value `v` maps to `v + off`.
-               - the inlined instructions are `fb`'s instrs in program order (`List.rev fb.Sil.instrs`),
-                 each rewritten `(vmap v, map_instr vmap i)`; copy each value's type into `g.Sil.val_ty`.
-               - `retval` = the callee's `Return (Some v)` value mapped through `vmap`, or `None` for void.
-               - SPLICE: in block `b`, replace the `(rv, apply …)` entry with the inlined instructions.
-               - the call result `rv` becomes `retval` everywhere in `g` (rewrite each operand with a
-                 `sub` mapping `rv -> retval`, via `map_instr`/`map_term`).
-               - finally `progress := true` so the loop re-scans for more calls. *)
+          (* TODO(19): splice the callee's single block into the caller in place of the `apply`. Renumber
+               its values past the caller's, map each PARAMETER to its actual argument, carry the value
+               types across, and make the call's result BE whatever the callee returned, everywhere.
+               Set `progress` so the worklist looks for more. §2 walks it in three pictures. *)
           ignore (b, rv, args, f, max_val, map_instr, map_term, progress)
           (* (leaving `progress` false here means the skeleton inlines nothing and the loop ends) *)
     done

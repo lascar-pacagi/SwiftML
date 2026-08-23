@@ -37,10 +37,8 @@ let has_side_effect : Sil.instr -> bool = function
 
 (* ---- the pass manager: run the pipeline over each function ---- *)
 let run_pipeline ?(log = false) (passes : pass list) (m : Sil.modul) : Sil.modul =
-  (* TODO(15): the pass manager. For each function in `m.Sil.funcs`, run every pass in `passes` in
-     order — each pass transforms `Sil.func -> Sil.func` via `p.run`. When `log`, `Printf.eprintf`
-     the pass name (`p.name`) and the function (`f.Sil.fname`). Return the module with the
-     transformed functions. (Hint: `List.map` over the funcs, `List.fold_left` over the passes.) *)
+  (* TODO(15): the pass manager — every pass over every function, in order, each result feeding
+     the next. With [log], trace the pass and function names on stderr. §3. *)
   ignore (log, passes);
   m
 
@@ -55,12 +53,10 @@ let eval_binop (op : Ast.binop) (x : int) (y : int) : int option =
   | _ -> None (* comparisons fold to Bool — left to concept 17 *)
 
 let constant_fold (f : Sil.func) : Sil.func =
-  (* TODO(15): a SIL pass — fold literal arithmetic. Walk the function in execution order (blocks =
-     `List.rev f.Sil.blocks`; instrs in program order = `List.rev block.instrs`), keeping a
-     `(Sil.value, int) Hashtbl` of values known to be Int constants (record each `Sil.Int_lit n`).
-     Replace a `Sil.Binop (op, a, b)` whose BOTH operands are known constants `x`,`y` with
-     `Sil.Int_lit n` when `eval_binop op x y` is `Some n` (and record the new constant, so chains
-     like `(1+2)+3` fold). Mutate `block.instrs` in place. (`eval_binop` is given above.) *)
+  (* TODO(15): a SIL pass — fold literal arithmetic. Walk the function in EXECUTION order,
+     remembering which values are known Int constants, and replace a binop of two of them with the
+     constant it computes, recording that too so chains like (1+2)+3 collapse. [eval_binop] is
+     given, and it refuses ÷0 and %0 — those must still trap at runtime. §3. *)
   ignore eval_binop;
   f
 

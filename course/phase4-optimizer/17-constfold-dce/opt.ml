@@ -51,11 +51,9 @@ type cst = CInt of int | CBool of bool
 let cst_to_instr = function CInt n -> Sil.Int_lit n | CBool b -> Sil.Bool_lit b
 
 let fold_binop (op : Ast.binop) (a : cst) (b : cst) : cst option =
-  (* TODO(17): evaluate a binary op on two known constants, returning the resulting constant.
-       - two CInt x,y: Add/Sub/Mul -> CInt; Div/Mod -> CInt but RETURN None when y = 0 (so the
-         runtime trap is preserved); the six comparisons Eq/Ne/Lt/Le/Gt/Ge -> CBool.
-       - two CBool p,q: Eq/Ne -> CBool; And/Or -> CBool.
-       - anything else -> None. *)
+  (* TODO(17): evaluate a binop on two known constants — Int arithmetic to an Int, the six
+       comparisons to a Bool, And/Or on Bools to a Bool. Div and Mod by ZERO must NOT fold: the
+       runtime trap has to survive the optimizer. §3. *)
   ignore (op, a, b);
   None
 
@@ -329,14 +327,9 @@ let mem2reg (f : Sil.func) : Sil.func =
 (* ---- pass: simplify the CFG (concept 17) — fold a branch on a constant condition, then delete
    blocks that are no longer reachable from the entry ---- *)
 let simplify_cfg (f : Sil.func) : Sil.func =
-  (* TODO(17): two steps.
-     (a) BRANCH FOLDING. Collect the values that are known Bool constants (the `Sil.Bool_lit`
-         instructions). For each block whose terminator is `Sil.Cond_br (c, (t, ta), (e, ea))` where
-         `c` is a known constant, replace it with `Sil.Br (t, ta)` if the constant is true, else
-         `Sil.Br (e, ea)` — keeping the taken side's branch arguments.
-     (b) DEAD-BLOCK ELIMINATION. Compute the blocks reachable from the entry (bb0) by a DFS over
-         `succs`, then set `f.Sil.blocks` to only the reachable ones. (Removing a now-unreachable
-         block also removes its branches, so target phis lose the stale incoming automatically.) *)
+  (* TODO(17): (a) a `cond_br` on a known Bool becomes the taken `Br` — keep THAT side's branch
+     arguments; (b) then keep only the blocks reachable from bb0. Deleting a block deletes its
+     branches, which is what makes the stale phi incomings disappear for free. §2. *)
   ignore succs;
   f
 

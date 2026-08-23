@@ -281,23 +281,12 @@ let mem2reg (f : Sil.func) : Sil.func =
     let removed : (Sil.value, unit) Hashtbl.t = Hashtbl.create 64 in
     let rec rename n (cur : Sil.value IMap.t) =
       let b = blk n in
-      (* TODO(16): the RENAMING — the heart of SSA construction. `cur : slot -> reaching value`
-         (an immutable IMap threaded down the dominator tree). Implement:
-         (a) ENTRY: a block argument (phi) DEFINES its slot here — for each `(av, _)` in `b.Sil.args`,
-             if `Hashtbl.find_opt arg_slot av = Some s`, set `cur` to map slot `s -> av`.
-         (b) WALK the instructions in program order (`List.rev b.Sil.instrs`):
-               - `Store (x, a)` to a promotable slot `a`: the new reaching value of `a` is `x`
-                 (update `cur`); mark the store removed (`Hashtbl.replace removed v ()`).
-               - `Load a` of a promotable slot `a` (result `v`): `v` is replaced by the reaching
-                 value `IMap.find a cur` (`Hashtbl.replace replace v (...)`); mark the load removed.
-         (c) BRANCH ARGS: for each successor `s`, this block must pass, for each of `s`'s block args,
-             the current reaching value of that arg's slot. Build `arg_list_for s` =
-             `List.map (fun (av,_) -> IMap.find (arg_slot av) cur) (blk s).Sil.args` and rewrite
-             `b.Sil.term`'s `Br`/`Cond_br` to carry those argument lists.
-         (d) RECURSE on the dominator-tree children (`children n`), passing the updated `cur`.
-         (Hint: thread `cur` immutably; use a local `ref` if you mutate it across the instruction
-         walk. See the explainer §2 + the figure. `arg_slot`, `replace`, `removed`, `is_promo`,
-         `blk`, `children` are all given above.) *)
+      (* TODO(16): the RENAMING walk — the heart of SSA construction. Thread each promotable slot's
+         REACHING VALUE down the dominator tree: a block argument defines its slot on entry, a store
+         redefines it, a load becomes it, and every branch hands its successors the values their
+         block arguments expect. The analyses above — dominators, frontiers, liveness, placement —
+         are given, as are `arg_slot`, `replace`, `removed`, `is_promo`, `blk`, `children`.
+         §2 and its figure walk the whole construction. *)
       ignore (b, cur, arg_slot, replace, removed, is_promo, children);
       failwith "TODO(16-mem2reg): implement the SSA renaming walk"
     in

@@ -375,18 +375,12 @@ let simplify_cfg (f : Sil.func) : Sil.func =
 let value_key (canon : Sil.value -> Sil.value) (rty : Types.ty) : Sil.instr -> string option =
   let _v x = string_of_int (canon x) in
   let _t () = Types.string_of_ty rty in
-  (* TODO(18): return a stable string key for a PURE instruction — two instructions with EQUAL keys
-     must compute the EQUAL value. Run each operand through `canon` first (use the helper `_v`), so
-     you compare already-numbered operands. Build a key for each pure instruction:
-       Int_lit/Bool_lit/Float_lit/String_lit/Func_ref (the constant/name),
-       Binop (op + both operands), Unop (op + operand),
-       Struct (the RESULT TYPE `_t ()` + its field values),
-       Enum (the RESULT TYPE + tag + payload), Struct_extract/Enum_tag/Enum_payload (operands +
-       indices/tag).
-     CAREFUL: `Struct`/`Enum` must include the result type — `struct (%1) $A` and `struct (%1) $B`
-     have identical operands but are DIFFERENT values (merging them produces ill-typed IR).
-     Return None for the IMPURE / unique ones so they are NEVER CSE'd:
-       Load, Store, Apply, Print, Alloc_stack, Struct_element_addr. *)
+  (* TODO(18): a stable string key per PURE instruction — equal keys must mean equal values. Run
+     operands through `canon` (helper `_v`) so you compare value NUMBERS, not names. `Struct` and
+     `Enum` must also fold in the RESULT TYPE (helper `_t ()`): same operands, different type = a
+     different value, and merging them produces ill-typed IR (§2). Return None for the impure or
+     unique ones — load, store, apply, print, alloc_stack, struct_element_addr — so that they are
+     never CSE'd. *)
   fun (_ : Sil.instr) -> None
 
 let gvn (f : Sil.func) : Sil.func =
@@ -423,16 +417,11 @@ let gvn (f : Sil.func) : Sil.func =
   let removed : (Sil.value, unit) Hashtbl.t = Hashtbl.create 64 in
   let rec canon v = match Hashtbl.find_opt repl v with Some v' when v' <> v -> canon v' | _ -> v in
   let rec visit n =
-    (* TODO(18): the dominance-scoped value numbering. For each instruction (v, instr) of block n in
-       program order (`List.rev (blk n).Sil.instrs`):
-         - compute `value_key canon (Hashtbl.find f.Sil.val_ty v) instr`. If None, skip (impure).
-         - if that key is ALREADY in `table`, this instruction is REDUNDANT: `Hashtbl.replace repl v
-           existing` and `Hashtbl.replace removed v ()` (redirect its uses, drop it).
-         - else add `key -> v` to `table` and REMEMBER the key so you can remove it on exit.
-       Then recurse on the dominator-tree children (`kids n`), and AFTER that, remove the keys you
-       added — so sibling subtrees don't reuse each other's expressions, only their dominators'.
-       (That scoping is what makes it correct: a value is only reused where its definition is
-       guaranteed to have run, i.e. dominates the use.) *)
+    (* TODO(18): the dominance-SCOPED numbering. Key each instruction of the block; a key already in
+       `table` means this instruction is redundant — redirect its uses and drop it. Then recurse on
+       the dominator-tree children and REMOVE the keys this block added. That pop is the whole
+       correctness argument: a value may be reused only where its definition dominates the use, so
+       sibling subtrees must not see each other's expressions. §2. *)
     ignore (n, table, repl, removed, value_key, kids, blk)
   in
   visit entry;
