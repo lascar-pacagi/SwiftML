@@ -232,13 +232,10 @@ let emit_llvm (m : Sil.modul) : string =
           p (Printf.sprintf "  %s = insertvalue %%thickfn undef, ptr @%s$thunk, 0\n" half fn);
           p (Printf.sprintf "  %s = insertvalue %%thickfn %s, ptr null, 1\n" (op v) half)
       | Sil.Apply_value (fv, args) ->
-          (* TODO(29b): the INDIRECT call — the closure ABI's consumer side:
-               1. extract the CODE pointer (field 0) and the CONTEXT pointer (field 1) from
-                  the %thickfn pair `op fv`;
-               2. call the code pointer with the context FIRST, then the args (typed via
-                  `llty (vty a)`); a TVoid result is a bare `call void`, else name `op v`.
-             (Compare Apply_witness/Apply_class — same shape; here the "table" is a single
-             function pointer riding with the value.) *)
+          (* TODO(29b): the INDIRECT call — the consumer side of the thick-function ABI (§2): take the
+             pair apart and call the code with the context first. Compare Apply_witness and
+             Apply_class: same shape, but here the table is one function pointer riding with the
+             value. *)
           ignore (fv, args);
           failwith "TODO(29b-irgen): call through the thick-function pair"
       | Sil.Capture_get (ctx, i) ->

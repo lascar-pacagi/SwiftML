@@ -748,22 +748,11 @@ and gen_array_hof (b : builder) (src : Sil.value) (el : Types.ty) (m : string)
     terminate b (Sil.Br (header.Sil.bid, []));
     switch_to b exit_b
   in
-  (* TODO(32): the three higher-order functions. The `loop ~body_fill` helper above gives you the
-     counted walk (it loads each element and hands it to `body_fill`); you supply the per-method
-     semantics. A closure value `fv = gen_expr b fexpr` is a `%thickfn`; CALL it with
-     `emit b (Sil.Apply_value (fv, [arg; ...])) <return ty>`. `rt_call b name args ret` is the
-     `apply @rt.name(args)` shortcut; a fresh result array is
-     `emit b (Sil.Apply (emit b (Sil.Func_ref "rt.array_new") (TArray t), [])) (TArray t)`.
-
-       - "map"    [ (_, fexpr) ]: closure return type `rty` = the `TFunc` result of `vty b fv`;
-                  make a `TArray rty` result; per element, push `Apply_value (fv, [elt])` onto it;
-                  return the result.
-       - "filter" [ (_, fexpr) ]: make a `TArray el` result; per element, `Apply_value (fv,[elt])`
-                  is a `TBool` -- branch on it (a `keep`/`skip` block pair, like the given For_in /
-                  filter shape) and push `elt` only on the keep side; return the result.
-       - "reduce" [ (_, initexpr); (_, fexpr) ]: lower `init` (its type `rty` = `vty b init`),
-                  stash it in an `Alloc_stack "$acc"` slot; per element, `acc := Apply_value
-                  (fv, [load acc; elt])`; after the loop, return `load acc`. *)
+  (* TODO(32): map, filter and reduce — ONE counted walk over the buffer, three different bodies
+     (§2). The `loop ~body_fill` helper above hands you each element; `Apply_value` calls the
+     closure; `rt_call` is the runtime shortcut. map pushes the result of each call into a fresh
+     array, filter branches on a Bool and pushes only the kept elements, reduce folds through a
+     slot and returns what is in it. None of them mutates the source, so no copy-on-write. *)
   ignore (loop, count, el);
   match (m, args) with
   | _ -> failwith "TODO(32-silgen): map / filter / reduce over the buffer (call the closure per element)"

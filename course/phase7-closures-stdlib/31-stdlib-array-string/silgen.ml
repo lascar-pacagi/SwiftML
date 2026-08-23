@@ -457,19 +457,10 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       let slot = array_slot b recv in
       let elt = (match vty b slot with Types.TArray el -> el | _ -> Types.TInt) in
       let xv = gen_expr_as b (snd (List.hd args)) elt in
-      (* TODO(31a): the COPY-ON-WRITE dance. A mutation must not be visible through any OTHER
-         binding that shares this buffer (`var b = a` shared it and bumped its refcount), so
-         before pushing, make the buffer uniquely owned:
-           1. LOAD the current buffer pointer from `slot` (its type is `vty b slot`);
-           2. call `rt.array_make_unique` on it — a runtime helper that COPIES the buffer iff
-              its refcount > 1 (releasing our share of the original), returning a pointer we
-              uniquely own. Emit it as `Apply (Func_ref "rt.array_make_unique", [p])`, typed
-              `vty b slot`;
-           3. STORE that (possibly new) pointer BACK into `slot` — skipping this is the classic
-              CoW bug: the copy is made but the variable keeps pointing at the old buffer;
-           4. `rt.array_push` the element onto the now-unique buffer — a `Void` Apply of
-              `[uniquePtr; xv]`, and the case's result.
-         (`Set_subscript`, below, is the identical dance ending in `rt.array_set`.) *)
+      (* TODO(31a): the COPY-ON-WRITE dance (§2), because a mutation must not be visible through a
+         binding that shares this buffer: make the buffer uniquely owned, STORE THE RESULTING
+         POINTER BACK into the slot — skipping that is the classic CoW bug, the copy happens and
+         the variable keeps pointing at the old buffer — then push onto it. *)
       ignore (slot, elt, xv);
       failwith "TODO(31a-silgen): the append copy-on-write dance (make_unique, store back, push)"
   | Ast.Method_call (recv, m, args, _) -> (
@@ -897,9 +888,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       let elt = (match vty b slot with Types.TArray el -> el | _ -> Types.TInt) in
       let iv = gen_expr b index in
       let xv = gen_expr_as b value elt in
-      (* TODO(31b): the SAME copy-on-write dance as `append` (TODO(31a)) — load the slot pointer,
-         `rt.array_make_unique` it, store the unique pointer back into `slot` — then write the
-         element with `rt.array_set(uniquePtr, iv, xv)` (a `Void` Apply). *)
+      (* TODO(31b): the same dance as append, ending in a `rt.array_set` instead of a push. *)
       ignore (slot, elt, iv, xv);
       failwith "TODO(31b-silgen): the subscript-set copy-on-write dance"
   | Ast.Expr_stmt (e, _) -> ignore (gen_expr b e)

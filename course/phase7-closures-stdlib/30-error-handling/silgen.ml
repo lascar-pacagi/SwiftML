@@ -699,13 +699,9 @@ and gen_throw_propagate (b : builder) : unit =
 (* after a throwing call (or a `throw`): if the error global is nonzero, branch to the current
    handler — the do's catch dispatch, a try?/try! block, or propagate out of the function *)
 and emit_error_check (b : builder) : unit =
-  (* TODO(30a): after a throwing call, branch on the error global. Read it (`rt_error_get b`),
-     compare to 0 (`Sil.Binop (Ast.Ne, e, zero)`). If nonzero, go to the current handler; else
-     continue. The handler is `List.hd b.handlers`:
-       - `HJump tgt` -> `Cond_br (nz, (tgt,[]), (ok,[]))` where `ok` is a fresh continue block;
-       - `HPropagate` (or empty) -> a fresh `prop` block that calls `gen_throw_propagate b`,
-         with `Cond_br (nz, (prop,[]), (ok,[]))`.
-     End by `switch_to b ok` so lowering continues on the no-error path. *)
+  (* TODO(30a): after a throwing call, branch on the error register — nonzero goes to the
+     CURRENT handler (a catch, or propagation to our own caller), zero continues. Errors travel
+     in that one register precisely so this is a branch and not unwinding (§2). *)
   ignore (rt_error_get, gen_throw_propagate);
   failwith "TODO(30a-silgen): the post-call error check + branch to the handler"
 
@@ -1001,12 +997,9 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       let rec dispatch_chain = function
         | [] -> gen_throw_propagate b (* no catch matched — re-propagate (error still set) *)
         | (c : Ast.catch_clause) :: rest -> (
-            (* TODO(30b): one catch clause. A BARE catch (`cpat = None`) matches anything: just
-               `run_handler c`. A PATTERN catch (`Some (en, csn)`) compares the error ordinal
-               `e` against `Hashtbl.find b.error_ord (en, csn)`: emit the `Eq` test, `Cond_br`
-               to a `hit` block (run_handler) vs a `nxt` block, then `switch_to b nxt` and
-               recurse `dispatch_chain rest`. (`run_handler` — clears the error, runs the body,
-               branches to merge — is given.) *)
+            (* TODO(30b): one catch clause — a bare catch matches anything; a pattern catch compares the
+               error ORDINAL and falls through to the next clause. `do`/`catch` is a switch on that
+               ordinal (§2); `run_handler`, which clears the error and runs the body, is given. *)
             ignore (run_handler, rest, c);
             failwith "TODO(30b-silgen): dispatch one catch clause")
       in

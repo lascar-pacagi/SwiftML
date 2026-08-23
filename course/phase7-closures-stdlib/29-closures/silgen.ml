@@ -445,21 +445,11 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
             else acc)
           [] fvs
       in
-      (* TODO(29a): LIFT the closure. With [caps] (the captured names, in order) in hand:
-           1. evaluate each capture NOW (by-value): `gen_expr` of `Ast.Var name` — the values
-              and their types form the context layout [capltys : (name, ty) list];
-           2. name the lifted function `b.fname ^ "$clo" ^ counter` (b.clo_count);
-           3. lower the BODY as a top-level function via `lower_func ~prologue ~lifted:b.lifted`:
-              params = ("$ctx", Types.TClass "$ctx") :: the closure's own (name, ty) params;
-              body   = [ Ast.Return (Some body, span) ]  (single-expression closure);
-              ret    = the annotation if present, else lower with TVoid and PATCH afterwards
-                       from the lifted function's actual `Return` value type;
-              the PROLOGUE binds each capture: `Capture_get (ctx, i)` typed from the layout,
-              registered in the lifted builder's `borrows` (captures are immutable);
-           4. record `(lifted_func, capltys)` in `b.lifted`;
-           5. emit `Sil.Closure (lifted_name, capture_values)` typed
-              `TFunc (param tys, ret)` — and `mark_owned` it: the fresh closure OWNS its
-              heap context (+1), a statement temp until something consumes it. *)
+      (* TODO(29a): LIFT the closure — Landin's transformation, §2. Evaluate the captures NOW, by
+           value; lower the body as an ordinary top-level function whose extra first parameter is
+           the context, with a prologue that binds each capture out of it; then emit the closure
+           value pairing the two. The result is a fresh +1 (it owns its heap context), so
+           `mark_owned` it or ARC will not balance — the ownership verifier says so out loud. *)
       ignore (caps, ptys, pnames, retname, body);
       failwith "TODO(29a-silgen): lift the closure (captures, lifted function, owned result)"
   | Ast.Cast (e0, tyname, conditional, _) ->
