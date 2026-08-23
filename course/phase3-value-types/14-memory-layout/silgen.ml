@@ -1,10 +1,7 @@
-(* SILGen — concept 13 (skeleton). Carries the switch compiler complete; you add the OPTIONAL
-   lowering (the TODO(13) holes) — optionals are an enum { none=0; some=1 }, so it reuses Enum*.
+(* SILGen — carried complete into concept 14 (memory layout). Concept 14 adds no lowering of
+   its own: its work is `layout.ml`. Optionals are an enum { none = 0; some = 1 }, so their
+   lowering reuses Enum / Enum_tag / Enum_payload (concept 13). *)
 
-   Each variable becomes an `alloc_stack` slot, read with `load`, written with `store` (no
-   SSA — Phase-4 mem2reg does that). Control flow becomes basic blocks: `if`/`while`/`for`
-   build the CFG with `cond_br`/`br`; the AST tree becomes a graph. Each function lowers to
-   its own SIL function; top-level statements become `main`. *)
 
 type builder = {
   mutable next_val : int;
@@ -142,12 +139,17 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
   (* optionals are an enum { none(tag 0); some(tag 1, payload) } — concept 13 *)
   | Ast.Nil _ -> assert false (* nil only appears in a checked context; gen_expr_as handles it *)
   | Ast.Force_unwrap (e0, _) ->
-      (* TODO(13): `e!`. gen_expr e0 to the optional value `ov` (its type is `Types.TOptional t`).
-         Read its tag (`Sil.Enum_tag`); if it's 1 (some), branch to a cont-block, else to a trap-block
-         that `terminate`s with `Sil.Trap "Fatal error: Unexpectedly found nil while unwrapping an
-         Optional value"`. In the cont-block, the result is `Sil.Enum_payload (ov, 0)`. *)
-      ignore e0;
-      failwith "TODO(13-silgen): lower force-unwrap (tag check, trap on nil, extract payload)"
+      let ov = gen_expr b e0 in
+      let t = match vty b ov with Types.TOptional t -> t | _ -> assert false in
+      let tag = emit b (Sil.Enum_tag ov) Types.TInt in
+      let one = emit b (Sil.Int_lit 1) Types.TInt in
+      let c = emit b (Sil.Binop (Ast.Eq, tag, one)) Types.TBool in
+      let cont_b = new_block b and trap_b = new_block b in
+      terminate b (Sil.Cond_br (c, cont_b.Sil.bid, trap_b.Sil.bid));
+      switch_to b trap_b;
+      terminate b (Sil.Trap "Fatal error: Unexpectedly found nil while unwrapping an Optional value");
+      switch_to b cont_b;
+      emit b (Sil.Enum_payload (ov, 0)) t
   (* ternary `c ? a : b` — a value-producing diamond (the general case of `&&`/`||`): evaluate the
      condition, branch, evaluate ONLY the taken arm, merge both arms' results through a slot. *)
   | Ast.Ternary (cnd, te, ee, _) ->
@@ -167,21 +169,36 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       switch_to b merge;
       emit b (Sil.Load slot) t
   | Ast.Coalesce (a, bexpr, _) ->
-      (* TODO(13): `a ?? b`. gen a to `av : T?`. The result merges two paths, so alloc a slot of the
-         payload type `t`. If `av`'s tag is 1 (some), store `Enum_payload (av, 0)` into the slot; else
-         store `gen_expr_as b bexpr t` (the default). Both branches Br to a merge; then load the slot. *)
-      ignore (a, bexpr);
-      failwith "TODO(13-silgen): lower nil-coalescing (?? )"
+      (* a ?? b : if a is some, its payload; else b. The result merges two paths, so route both
+         into a slot and load it afterwards. *)
+      let av = gen_expr b a in
+      let t = match vty b av with Types.TOptional t -> t | _ -> assert false in
+      let slot = emit b (Sil.Alloc_stack "coalesce") t in
+      let tag = emit b (Sil.Enum_tag av) Types.TInt in
+      let one = emit b (Sil.Int_lit 1) Types.TInt in
+      let c = emit b (Sil.Binop (Ast.Eq, tag, one)) Types.TBool in
+      let some_b = new_block b and none_b = new_block b and merge = new_block b in
+      terminate b (Sil.Cond_br (c, some_b.Sil.bid, none_b.Sil.bid));
+      switch_to b some_b;
+      let pv = emit b (Sil.Enum_payload (av, 0)) t in
+      ignore (emit b (Sil.Store (pv, slot)) Types.TVoid);
+      terminate b (Sil.Br merge.Sil.bid);
+      switch_to b none_b;
+      let bv = gen_expr_as b bexpr t in
+      ignore (emit b (Sil.Store (bv, slot)) Types.TVoid);
+      terminate b (Sil.Br merge.Sil.bid);
+      switch_to b merge;
+      emit b (Sil.Load slot) t
 
-(* lower `e` where an optional is expected — concept 13 *)
+(* lower `e` where an optional is expected: `nil` -> none; a `T` -> `.some(T)` (implicit wrap);
+   an already-optional value passes through — concept 13 *)
 and gen_expr_as (b : builder) (e : Ast.expr) (expected : Types.ty) : Sil.value =
-  (* TODO(13): the wrap. When `expected` is `Types.TOptional t`:
-       - `nil` lowers to the `none` case: `Sil.Enum (0, [])` of type `expected`
-       - a value already of type `expected` passes through unchanged
-       - any other value `v : t` is implicitly wrapped to `.some(v)`: `Sil.Enum (1, [v])`
-     When `expected` is not optional, just `gen_expr b e`. *)
-  ignore expected;
-  gen_expr b e
+  match (e, expected) with
+  | Ast.Nil _, Types.TOptional _ -> emit b (Sil.Enum (0, [])) expected
+  | _, Types.TOptional _ ->
+      let v = gen_expr b e in
+      if vty b v = expected then v else emit b (Sil.Enum (1, [ v ])) expected
+  | _ -> gen_expr b e
 
 (* --- lowering statements; gen_block stops after a terminator (dead code) --- *)
 let rec gen_block (b : builder) (stmts : Ast.stmt list) : unit =
@@ -247,12 +264,26 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       | None -> ());
       switch_to b merge
   | Ast.If_let { name; opt; then_blk; else_blk; _ } ->
-      (* TODO(13): `if let x = opt`. Like an `if`, but the condition is "opt is `.some`": gen opt to
-         `ov : T?`, check `Enum_tag ov == 1`, `cond_br` to a then-block / else-(or merge-)block. In the
-         then-block, BIND x = `Enum_payload (ov, 0)` (alloc_stack + store, like a let), then gen_block
-         the body. Both branches Br to merge; switch_to merge. (Compare the `if`/`switch` lowerings.) *)
-      ignore (name, opt, then_blk, else_blk);
-      failwith "TODO(13-silgen): lower `if let` (some-check + bind payload)"
+      (* `if let x = opt`: if opt is `.some`, bind x to its payload and run then; else run else *)
+      let ov = gen_expr b opt in
+      let t = match vty b ov with Types.TOptional t -> t | _ -> assert false in
+      let tag = emit b (Sil.Enum_tag ov) Types.TInt in
+      let one = emit b (Sil.Int_lit 1) Types.TInt in
+      let c = emit b (Sil.Binop (Ast.Eq, tag, one)) Types.TBool in
+      let then_b = new_block b and merge = new_block b in
+      let else_b = match else_blk with Some _ -> new_block b | None -> merge in
+      terminate b (Sil.Cond_br (c, then_b.Sil.bid, else_b.Sil.bid));
+      switch_to b then_b;
+      let pv = emit b (Sil.Enum_payload (ov, 0)) t in
+      let addr = emit b (Sil.Alloc_stack name) t in
+      Hashtbl.replace b.vars name addr;
+      ignore (emit b (Sil.Store (pv, addr)) Types.TVoid);
+      gen_block b then_blk;
+      terminate b (Sil.Br merge.Sil.bid);
+      (match else_blk with
+      | Some e -> switch_to b else_b; gen_block b e; terminate b (Sil.Br merge.Sil.bid)
+      | None -> ());
+      switch_to b merge
   | Ast.While { cond; body; _ } ->
       let header = new_block b and body_b = new_block b and exit_b = new_block b in
       terminate b (Sil.Br header.Sil.bid);

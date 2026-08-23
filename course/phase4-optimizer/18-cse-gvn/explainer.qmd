@@ -71,14 +71,38 @@ are pipelines precisely because each pass makes more work for the others.
 > hashtable exactly like ours) and the heavier `GVN` (which also does value *congruence* — proving
 > `a+b` and `b+a` equal, and reasoning through φs).
 
+### The key must include the result TYPE
+
+Two instructions with the same operation and the same operands are *not* necessarily the same value.
+The counter-example is a struct with no fields:
+
+```
+%1 = struct ()          : Zero
+%2 = struct ()          : One
+```
+
+Same opcode, same (empty) operand list — so an operand-only key says "these are equal" and GVN
+replaces every use of `%2` with `%1`. Now a value of type `One` is a value of type `Zero`, and in
+Phase 5 that is a *witness table* mix-up: the dispatch site loads the method table of the wrong
+conformance, and IRGen emits ill-typed LLVM. This actually happened — it shipped, and concept 21's
+parity suite is what caught it.
+
+Hence `value_key` takes the instruction's result type and folds it into the key for `Struct` and
+`Enum` — the two instructions whose operands do not determine their type. Everything else is either
+typed by its operands (`Binop`, `Struct_extract`) or carries its type in the key already (the
+literals). The general rule is worth remembering beyond this concept: **a value-numbering key must
+capture everything that distinguishes one value from another, and in a typed IR the type is part of
+the value.**
+
 ## 3. Build it, step by step
 
 In `opt.ml`:
 
-- `value_key canon instr` — `TODO(18)`: return `Some key` for each **pure** instruction, building the
-  key from its operation and its operands' `canon` value-numbers (use the given `_v`). Cover the
+- `value_key canon rty instr` — `TODO(18)`: return `Some key` for each **pure** instruction, building
+  the key from its operation and its operands' `canon` value-numbers (use the given `_v`). Cover the
   literals, `Func_ref`, `Binop`, `Unop`, `Struct`, `Struct_extract`, `Enum`, `Enum_tag`,
   `Enum_payload`. Return `None` for `Load`/`Store`/`Apply`/`Print`/`Alloc_stack`/`Struct_element_addr`.
+  **`Struct` and `Enum` must fold in the result type** (`rty`, via the given `_t ()`) — see below.
 - the `visit n` DFS — `TODO(18)`: for each instruction of block `n`, look its key up in `table`; if
   present, record it redundant (`repl`, `removed`); else add `key → v` (remembering it). Recurse on
   `kids n`, then remove the keys you added (leave the scope).
@@ -130,8 +154,9 @@ boundary). After that, the LLVM hand-off (20) and **Milestone M4**: `swiftml -O`
 ## 8. Appendix — full solution
 
 ```ocaml
-let value_key (canon : Sil.value -> Sil.value) : Sil.instr -> string option =
+let value_key (canon : Sil.value -> Sil.value) (rty : Types.ty) : Sil.instr -> string option =
   let v x = string_of_int (canon x) in
+  let t () = Types.string_of_ty rty in
   function
   | Sil.Int_lit n -> Some (Printf.sprintf "int:%d" n)
   | Sil.Bool_lit b -> Some (Printf.sprintf "bool:%b" b)
@@ -140,9 +165,10 @@ let value_key (canon : Sil.value -> Sil.value) : Sil.instr -> string option =
   | Sil.Func_ref n -> Some (Printf.sprintf "fref:%s" n)
   | Sil.Binop (op, a, b) -> Some (Printf.sprintf "bin:%s:%s:%s" (Ast.string_of_binop op) (v a) (v b))
   | Sil.Unop (op, a) -> Some (Printf.sprintf "un:%s:%s" (Ast.string_of_unop op) (v a))
-  | Sil.Struct fs -> Some (Printf.sprintf "struct:%s" (String.concat "," (List.map v fs)))
+  | Sil.Struct fs -> Some (Printf.sprintf "struct:%s:%s" (t ()) (String.concat "," (List.map v fs)))
   | Sil.Struct_extract (a, i) -> Some (Printf.sprintf "sext:%s:%d" (v a) i)
-  | Sil.Enum (t, p) -> Some (Printf.sprintf "enum:%d:%s" t (String.concat "," (List.map v p)))
+  | Sil.Enum (tg, p) ->
+      Some (Printf.sprintf "enum:%s:%d:%s" (t ()) tg (String.concat "," (List.map v p)))
   | Sil.Enum_tag a -> Some (Printf.sprintf "etag:%s" (v a))
   | Sil.Enum_payload (a, i) -> Some (Printf.sprintf "epay:%s:%d" (v a) i)
   | Sil.Load _ | Sil.Store _ | Sil.Apply _ | Sil.Print _ | Sil.Alloc_stack _ | Sil.Struct_element_addr _ -> None

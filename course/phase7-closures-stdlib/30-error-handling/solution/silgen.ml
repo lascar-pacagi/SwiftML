@@ -484,23 +484,45 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
             else acc)
           [] fvs
       in
-      (* TODO(29a): LIFT the closure. With [caps] (the captured names, in order) in hand:
-           1. evaluate each capture NOW (by-value): `gen_expr` of `Ast.Var name` — the values
-              and their types form the context layout [capltys : (name, ty) list];
-           2. name the lifted function `b.fname ^ "$clo" ^ counter` (b.clo_count);
-           3. lower the BODY as a top-level function via `lower_func ~prologue ~lifted:b.lifted`:
-              params = ("$ctx", Types.TClass "$ctx") :: the closure's own (name, ty) params;
-              body   = [ Ast.Return (Some body, span) ]  (single-expression closure);
-              ret    = the annotation if present, else lower with TVoid and PATCH afterwards
-                       from the lifted function's actual `Return` value type;
-              the PROLOGUE binds each capture: `Capture_get (ctx, i)` typed from the layout,
-              registered in the lifted builder's `borrows` (captures are immutable);
-           4. record `(lifted_func, capltys)` in `b.lifted`;
-           5. emit `Sil.Closure (lifted_name, capture_values)` typed
-              `TFunc (param tys, ret)` — and `mark_owned` it: the fresh closure OWNS its
-              heap context (+1), a statement temp until something consumes it. *)
-      ignore (caps, ptys, pnames, retname, body);
-      failwith "TODO(29a-silgen): lift the closure (captures, lifted function, owned result)"
+      (* the captured VALUES, evaluated now (by-value capture) — concept 29 *)
+      let capvals = List.map (fun x -> gen_expr b (Ast.Var (x, Ast.expr_span body))) caps in
+      let capltys = List.map2 (fun x v -> (x, vty b v)) caps capvals in
+      let lifted_name = Printf.sprintf "%s$clo%d" b.fname !(b.clo_count) in
+      incr b.clo_count;
+      let rty = match retname with Some n -> resolve_name b n | None -> Types.TVoid (* fixed below *) in
+      let ctx_param = ("$ctx", Types.TClass "$ctx") in
+      let lifted_params = ctx_param :: List.combine pnames ptys in
+      let prologue (lb : builder) =
+        let ctxv = Hashtbl.find lb.borrows "$ctx" in
+        List.iteri
+          (fun i (x, t) ->
+            let v = emit lb (Sil.Capture_get (ctxv, i)) t in
+            Hashtbl.replace lb.borrows x v)
+          capltys
+      in
+      let lf =
+        lower_func ~prologue ~lifted:b.lifted ~throwing:b.throwing ~error_ord:b.error_ord b.structs
+          b.enums b.protos b.methods b.funcs b.gfuncs b.classes lifted_name lifted_params rty
+          [ Ast.Return (Some body, Ast.expr_span body) ]
+      in
+      (* patch an unannotated return type from what the body actually returned *)
+      let lf =
+        match retname with
+        | Some _ -> lf
+        | None ->
+            let actual =
+              List.fold_left
+                (fun acc (blk : Sil.block) ->
+                  match blk.Sil.term with
+                  | Sil.Return (Some v) -> ( try Hashtbl.find lf.Sil.val_ty v with Not_found -> acc)
+                  | _ -> acc)
+                Types.TVoid lf.Sil.blocks
+            in
+            { lf with Sil.ret = actual }
+      in
+      b.lifted := (lf, capltys) :: !(b.lifted);
+      (* the fresh closure OWNS its context (+1) — a statement temp until consumed (26/29) *)
+      mark_owned b (emit b (Sil.Closure (lifted_name, capvals)) (Types.TFunc (ptys, lf.Sil.ret)))
   (* `try` / `try?` / `try!` — concept 30. Plain `try` defers to the AMBIENT handler (already
      on the stack); `try?` installs a none-handler and wraps the success as `.some`; `try!`
      installs a trap-handler. The throwing call INSIDE does the actual branch on error. *)

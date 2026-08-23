@@ -232,15 +232,17 @@ let emit_llvm (m : Sil.modul) : string =
           p (Printf.sprintf "  %s = insertvalue %%thickfn undef, ptr @%s$thunk, 0\n" half fn);
           p (Printf.sprintf "  %s = insertvalue %%thickfn %s, ptr null, 1\n" (op v) half)
       | Sil.Apply_value (fv, args) ->
-          (* TODO(29b): the INDIRECT call — the closure ABI's consumer side:
-               1. extract the CODE pointer (field 0) and the CONTEXT pointer (field 1) from
-                  the %thickfn pair `op fv`;
-               2. call the code pointer with the context FIRST, then the args (typed via
-                  `llty (vty a)`); a TVoid result is a bare `call void`, else name `op v`.
-             (Compare Apply_witness/Apply_class — same shape; here the "table" is a single
-             function pointer riding with the value.) *)
-          ignore (fv, args);
-          failwith "TODO(29b-irgen): call through the thick-function pair"
+          (* the INDIRECT call — extract code+context from the %thickfn pair, call code with the
+             context FIRST, then the args (concept 29) *)
+          let code = fresh () and ctx = fresh () in
+          p (Printf.sprintf "  %s = extractvalue %%thickfn %s, 0\n" code (op fv));
+          p (Printf.sprintf "  %s = extractvalue %%thickfn %s, 1\n" ctx (op fv));
+          let argstr =
+            String.concat "" (List.map (fun a -> Printf.sprintf ", %s %s" (llty (vty a)) (op a)) args)
+          in
+          let rt = vty v in
+          if rt = Types.TVoid then p (Printf.sprintf "  call void %s(ptr %s%s)\n" code ctx argstr)
+          else p (Printf.sprintf "  %s = call %s %s(ptr %s%s)\n" (op v) (llty rt) code ctx argstr)
       | Sil.Capture_get (ctx, i) ->
           (* inside the lifted function f: index its own context layout *)
           let fp = fresh () in
