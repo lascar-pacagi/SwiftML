@@ -5,8 +5,50 @@
    call parsing, and (d) that malformed input produces diagnostics — recovery the cram
    `--emit-ast` golden test does not exercise.
 
-   RED until you implement `parser.ml`; GREEN against `solution/parser.ml`. *)
+   The groups follow the THREE HOLES, and each one drives its own entry point, so you can
+   fill them in order and watch the suite go green a layer at a time:
 
+     expr      TODO(02a)  ->  Parser.parse_expr   (needs neither of the others)
+     stmt      TODO(02b)  ->  Parser.parse_stmt   (uses your expression parser)
+     program   TODO(02c)  ->  Parser.parse_program
+
+   All of them are RED on the shipped skeleton — that is the point — but a failure now names
+   the layer that is missing instead of failing everywhere at once.
+
+   GREEN against `solution/parser.ml`. *)
+
+(* a parser over `src`'s tokens, for driving one production directly *)
+let mk (src : string) : Parser.t =
+  let diags = Diagnostics.create () in
+  Parser.create (Lexer.tokenize (Lexer.create src diags)) diags
+
+(* --- layer 1: expressions (TODO(02a)) — parse_expr only ------------------------- *)
+let dump_of_expr (src : string) : string = Ast.dump_expr (Parser.parse_expr (mk src))
+let check_expr name expected src = Alcotest.(check string) name expected (dump_of_expr src)
+
+let test_expr_precedence () =
+  check_expr "* binds tighter than +" "(+ 1 (* 2 3))" "1 + 2 * 3";
+  check_expr "parentheses override" "(* (+ 1 2) 3)" "(1 + 2) * 3";
+  check_expr "- is left associative" "(- (- 10 4) 3)" "10 - 4 - 3";
+  check_expr "unary minus binds tighter than *" "(* 2 (- 3))" "2 * -3";
+  check_expr "a call is a primary" "(print 1)" "print(1)"
+
+(* --- layer 2: statements (TODO(02b)) — parse_stmt only -------------------------- *)
+let test_stmt_kinds () =
+  (match Parser.parse_stmt (mk "let a = 6") with
+  | Ast.Let { name = "a"; is_var = false; _ } -> ()
+  | _ -> Alcotest.fail "expected a `let` binding");
+  (match Parser.parse_stmt (mk "var c = 1") with
+  | Ast.Let { name = "c"; is_var = true; _ } -> ()
+  | _ -> Alcotest.fail "expected a `var` binding");
+  (match Parser.parse_stmt (mk "c = c * 2") with
+  | Ast.Assign { name = "c"; _ } -> ()
+  | _ -> Alcotest.fail "expected an assignment (one token of lookahead past the ident)");
+  match Parser.parse_stmt (mk "print(1)") with
+  | Ast.Expr_stmt (Ast.Call ("print", [ _ ], _), _) -> ()
+  | _ -> Alcotest.fail "expected a print call expression statement"
+
+(* --- layer 3: whole programs (TODO(02c)) ---------------------------------------- *)
 let parse (src : string) : Ast.program * Diagnostics.sink =
   let diags = Diagnostics.create () in
   let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src diags)) diags) in
@@ -73,6 +115,12 @@ let test_errors () =
 let () =
   Alcotest.run "parser"
     [
+      ( "expr (02a)",
+        [
+          Alcotest.test_case "precedence & associativity, via parse_expr" `Quick
+            test_expr_precedence;
+        ] );
+      ("stmt (02b)", [ Alcotest.test_case "statement kinds, via parse_stmt" `Quick test_stmt_kinds ]);
       ("precedence", [ Alcotest.test_case "precedence & associativity" `Quick test_precedence_assoc ]);
       ("unary", [ Alcotest.test_case "unary minus" `Quick test_unary ]);
       ("statements", [ Alcotest.test_case "statement kinds" `Quick test_statements ]);
