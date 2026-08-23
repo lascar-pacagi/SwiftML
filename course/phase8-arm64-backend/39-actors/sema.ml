@@ -346,13 +346,10 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
                 Types.TInt)
         (* a class method call — DYNAMIC dispatch through the vtable (concept 25) *)
         | Types.TClass cn -> (
-            (* TODO(39): ACTOR ISOLATION. An actor serializes access to its state, so calling an
-               actor's instance method from a NONISOLATED context is a compile error -- the call
-               must `await` to hop onto the actor's executor. Report
-               `"call to actor-isolated instance method '%s' in a synchronous nonisolated context"`
-               (with `err span`) when ALL of: `cn` is an actor (`Hashtbl.mem actors cn`), we are
-               NOT under an `await` (`not !in_await`), and we are NOT inside that actor's own
-               methods (`!current_class <> Some cn`). Inside the actor, access is synchronous. *)
+            (* TODO(39): ACTOR ISOLATION — the compile-time rule that is the whole concept. Calling an
+               actor's instance method from OUTSIDE it, in a synchronous context, is an error in
+               swiftc's exact words (§2 quotes them); inside the actor, or under an `await`, it is
+               fine. Three conditions, all of which must hold. *)
             ignore (actors, in_await);
             match Option.bind (Hashtbl.find_opt classes cn) (fun cl -> Types.vsig cl m) with
             | Some (ptys, ret) -> check_args (Printf.sprintf "method '%s'" m) ptys; ret

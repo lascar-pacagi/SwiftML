@@ -980,17 +980,10 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
      (a coroutine the executor will run on its own stack); `rt_async_spawn` enqueues it. v0 task
      bodies are capture-free (they call top-level functions), so the context is empty. *)
   | Ast.Spawn (body, _) ->
-      (* TODO(38): spawn a task. A task is a COROUTINE the executor runs on its own stack -- and a
-         coroutine is just a function value, so:
-           1. LIFT `body` into a void function named `b.fname ^ "$task" ^ counter` (use
-              `b.clo_count`) via `lower_func ~lifted:b.lifted ~throwing:b.throwing
-              ~error_ord:b.error_ord b.structs ... b.classes name [("$ctx", Types.TClass "$ctx")]
-              Types.TVoid body`, and record it `b.lifted := (lf, []) :: !(b.lifted)` (v0 tasks are
-              capture-free, layout `[]`);
-           2. make a closure value `Sil.Closure (name, [])` (typed `TFunc ([], TVoid)`);
-           3. hand it to the executor: `Apply (Func_ref "rt_async_spawn", [clo])` (Void);
-           4. `Destroy_value clo` to balance the owned closure for the ownership verifier.
-         Reference: solution/silgen.ml. *)
+      (* TODO(38): spawn a task. A task is a coroutine the executor runs on its own stack, and a
+         coroutine here is just a function value — so LIFT the body exactly as concept 29 lifts a
+         closure (v0 tasks capture nothing), then hand the closure to `rt_async_spawn`. The closure
+         is owned, so destroy it afterwards or the ownership verifier will tell you. §2. *)
       ignore (body, lower_func);
       failwith "TODO(38-silgen): lower Task spawn to a lifted coroutine + rt_async_spawn"
   | Ast.Expr_stmt (e, _) -> ignore (gen_expr b e)

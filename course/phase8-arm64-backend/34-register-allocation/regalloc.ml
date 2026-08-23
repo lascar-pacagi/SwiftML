@@ -112,14 +112,9 @@ let intervals (instrs : Arm64.instr array) (live_in : (int, unit) Hashtbl.t arra
    pool); when no register is free, SPILL whichever live interval ENDS LATEST -- it frees its
    register for the longest, so keeping the shorter ones in registers wins.
 
-   TODO(34a). Given: `intervals instrs (liveness instrs)` = a `(vreg, (start, end)) list`. Produce
-   an `assign : (int, loc) Hashtbl.t` mapping each vreg to `Reg r` (a pool register) or `Spill`.
-   Sketch:
-     - sort intervals by start; keep `free` (pool) and `active` (= (vreg,end,reg), sorted by end);
-     - for each interval (v,(s,e)): EXPIRE actives with end < s (free their regs); then
-       - if a register is free: take it, `assign v (Reg r)`, add to active;
-       - else: let `(lv,le,lr)` be the active interval ending LATEST. If `le > e`, steal `lr`
-         (`assign lv Spill`, `assign v (Reg lr)`, swap into active); otherwise `assign v Spill`. *)
+   TODO(34a). From the live `intervals`, fill `assign : vreg -> Reg r | Spill`, walking them in
+   START order and expiring the ones that have ended. The spill choice is the algorithm's whole
+   idea and §2 argues it: when nothing is free, spill the interval that ends LATEST. *)
 let linscan (instrs : Arm64.instr array) : (int, loc) Hashtbl.t =
   let assign = Hashtbl.create 32 in
   ignore (instrs, intervals, liveness, pool, k);
@@ -133,9 +128,8 @@ let linscan (instrs : Arm64.instr array) : (int, loc) Hashtbl.t =
    SELECT: pop the stack, giving each node a register none of its (already-coloured) neighbours
    took; if every register is taken, actually `Spill`.
 
-   TODO(34b). Given the same `intervals`. Build adjacency from interval overlap
-   (`(s1,e1)` overlaps `(s2,e2)` iff `s1 <= e2 && s2 <= e1`), run simplify then select, and fill
-   `assign`. *)
+   TODO(34b). Same input, but build the interference GRAPH from interval overlap and colour it —
+   simplify, then select — filling the same `assign`. §2. *)
 let graphcolor (instrs : Arm64.instr array) : (int, loc) Hashtbl.t =
   let assign = Hashtbl.create 32 in
   ignore (instrs, intervals, liveness, pool, k);

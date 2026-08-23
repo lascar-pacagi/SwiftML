@@ -152,10 +152,9 @@ let lower_func (_m : Sil.modul) (f : Sil.func) : Arm64.func * (string * string) 
      assembler can build a DWARF line table. Each SIL value's line is in `f.Sil.lines`. *)
   let last_line = ref 0 in
   let emit_loc (vv : Sil.value) : unit =
-    (* TODO(37): if `f.Sil.lines` has a (positive) line for `vv` that DIFFERS from `!last_line`,
-       update `last_line` and `emit (Arm64.Loc line)`. Otherwise do nothing (consecutive
-       instructions from the same statement share one `.loc`). This builds the line table the
-       assembler turns into DWARF. Reference: solution/isel.ml. *)
+    (* TODO(37): emit a `.loc` when this value's source line CHANGES — consecutive instructions
+       from one statement share a single directive. That stream is the line table the assembler
+       turns into DWARF. §2. *)
     ignore (vv, last_line, emit);
     failwith "TODO(37-isel): emit a .loc directive when the source line changes"
   in

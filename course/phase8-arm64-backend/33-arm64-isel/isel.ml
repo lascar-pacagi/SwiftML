@@ -97,36 +97,18 @@ let lower_func (m : Sil.modul) (f : Sil.func) : Arm64.func * (string * string) l
      appends one instruction; `lea_cstring dst (use_cstring label bytes)` materializes a string's
      address; `epilogue ()` restores fp/lr and returns; `cond_of op` maps a comparison to a cond. *)
 
-  (* TODO(33a): lower one non-terminator `%v = instr` (its result lives in slot v). Cover:
-       Int_lit n / Bool_lit b -> materialize into x9, `store (x 9) v`.
-       Func_ref _              -> nothing (recorded in `funcrefs`; the apply becomes a direct bl).
-       Alloc_stack name        -> nothing -- in this scalar subset the slot IS the storage (only
-                                  load/store target it); a Comment is nice.
-       Load a                  -> load x9 from a, store to v.
-       Store (src, a)          -> load x9 from src, store to a.
-       Unop (Neg, a)           -> load x9, `Neg (x9, x9)`, store to v.
-       Binop (op, l, r)        -> load l->x9, r->x10, then per op: Add/Sub/Mul/Sdiv; Mod =
-                                  Sdiv(x11,x9,x10) then Msub(x9,x11,x10,x9); And/Orr; a comparison
-                                  = `Cmp (x9, R x10)` then `Cset (x9, cond_of op)`. Store x9 to v.
-       Apply (callee, args)    -> load args into x0,x1,... (`List.iteri (fun k a -> load (x k) a)`),
-                                  `Bl ("_" ^ Hashtbl.find funcrefs callee)`, store x0 to v.
-       Print a                 -> by `vty a`: Int -> store the value at [sp,#0]
-                                  (`Str (x9, SP, 0)`), x0 = address of the "%lld\n" cstring, `Bl
-                                  "_printf"`. Bool -> select "true"/"false" (Csel) then "%s\n".
-       any other op            -> emit a Comment (out of v0 scope -- a visible failure, no miscompile).
-     Reference: solution/isel.ml. *)
+  (* TODO(33a): lower one non-terminator `%v = instr`, stack-machine style: operands into
+       scratch, compute, result back to the slot. §2 gives the ARM64 for each op — including the
+       two that are not one instruction (mod is sdiv+msub, a comparison is cmp+cset) and print,
+       which goes through printf with Apple's variadic-on-the-stack rule. An op outside v0's scope
+       emits a Comment: a visible gap, never a miscompile. *)
   let sel_instr (v : Sil.value) (i : Sil.instr) : unit =
     ignore (v, i, materialize, load, store, lea_cstring, use_cstring, cond_of, funcrefs, vty, x);
     failwith "TODO(33a-isel): select ARM64 for one SIL instruction (the stack-machine templates)"
   in
 
-  (* TODO(33b): lower a block terminator.
-       Return (Some a)  -> load a into x0, `epilogue ()`.
-       Return None      -> if `is_main`, `materialize (x 0) 0` (exit code 0); `epilogue ()`.
-       Br (n, _)        -> `B (blabel n)`.
-       Cond_br (c,(t,_),(e,_)) -> load c into x9, `Cmp (x9, Imm 0)`, `Bcond (NE, blabel t)`,
-                                  then `B (blabel e)`  (nonzero c -> the true block).
-       Trap _ / Abort _ -> `Brk 1`.  Unreachable -> nothing. *)
+  (* TODO(33b): the terminators — return (x0, then the epilogue; @main must return 0), the two
+       branches, and brk for a trap. §2. *)
   let sel_term (t : Sil.term) : unit =
     ignore (t, blabel, epilogue, is_main, load, materialize, x);
     failwith "TODO(33b-isel): select ARM64 for a block terminator (branches + return)"

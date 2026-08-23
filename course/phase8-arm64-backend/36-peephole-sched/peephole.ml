@@ -28,21 +28,11 @@ let kill_reg (held : (Arm64.reg * int, Arm64.reg) Hashtbl.t) (r : Arm64.reg) : u
 (* rewrite one basic block. `held` maps a memory slot (base,offset) to the register that currently
    holds its value; `changed` records whether anything was rewritten.
 
-   TODO(36): local redundant-load elimination. Walk the block keeping `held` accurate, and for each
-   instruction (`emit i` to keep it, `changed := true` when you rewrite):
-     - `Str (rs, b, o)`: keep it (memory must be written); record slot (b,o) is now held by rs
-       (`Hashtbl.replace held (mem_key b o) rs`). A store writes memory, not a register, and our
-       stack slots don't alias -- so nothing is invalidated.
-     - `Ldr (rd, b, o)`: look up `held (mem_key b o)`.
-         . `Some rsrc` and `rsrc = rd`: rd ALREADY holds it -- DROP the load.
-         . `Some rsrc` (other register): replace it with `Mov (rd, R rsrc)` -- a register move, not
-           a memory access; first `kill_reg held rd` (rd is being overwritten).
-         . `None`: emit the load; `kill_reg held rd` first.
-       AFTER the load rd holds (b,o): `Hashtbl.replace held (mem_key b o) rd`.
-     - `Mov (rd, R rs)` with `rd = rs`: a move to self -- DROP it.
-     - anything else: `kill_reg held` each register it WRITES (`snd (Arm64.reads_writes i)`); a `Bl`
-       clobbers broadly, so `Hashtbl.reset held`; emit it.
-   `kill_reg held r` (given) forgets any slot whose holder is r. Reference: solution/peephole.ml. *)
+   TODO(36): local redundant-load elimination. Keep `held` accurate as you walk the block, and a
+   load of a slot already in a register becomes a Mov — or disappears, if that register is the
+   destination. INVALIDATION is the whole game (§2): anything that writes a register forgets what
+   it held, and a call clobbers broadly. `kill_reg` is given, and the table never crosses a block
+   boundary. *)
 let rewrite_block (changed : bool ref) (instrs : Arm64.instr list) : Arm64.instr list =
   let held : (Arm64.reg * int, Arm64.reg) Hashtbl.t = Hashtbl.create 16 in
   ignore (held, changed, kill_reg, mem_key, instrs);

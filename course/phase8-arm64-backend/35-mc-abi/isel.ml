@@ -103,9 +103,8 @@ let lower_func (_m : Sil.modul) (f : Sil.func) : Arm64.func * (string * string) 
           (fun k a ->
             if k < 8 then emit (Arm64.Mov (x k, Arm64.R (v a)))
             else
-              (* TODO(35a): the 9th+ argument goes ON THE STACK (AAPCS64). Store it into the
-                 outgoing area at `[sp, #stackarg_off (k-8)]` -- `Str (v a, SP, stackarg_off (k-8))`.
-                 (The frame reserves `outgoing` words at the bottom for exactly this.) *)
+              (* TODO(35a): argument 9 and beyond go ON THE STACK, into the outgoing area the frame
+                 reserves at its bottom. §2. *)
               (ignore stackarg_off;
                failwith "TODO(35a-isel): pass argument 9+ on the stack"))
           args;
@@ -152,9 +151,8 @@ let lower_func (_m : Sil.modul) (f : Sil.func) : Arm64.func * (string * string) 
     (fun k (pv, _) ->
       if k < 8 then emit (Arm64.Mov (v pv, Arm64.R (x k)))
       else
-        (* TODO(35b): the 9th+ parameter arrives ON THE STACK. Read it via x29 (= the incoming sp,
-           set by the prologue), at `[x29, #16 + stackarg_off (k-8)]` -- the +16 skips the saved
-           fp/lr that sit between x29 and the incoming arguments. *)
+        (* TODO(35b): the other side of the same contract — read those parameters through x29. Mind
+           what sits between x29 and the incoming arguments (§2 draws the frame). *)
         (ignore stackarg_off;
          failwith "TODO(35b-isel): read parameter 9+ from the stack"))
     f.Sil.params;
