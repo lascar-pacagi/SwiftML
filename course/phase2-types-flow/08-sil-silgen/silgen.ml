@@ -112,22 +112,19 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       | None -> terminate b (Sil.Return None))
   (* --- NEW in concept 08: build the control-flow GRAPH (you implement these) --- *)
   | Ast.If { cond; then_blk; else_blk; _ } ->
-      (* TODO(08): lower the condition; [new_block] a then-block, a merge-block, and (if
-         there's an else) an else-block; [terminate] the current block with a Cond_br to
-         then/else (or then/merge); lower each branch in its block (gen_block) and [terminate]
-         it with Br merge; finally [switch_to] merge. (See the explainer §2 + figure.) *)
+      (* TODO(08): the if-DIAMOND — a block per branch, both ending in a Br to the merge block
+         that execution continues from. §2 and its figure draw the shape. *)
       ignore (cond, then_blk, else_blk);
       failwith "TODO(08-silgen): lower `if`"
   | Ast.While { cond; body; _ } ->
-      (* TODO(08): a header block (evaluate cond, Cond_br to body/exit), a body block (push
-         (header, exit) on b.loops, gen_block, Br back to header — the back-edge, pop loops),
-         and an exit block. Br from the current block into the header first. *)
+      (* TODO(08): the while LOOP — a header that re-tests the condition, a body whose last
+         terminator is the BACK-EDGE to that header, an exit block. Push (header, exit) on
+         [b.loops] around the body: that is how break and continue find their targets. §2. *)
       ignore (cond, body);
       failwith "TODO(08-silgen): lower `while`"
   | Ast.For { var; lo; hi; body; _ } ->
-      (* TODO(08): desugar `for v in lo ..< hi { body }` to a counted loop: a slot for v
-         (store lo), then a while-style header (load v; v < hi), body (gen_block, then v = v+1),
-         and exit. Evaluate hi ONCE before the loop. *)
+      (* TODO(08): `for v in lo ..< hi` DESUGARS to the counted loop above, over a slot for v.
+         Evaluate hi once, before the loop. §2. *)
       ignore (var, lo, hi, body);
       failwith "TODO(08-silgen): lower `for`"
   | Ast.Break _ ->

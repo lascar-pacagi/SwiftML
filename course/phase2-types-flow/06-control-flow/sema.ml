@@ -152,13 +152,9 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
     | Ast.If _ | Ast.While _ | Ast.For _ | Ast.Break _ | Ast.Continue _ ->
         ignore loop_depth;
         ignore check_block;
-        (* TODO(06): the control-flow rules.
-           If    : check_expr cond Bool; check_block then; option-check_block else.
-           While : check_expr cond Bool; bracket the body with incr/decr loop_depth.
-           For   : lo,hi check against Int; in a fresh scope bind var as immutable Int,
-                   check the body (List.iter check_stmt body); bracket with loop_depth.
-           Break/Continue : error if loop_depth = 0 ("'break'/'continue' is only allowed
-                   inside a loop"). *)
+        (* TODO(06): the control-flow rules — conditions are Bool; `for` binds an IMMUTABLE Int over
+           an Int range in a fresh scope; `break`/`continue` need an enclosing loop (loop_depth).
+           The tests pin swiftc's wording for each rejection. §3. *)
         failwith "TODO(06): check control-flow statements"
   and check_block (stmts : Ast.stmt list) : unit = in_scope (fun () -> List.iter check_stmt stmts) in
   List.iter check_stmt prog.Ast.stmts

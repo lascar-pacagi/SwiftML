@@ -55,11 +55,7 @@ let rec parse_expr_bp (p : t) (min_bp : int) : Ast.expr =
   let lhs =
     match peek_kind p with
     | Token.Int n -> let t = advance p in Ast.Int_lit (n, t.Token.span)
-    (* TODO(05): the new literal prefixes. Mirror the Int_lit case above:
-         Token.Float f    -> Ast.Double_lit (f, span)
-         Token.String s   -> Ast.String_lit (s, span)
-         Token.Kw_true    -> Ast.Bool_lit (true, span)
-         Token.Kw_false   -> Ast.Bool_lit (false, span) *)
+    (* TODO(05): the Double / String / Bool literal prefixes, mirroring Int_lit above. *)
     | Token.Ident name ->
         let t = advance p in
         if peek_kind p = Token.LParen then (
@@ -116,8 +112,7 @@ let parse_ident (p : t) (what : string) : string * Token.span =
 (* optional ": TypeName" annotation *)
 let parse_annot (p : t) : string option =
   ignore p;
-  (* TODO(05): if the next token is Token.Colon, consume it, read the following identifier as
-     the type *name* with parse_ident, and return Some name; otherwise None. *)
+  (* TODO(05): an optional `: TypeName` annotation — Some name, or None. *)
   None
 
 let parse_stmt (p : t) : Ast.stmt =

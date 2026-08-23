@@ -127,26 +127,18 @@ let parse_annot (p : t) : string option =
 let rec parse_block (p : t) : Ast.stmt list =
   ignore p;
   ignore parse_if;
-  (* TODO(06): consume '{' (expect), parse statements (skipping blank Newlines) until '}'
-     (or Eof), then return the stmt list. Between statements consume an optional Newline. *)
+  (* TODO(06): a `{ ... }` block — the statements inside, blank lines skipped. §3. *)
   failwith "TODO(06): parse a { ... } block"
 
 and parse_if (p : t) : Ast.stmt =
   ignore p;
-  (* TODO(06): advance past 'if'; parse the condition expr; parse_block the then-branch;
-     if 'else' follows, an 'else if' recurses into parse_if (wrap in a one-element list)
-     otherwise parse_block the else-branch. Build Ast.If. *)
+  (* TODO(06): `if cond { } else { }`, where `else if` nests as an If inside the else. §3. *)
   failwith "TODO(06): parse an if/else statement"
 
 and parse_stmt (p : t) : Ast.stmt =
   match peek_kind p with
-  (* TODO(06): the control-flow statements.
-     Kw_if       -> parse_if
-     Kw_while    -> '<expr>' then a block            => Ast.While
-     Kw_for      -> '<ident> in <expr> ..< <expr>' then a block => Ast.For
-     Kw_break    -> the keyword + its span           => Ast.Break
-     Kw_continue -> the keyword + its span           => Ast.Continue
-     The four cases below (let/var, assign, expr-stmt) are given. *)
+  (* TODO(06): the control-flow statements — if / while / for-in-a-range / break / continue.
+     The let-var, assignment and expression cases below are given. §3. *)
   | Token.Kw_let | Token.Kw_var ->
       let kw = advance p in
       let is_var = kw.Token.kind = Token.Kw_var in

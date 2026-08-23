@@ -18,19 +18,8 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
   ignore env;
   ignore err;
   ignore prog;
-  (* TODO(05): the bidirectional type checker.
-
-     - is_int_literal : an Int_lit, a negation of one, or an arithmetic expression of them
-       (so a pure integer-literal expression can flex to Double).
-     - unify l tl r tr : equal types unify; otherwise an integer-literal operand may become
-       Double when the other side is Double.
-     - infer : literals -> their type; Var -> env lookup (else "cannot find 'x' in scope");
-       Unary '-' -> operand must be numeric; Binary -> the operator typing table; Call ->
-       print(_:) takes one argument of any type and yields a placeholder.
-     - check_expr e expected : Int_lit checks against Int OR Double; arithmetic Binary when
-       expected is numeric pushes expected into both operands; everything else infers and
-       compares ("cannot convert value of type 'X' to specified type 'Y'").
-     - check_stmt : Let (annotated -> resolve + check_expr; else infer; bind name);
-       Assign (must exist, be a var, value check_expr's against its type); Expr_stmt.
-     Finally iterate check_stmt over prog.stmts. *)
+  (* TODO(05): the two judgments — `infer e -> ty` and `check_expr e expected -> unit` — the
+     `unify` they share, and `check_stmt` over the program. The one coercion is the literal
+     flexibility described in the header. Every diagnostic here is compared against swiftc's
+     wording by the tests, so match it exactly. Walk-through: §3. *)
   failwith "TODO(05): implement the bidirectional type checker in sema.ml"

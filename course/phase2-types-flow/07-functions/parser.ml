@@ -175,8 +175,7 @@ and parse_stmt (p : t) : Ast.stmt =
   | Token.Kw_continue -> let t = advance p in Ast.Continue t.Token.span
   | Token.Kw_return ->
       let kw = advance p in
-      (* TODO(07): a bare `return` if the next token ends the statement (Newline/RBrace/Eof),
-         else `return <expr>`. Build Ast.Return (eo, span). *)
+      (* TODO(07): `return`, with or without a value. §3. *)
       ignore kw;
       failwith "TODO(07): parse a return statement"
   | Token.Kw_let | Token.Kw_var ->
@@ -201,17 +200,16 @@ and parse_stmt (p : t) : Ast.stmt =
    call positionally and don't check labels (a simplification — see the explainer). *)
 let parse_params (p : t) : Ast.param list =
   ignore p;
-  (* TODO(07): consume '(', then zero-or-more `name: Type` separated by ',' up to ')'.
-     Accept an optional external label (a '_' or identifier BEFORE the name) and drop it
-     (`name :` -> label = name; `label name :` -> keep [name]). Build { pname; ptype } list. *)
+  (* TODO(07): a parenthesised, comma-separated list of `name: Type`. Swift's external
+     argument LABEL may precede the name; accept it and drop it — we call positionally, a
+     simplification the explainer is explicit about. §3. *)
   failwith "TODO(07): parse a parameter list"
 
 (* `func name ( params ) [ -> Type ] { body }` *)
 let parse_func (p : t) : Ast.func_decl =
   ignore p;
   ignore parse_params;
-  (* TODO(07): advance past `func`; parse the name; parse_params; an optional `-> Type`;
-     then parse_block the body. Build the Ast.func_decl record. *)
+  (* TODO(07): `func name(params) -> Ret { body }` — the return type is optional. §3. *)
   failwith "TODO(07): parse a function declaration"
 
 (* A program is a sequence of top-level items: function declarations and statements. *)

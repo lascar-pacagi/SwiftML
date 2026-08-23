@@ -97,26 +97,18 @@ let emit_llvm (m : Sil.modul) : string =
       | Sil.Float_lit x -> Hashtbl.replace opnd v (Printf.sprintf "0x%016LX" (Int64.bits_of_float x))
       | Sil.String_lit s -> Hashtbl.replace opnd v (add_string_const s)
       | Sil.Alloc_stack _ -> () (* emitted in the entry block by gen_allocas below (no-op here) *)
-      (* TODO(09): the remaining instructions. Emit an LLVM line with `p "..."` and record the
-         result via `Hashtbl.replace opnd v (fresh ())`.
-           Load a         -> "%r = load <ty>, ptr <a>"      (ty = llty (vty v))
-           Store (x, a)   -> "store <ty> <x>, ptr <a>"      (ty = llty (vty x))
-           Binop (op,l,r) -> the given `gen_binop v op l r`
-           Unop (Neg, x)  -> "%r = sub i64 0, <x>"  (or fneg double for a Double)
-           Func_ref name  -> operand "@name" (no line emitted)
-           Apply (fr,args)-> "%r = call <ret> <fr>(<args>)"; a void call emits no result
-           Print x        -> the given `gen_print x` *)
+      (* TODO(09): the remaining instructions. The mapping is near 1:1 — §2 tabulates every SIL
+         instruction against its LLVM line. Emit with [p], and register each result operand
+         with [Hashtbl.replace opnd v (fresh ())] so later instructions can refer to it.
+         Watch the ones that emit NO line (a func_ref is just an operand) and the ones that
+         produce no result (a void call, a store). *)
       | _ -> ignore gen_binop; ignore gen_print; failwith "TODO(09): lower a SIL instruction"
     in
     let gen_term (t : Sil.term) =
       ignore t;
       ignore is_main;
-      (* TODO(09): lower the terminator.
-           Br n              -> "br label %bbN"
-           Cond_br (c,th,el) -> "br i1 <c>, label %bbT, label %bbE"
-           Return None       -> "ret i32 0" in @main, else "ret void"
-           Return (Some v)   -> "ret <ret> <v>"  (ret = llty f.ret)
-           Unreachable       -> "unreachable" *)
+      (* TODO(09): the terminators — br, conditional br, ret, unreachable (§2). The one special
+         case: @main returns i32, so a valueless return there is `ret i32 0`. *)
       failwith "TODO(09): lower a SIL terminator"
     in
     (* every alloca goes at the top of the ENTRY block: alloca'd stack space is only returned

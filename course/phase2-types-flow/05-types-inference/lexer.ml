@@ -43,8 +43,8 @@ let is_ident_cont c = is_ident_head c || is_digit c
 (* scan a "..." string literal (the opening quote is at the cursor); basic escapes *)
 let scan_string (lx : t) : string =
   ignore lx;
-  (* TODO(05): use a Buffer; bump past the opening quote; read chars until the closing quote
-     (handle the n, t, quote, backslash escapes); bump past the closing quote; return contents. *)
+  (* TODO(05): the CONTENTS of a string literal — quotes consumed, the backslash escapes
+     (newline, tab, quote, backslash) unescaped. §3. *)
   failwith "TODO(05): scan a string literal"
 
 let rec next (lx : t) : Token.t =
@@ -80,8 +80,7 @@ let rec next (lx : t) : Token.t =
       (* number: integer part, then an optional fractional part => Double *)
       let start = lx.pos in
       while (not (at_end lx)) && is_digit (peek_char lx) do ignore (bump lx) done;
-      (* TODO(05): if the next char is '.' followed by a digit, consume the fractional part
-         and make a Token.Float (float_of_string the whole lexeme); else Token.Int as below. *)
+      (* TODO(05): a fractional part makes this a Token.Float, otherwise the Token.Int below. §3. *)
       ignore start;
       make lo lx (Token.Int (int_of_string (String.sub lx.src start (lx.pos - start)))))
     else if c = '"' then make lo lx (Token.String (scan_string lx))
@@ -96,9 +95,7 @@ let rec next (lx : t) : Token.t =
       | '*' -> ignore (bump lx); make lo lx Token.Star
       | '/' -> ignore (bump lx); make lo lx Token.Slash
       | '%' -> ignore (bump lx); make lo lx Token.Percent
-      (* TODO(05): the comparison operators and the colon.
-         '=' peeks for a second '=' (=> EqEq, else Eq); '!' requires '=' (=> Ne);
-         '<' / '>' peek for '=' (=> Le/Ge, else Lt/Gt); ':' => Colon. *)
+      (* TODO(05): `== != <= >= < >` and `:` — maximal munch (§2); a lone '!' is an error. *)
       | '(' -> ignore (bump lx); make lo lx Token.LParen
       | ')' -> ignore (bump lx); make lo lx Token.RParen
       | ',' -> ignore (bump lx); make lo lx Token.Comma

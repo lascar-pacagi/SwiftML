@@ -128,9 +128,7 @@ let rec next (lx : t) : Token.t =
       | '(' -> ignore (bump lx); make lo lx Token.LParen
       | ')' -> ignore (bump lx); make lo lx Token.RParen
       | ',' -> ignore (bump lx); make lo lx Token.Comma
-      (* TODO(06): the new control-flow lexemes (all mirror 05's multi-char '=='/'<=').
-         '{' -> LBrace; '}' -> RBrace; '&' then '&' -> AmpAmp (error on a lone '&');
-         '|' then '|' -> PipePipe; '.' then '.<' -> DotDotLt (error on a lone '.'). *)
+      (* TODO(06): `{ } && || ..<` — maximal munch again; a lone '&', '|' or '.' is an error. *)
       | '\n' -> ignore (bump lx); make lo lx Token.Newline
       | _ ->
           (* swiftc's `diag::lex_invalid_character`; drop the byte and lex on *)

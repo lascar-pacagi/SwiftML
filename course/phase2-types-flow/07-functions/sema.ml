@@ -95,9 +95,8 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         ignore ptypes;
         ignore ret;
         ignore span;
-        (* TODO(07): call typing. Check arity ("function 'f' expects N argument(s) but M
-           given") and, when it matches, each arg against its parameter type with check_expr;
-           return the function's return type. *)
+        (* TODO(07): a call — arity, then each argument against its parameter type; the result
+           is the callee's return type. The tests pin swiftc's wording. §3. *)
         failwith "TODO(07): type a function call"
     | None ->
         if f = "print" then (
@@ -180,10 +179,8 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         ignore eo;
         ignore span;
         ignore current_ret;
-        (* TODO(07): `return` is valid only inside a function (check !current_ret, else
-           "'return' invalid outside of a func"). With a value: Void function -> error
-           "unexpected non-void return value in void function"; else check_expr against the
-           return type. Without a value: non-Void -> "non-void function should return a value". *)
+        (* TODO(07): `return` — only inside a function, and the value (or its absence) must agree
+           with the enclosing return type. Three distinct diagnostics; §3 lists them. *)
         failwith "TODO(07): check a return statement"
   and check_block (stmts : Ast.stmt list) : unit = in_scope (fun () -> List.iter check_stmt stmts) in
 
@@ -192,18 +189,15 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
     ignore f;
     ignore resolve_ty;
     ignore block_returns;
-    (* TODO(07): resolve the return type; save/restore env + current_ret; set env := [] and
-       current_ret := Some ret; bind each parameter immutable; check the body; then the
-       "missing return" rule — a non-Void function whose body does not block_returns errors
-       "missing return in function expected to return 'T'". *)
+    (* TODO(07): one function — parameters bound immutably in a scope of their own (a function
+       body sees no top-level bindings), the body checked, and the MISSING RETURN rule: a
+       non-Void function must return on every path (`block_returns`). §3. *)
     failwith "TODO(07): check a function body"
   in
 
   ignore check_func;
   ignore resolve_silent;
-  (* TODO(07): the two passes.
-     PASS 1 — fill `funcs` with every function's signature (param types + return type), so
-     calls, recursion, and forward references resolve. Report "invalid redeclaration of 'f'"
-     on a duplicate name. Use resolve_silent for the types (PASS 1 doesn't diagnose).
-     PASS 2 — walk the items in order: check_func each IFunc, check_stmt each IStmt. *)
+  (* TODO(07): the two passes — collect every signature first (which is what makes calls,
+     recursion and forward references resolve), then check the bodies in order. A duplicate
+     name is an error. §2 explains why one pass cannot work. *)
   failwith "TODO(07): the two-pass driver"
