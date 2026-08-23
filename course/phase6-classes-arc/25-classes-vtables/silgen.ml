@@ -277,13 +277,9 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
           let argvs = List.map2 (fun (_, e) pt -> gen_expr_as b e pt) args ptypes in
           emit b (Sil.Apply_witness (rv, slot, argvs)) ret
       | Types.TClass cn ->
-          (* TODO(25b): DYNAMIC dispatch through the VTABLE. Look up the method's SLOT
-             (`Types.vslot`) and signature (`Types.vsig`) in the STATIC type's layout
-             (`Hashtbl.find b.classes cn`) — the slot number is fixed by the static type, but
-             the function pointer will come from the OBJECT's vtable at runtime, so an
-             override in the dynamic type wins. Lower the args with gen_expr_as to the
-             parameter types and emit `Sil.Apply_class (receiver, slot, args)` with the
-             method's return type. *)
+          (* TODO(25b): DYNAMIC dispatch. The SLOT comes from the receiver's STATIC type; the function
+             pointer comes from the OBJECT's vtable at run time — which is exactly why an override
+             in the dynamic type wins. §2. *)
           ignore (cn, args, rv);
           failwith "TODO(25b-silgen): lower a class method call (vtable dispatch)"
       | _ -> assert false (* sema rejected it *))

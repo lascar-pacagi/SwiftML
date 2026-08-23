@@ -216,15 +216,9 @@ let emit_llvm (m : Sil.modul) : string =
           let cn = match vty o with Types.TClass cn -> cn | _ -> assert false in
           p (Printf.sprintf "  %s = getelementptr %%obj.%s, ptr %s, i32 0, i32 %d\n" (op v) cn (op o) (idx + 2))
       | Sil.Apply_class (o, slot, args) ->
-          (* TODO(25c): the vtable dispatch, in three loads and a call:
-               1. the object's FIRST word is its vtable pointer — `load ptr` from `op o`;
-               2. index the vtable: `getelementptr ptr, ptr <vt>, i64 <slot>` then `load ptr`;
-               3. call it: self (the object pointer) first, then the args (typed via
-                  `llty (vty a)`); a TVoid result is a bare `call void`, otherwise name the
-                  result `op v`.
-             (Compare Apply_witness above — same shape, but the table rides IN THE OBJECT
-             rather than next to the value: that's the difference between a class and an
-             existential.) *)
+          (* TODO(25c): emit the vtable dispatch — three loads and a call (§2 spells them out). Compare
+             `Apply_witness` above: same shape, but the table rides IN THE OBJECT instead of beside
+             the value, which is the whole difference between a class and an existential. *)
           ignore (o, slot, args);
           failwith "TODO(25c-irgen): emit the vtable dispatch"
       | Sil.Upcast (o, _) ->

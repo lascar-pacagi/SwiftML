@@ -454,11 +454,9 @@ let emit_llvm (m : Sil.modul) : string =
         "  ret void";
         "}";
         "define private void @rt.release(ptr %o) {";
-        (* TODO(26c): the decrement-and-destroy path. Decrement the refcount (byte offset 8 —
-           header word 1); if it hits zero: load the vtable (word 0), call SLOT 0 (the
-           deinit-body chain), then SLOT 1 (the field-destroy chain), then @free. Mirror
-           @rt.retain above; emit the body as quoted IR lines (a branch to a dead:/done:
-           pair keeps it readable). *)
+        (* TODO(26c): rt.release — decrement, and at zero run the two chains (slot 0 then slot 1)
+           before freeing. §2 explains why there are two and why they run in opposite directions;
+           mirror @rt.retain above for the shape. *)
         "  ret void ; TODO(26c-irgen): decrement; at zero run vt[0], vt[1], then free";
         "}";
         "" ]

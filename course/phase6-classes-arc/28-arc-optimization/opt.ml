@@ -842,21 +842,13 @@ let copy_propagation (f : Sil.func) : Sil.func =
           (fun ((c : Sil.value), i) ->
             match i with
             | Sil.Copy_value src ->
-                (* TODO(28): decide whether THIS pair is deletable, and delete it. Using the
-                   use map above (`uses` : value -> [(block, idx, consuming?)], terminators at
-                   idx = max_int; `consuming_uses`):
-                     1. every use of %c must be in THIS block, and %c must have EXACTLY ONE
-                        consuming use — a `destroy_value %c` (check `arr.(d_idx)`), with all
-                        other uses at indices <= d_idx;
-                     2. the SOURCE must outlive the bracket: `List.mem src params`, OR src's
-                        single consuming use is in this block at an index > d_idx. (A
-                        load-sourced copy fails both — correctly: the slot may be overwritten
-                        inside the bracket; the probes pin that case.)
-                     3. rewrite: filter the copy (result = c) and the destroy out of
-                        b.Sil.instrs; redirect every use of c to src across ALL blocks
-                        (map_instr/map_term); set `changed := true`.
-                   ONE rewrite per sweep (guard on `not !changed`): deletions shift indices
-                   and stale the use map — the fixpoint loop recomputes everything. *)
+                (* TODO(28): is THIS copy/destroy pair deletable, and if so delete it. The three conditions
+                   are §2's: the copy's uses all sit inside the bracket in this block, the pair is
+                   a copy and its single consuming destroy, and the SOURCE outlives the bracket (a
+                   load-sourced copy fails that — correctly; the probes pin the case). Rewrite by
+                   dropping both instructions and redirecting the copy's uses to the source.
+                   ONE rewrite per sweep: deletions shift indices and stale the use map, so let the
+                   fixpoint recompute. *)
                 ignore (c, src, params, consuming_uses);
                 failwith "TODO(28-opt): delete a provably-redundant copy/destroy pair"
             | _ -> ())

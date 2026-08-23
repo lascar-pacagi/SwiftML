@@ -84,14 +84,10 @@ let mark_owned (b : builder) (v : Sil.value) : Sil.value =
 (* a value is about to be STORED somewhere durable: take ownership. An owned temp transfers
    (consume: it's no longer the statement's to release); a borrowed value gets a retain. *)
 let take_ownership (b : builder) (v : Sil.value) : unit =
-  (* TODO(26a): THE ownership-transfer rule. Non-class values: nothing. For a class value:
-       - if [v] is in [b.owned] (a fresh +1 temp — an allocation or an owned call result),
-         the store CONSUMES it: remove it from b.owned AND from b.stmt_temps (it is no longer
-         the statement's to release);
-       - otherwise [v] is BORROWED (loaded from a slot/field, or a parameter): the new owner
-         needs its own +1 — emit `Sil.Retain v`.
-     Get this wrong one way and objects die early (use-after-free); the other way and they
-     leak with their deinit never firing. The probes catch both. *)
+  (* TODO(26a): the ownership-transfer rule — a store either CONSUMES a fresh +1 temp or
+       RETAINS a borrowed value, and nothing else. Get it wrong one way and objects die early;
+       the other way and they leak with their deinit never firing. The deinit-order probes catch
+       both. §2. *)
   ignore (b, v);
   failwith "TODO(26a-silgen): consume an owned temp / retain a borrowed value"
 
@@ -969,14 +965,9 @@ let lower (prog : Ast.program) : Sil.modul =
               | None -> ()
             in
             let destroy_epilogue (b : builder) =
-              (* TODO(26b): the FIELD-DESTROY chain (vtable slot 1) — swiftc's verified order:
-                   1. FIRST chain to the superclass: Upcast self, direct Apply of
-                      "<Super>.destroy" (base-level fields release before derived's);
-                   2. then release this class's OWN class-typed stored properties (index >=
-                      [inherited], is_class_ty): Ref_element_addr + Load + `Sil.Release`.
-                 (The deinit-BODY chain — slot 0, derived -> base — is given above; note the
-                 two chains run in opposite directions. cl.Types.cl_fields, [inherited], and
-                 the self slot are in scope.) *)
+              (* TODO(26b): the FIELD-DESTROY chain (slot 1) — superclass FIRST, then this class's own
+                 class-typed fields. That is the opposite direction from the deinit-body chain
+                 above, and it is not a guess: §2 shows the swiftc output that settles the order. *)
               ignore (b, cl, inherited);
               failwith "TODO(26b-silgen): super-first field destruction, then own fields"
             in

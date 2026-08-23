@@ -262,22 +262,11 @@ let def_is_owned (i : instr) : bool =
   | _ -> false (* plain Load, Upcast of a borrow, … : guaranteed *)
 
 let verify_ownership (m : modul) : string list =
-  (* TODO(27): implement the three rules, per function, using the helpers above
-     (`is_class_value`, `consumed_operands`, `consumed_by_term`, `def_is_owned`):
-       1. CLASSIFY every class-typed value: parameters are GUARANTEED; an instruction result
-          is OWNED iff `def_is_owned` says so, else guaranteed.
-       2. R2 first, while COUNTING consumes: walk every instruction's `consumed_operands`
-          (and each terminator's `consumed_by_term`); consuming a guaranteed value is the
-          error "@f: guaranteed value %N consumed without a copy_value"; consuming an owned
-          value increments its count.
-       3. R1: every owned value's count must be exactly 1 —
-          0  -> "@f: owned value %N is leaked (never consumed)"
-          n  -> "@f: owned value %N consumed n times"
-       4. R3 (within a block): record the instruction index where each owned value is
-          consumed; any USE of it at a later index (walk each instruction's full operand
-          list) is "@f bbK: owned value %N used after being consumed".
-     Return the errors in program order. The driver runs this on EVERY compile — your ARC
-     insertion from concept 26 must satisfy your own verifier. *)
+  (* TODO(27): the verifier — classify every class-typed value as OWNED or GUARANTEED, then
+     enforce the three rules of §2: an owned value is consumed exactly once, a guaranteed value
+     is never consumed, and nothing is used after its consume. Errors in program order, with the
+     messages §2 lists. The driver runs this on EVERY compile, so your own concept-26 ARC
+     insertion has to satisfy it. *)
   ignore m;
   failwith "TODO(27-sil): the ownership verifier"
 

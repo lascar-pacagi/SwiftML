@@ -810,19 +810,10 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
       in
       let methods = ref (match super_layout with Some sl -> sl.Types.cl_methods | None -> []) in
       let impls = ref (match super_layout with Some sl -> sl.Types.cl_impls | None -> []) in
-      (* TODO(25a): BUILD THE VTABLE. [methods]/[impls] start as the SUPERCLASS's (slot
-         numbering is inherited — that's what makes an upcast's dispatch work). For each own
-         method (is_override, m) — its signature resolved with `resolve_silent` on each
-         param's ptype and on the return:
-           - `override` + a slot with that name exists: the signature must MATCH exactly (else
-             err "method does not override any method from its superclass"); REPLACE that
-             slot's impl with "C.m" (the slot itself keeps its place — the override wins at
-             the same index the superclass dispatches through).
-           - `override` + no such slot: the same "does not override" error.
-           - no `override` + the name exists in the superclass: err "overriding declaration
-             requires an 'override' keyword".
-           - a genuinely new method: APPEND (name, params, ret) to methods and "C.m" to impls.
-       *)
+      (* TODO(25a): BUILD THE VTABLE. Start from the superclass's slots — inheriting the NUMBERING
+         is what makes dispatch through an upcast work. An override replaces its slot in place
+         (same index the superclass dispatches through); a new method appends. The two swiftc
+         diagnostics for a mismatched or unmarked override are pinned by the tests. §2. *)
       ignore (resolve_silent, err);
       List.iter
         (fun ((_ : bool), (m : Ast.func_decl)) -> ignore m; failwith "TODO(25a-sema): build the vtable")
