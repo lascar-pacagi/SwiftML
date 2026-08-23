@@ -47,20 +47,14 @@ let error (lx : t) (lo : Token.pos) (msg : string) : unit =
 
 (* --- the part you implement ------------------------------------------------- *)
 
-(* Produce the next token. The scanning DFA, in order:
-     1. skip whitespace that is NOT a newline (newlines are significant tokens);
-     2. skip // line comments and /* ... */ block comments (block comments nest in Swift);
-     3. if at end of input, return [Eof];
-     4. otherwise dispatch on [peek_char lx]:
-          - digit            -> scan an integer literal      (Token.Int)
-          - letter or '_'    -> scan an identifier, then     (Token.keyword_or_ident)
-          - '+' '-' '*' '/' '%' '=' '(' ')' ','
-                             -> single-char operator/punct tokens
-          - '\n'             -> Token.Newline
-     Use [here lx] to capture the start position, [bump]/[peek_char]/[at_end] to scan,
-     and [make lo lx kind] to build the token with its span.
-   Tips: scan the lexeme into a substring with String.sub; convert with int_of_string.
-   See the explainer (§3 "Build it") for the full walk-through. *)
+(* Produce the next token: skip trivia, then scan one token starting at the cursor.
+
+   The contract the tests hold you to: trivia is spaces/tabs/CR and //, /* */ comments
+   (which NEST); a newline is a TOKEN, not trivia; a token's span starts at the token,
+   not at the trivia before it; and a problem is REPORTED with [error] and recovered
+   from, never raised.
+
+   Walk-through, if you want one: explainer §3. *)
 let next (lx : t) : Token.t =
   ignore (here, make, bump, peek_char, at_end, lx);
   failwith "TODO(01-lexer): implement Lexer.next (the scanning DFA)"

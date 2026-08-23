@@ -66,32 +66,16 @@ let span_between (lo : Token.span) (hi : Token.span) : Token.span =
 (* --- expressions: Pratt parser --------------------------------------------- *)
 
 let rec parse_expr_bp (p : t) (min_bp : int) : Ast.expr =
-  (* TODO(02a): the Pratt loop — "parse an expression, absorbing only operators that
-     bind at least as tightly as [min_bp]".
-
-     1. PREFIX (Pratt's "nud"): match [peek_kind p] and build the left operand —
-          Int n        -> advance, Ast.Int_lit
-          Ident name   -> advance; if the next token is LParen it is a CALL (consume
-                          '(', [parse_call_args p], [expect p Token.RParen "')'"]),
-                          otherwise Ast.Var
-          LParen       -> advance, [parse_expr_bp p 0], expect ')', return the inner expr
-          Minus        -> advance, [parse_expr_bp p unary_bp], Ast.Unary (Ast.Neg, ...)
-          anything else-> [Diagnostics.error p.diags t.Token.span "expected expression"],
-                          advance past it and return a placeholder so parsing continues.
-     2. INFIX (Pratt's "led"): loop. Ask [infix_bp (peek_kind p)]; while it is
-        [Some bp] with [bp >= min_bp], read the operator with [binop_of_kind], advance,
-        parse the right operand with [parse_expr_bp p (bp + 1)] — the +1 is what makes
-        the operators LEFT-associative (§2) — fold into [Ast.Binary] and keep going.
-        Stop as soon as the next token is not an operator you may take.
-
-     Use [span_between] to cover both operands. *)
+  (* TODO(02a): parse one expression, absorbing only operators whose binding power is
+     >= [min_bp]. A prefix (literal / variable / call / '(' expr ')' / unary minus), then
+     the infix fold. Report a missing expression rather than raising, and keep parsing.
+     Walk-through: explainer §3.1-2. *)
   ignore (p, min_bp, parse_call_args);
   failwith "TODO(02a): implement Parser.parse_expr_bp (the Pratt loop)"
 
 (* Zero-or-more comma-separated arguments, up to the closing ')'. *)
 and parse_call_args (p : t) : Ast.expr list =
-  (* TODO(02a): [] if the next token is already ')', otherwise parse expressions with
-     [parse_expr_bp p 0] separated by [Token.Comma], in source order. *)
+  (* TODO(02a): zero or more expressions separated by ',', in source order. *)
   ignore p;
   failwith "TODO(02a): implement Parser.parse_call_args"
 
@@ -111,25 +95,15 @@ let parse_ident (p : t) (what : string) : string * Token.span =
       ("_", t.Token.span)
 
 let parse_stmt (p : t) : Ast.stmt =
-  (* TODO(02b): one statement. Dispatch on [peek_kind p]:
-       Kw_let / Kw_var -> consume it, read the name with [parse_ident p "identifier"],
-                          [expect p Token.Eq "'='"], parse the initializer with
-                          [parse_expr p], return [Ast.Let { name; is_var; value; span }]
-       Ident, and [peek_kind_at p 1] is Eq
-                       -> a reassignment: consume both, parse the expression, return
-                          [Ast.Assign { name; value; span }]
-       otherwise       -> an expression statement: [Ast.Expr_stmt (e, Ast.expr_span e)]
-     Telling the last two apart is the one place a single token of lookahead is needed. *)
+  (* TODO(02b): one statement — a `let`/`var` binding, a reassignment, or a bare
+     expression. Explainer §3.3 (note which case needs a token of lookahead). *)
   ignore p;
   failwith "TODO(02b): implement Parser.parse_stmt"
 
 (* Whole file: skip blank lines, parse statements until Eof, consuming the Newline
    (or Eof) that terminates each. *)
 let parse_program (p : t) : Ast.program =
-  (* TODO(02c): the whole file. Skip blank lines (runs of [Token.Newline]), then loop:
-       - at [Token.Eof], you are done — return { Ast.stmts = ... } in source order;
-       - otherwise [parse_stmt p], then consume the [Newline] that terminates it (or
-         accept [Eof]); anything else is an error — report "expected newline or end of
-         statement" and keep going, so one run reports more than the first mistake. *)
+  (* TODO(02c): every statement in the file, in source order, each terminated by a
+     newline (or Eof). Blank lines are not statements. Explainer §3.4. *)
   ignore p;
   failwith "TODO(02c): implement Parser.parse_program"
