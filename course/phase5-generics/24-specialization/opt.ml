@@ -593,18 +593,10 @@ let devirt_module (m : Sil.modul) : Sil.modul =
         b.Sil.instrs <-
           List.concat_map
             (fun (v, i) ->
-              (* TODO(24a): the DEVIRTUALIZATION folds. For each instruction, when `wrap_of`
-                 proves the concrete type, rewrite:
-                   - `Apply_witness (ex, slot, args)` with proof `Some (payload, sn, pn)` and
-                     `impl_of pn sn slot = Some impl`: the dynamic dispatch becomes a DIRECT
-                     call — return TWO instructions: a fresh `Func_ref impl` (make the value
-                     with `fresh (vty of v)`) and `(v, Apply (fr, self :: args))`, where self
-                     is the payload (or `ex` itself when the proof says it's already concrete).
-                   - `Open_existential (ex, sn)` whose proof matches `sn`: the open is the
-                     payload itself — record `Hashtbl.replace alias v payload` (or `ex` when
-                     already concrete) and DROP the instruction (return []).
-                   - `Same_witness (ex, sn)` with any proof: a constant — `Bool_lit (sn' = sn)`.
-                 Anything unproven stays untouched: `[ (v, i) ]`. *)
+              (* TODO(24a): the DEVIRTUALIZATION folds, each one licensed by `wrap_of` PROVING the concrete
+                 type behind an existential: a witness dispatch becomes a direct call, an open
+                 becomes an alias for the payload, a witness-identity test becomes a constant (which
+                 then lets simplify_cfg delete the branch). Anything unproven is left alone. §2. *)
               ignore (wrap_of, impl_of, fresh, alias, vty);
               ignore v;
               failwith "TODO(24a-opt): fold proven witness dispatch/open/identity"
@@ -676,24 +668,12 @@ let specialize_module (m : Sil.modul) : Sil.modul =
                       | Some (Sil.Func_ref g) -> (
                           match find_fn g with
                           | Some gf when gf.Sil.generic ->
-                              (* TODO(24b): the CALL-SITE rewrite. For a call to the generic
-                                 [gf], try to PROVE the concrete type at every erased
-                                 (`TProto c`) parameter position:
-                                   - the argument's def is `Init_existential (pv, sn, _)`
-                                     -> proof (payload pv, type sn);
-                                   - or the argument is already a `TStruct sn` value (we're
-                                     inside another clone) -> proof (the arg itself, sn);
-                                   - anything else -> UNPROVABLE: leave the whole call alone.
-                                 If every erased position proves the SAME sn and
-                                 `retypable gf c` holds: ensure the clone exists
-                                 (`clone_specialized gf sn`, named `g ^ "$" ^ sn`, appended to
-                                 !funcs once — set `changed := true` when you add it); rewrite
-                                 the call: erased args become their payloads, the func_ref
-                                 retargets to the clone (update [def] for `fr` AND rewrite the
-                                 Func_ref instruction — see the commit step below), and if the
-                                 call result's type was erased (`TProto _`), retype it to
-                                 `TStruct sn` so the caller's open_existential folds.
-                                 Non-generic callees and concrete positions are untouched. *)
+                              (* TODO(24b): the CALL-SITE specializer. Prove the concrete type at EVERY erased parameter
+                                 position; if they all prove the SAME type and the callee is
+                                 retypable, clone it for that type (`g$sn`), pass the raw payloads,
+                                 retarget the call, and retype an erased result so the caller's open
+                                 folds away. One unprovable position and the call stays on the erased
+                                 original — coexistence, exactly as swiftc does it. §2. *)
                               ignore (g, args, retypable, clone_specialized, find_fn, funcs, changed);
                               failwith "TODO(24b-opt): specialize a provable generic call"
                           | _ -> (v, i))

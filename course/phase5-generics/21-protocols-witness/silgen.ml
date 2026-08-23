@@ -172,17 +172,10 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
      self as the first argument. On an existential: DYNAMIC dispatch through the witness
      table (`Apply_witness` = swiftc's witness_method+apply). *)
   | Ast.Method_call (recv, m, args, _) ->
-      (* TODO(21b): METHOD DISPATCH — the heart of the concept. Lower the receiver, then split
-         on its type (vty):
-           - `TStruct sn` -> STATIC dispatch: the method is the plain function "sn.m"
-             (look up its signature with `method_sig b sn m`); lower each arg with
-             `gen_expr_as` to its parameter type; emit `Func_ref` then
-             `Apply (fr, receiver :: args)` — the receiver is `self`, argument 0.
-           - `TProto pn` -> DYNAMIC dispatch: the receiver is an existential. Find the
-             requirement's witness-table SLOT (`Types.req_index`) and signature
-             (`Types.req_sig`) in `Hashtbl.find b.protos pn`; lower the args; emit
-             `Apply_witness (receiver, slot, args)` — load-from-table + indirect call.
-         Both produce a value of the method's return type. *)
+      (* TODO(21b): METHOD DISPATCH — the heart of the concept, and it splits on the receiver's
+         type. A concrete struct dispatches STATICALLY to the plain function `sn.m`, with self as
+         argument 0. An existential dispatches DYNAMICALLY through its witness table, by the
+         requirement's SLOT. §2 contrasts the two. *)
       ignore (recv, m, args, method_sig);
       failwith "TODO(21b-silgen): lower method calls (static vs witness dispatch)"
   (* optionals are an enum { none(tag 0); some(tag 1, payload) } — concept 13 *)
@@ -250,10 +243,9 @@ and gen_expr_as (b : builder) (e : Ast.expr) (expected : Types.ty) : Sil.value =
       let v = gen_expr b e in
       if vty b v = expected then v else emit b (Sil.Enum (1, [ v ])) expected
   | _, Types.TProto pn ->
-      (* TODO(21a): the EXISTENTIAL WRAP. Lower [e] with gen_expr; if its type (vty) is already
-         `TProto _`, pass it through unchanged. If it's a concrete `TStruct sn`, wrap it:
-         emit `Sil.Init_existential (value, sn, pn)` with result type [expected] — pairing the
-         payload with the (sn : pn) witness table. (Sema guaranteed conformance.) *)
+      (* TODO(21a): the EXISTENTIAL WRAP — pair a concrete value with the witness table for its
+         conformance; an already-existential value passes through. Sema has guaranteed the
+         conformance by the time we get here. §2. *)
       ignore pn;
       failwith "TODO(21a-silgen): wrap a concrete value into an existential"
   | _ -> gen_expr b e
@@ -572,11 +564,9 @@ let lower (prog : Ast.program) : Sil.modul =
   (* one WITNESS TABLE per (struct, protocol) conformance: the implementing function for each
      requirement, in requirement order — the table IS the proof of conformance (concept 21) *)
   let wtables =
-    (* TODO(21c): build the WITNESS TABLES. For every `Ast.IStruct st` and every protocol name
-       in `st.Ast.sconforms`, produce one entry `(proto, struct, impls)` where [impls] is the
-       implementing function name `"S.req"` for each requirement of the protocol's layout
-       (`Hashtbl.find protos pname`), IN REQUIREMENT ORDER — the order IS the slot numbering
-       that Apply_witness indexes into. *)
+    (* TODO(21c): build the WITNESS TABLES — one per (struct, protocol) conformance, listing the
+       implementing function of each requirement IN REQUIREMENT ORDER. That order *is* the slot
+       numbering the dispatch indexes into; get it wrong and calls land on the wrong method. *)
     ignore protos;
     failwith "TODO(21c-silgen): emit one witness table per conformance"
   in

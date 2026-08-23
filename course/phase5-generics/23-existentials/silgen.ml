@@ -254,15 +254,9 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
         if conforms then emit b (Sil.Same_witness (ev, sn)) Types.TBool
         else emit b (Sil.Bool_lit false) Types.TBool
       in
-      (* TODO(23a): lower the cast around [same] (Bool: does the existential hold an [sn]?).
-           as? (conditional=true) -> an Optional<sn> built across a DIAMOND, exactly like
-             ??/coalesce: alloc a slot of `TOptional (TStruct sn)`; cond_br same -> yes/no;
-             yes-block: `Open_existential (ev, sn)`, wrap `Enum (1, [payload])`, store, br merge;
-             no-block: store `Enum (0, [])`, br merge; merge: load the slot.
-           as! (conditional=false) -> cond_br same -> ok/fail; the fail block TERMINATES with
-             `Sil.Abort "Could not cast value to 'sn'"` (SIGABRT, exit 134 — like swiftc);
-             the ok block opens and yields the concrete value.
-         (Patterns to copy: Coalesce for the diamond+slot, Force_unwrap for the trap split.) *)
+      (* TODO(23a): the two casts, both branching on [same]. `as?` produces an Optional across a
+           DIAMOND (copy the `??` shape: slot, two arms, merge). `as!` aborts on the failing arm —
+           `Sil.Abort`, which exits 134 like swiftc, not the 133 of a trap. §2. *)
       ignore (same, conditional);
       failwith "TODO(23a-silgen): lower as? (diamond) and as! (abort)"
   (* ternary `c ? a : b` — a value-producing diamond (the general case of `&&`/`||`): evaluate the

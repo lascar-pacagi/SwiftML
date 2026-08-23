@@ -24,12 +24,9 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
   let current_self : string option ref = ref None in
   let method_sig sname m = Option.bind (Hashtbl.find_opt methods sname) (fun ms -> List.find_map (fun (n, ps, r) -> if n = m then Some (ps, r) else None) ms) in
   let struct_conforms sname pname =
-    (* TODO(21-sema): does struct [sname] CONFORM to protocol [pname]? True iff the protocol
-       exists and EVERY requirement `(rname, param-tys, ret-ty)` in its `pl_reqs` is implemented
-       by a method of [sname] with the EXACT same signature (use `method_sig sname rname` and
-       compare the parameter list and return type). No protocol named [pname] -> false.
-       This one predicate powers both the conformance ERROR ("type 'S' does not conform to
-       protocol 'P'") and the implicit existential coercion in check_expr. *)
+    (* TODO(21-sema): does struct [sname] conform to protocol [pname]? Every requirement must be
+       implemented with the EXACT signature. This one predicate powers both the conformance
+       diagnostic and the implicit existential coercion in check_expr. §2. *)
     ignore (sname, pname, protos, method_sig);
     failwith "TODO(21-sema): implement the conformance check"
   in

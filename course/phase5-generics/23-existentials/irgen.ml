@@ -199,9 +199,8 @@ let emit_llvm (m : Sil.modul) : string =
           let arr = fresh () in
           p (Printf.sprintf "  %s = extractvalue %%any.%s %s, 0\n" arr pn (op ex));
           p (Printf.sprintf "  store [%d x i64] %s, ptr %s\n" n arr buf);
-          (* TODO(23c): read the payload back out of [buf] as a `%sn` named `op v`.
-             Inline type: one load. Boxed type: load the box POINTER from [buf] first, then
-             load the struct through it. *)
+          (* TODO(23c): read the payload back out of [buf] — one load if the type fits inline, two if
+             it is boxed (the buffer's first word is the box pointer). §2. *)
           ignore buf;
           failwith "TODO(23c-irgen): open inline-or-boxed payloads"
       (* dynamic casts — concept 23: type identity IS witness-table identity *)
@@ -217,11 +216,9 @@ let emit_llvm (m : Sil.modul) : string =
           let n = ex_words pn in
           let buf = Printf.sprintf "%%ex%d" v in
           let arr = fresh () and half = fresh () in
-          (* TODO(23b): write the payload into [buf] (this site's 3-word buffer alloca).
-             A type that FITS (`is_boxed sn = false`): store the struct value directly.
-             A LARGE type: `call ptr @malloc(i64 <8 * words>)`, store the struct into the box,
-             then store the box POINTER into [buf] — the buffer's first word now points at the
-             heap payload. (Emit with `p`; fresh names with `fresh ()`; the value is `op pv`.) *)
+          (* TODO(23b): write the payload into this site's 3-word buffer — directly when it fits,
+             otherwise malloc a box, store into it, and put the box POINTER in the buffer. That
+             fixed container size is what separate compilation requires; §2. *)
           ignore (is_boxed, words);
           failwith "TODO(23b-irgen): inline-or-box the payload";
           p (Printf.sprintf "  %s = load [%d x i64], ptr %s\n" arr n buf);

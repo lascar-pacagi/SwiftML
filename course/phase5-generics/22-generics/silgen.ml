@@ -136,19 +136,10 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
         let fr = emit b (Sil.Func_ref f) ret in
         emit b (Sil.Apply (fr, argvs)) ret)
       else if Hashtbl.mem b.gfuncs f then (
-        (* TODO(22-silgen): lower a call to a GENERIC function. The callee was compiled ONCE
-           with every `T` erased to its constraint's existential (`any P`), so:
-           1. For each parameter type / argument pair: a `Types.TVar (n, c)` position lowers
-              the arg with gen_expr, RECORDS the binding n -> vty (first one wins), then WRAPS:
-              an already-`TProto` value passes through; a `TStruct sn` becomes
-              `Init_existential (v, sn, c)` of type `TProto c`. A non-TVar position lowers
-              with `gen_expr_as` to its parameter type as usual.
-           2. Emit `Func_ref f` and `Apply` with result type = the declared return, ERASED
-              (`TVar (_, c)` -> `TProto c`).
-           3. If the declared return is `TVar (n, _)` and n's binding is a concrete
-              `TStruct sn`, emit `Open_existential (call, sn)` typed `TStruct sn` — the caller
-              knows T statically, so the payload comes back out as the concrete type. A
-              still-erased binding (generic-from-generic) returns the call value unchanged. *)
+        (* TODO(22-silgen): the CALL SITE of a generic function. The callee is compiled once with T
+           erased to `any P`, so this side does the boundary work: WRAP each T-position argument
+           into the existential, call, and — when the caller knows T concretely — OPEN the result
+           back to that type. A caller that is itself generic leaves it erased. §2 has the model. *)
         ignore (Hashtbl.find b.gfuncs f);
         failwith "TODO(22-silgen): lower a generic call (wrap T-args, open the T-result)")
       else (

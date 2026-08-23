@@ -294,19 +294,10 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
      T's constraint (else "requires that 'X' conform to 'P'"). The result type is the declared
      return with the inferred bindings substituted in. *)
   and infer_generic_call f generics ptypes ret (args : Ast.arg list) span : Types.ty =
-    (* TODO(22-sema): INFER the type parameters from the arguments, then check them.
-       1. Arity: List.length ptypes vs args — on mismatch, err "function 'f' expects N
-          argument(s) but M given" and return [ret].
-       2. Walk ptypes/args together. A parameter `Types.TVar (n, _)`: INFER the argument's type
-          and record the binding n -> t. If n is already bound to a DIFFERENT type, err
-          swiftc's "conflicting arguments to generic parameter 'n' ('T1' vs. 'T2')". A
-          non-TVar parameter: just `check_expr arg pt` as usual.
-       3. For each (n, c) in [generics], the inferred binding must SATISFY the constraint:
-          a `TStruct sn` needs `struct_conforms sn c` — else err "global function 'f' requires
-          that 'sn' conform to 'c'"; a `TVar (_, c')` with c' = c is fine (a generic calling a
-          generic); any other type errs the same "requires that ... conform to" way.
-       4. Result: if [ret] is `TVar (n, _)`, return n's binding (the call's CONCRETE result
-          type — what makes `let w = pick(a, b); w.x` work); otherwise return [ret]. *)
+    (* TODO(22-sema): INFERENCE at the call site — bind each type parameter from the argument in
+       its position, reject a second, different binding for the same parameter, check every
+       binding against its constraint, and substitute into the return type so a T-returning call
+       has a CONCRETE type at the caller. Four swiftc-worded diagnostics; §2 and §3 give them. *)
     ignore (f, generics, ptypes, ret, args, span, struct_conforms);
     failwith "TODO(22-sema): infer + check a generic call"
   (* the memberwise initializer: one labeled argument per stored property, in order *)
