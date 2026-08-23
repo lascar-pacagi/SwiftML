@@ -8,7 +8,7 @@ PY := $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
 # bare `dune` if opam isn't installed.
 DUNE := $(shell command -v opam >/dev/null 2>&1 && echo "opam exec -- dune" || echo dune)
 
-.PHONY: setup setup-hooks claim unclaim save restore check-pristine check-shipped build test test-all lab exercises oracle bench profile profile-cpu fmt lint figs explainer docs preview clean
+.PHONY: setup setup-hooks claim claim-all unclaim save restore check-pristine check-shipped build test test-all lab exercises oracle bench profile profile-cpu fmt lint figs explainer docs preview clean
 
 # ---- Phase 0: toolchain bootstrap ------------------------------------------
 # Installs OCaml + dune + the test/format deps. Walks you through opam if missing.
@@ -85,8 +85,14 @@ setup-hooks:
 	@echo "pre-commit guard installed (core.hooksPath=course/tooling/hooks)"
 
 # Declare the stage files of a concept as YOUR work: the hook then refuses to commit them.
+# Claim EVERY concept at once — the sensible default if you are working through the course
+# and want none of your fill-ins to be committable.
+claim-all:
+	@for d in phase*/[0-9][0-9]-*; do test -d "$$d/solution" && $(MAKE) -s claim C=$$d; done
+	@echo "all concepts claimed"
+
 claim:
-	@test -n "$(C)" || { echo "usage: make claim C=phase1-minimal/01-lexer"; exit 1; }
+	@test -n "$(C)" || { echo "usage: make claim C=phase1-minimal/01-lexer (or: make claim-all)"; exit 1; }
 	@mkdir -p work
 	@for f in $(C)/*.ml; do \
 	  test -f "$$f" || continue; \

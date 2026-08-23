@@ -183,14 +183,21 @@ they go green when *your* code in that directory is correct
 
 ## 7b. Your work vs the course (if you'll share this repo)
 
+**Do you need this?** If you cloned this course to learn from it and nobody clones *from you*,
+no: edit the skeletons, commit them if you like, it is your copy. This section is for two people —
+the author, whose `main` other people clone, and anyone who intends to send corrections upstream
+without their answers riding along in the diff.
+
 You edit the skeletons **in place**, so your solutions live as uncommitted changes to tracked
-files. That is fine on your own machine and a problem the moment someone else clones the repo:
-they must get the skeletons, not your answers. One command sets that up, once:
+files. That is fine locally and a problem the moment someone else clones the repo: they must get
+the skeletons, not your answers. Two commands set that up, once:
 
 ```bash
-make setup-hooks                          # installs the pre-commit guard
-make claim C=phase1-minimal/01-lexer      # "these files are mine" — before you start a concept
+make setup-hooks    # install the pre-commit guard
+make claim-all      # every concept's stage files are yours (or: make claim C=<one concept>)
 ```
+
+The rest of this section is the detail.
 
 `claim` records the concept's stage files in `course/work/.mine` (gitignored) and the hook then
 **refuses any commit that touches them**. Everything else — tests, explainers, tooling, other

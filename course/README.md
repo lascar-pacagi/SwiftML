@@ -9,7 +9,8 @@ plus a from-scratch ARM64 backend). Validated against the real `swiftc` at every
 
 ```bash
 make setup                                # one-time: OCaml + dune + deps (Phase 0)
-make setup-hooks                          # one-time: keep your solutions out of commits
+make setup-hooks                          # ONLY if you will share this clone or send fixes
+                                          #   upstream — then: make claim-all
 make build                                # compile the compiler
 
 # working through a concept
