@@ -21,6 +21,50 @@ You'll turn the flat token list into a **tree** — the AST — that captures st
 
 ## 2. Concepts in depth
 
+### The grammar you are implementing
+
+Concept 01 stated the *lexical* grammar — which characters make which tokens. This is the other
+half, the **syntactic** grammar, and it is this concept's actual specification. Notation as before:
+`::=` defines, `|` chooses, `*` is zero-or-more, `?` optional.
+
+```
+program    ::= ( Newline | statement Newline )* Eof    # blank/comment-only lines are bare Newlines
+statement  ::= "let" Ident "=" expr            # constant binding
+             | "var" Ident "=" expr            # mutable binding
+             | Ident "=" expr                  # reassignment (var only — sema decides that)
+             | expr                            # an expression statement, e.g. print(...)
+
+expr       ::= add
+add        ::= mul ( ("+" | "-") mul )*        # lowest precedence, left-associative
+mul        ::= unary ( ("*" | "/" | "%") unary )*
+unary      ::= "-" unary | primary             # unary minus, binds tighter than any binary op
+primary    ::= Int
+             | Ident
+             | Ident "(" args? ")"             # a call — Phase 1 only ever calls print
+             | "(" expr ")"
+args       ::= expr ( "," expr )*
+```
+
+Each production has a function, and that correspondence is the whole method of recursive descent:
+
+| production | function | notes |
+|---|---|---|
+| `program` | `parse_program` | loops to `Eof`, eats the `Newline` after each statement |
+| `statement` | `parse_stmt` | one token of lookahead separates reassignment from an expression |
+| `expr`, `add`, `mul` | `parse_expr_bp` | **all three at once** — see below |
+| `unary`, `primary` | the prefix half of `parse_expr_bp` | |
+| `args` | `parse_call_args` | |
+
+The interesting line is the third. A textbook recursive-descent parser writes one function per
+precedence level — `parse_add` calls `parse_mul` calls `parse_unary` — so the *call chain* encodes
+precedence, and adding a level means adding a function and re-threading its neighbours. Pratt
+parsing collapses that ladder into a single function plus a table: `add` and `mul` are not separate
+rules at run time, they are the numbers 10 and 20 in `infix_bp`. The grammar above is what the
+parser accepts; `parse_expr_bp` is not a transcription of it.
+
+Keep the grammar in view while you write §3 — it is also the answer to "should this be an error?".
+`1 + + 2` has no derivation, so the second `+` reaches the prefix position and fails there.
+
 ### Recursive descent
 
 Each grammar rule becomes a function that consumes the tokens it expects and returns an AST node,
