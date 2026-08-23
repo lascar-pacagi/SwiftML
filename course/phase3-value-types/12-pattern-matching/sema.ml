@@ -322,9 +322,8 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
                 check_block body)
           cases;
         Option.iter check_block default;
-        (* TODO(12-sema): EXHAUSTIVENESS. With no `default`, every enum case must be matched.
-           `covered` lists the case names the patterns matched; `el.Types.el_cases` is all of them.
-           If any case is unmatched, `err span "switch must be exhaustive"` (matching swiftc). *)
+        (* TODO(12-sema): EXHAUSTIVENESS — without a `default`, every case of the enum must be
+           matched, or it is an error in swiftc's words. §2. *)
         ignore covered
     | Types.TInt ->
         List.iter

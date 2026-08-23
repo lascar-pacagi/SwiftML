@@ -207,20 +207,11 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       terminate b (Sil.Br header.Sil.bid);
       switch_to b exit_b
   | Ast.Switch { subject; cases; default; _ } ->
-      (* TODO(12): lower a switch to a dispatch chain (this is what pattern matching compiles to):
-         - gen_expr the subject ONCE (call it [subj]). The DISCRIMINANT is `Sil.Enum_tag subj` for an
-           enum subject (vty subj is `Types.TEnum en`), or [subj] itself for an Int.
-         - [new_block] a `merge` block for after the switch.
-         - for each (pattern, body): the pattern's KEY is the case's tag for an enum
-           (`Types.case_index (Hashtbl.find b.enums en) cn`) or the literal for a `PInt`. Emit it as an
-           `Sil.Int_lit`, compare with the discriminant (`Sil.Binop (Ast.Eq, disc, key)`), and
-           [terminate] with a `Sil.Cond_br` to a fresh case-block or a fresh next-block.
-         - in the case-block: BIND the payload — for each `Ast.Bind x` at index i, emit
-           `Sil.Enum_payload (subj, i)`, then `alloc_stack x` + `store` (just like a `let`); then
-           [gen_block] the body and [terminate] `Br merge`. Then [switch_to] the next-block and recurse.
-         - after the chain: a `default` body ([gen_block] then `Br merge`), or — for an exhaustive enum
-           switch with no default — `Sil.Unreachable`.
-         - finally [switch_to] merge. (See the explainer §2 + the dispatch figure.) *)
+      (* TODO(12): lower the switch to a DISPATCH CHAIN — evaluate the subject once, compare its
+         discriminant against each pattern's key in turn, and let every arm branch to one merge
+         block. Two details worth getting right: a pattern's bindings are the payload, extracted
+         and bound in that arm's block like a `let`; and an exhaustive enum switch with no
+         `default` ends in `Unreachable`, not a fallthrough. §2 and its figure draw the chain. *)
       ignore (subject, cases, default);
       failwith "TODO(12-silgen): lower the switch dispatch + payload binding"
   | Ast.Break _ -> ( match b.loops with (_, ex) :: _ -> terminate b (Sil.Br ex) | [] -> ())

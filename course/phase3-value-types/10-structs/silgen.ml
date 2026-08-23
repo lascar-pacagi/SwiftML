@@ -86,9 +86,8 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
         emit b (Sil.Apply (fr, argvs)) ret)
       else emit b (Sil.Print (List.hd argvs)) Types.TVoid
   | Ast.Member (e0, fld, _) ->
-      (* TODO(10): read field `fld` out of a struct VALUE. gen_expr e0 gives the struct value;
-         its type is `Types.TStruct sn`. Look up the layout (Hashtbl.find b.structs sn) and emit a
-         `Sil.Struct_extract (value, Types.field_index sl fld)` of type `Types.field_type sl fld`. *)
+      (* TODO(10): read a field out of a struct VALUE — the layout in [b.structs] turns the field
+         NAME into an index. §2. *)
       ignore (e0, fld);
       failwith "TODO(10-silgen): lower member read (struct_extract)"
 
@@ -111,10 +110,9 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       let v = gen_expr b value in
       ignore (emit b (Sil.Store (v, Hashtbl.find b.vars name)) Types.TVoid)
   | Ast.Set_member { obj; field; value; _ } ->
-      (* TODO(10): `p.x = e`. This is where VALUE SEMANTICS lives: take the ADDRESS of the field
-         inside p's OWN slot (Hashtbl.find b.vars obj gives the slot), then store into it. Use
-         `Sil.Struct_element_addr (slot, index)` to get the field address, then `Sil.Store (v, addr)`.
-         Because each struct variable has its own slot, writing p.x never touches a copy q. *)
+      (* TODO(10): `p.x = e` — where VALUE SEMANTICS lives. Write THROUGH p's own slot (address of
+         the field, then store), which is why assigning to p.x can never be observed through a
+         copy q. §2. *)
       ignore (obj, field, value);
       failwith "TODO(10-silgen): lower member write (struct_element_addr + store)"
   | Ast.Expr_stmt (e, _) -> ignore (gen_expr b e)

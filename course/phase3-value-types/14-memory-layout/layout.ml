@@ -32,13 +32,9 @@ let rec info_of (m : Sil.modul) (t : Types.ty) : info =
       { size = 8 + i.size; align = 8 } (* { i64 tag, T } *)
 
 and struct_info (m : Sil.modul) (fields : (string * Types.ty) list) : info =
-  (* TODO(14a): lay out the fields in declaration order. Walk an [off] (running byte offset,
-     start 0) and an [align] (running max alignment, start 1). For each field type [ft], get
-     its `info_of m ft`; the field starts at `round_up off field.align` (pad up to its own
-     alignment), then [off] advances by the field's size, and [align] is `max`'d with the
-     field's alignment. The struct's size is the final [off]; its alignment the final [align].
-     (This is why `{Int; Bool}` is size 9 but `{Bool; Int}` is size 16 — the padding lands in
-     different places.) *)
+  (* TODO(14a): the padding walk, in DECLARATION order — each field starts at the next offset
+     that satisfies its own alignment, and the struct's alignment is the widest of them. Field
+     order therefore changes the size; §2 works the examples. *)
   ignore (m, fields, round_up, info_of);
   failwith "TODO(14a-layout): the struct padding walk"
 
@@ -49,9 +45,8 @@ let stride (i : info) : int = max 1 (round_up i.size (max 1 i.align))
 
 (* the byte offset of each stored property — same padding walk, remembering each start *)
 let field_offsets (m : Sil.modul) (fields : (string * Types.ty) list) : (string * int) list =
-  (* TODO(14b): the same padding walk, but REMEMBER each field's start offset. Map each
-     `(name, ft)` to `(name, its byte offset)` — the offset is `round_up off ft.align`, and
-     [off] then advances past the field's size. *)
+  (* TODO(14b): the same walk, keeping each field's start offset — what `MemoryLayout.offset(of:)`
+     reports. *)
   ignore (m, fields);
   failwith "TODO(14b-layout): the field offsets"
 

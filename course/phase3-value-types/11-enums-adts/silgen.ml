@@ -95,9 +95,7 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       else emit b (Sil.Print (List.hd argvs)) Types.TVoid
   (* `E.case` — a no-payload enum case (concept 11) *)
   | Ast.Member (Ast.Var (tn, _), case, _) when Hashtbl.mem b.enums tn ->
-      (* TODO(11): build a no-payload enum value. The case's tag is its index:
-         `Types.case_index (Hashtbl.find b.enums tn) case`. Emit `Sil.Enum (tag, [])` of type
-         `Types.TEnum tn`. *)
+      (* TODO(11): a case with no payload — its TAG is its index in the declaration. §2. *)
       ignore (tn, case);
       failwith "TODO(11-silgen): construct a no-payload enum case"
   | Ast.Member (e0, fld, _) -> (
@@ -111,8 +109,7 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       | _ -> assert false)
   (* `E.case(args)` — a payload-carrying enum case (concept 11) *)
   | Ast.Method_call (Ast.Var (tn, _), case, args, _) when Hashtbl.mem b.enums tn ->
-      (* TODO(11): gen_expr each argument to a payload value, then emit `Sil.Enum (tag, payloads)`
-         (tag = the case's index, as above). *)
+      (* TODO(11): the same, carrying the evaluated arguments as the payload. *)
       ignore (tn, case, args);
       failwith "TODO(11-silgen): construct a payload-carrying enum case"
   | Ast.Method_call _ -> assert false (* sema rejected non-enum method calls *)

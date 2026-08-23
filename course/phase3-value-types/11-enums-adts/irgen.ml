@@ -141,12 +141,8 @@ let emit_llvm (m : Sil.modul) : string =
           Hashtbl.replace opnd v r
       (* enums — concept 11: a tagged union { tag at #0, payload at #1.. } *)
       | Sil.Enum _ | Sil.Enum_tag _ ->
-          (* TODO(11-irgen): lower the enum instructions (emit with `p`, record the result via
-             `Hashtbl.replace opnd v (fresh ())`). The enum type is `llty (vty …)`:
-               Enum (tag, payload) -> build the aggregate from `undef`: first
-                 `insertvalue <enumTy> undef, i64 <tag>, 0` (the tag at field #0), then a chain of
-                 `insertvalue … <payloadᵢ>, i+1` for each payload value
-               Enum_tag a          -> `%t = extractvalue <enumTy of a> <a>, 0`  (read the tag) *)
+          (* TODO(11-irgen): the two enum instructions. The representation is in §2: a tag at field
+             #0 and the payload after it. *)
           ignore (v, i);
           failwith "TODO(11-irgen): lower the enum instruction (insertvalue/extractvalue)"
     in

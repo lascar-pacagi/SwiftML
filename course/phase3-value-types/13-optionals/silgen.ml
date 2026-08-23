@@ -142,10 +142,8 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
   (* optionals are an enum { none(tag 0); some(tag 1, payload) } — concept 13 *)
   | Ast.Nil _ -> assert false (* nil only appears in a checked context; gen_expr_as handles it *)
   | Ast.Force_unwrap (e0, _) ->
-      (* TODO(13): `e!`. gen_expr e0 to the optional value `ov` (its type is `Types.TOptional t`).
-         Read its tag (`Sil.Enum_tag`); if it's 1 (some), branch to a cont-block, else to a trap-block
-         that `terminate`s with `Sil.Trap "Fatal error: Unexpectedly found nil while unwrapping an
-         Optional value"`. In the cont-block, the result is `Sil.Enum_payload (ov, 0)`. *)
+      (* TODO(13): `e!` — a tag test, and on `none` a `Sil.Trap` whose message and exit code the
+         tests compare against swiftc's. §2 quotes it. *)
       ignore e0;
       failwith "TODO(13-silgen): lower force-unwrap (tag check, trap on nil, extract payload)"
   (* ternary `c ? a : b` — a value-producing diamond (the general case of `&&`/`||`): evaluate the
@@ -167,19 +165,16 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       switch_to b merge;
       emit b (Sil.Load slot) t
   | Ast.Coalesce (a, bexpr, _) ->
-      (* TODO(13): `a ?? b`. gen a to `av : T?`. The result merges two paths, so alloc a slot of the
-         payload type `t`. If `av`'s tag is 1 (some), store `Enum_payload (av, 0)` into the slot; else
-         store `gen_expr_as b bexpr t` (the default). Both branches Br to a merge; then load the slot. *)
+      (* TODO(13): `a ?? b` — two paths producing one value, so it needs a slot to merge through
+         (the same shape a value-producing `if` needs). §2. *)
       ignore (a, bexpr);
       failwith "TODO(13-silgen): lower nil-coalescing (?? )"
 
 (* lower `e` where an optional is expected — concept 13 *)
 and gen_expr_as (b : builder) (e : Ast.expr) (expected : Types.ty) : Sil.value =
-  (* TODO(13): the wrap. When `expected` is `Types.TOptional t`:
-       - `nil` lowers to the `none` case: `Sil.Enum (0, [])` of type `expected`
-       - a value already of type `expected` passes through unchanged
-       - any other value `v : t` is implicitly wrapped to `.some(v)`: `Sil.Enum (1, [v])`
-     When `expected` is not optional, just `gen_expr b e`. *)
+  (* TODO(13): the IMPLICIT WRAP — where a `T?` is expected, `nil` becomes `.none`, an already
+     optional value passes through, and anything else is wrapped as `.some`. This is the one
+     place the enum-as-sugar story becomes code; §2 has the table. *)
   ignore expected;
   gen_expr b e
 
@@ -247,10 +242,8 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       | None -> ());
       switch_to b merge
   | Ast.If_let { name; opt; then_blk; else_blk; _ } ->
-      (* TODO(13): `if let x = opt`. Like an `if`, but the condition is "opt is `.some`": gen opt to
-         `ov : T?`, check `Enum_tag ov == 1`, `cond_br` to a then-block / else-(or merge-)block. In the
-         then-block, BIND x = `Enum_payload (ov, 0)` (alloc_stack + store, like a let), then gen_block
-         the body. Both branches Br to merge; switch_to merge. (Compare the `if`/`switch` lowerings.) *)
+      (* TODO(13): `if let x = opt` — an `if` whose condition is the tag test, and whose then-block
+         opens by binding x to the payload. Compare the `if` and `switch` lowerings. §2. *)
       ignore (name, opt, then_blk, else_blk);
       failwith "TODO(13-silgen): lower `if let` (some-check + bind payload)"
   | Ast.While { cond; body; _ } ->

@@ -120,12 +120,8 @@ let emit_llvm (m : Sil.modul) : string =
       | Sil.Print x -> gen_print x
       (* structs — concept 10 *)
       | Sil.Struct _ | Sil.Struct_extract _ | Sil.Struct_element_addr _ ->
-          (* TODO(10-irgen): lower the three struct instructions (emit with `p`, record the
-             result via `Hashtbl.replace opnd v (fresh ())`). The struct type is `llty (vty …)`:
-               Struct fields            -> build the aggregate from `undef` with a chain of
-                                           `%t = insertvalue <structTy> <acc>, <fieldTy> <fv>, <idx>`
-               Struct_extract (a, idx)  -> `%t = extractvalue <structTy of a> <a>, idx`
-               Struct_element_addr(a,i) -> `%t = getelementptr <structTy of a>, ptr <a>, i32 0, i32 i` *)
+          (* TODO(10-irgen): the three struct instructions — build an aggregate, read a field out of a
+             VALUE, take the address of a field in a SLOT. §2 gives the LLVM for each. *)
           ignore (v, i);
           failwith "TODO(10-irgen): lower the struct instruction (insertvalue/extractvalue/getelementptr)"
     in
