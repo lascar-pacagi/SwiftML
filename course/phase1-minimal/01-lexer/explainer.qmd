@@ -551,10 +551,18 @@ Net effect: the scanning pass allocates *essentially nothing per token*. That's 
 concept:
 
 - **`TODO(01-v1a)` — `lex`**, the scanning loop. The soup type, the growable arrays and their
-  `push`, and the trivia `skip` are given; you write the token loop. The rules are the three moves
-  above: offsets only, no `Token.t`/`span`/`pos`, and no `String.sub` or `int_of_string` in the loop.
-- **`TODO(01-v1b)` — `pos_of`**, the binary search that turns a byte offset into `line:col` against
-  the line-start table. This is the piece that *lets* the hot loop ignore positions.
+  `push`, and the trivia `skip` are given; you write the token loop. Shape: until you have pushed
+  `t_eof`, call `skip ()`, stop at end of input, else read `s = !pos` and dispatch — digits munch
+  into `t_int`, an identifier head munches into `t_ident`, the single-character operators and `'\n'`
+  push a one-byte token, and anything else is `error s (s + 1) "invalid character in source file"`
+  followed by carrying on (no token pushed), exactly the recovery v0 does. The rules are the three
+  moves above: offsets only, no `Token.t`/`span`/`pos`, and no `String.sub` or `int_of_string` in
+  the loop. Mind the end of the buffer — `g` is `String.unsafe_get`, so an off-by-one reads past the
+  string instead of raising; test `!pos < len` after `skip ()` and in every munch loop.
+- **`TODO(01-v1b)` — `pos_of`**, the search that turns a byte offset into `line:col` against the
+  line-start table `ls`: find the **last index `i` with `ls.(i) <= off`**, then `line = i + 1` and
+  `col = off - ls.(i) + 1` (both 1-based) and `offset = off`. Binary-search it — this is the piece
+  that *lets* the hot loop ignore positions, and it is the only caller of the table in the rung.
 
 The two holes are **independent**, and the tests know it — each has its own check that stays
 skipped until you start that piece:

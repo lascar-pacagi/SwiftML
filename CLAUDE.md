@@ -62,6 +62,21 @@ fill them in. `solution/` is the frozen answer key (kept out of the build via `(
 benchmarkable — e.g. `solution/regalloc_v0_stack.ml`, `…_v1_linscan.ml`, `…_v2_graphcolor.ml`.
 Don't collapse the ladder. Start naive/correct, then climb (à la siboehm CUDA-MMM).
 
+## Skeletons carry the contract; the explainer carries the lesson
+
+A concept-dir skeleton states **what the function must produce and the properties the tests
+enforce**, then points at the explainer section that walks it through — three or four lines, not a
+transcription of §3. The learner should be able to open the file and try it cold, with the help one
+deliberate click away, instead of having to fold comments away to avoid reading the answer. Two
+rules make that safe:
+
+- **No information may be lost.** Anything trimmed from a skeleton must already exist in the
+  explainer (spec in §3/§5, code in §8) — check before deleting, and move it if it doesn't.
+- **Comments on GIVEN code stay.** The cursor helpers, the contracts, the `push`/`skip` machinery
+  the learner never edits: those comments are documentation, not hints, and they earn their place.
+
+Applied to 01-lexer and 02-parser (2026-08-23); the older concepts still carry inline walk-throughs.
+
 ## The explainer is the lesson (REQUIRED)
 
 `explainer.qmd` is a full tutorial, never a stub. A learner enters from zero and can do the work
