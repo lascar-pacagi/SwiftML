@@ -7,17 +7,26 @@
 # stage just those hunks (`git add -p`) and commit with SKELETON_FIX=1.
 #
 #   install:  make setup-hooks
-#   bypass:   SKELETON_FIX=1 git commit ...   (or --no-verify)
+#   bypass:   SKELETON_FIX="<path> [<path>...]" git commit ...   (or --no-verify)
+#             The paths must be NAMED. A blanket bypass is what lets a stray `git add -A`
+#             sweep every claimed file into a commit — it has happened.
 set -uo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 mine="$root/course/work/.mine"
 [ -f "$mine" ] || exit 0
-[ "${SKELETON_FIX:-0}" = "1" ] && exit 0
+allow="${SKELETON_FIX:-}"
+if [ "$allow" = "1" ]; then
+  echo "pre-commit: SKELETON_FIX=1 is no longer accepted — name the files you mean, e.g."
+  echo "            SKELETON_FIX=\"course/phase1-minimal/01-lexer/lexer.ml\" git commit ..."
+  exit 1
+fi
 
 blocked=()
 while IFS= read -r path; do
-  grep -Fxq "$path" "$mine" && blocked+=("$path")
+  grep -Fxq "$path" "$mine" || continue
+  case " $allow " in *" $path "*) continue ;; esac
+  blocked+=("$path")
 done < <(git diff --cached --name-only --diff-filter=ACM)
 
 [ ${#blocked[@]} -eq 0 ] && exit 0

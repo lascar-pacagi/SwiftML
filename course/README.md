@@ -42,7 +42,7 @@ make claim-all       # mark every concept's stage files as yours — the hook no
 ```
 
 Corrections to the *given* parts of a claimed file still go through: stage those hunks with
-`git add -p` and commit with `SKELETON_FIX=1`. Two more helpers:
+`git add -p` and commit with `SKELETON_FIX="<the path>"` (naming the file, not a blanket bypass). Two more helpers:
 
 ```bash
 make save                                 # snapshot your claimed files into gitignored work/

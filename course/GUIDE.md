@@ -209,8 +209,11 @@ have claimed (a helper, a comment, a signature). Stage just those hunks and say 
 
 ```bash
 git add -p course/phase1-minimal/01-lexer/lexer.ml
-SKELETON_FIX=1 git commit -m "01-lexer: fix the trivia comment"
+SKELETON_FIX="course/phase1-minimal/01-lexer/lexer.ml" git commit -m "01-lexer: fix the trivia comment"
 ```
+
+The bypass takes the **paths you mean**, not a blanket `1`. That is deliberate: a blanket
+bypass plus a habitual `git add -A` is exactly how a set of solutions ends up in a commit.
 
 Two more targets round it out:
 
