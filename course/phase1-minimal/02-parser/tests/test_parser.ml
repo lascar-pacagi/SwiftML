@@ -64,6 +64,30 @@ let test_expr_errors () =
   Alcotest.(check bool) "trailing operator is reported" true (ndiags_expr "1 +" >= 1);
   Alcotest.(check bool) "missing ')' is reported" true (ndiags_expr "print(1" >= 1)
 
+(* Spans. Nothing downstream can point at source without them: concept 03 reports
+   "cannot find 'x' in scope" AT a span, and Phase 8 turns statement spans into DWARF
+   lines. The dump above is span-free, so these are the only assertions that check them. *)
+let lo_col (e : Ast.expr) = (Ast.expr_span e).Token.lo.Token.col
+let hi_col (e : Ast.expr) = (Ast.expr_span e).Token.hi.Token.col
+
+let test_expr_spans () =
+  (match Parser.parse_expr (mk "1 + 2 * 3") with
+  | Ast.Binary (_, l, r, sp) ->
+      Alcotest.(check int) "a binary starts where its LEFT operand starts" (lo_col l)
+        sp.Token.lo.Token.col;
+      Alcotest.(check int) "...and ends where its RIGHT operand ends" (hi_col r)
+        sp.Token.hi.Token.col
+  | _ -> Alcotest.fail "expected a binary at the root");
+  (match Parser.parse_expr (mk "-5 + 8") with
+  | Ast.Binary (_, Ast.Unary (_, _, us), _, _) ->
+      Alcotest.(check int) "unary minus starts at the '-'" 1 us.Token.lo.Token.col
+  | _ -> Alcotest.fail "expected (+ (- 5) 8)");
+  match Parser.parse_expr (mk "print(1 + 2)") with
+  | Ast.Call (_, _, sp) ->
+      Alcotest.(check int) "a call starts at the callee" 1 sp.Token.lo.Token.col;
+      Alcotest.(check int) "...and covers the closing paren" 13 sp.Token.hi.Token.col
+  | _ -> Alcotest.fail "expected a call"
+
 (* --- layer 2: statements (TODO(02b)) — parse_stmt only -------------------------- *)
 let test_stmt_kinds () =
   (match Parser.parse_stmt (mk "let a = 6") with
@@ -78,6 +102,17 @@ let test_stmt_kinds () =
   match Parser.parse_stmt (mk "print(1)") with
   | Ast.Expr_stmt (Ast.Call ("print", [ _ ], _), _) -> ()
   | _ -> Alcotest.fail "expected a print call expression statement"
+
+(* A malformed binding is reported by parse_stmt, not by the expression parser. *)
+let ndiags_stmt (src : string) : int =
+  let p, d = mk_d src in
+  ignore (Parser.parse_stmt p);
+  List.length (Diagnostics.all d)
+
+let test_stmt_errors () =
+  Alcotest.(check int) "a good binding is clean" 0 (ndiags_stmt "let a = 1");
+  Alcotest.(check bool) "missing name is reported" true (ndiags_stmt "let = 1" >= 1);
+  Alcotest.(check bool) "missing '=' is reported" true (ndiags_stmt "let a 1" >= 1)
 
 (* --- layer 3: whole programs (TODO(02c)) ---------------------------------------- *)
 let parse (src : string) : Ast.program * Diagnostics.sink =
@@ -101,6 +136,16 @@ let test_program_blank_lines () =
   Alcotest.(check int) "a last line without a newline still counts" 1
     (List.length (prog "print(1)").Ast.stmts)
 
+(* Recovery: one run reports the broken line AND still returns the good statements.
+   The base parser manages this because the prefix error consumes a token (§3); §9's
+   exercise 1 makes it deliberate with skip-to-newline panic mode. *)
+let test_program_recovery () =
+  let p, d = mk_d "let a = 1\nlet b = *\nprint(a)\n" in
+  let prog = Parser.parse_program p in
+  Alcotest.(check bool) "the bad line is reported" true (List.length (Diagnostics.all d) >= 1);
+  Alcotest.(check bool) "parsing continued to the end" true
+    (List.length prog.Ast.stmts >= 2)
+
 let test_program_errors () =
   Alcotest.(check int) "a valid program is clean" 0 (ndiags "let a = 1\nprint(a)\n");
   (* two statements on one line: the program layer is what notices *)
@@ -114,10 +159,13 @@ let () =
       ("expr: unary", [ Alcotest.test_case "unary minus" `Quick test_expr_unary ]);
       ("expr: calls", [ Alcotest.test_case "comma-separated args" `Quick test_expr_calls ]);
       ("expr: errors", [ Alcotest.test_case "diagnostics from an expression" `Quick test_expr_errors ]);
+      ("expr: spans", [ Alcotest.test_case "spans cover their operands" `Quick test_expr_spans ]);
       (* layer 2 — TODO(02b), needs parse_stmt (and your expression parser) *)
       ("stmt: kinds", [ Alcotest.test_case "statement kinds" `Quick test_stmt_kinds ]);
+      ("stmt: errors", [ Alcotest.test_case "malformed bindings" `Quick test_stmt_errors ]);
       (* layer 3 — TODO(02c), the only group that genuinely needs parse_program *)
       ("program: many statements", [ Alcotest.test_case "several statements" `Quick test_program_multi ]);
       ("program: blank lines", [ Alcotest.test_case "newlines and eof" `Quick test_program_blank_lines ]);
       ("program: errors", [ Alcotest.test_case "statement separators" `Quick test_program_errors ]);
+      ("program: recovery", [ Alcotest.test_case "reports and keeps going" `Quick test_program_recovery ]);
     ]

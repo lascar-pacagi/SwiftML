@@ -5,6 +5,27 @@
 ; Alcotest unit tests for the parser — assert AST structure + diagnostics in-process.
 (test
  (name test_parser)
+ (modules test_parser)
  (libraries alcotest swiftml_parser)
  (flags
   (:standard -warn-error -a)))
+
+; The §6 EXERCISE tests. They run under `make lab` too, but each group probes whether you
+; have started that exercise and reports "skipped" if not.
+;   make exercises C=phase1-minimal/02-parser
+(executable
+ (name test_exercises)
+ (modules test_exercises)
+ (libraries alcotest swiftml_parser)
+ (flags
+  (:standard -warn-error -a)))
+
+(rule
+ (alias exercises)
+ (action
+  (run ./test_exercises.exe)))
+
+(rule
+ (alias runtest)
+ (action
+  (run ./test_exercises.exe)))

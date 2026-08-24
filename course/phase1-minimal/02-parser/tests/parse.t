@@ -50,3 +50,13 @@ statement — it needs one token of lookahead past the identifier to see the `=`
   $ swiftml --emit-ast h.swift
   (var c 1)
   (= c (* c 2))
+
+A malformed program is REPORTED, not silently accepted: diagnostics go to stderr as
+`line:col: error: …` and the compile fails. The wording is yours (§6 exercise 1 improves
+it), so this checks the shape only.
+
+  $ printf 'let a = 1\nlet b = *\nprint(a)\n' > bad.swift
+  $ swiftml --emit-ast bad.swift 2>&1 >/dev/null | grep -q 'error:' && echo reported
+  reported
+  $ swiftml --emit-ast bad.swift > /dev/null 2>&1; echo "exit=$?"
+  exit=1
