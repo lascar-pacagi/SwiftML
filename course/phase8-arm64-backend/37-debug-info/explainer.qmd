@@ -77,7 +77,7 @@ points at nothing and `lldb` finds no line info. The fix is to **keep the `.o`**
 
 ### What you can do with it
 
-```
+```bash
 $ swiftml8 build square.swift --native -o square      # builds square + square.o (with DWARF)
 $ lldb square
 (lldb) breakpoint set --file square.swift --line 3

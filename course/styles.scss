@@ -1,0 +1,24 @@
+/*-- scss:defaults --*/
+// A calmer, tighter code block: the explainers are mostly code, so it has to read
+// like an editor rather than like prose.
+$code-block-bg:          #f7f8fa;
+$code-block-border-left:  #b9c2cc;
+$font-family-monospace:   "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+
+/*-- scss:rules --*/
+pre > code.sourceCode {
+  font-size: 0.82rem;      // smaller than the prose, so long OCaml lines fit
+  line-height: 1.45;
+  tab-size: 2;
+}
+
+div.sourceCode {
+  border-radius: 4px;
+  padding: 0.15rem 0.1rem;
+}
+
+// inline `code` should not shout
+code:not(.sourceCode) { font-size: 0.88em; }
+
+// keep indentation intact: scroll rather than wrap (set in _quarto.yml too)
+pre code { white-space: pre; }

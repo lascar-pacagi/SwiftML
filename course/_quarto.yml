@@ -9,15 +9,22 @@ project:
 
 format:
   html:
-    theme: cosmo
+    theme: [cosmo, styles.scss]
     toc: true
     toc-depth: 3
     code-copy: true
-    code-overflow: wrap
-    highlight-style: github
+    # scroll, NOT wrap: wrapping a long OCaml line destroys its indentation
+    code-overflow: scroll
+    highlight-style:
+      light: arrow
+      dark: dracula
   typst:
     toc: true
     papersize: a4
+    # the PDF is mostly code; shrink it so lines stop wrapping mid-expression
+    include-in-header:
+      - text: |
+          #show raw: set text(size: 8.2pt)
 
 # Cache executed code so re-renders are fast; explainers use static code blocks by default.
 execute:
