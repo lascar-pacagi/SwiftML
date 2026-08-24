@@ -42,6 +42,10 @@ let test_expr_unary () =
 
 let test_expr_calls () =
   check_expr "a call is a primary" "(print 1)" "print(1)";
+  (* the two ends of the argument list: none at all, and one that STARTS with a paren *)
+  (* dump_expr joins args with a space, so a no-argument call renders with a trailing one *)
+  check_expr "zero arguments" "(f )" "f()";
+  check_expr "an argument may start with '('" "(print (* (+ 1 2) 3))" "print((1 + 2) * 3)";
   match Parser.parse_expr (mk "f(1, 2, 3)") with
   | Ast.Call ("f", [ a; b; c ], _) ->
       Alcotest.(check string) "arg0" "1" (Ast.dump_expr a);
