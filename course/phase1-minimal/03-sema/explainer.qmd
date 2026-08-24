@@ -23,8 +23,9 @@ later phase extends.
 Name resolution needs to know what's in scope at each point. In Phase 1 the scope is flat (all
 top-level), so an environment can be as simple as a `string list` (or `Set`/`Hashtbl`) of declared
 names. The rule for `let`/`var` is subtle and worth getting right: the initializer is checked **in
-the scope *before* the new name is added**, so `let x = x` is an error (`x` isn't in scope yet) —
-exactly as in Swift. Add the name *after* checking the initializer.
+the scope *before* the new name is added**, so `let x = x` is an error (`x` isn't in scope yet), as
+in Swift. Add the name *after* checking the initializer. (swiftc *rejects* it too but words it
+differently — see "Diagnostics are the product" below.)
 
 ![Sema is one walk threading an environment: each statement is checked against the env-so-far, then extends it. Both classic rejections fall out of the threading order — `let x = x` fails because the initializer is checked *before* `x` is added, and `a = 9` fails because the env records that `a` is a `let`.](figs/env_walk.png)
 
@@ -52,6 +53,47 @@ Building it now means Phase 2 is an edit, not a rewrite.
 > `CSSolver.cpp` solves them). That machinery exists because Swift's inference is bidirectional and
 > overload-heavy; our Phase-1 version is the degenerate case where every node is `Int`.
 
+### Diagnostics are the product
+
+In 01 and 02 `Diagnostics` was scaffolding: it existed so a malformed *file* had somewhere to
+report to. Here it becomes the point. Every program that reaches Sema already lexed and parsed —
+it is well-formed Swift text. So from this stage on, "the compiler rejected my program" **is** a
+message, and that message is the entire user-visible output of a failed compile. The wording is
+not decoration; it is the specification of the stage, and the tests treat it that way: the cram
+test greps the exact substring, and `tests/test_sema.ml` asserts the exact string with `List.mem`.
+`"cannot find 'y' in scope."` — one trailing period — fails.
+
+That raises an obvious question: *whose* wording? swiftc's. It is the behavioral oracle for
+messages exactly as it is for output, and asking it takes one command:
+
+```bash
+swiftc -typecheck bad.swift                    # the authority
+dune exec swiftml -- --typecheck bad.swift     # ours, same stage, no codegen
+```
+
+`--typecheck` is our `swiftc -typecheck`: lex → parse → sema and stop. It exists so Sema can be
+exercised alone, without a working IRGen underneath it — which is why the tests for *this* concept
+use it, and why you can compare the two compilers side by side while the rest of the pipeline is
+still a skeleton.
+
+`make oracle` (see §4) is the coarser, automatic version of the same comparison, and it is worth
+knowing precisely what it does and does not check.
+
+Where we knowingly diverge, say so rather than pretend. swiftc has three different messages for
+what our Phase-1 sema treats as one rule:
+
+| program | swiftc says | swiftml says |
+|---|---|---|
+| `print(y)` | `cannot find 'y' in scope` | same |
+| `let k = 1; k = 2` | `cannot assign to value: 'k' is a 'let' constant` | same |
+| `let a = a` (top level) | `circular reference` | `cannot find 'a' in scope` |
+| `let a = a` (in a func) | `use of local variable 'a' before its declaration` | *(no funcs yet)* |
+
+Both compilers *reject* all four; we match two of the messages and consciously pick one wording for
+the third, because Phase 1 has one flat scope and no notion of a reference cycle. Matching text is a
+goal, not a fetish — but a divergence you chose and documented is a different thing from one you
+never noticed.
+
 ## 3. Build it, step by step
 
 Open `sema.ml` in this directory. Implement `check (prog) (diags)`:
@@ -78,8 +120,44 @@ familiar — but the test only needs the substring `in scope`.
 make lab C=phase1-minimal/03-sema
 ```
 
-The cram test feeds an undeclared-name program and greps the diagnostic; it also confirms a valid
-program is accepted (exit 0, no diagnostics).
+Two layers, both driven through `--typecheck` so they test Sema and nothing downstream:
+
+- **`tests/sema.t`** (cram) — a valid program produces *no* diagnostics and exits 0 (it reassigns a
+  `var` and refers to earlier bindings; none of that may be falsely rejected), then four rejections
+  each grep their message and check the exit code is 1.
+- **`tests/test_sema.ml`** (alcotest) — runs the front end in-process and compares the **exact**
+  message strings, plus the arity rule `print(_:) expects exactly one argument`. This is the strict
+  one: a substring is not enough, the whole message has to match.
+
+### Checking yourself against swiftc
+
+`make oracle` is the differential test against the behavioral oracle:
+
+```bash
+make oracle F=tests/programs/arith.swift        # Phase-1 swiftml by default
+make oracle F=prog.swift B=swiftml4             # or a later phase's binary
+```
+
+It compiles `F` **twice** — once with `swiftc`, once with our compiler — runs both binaries, and
+compares three things: whether each compiler accepted the program at all, the program's stdout, and
+its exit code. Identical on all three ⇒ `OK`; otherwise it prints a diff and our compile output.
+That is the headline correctness check of the whole project, and `tooling/oracle.sh` is 60 lines you
+can read.
+
+Note carefully what it gives you *here*. For a program that both compilers **reject**, the oracle
+can only see that they agreed to reject it — it never compares the two error messages, because a
+failed compile produces no program to run. Run it on the untouched skeleton and you will see the
+trap:
+
+```console
+$ make oracle F=/tmp/bad.swift        # bad.swift is `print(y)`
+OK  /tmp/bad.swift  (status=compile-error exit=0)
+```
+
+Green — and meaningless. swiftc refused because `y` is undeclared; we refused because `Sema.check`
+is still `failwith "TODO"`. So: use `make oracle` to pin down *accept vs reject* (that is what
+Exercise 1 below asks you to do), and read the messages yourself with the two `-typecheck`
+commands from §2. The alcotest file is where the wording gets locked in for good.
 
 ## 5. Benchmark it
 
