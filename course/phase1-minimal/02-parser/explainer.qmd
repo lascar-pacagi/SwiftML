@@ -18,6 +18,11 @@ You'll turn the flat token list into a **tree** — the AST — that captures st
 - **You implement:** `parse_expr_bp`, `parse_stmt`, `parse_program` in `parser.ml` (this dir).
 - **Outcome:** `swiftml --emit-ast arith.swift` prints the correct tree; Sema (03) and IRGen (04)
   consume it.
+- **Two rungs** (the README's version table). `v0_parse` is what you are about to write: it accepts
+  the grammar and reports what it cannot parse. **`v1_recovery`** is the optional second rung —
+  after a diagnostic, resync to the next newline so one broken line does not cascade into five
+  errors. §6's first exercise *is* that rung, and §9 measures the difference: six diagnostics
+  become two.
 
 ## 2. Concepts in depth
 
@@ -217,9 +222,10 @@ Not perf-critical in Phase 1. (Parsing throughput becomes interesting at stdlib 
 
 ## 6. Exercises
 
-1. Make `parse_prefix` report a *good* error (with the offending token) instead of a placeholder,
-   then implement `v1_recovery`: skip to the next `Newline` and keep parsing, so multiple errors
-   are reported in one run.
+1. Make `parse_prefix` report a *good* error (naming the offending token) instead of a bare
+   placeholder, then build the **`v1_recovery`** rung from §1: after a broken statement, skip to
+   the next `Newline` and keep parsing, so one run reports one error per broken line instead of a
+   cascade.
 2. Add right-associative exponentiation `**`, binding tighter than `*`, and verify that
    `2 ** 3 ** 2` groups as `2 ** (3 ** 2)` (use `bp` instead of `bp + 1` for the right
    recursion). Do it **without touching the lexer**: `token.ml` and `lexer.ml` belong to
