@@ -60,7 +60,22 @@ let test_ex1_recovery () =
    Done inside parser.ml: two ADJACENT `*` tokens are the operator (the spans say whether
    they touch), it binds above `*`, it recurses at its own bp rather than bp + 1, and it
    desugars to the call `pow(a, b)` rather than growing the AST. *)
-let dump_expr_of (src : string) : string = Ast.dump_expr (Parser.parse_expr (fst (mk_d src)))
+(* The NAME you desugar to is yours — `pow`, `power`, whatever reads right — and if you
+   took the token route instead (a StarStar token and a Pow binop) that works too. This
+   printer normalises either shape to a single spelling, so the assertions below are about
+   PRECEDENCE and ASSOCIATIVITY, which is what the exercise is really testing. *)
+let power_names = [ "pow"; "power"; "powi"; "ipow"; "expt"; "exponent" ]
+
+let rec norm (e : Ast.expr) : string =
+  match e with
+  | Ast.Int_lit (n, _) -> string_of_int n
+  | Ast.Binary (op, l, r, _) ->
+      Printf.sprintf "(%s %s %s)" (Ast.string_of_binop op) (norm l) (norm r)
+  | Ast.Call (f, [ a; b ], _) when List.mem f power_names ->
+      Printf.sprintf "(** %s %s)" (norm a) (norm b)
+  | e -> Ast.dump_expr e
+
+let dump_expr_of (src : string) : string = norm (Parser.parse_expr (fst (mk_d src)))
 
 let ex2_started () =
   let p, d = mk_d "2 ** 3" in
@@ -74,9 +89,9 @@ let ndiags_expr (src : string) : int =
   List.length (Diagnostics.all d)
 
 let test_ex2_power () =
-  Alcotest.(check string) "** is RIGHT associative" "(pow 2 (pow 3 2))" (dump_expr_of "2 ** 3 ** 2");
-  Alcotest.(check string) "** binds tighter than *" "(* (pow 2 3) 4)" (dump_expr_of "2 ** 3 * 4");
-  Alcotest.(check string) "...and tighter than +" "(+ 1 (pow 2 3))" (dump_expr_of "1 + 2 ** 3");
+  Alcotest.(check string) "** is RIGHT associative" "(** 2 (** 3 2))" (dump_expr_of "2 ** 3 ** 2");
+  Alcotest.(check string) "** binds tighter than *" "(* (** 2 3) 4)" (dump_expr_of "2 ** 3 * 4");
+  Alcotest.(check string) "...and tighter than +" "(+ 1 (** 2 3))" (dump_expr_of "1 + 2 ** 3");
   (* a single star still means multiplication *)
   Alcotest.(check string) "one star is unchanged" "(* 2 3)" (dump_expr_of "2 * 3");
   (* and two stars that are NOT adjacent are not the operator *)

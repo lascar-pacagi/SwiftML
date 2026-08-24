@@ -437,8 +437,11 @@ let rec loop lhs =
   else match infix_bp (peek_kind p) with ...
 ```
 
-And rather than growing the AST, **desugar**: `a ** b` becomes the call `pow(a, b)`, a node that
-already exists. Sema and SILGen need no changes either, once `pow` is a known function.
+And rather than growing the AST, **desugar**: `a ** b` becomes a call — `pow(a, b)`, or `power`,
+or whatever name reads right to you — using a node that already exists. Sema and SILGen need no
+changes either, once that name is a known function. The exercise test accepts any of the sensible
+spellings, and it also accepts the token route if you took it: what it checks is the SHAPE, that
+`2 ** 3 ** 2` groups to the right and that `**` outranks `*`.
 
 ```
 2 ** 3 ** 2   (pow 2 (pow 3 2))     right-associative
