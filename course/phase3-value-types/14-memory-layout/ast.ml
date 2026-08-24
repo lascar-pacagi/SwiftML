@@ -99,7 +99,8 @@ let expr_span = function
   | Method_call (_, _, _, s)
   | Nil s
   | Force_unwrap (_, s)
-  | Coalesce (_, _, s) ->
+  | Coalesce (_, _, s)
+  | Ternary (_, _, _, s) ->
       s
 
 let string_of_binop = function
