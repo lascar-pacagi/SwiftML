@@ -45,6 +45,13 @@ primary    ::= Int
 args       ::= expr ( "," expr )*
 ```
 
+One deliberate gap: `args` has no TRAILING comma. Swift accepted one in 6.1 (SE-0439), and
+the toolchain you are checking against agrees — `swiftc -typecheck` is happy with
+`print(1,)`. Our grammar predates that and does not mention it, so whether your parser
+accepts `f(1,)` is unspecified here; the tests assert neither. It is a one-line change if
+you want the oracle's behaviour: let the argument loop stop when the token after a comma
+is `)`.
+
 Each production has a function, and that correspondence is the whole method of recursive descent:
 
 | production | function | notes |

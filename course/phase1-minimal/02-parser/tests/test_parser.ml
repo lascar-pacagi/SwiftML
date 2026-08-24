@@ -33,7 +33,11 @@ let test_expr_precedence () =
   check_expr "parentheses override" "(* (+ 1 2) 3)" "(1 + 2) * 3";
   check_expr "- is left associative" "(- (- 10 4) 3)" "10 - 4 - 3";
   check_expr "/ and % share a level, left assoc, above +" "(+ 1 (% (/ 20 4) 3))" "1 + 20 / 4 % 3";
-  check_expr "nested parens collapse" "7" "((7))"
+  check_expr "nested parens collapse" "7" "((7))";
+  (* every operator at once: both levels, both associativities, one derivation *)
+  check_expr "all five operators in one expression" "(- (+ 1 2) (% (/ (* 3 4) 5) 6))"
+    "1 + 2 - 3 * 4 / 5 % 6";
+  check_expr "a long chain stays left-leaning" "(+ (+ (+ 1 2) 3) 4)" "1 + 2 + 3 + 4"
 
 let test_expr_unary () =
   check_expr "unary minus then binary +" "(+ (- 5) 8)" "-5 + 8";
@@ -52,6 +56,10 @@ let test_expr_calls () =
       Alcotest.(check string) "arg1" "2" (Ast.dump_expr b);
       Alcotest.(check string) "arg2" "3" (Ast.dump_expr c)
   | _ -> Alcotest.fail "expected a 3-argument call (comma-separated args)"
+
+let test_expr_nested_calls () =
+  check_expr "a call may be an argument" "(print (f 1))" "print(f(1))";
+  check_expr "arguments are full expressions" "(f (+ 1 2) (- 3) 4)" "f(1+2, -3, (4))"
 
 (* diagnostics an EXPRESSION can raise on its own — no statement or program needed *)
 let ndiags_expr (src : string) : int =
@@ -99,9 +107,13 @@ let test_stmt_kinds () =
   (match Parser.parse_stmt (mk "c = c * 2") with
   | Ast.Assign { name = "c"; _ } -> ()
   | _ -> Alcotest.fail "expected an assignment (one token of lookahead past the ident)");
-  match Parser.parse_stmt (mk "print(1)") with
+  (match Parser.parse_stmt (mk "print(1)") with
   | Ast.Expr_stmt (Ast.Call ("print", [ _ ], _), _) -> ()
-  | _ -> Alcotest.fail "expected a print call expression statement"
+  | _ -> Alcotest.fail "expected a print call expression statement");
+  (* a bare expression is a statement too — not only calls *)
+  match Parser.parse_stmt (mk "1 + 2") with
+  | Ast.Expr_stmt (e, _) -> Alcotest.(check string) "bare expression statement" "(+ 1 2)" (Ast.dump_expr e)
+  | _ -> Alcotest.fail "expected an expression statement"
 
 (* A malformed binding is reported by parse_stmt, not by the expression parser. *)
 let ndiags_stmt (src : string) : int =
@@ -130,11 +142,42 @@ let test_program_multi () =
   | [ Ast.Let { is_var = false; _ }; Ast.Let { is_var = true; _ }; Ast.Assign _ ] -> ()
   | _ -> Alcotest.fail "expected let; var; assign"
 
+let dumps src = List.map Ast.dump_stmt (prog src).Ast.stmts
+
 let test_program_blank_lines () =
   Alcotest.(check int) "blank and comment-only lines are not statements" 2
     (List.length (prog "\n// just a comment\n\nlet a = 1\n\nprint(a)\n").Ast.stmts);
   Alcotest.(check int) "a last line without a newline still counts" 1
-    (List.length (prog "print(1)").Ast.stmts)
+    (List.length (prog "print(1)").Ast.stmts);
+  (* runs of newlines before, between and after the statements *)
+  Alcotest.(check (list string)) "multiple blank lines everywhere"
+    [ "(let a 1)"; "(print a)" ]
+    (dumps "\n\n\nlet a = 1\n\n\n\nprint(a)\n\n");
+  Alcotest.(check int) "an empty file is an empty program" 0 (List.length (prog "").Ast.stmts);
+  Alcotest.(check int) "...and reports nothing" 0 (ndiags "")
+
+(* Things the grammar does NOT accept. Each must be REPORTED — the parser is allowed to
+   recover however it likes, so these assert that a diagnostic exists, not how many. *)
+let rejects name src =
+  Alcotest.(check bool) (Printf.sprintf "%s: %S is rejected" name src) true (ndiags src >= 1)
+
+let test_program_rejects () =
+  rejects "missing initializer" "let a =\n";
+  rejects "name must be an identifier" "let 5 = 3\n";
+  rejects "missing '='" "let a 1\n";
+  rejects "keyword as a name" "let let = 1\n";
+  rejects "double '='" "a = = 3\n";
+  (* NOT here: `f(1,)`. Swift 6.1 accepted trailing commas (SE-0439) and swiftc 6.3
+     typechecks `print(1,)` happily, so a parser that rejects it is stricter than the
+     oracle — see §2. Our grammar has no rule for it either way, so neither behaviour is
+     asserted. *)
+  rejects "unclosed parenthesis" "(1 + 2\n";
+  rejects "a call needs its parentheses" "print 1\n";
+  rejects "a stray closing parenthesis" ")\n";
+  rejects "two operators in a row" "1 +* 2\n";
+  (* the control: none of the shapes above is rejected by accident *)
+  Alcotest.(check int) "a valid program is still clean" 0
+    (ndiags "let a = 1\nvar b = a * 2\nb = b - 1\nprint(b)\n")
 
 (* Recovery: one run reports the broken line AND still returns the good statements.
    The base parser manages this because the prefix error consumes a token (§3); §9's
@@ -158,6 +201,7 @@ let () =
       ("expr: precedence", [ Alcotest.test_case "precedence & associativity" `Quick test_expr_precedence ]);
       ("expr: unary", [ Alcotest.test_case "unary minus" `Quick test_expr_unary ]);
       ("expr: calls", [ Alcotest.test_case "comma-separated args" `Quick test_expr_calls ]);
+      ("expr: nesting", [ Alcotest.test_case "calls and parens nest" `Quick test_expr_nested_calls ]);
       ("expr: errors", [ Alcotest.test_case "diagnostics from an expression" `Quick test_expr_errors ]);
       ("expr: spans", [ Alcotest.test_case "spans cover their operands" `Quick test_expr_spans ]);
       (* layer 2 — TODO(02b), needs parse_stmt (and your expression parser) *)
@@ -168,4 +212,5 @@ let () =
       ("program: blank lines", [ Alcotest.test_case "newlines and eof" `Quick test_program_blank_lines ]);
       ("program: errors", [ Alcotest.test_case "statement separators" `Quick test_program_errors ]);
       ("program: recovery", [ Alcotest.test_case "reports and keeps going" `Quick test_program_recovery ]);
+      ("program: rejects", [ Alcotest.test_case "malformed programs are reported" `Quick test_program_rejects ]);
     ]
