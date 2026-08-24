@@ -120,6 +120,13 @@ let rec fv_expr (bound : string list) (e : Ast.expr) : string list =
   | Ast.Method_call (recv, _, args, _) -> go recv @ List.concat_map (fun (_, a) -> go a) args
   | Ast.Closure (ps, _, body, _) -> fv_expr (List.map (fun (p : Ast.param) -> p.Ast.pname) ps @ bound) body
   | Ast.Try (_, e, _) -> go e
+  | Ast.Array_lit (es, _) -> List.concat_map go es
+  | Ast.Subscript (a, i, _) -> go a @ go i
+  | Ast.Await (e, _) -> go e
+  | Ast.MacroExpr (_, args, _) ->
+      (* Macros.expand_program runs before SILGen, so this cannot occur — but leaving the
+         match partial is how the Ternary crash got in *)
+      List.concat_map go args
 
 (* ---- ARC helpers (concept 26) ---- *)
 (* MANAGED types — refcounted heap contexts: class references (26) and function values (29:

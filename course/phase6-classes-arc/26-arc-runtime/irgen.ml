@@ -134,6 +134,10 @@ let emit_llvm (m : Sil.modul) : string =
       | Types.TString -> p (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_str, ptr %s)\n" (op x))
       | Types.TDouble -> p (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_dbl, double %s)\n" (op x))
       | Types.TVoid -> ()
+      | t ->
+          (* sema rejects printing an aggregate, so reaching here is a compiler bug,
+             not a user error — say which type rather than dying in Match_failure *)
+          failwith (Printf.sprintf "IRGen: print of unsupported type %s" (Types.string_of_ty t))
     in
     let gen_instr (v, i) =
       match (i : Sil.instr) with
