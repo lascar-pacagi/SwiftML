@@ -171,7 +171,9 @@ let value_key (canon : Sil.value -> Sil.value) (rty : Types.ty) : Sil.instr -> s
       Some (Printf.sprintf "enum:%s:%d:%s" (t ()) tg (String.concat "," (List.map v p)))
   | Sil.Enum_tag a -> Some (Printf.sprintf "etag:%s" (v a))
   | Sil.Enum_payload (a, i) -> Some (Printf.sprintf "epay:%s:%d" (v a) i)
-  | Sil.Load _ | Sil.Store _ | Sil.Apply _ | Sil.Print _ | Sil.Alloc_stack _ | Sil.Struct_element_addr _ -> None
+  | Sil.Load _ | Sil.Store _ | Sil.Apply _ | Sil.Print _ | Sil.Alloc_stack _
+  | Sil.Struct_element_addr _ ->
+      None
 
 (* the dominance-scoped numbering walk *)
 let rec visit n =

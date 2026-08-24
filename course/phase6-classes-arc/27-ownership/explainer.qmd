@@ -186,7 +186,10 @@ let verify_ownership (m : modul) : string list =
                 (fun u ->
                   match Hashtbl.find_opt consumed_at u with
                   | Some j when j < idx ->
-                      add (Printf.sprintf "@%s bb%d: owned value %%%d used after being consumed" f.fname b.bid u)
+                      add
+                        (Printf.sprintf
+                           "@%s bb%d: owned value %%%d used after being consumed"
+                           f.fname b.bid u)
                   | _ -> ())
                 (operand_list i);
               List.iter (fun v -> if Hashtbl.mem owned v then Hashtbl.replace consumed_at v idx)

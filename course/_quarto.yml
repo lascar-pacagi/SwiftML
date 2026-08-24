@@ -21,10 +21,15 @@ format:
   typst:
     toc: true
     papersize: a4
-    # the PDF is mostly code; shrink it so lines stop wrapping mid-expression
+    # the PDF is mostly code: narrower margins and a smaller mono face fit ~103
+    # columns (the widest line in any explainer is 105), which is what stops long
+    # lines wrapping mid-expression
+    margin:
+      x: 1.9cm
+      y: 2.2cm
     include-in-header:
       - text: |
-          #show raw: set text(size: 8.2pt)
+          #show raw: set text(size: 7.6pt)
 
 # Cache executed code so re-renders are fast; explainers use static code blocks by default.
 execute:

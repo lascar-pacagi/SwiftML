@@ -180,7 +180,9 @@ let rec rename n (cur : Sil.value IMap.t) =
   (* (b) walk instructions: stores update the reaching value, loads are replaced — both deleted *)
   List.iter (fun (v, i) -> match i with
     | Sil.Store (x, a) when is_promo a -> cur := IMap.add a x !cur; Hashtbl.replace removed v ()
-    | Sil.Load a  when is_promo a -> Hashtbl.replace replace v (IMap.find a !cur); Hashtbl.replace removed v ()
+    | Sil.Load a when is_promo a ->
+        Hashtbl.replace replace v (IMap.find a !cur);
+        Hashtbl.replace removed v ()
     | _ -> ()) (List.rev b.Sil.instrs);
   (* (c) pass each successor's φs their current reaching values, on this block's branch *)
   let arg_list_for s =

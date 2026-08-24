@@ -225,17 +225,28 @@ let graphcolor (instrs : Arm64.instr array) : (int, loc) Hashtbl.t =
         Hashtbl.replace (Hashtbl.find adj a) b (); Hashtbl.replace (Hashtbl.find adj b) a ())) rest;
     pairs rest in
   pairs nodes;
-  let deg v rm = Hashtbl.fold (fun u () a -> if Hashtbl.mem rm u then a else a+1) (Hashtbl.find adj v) 0 in
+  let deg v rm =
+    Hashtbl.fold
+      (fun u () a -> if Hashtbl.mem rm u then a else a + 1)
+      (Hashtbl.find adj v) 0
+  in
   let removed = Hashtbl.create 32 and stack = ref [] in
   let remaining () = List.filter (fun v -> not (Hashtbl.mem removed v)) nodes in
   while remaining () <> [] do
     let rem = remaining () in
     let pick = match List.filter (fun v -> deg v removed < k) rem with v :: _ -> v
-      | [] -> List.fold_left (fun a v -> if deg v removed > deg a removed then v else a) (List.hd rem) (List.tl rem) in
+      | [] ->
+          List.fold_left
+            (fun a v -> if deg v removed > deg a removed then v else a)
+            (List.hd rem) (List.tl rem)
+    in
     Hashtbl.replace removed pick (); stack := pick :: !stack
   done;
   List.iter (fun v ->
-    let used = Hashtbl.fold (fun u () a -> match Hashtbl.find_opt assign u with Some (Reg r) -> r::a | _ -> a)
+    let used =
+      Hashtbl.fold
+        (fun u () a ->
+          match Hashtbl.find_opt assign u with Some (Reg r) -> r :: a | _ -> a)
                  (Hashtbl.find adj v) [] in
     match List.filter (fun r -> not (List.mem r used)) pool with
     | r :: _ -> Hashtbl.replace assign v (Reg r) | [] -> Hashtbl.replace assign v Spill) !stack;

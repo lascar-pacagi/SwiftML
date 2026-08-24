@@ -172,7 +172,8 @@ let expand_macro_expr (name : string) (_args : Ast.expr list) (span : Token.span
 (* 40b — statement macros *)
 let expand_macro_stmt (name : string) (args : Ast.expr list) (span : Token.span) : Ast.stmt option =
   match (name, args) with
-  | "assert", [ cond ] -> Some (Ast.If { cond; then_blk = []; else_blk = Some [ fatal_error span ]; span })
+  | "assert", [ cond ] ->
+      Some (Ast.If { cond; then_blk = []; else_blk = Some [ fatal_error span ]; span })
   | _ -> None
 ```
 

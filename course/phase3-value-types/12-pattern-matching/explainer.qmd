@@ -139,7 +139,9 @@ From `solution/silgen.ml` (dispatch) and `solution/sema.ml` (exhaustiveness):
     let disc = match enum_name with Some _ -> emit b (Sil.Enum_tag subj) Types.TInt | None -> subj in
     let merge = new_block b in
     let key_of = function
-      | Ast.PEnumCase (cn, _) -> Option.get (Types.case_index (Hashtbl.find b.enums (Option.get enum_name)) cn)
+      | Ast.PEnumCase (cn, _) ->
+          let el = Hashtbl.find b.enums (Option.get enum_name) in
+          Option.get (Types.case_index el cn)
       | Ast.PInt n -> n in
     let bind_payload = function
       | Ast.PEnumCase (cn, bindings) when enum_name <> None ->

@@ -154,7 +154,8 @@ From `solution/silgen.ml` (construction) and `solution/irgen.ml` (the LLVM):
     let acc = ref r0 in
     List.iteri (fun idx fv ->
       let r = fresh () in
-      p (Printf.sprintf "  %s = insertvalue %s %s, %s %s, %d\n" r ety !acc (llty (vty fv)) (op fv) (idx + 1));
+      p (Printf.sprintf "  %s = insertvalue %s %s, %s %s, %d\n"
+           r ety !acc (llty (vty fv)) (op fv) (idx + 1));
       acc := r) payload;
     Hashtbl.replace opnd v !acc
 | Sil.Enum_tag a ->

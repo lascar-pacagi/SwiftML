@@ -145,7 +145,11 @@ let fold_binop (op : Ast.binop) (a : cst) (b : cst) : cst option =
 let simplify_cfg (f : Sil.func) : Sil.func =
   let bcst = Hashtbl.create 64 in
   List.iter (fun (b : Sil.block) ->
-    List.iter (fun (v, i) -> match i with Sil.Bool_lit x -> Hashtbl.replace bcst v x | _ -> ()) b.Sil.instrs) f.Sil.blocks;
+    List.iter
+      (fun (v, i) ->
+        match i with Sil.Bool_lit x -> Hashtbl.replace bcst v x | _ -> ())
+      b.Sil.instrs)
+    f.Sil.blocks;
   List.iter (fun (b : Sil.block) -> match b.Sil.term with
     | Sil.Cond_br (c, (t, ta), (e, ea)) -> (match Hashtbl.find_opt bcst c with
         | Some true -> b.Sil.term <- Sil.Br (t, ta)

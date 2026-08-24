@@ -131,7 +131,7 @@ Watch three things: the comment-only first line still yields a `newline`; multi-
 `int(8)` (maximal munch); and the trailing `/* prints 37 */` is dropped, but its line's `\n` is not.
 
 ```
-newline          # line 1 was only `// area of a rectangle` — the comment is skipped, the line break is a token
+newline          # line 1 was only a comment: skipped, but its line break is a token
 let              # `let` matched the keyword table, so Kw_let, not ident(let)
 ident(width)
 =
@@ -755,7 +755,10 @@ let next (lx : t) : Token.t =
         let depth = ref 1 in
         while !depth > 0 && not (at_end lx) do
           if peek_char lx = '/' && peek2 lx = '*' then (ignore (bump lx); ignore (bump lx); incr depth)
-          else if peek_char lx = '*' && peek2 lx = '/' then (ignore (bump lx); ignore (bump lx); decr depth)
+          else if peek_char lx = '*' && peek2 lx = '/' then (
+            ignore (bump lx);
+            ignore (bump lx);
+            decr depth)
           else ignore (bump lx)
         done;
         (* depth > 0 here ⇒ unterminated: swiftc's wording, swiftc's position (end of

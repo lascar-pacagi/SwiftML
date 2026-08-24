@@ -137,7 +137,9 @@ they are **Milestone M4** — `swiftml -O` competitive with `swiftc -O`.
     let param_arg = List.map2 (fun (p, _) a -> (p, a)) f.Sil.params args in
     let vmap v = match List.assoc_opt v param_arg with Some a -> a | None -> v + off in
     let inlined = List.map
-      (fun (v, i) -> Hashtbl.replace g.Sil.val_ty (vmap v) (Hashtbl.find f.Sil.val_ty v); (vmap v, map_instr vmap i))
+      (fun (v, i) ->
+        Hashtbl.replace g.Sil.val_ty (vmap v) (Hashtbl.find f.Sil.val_ty v);
+        (vmap v, map_instr vmap i))
       (List.rev fb.Sil.instrs) in
     let retval = match fb.Sil.term with
       | Sil.Return (Some v) -> Some (vmap v) | Sil.Return None -> None | _ -> assert false in

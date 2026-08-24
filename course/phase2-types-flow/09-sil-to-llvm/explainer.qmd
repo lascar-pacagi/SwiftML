@@ -169,7 +169,9 @@ let gen_instr (v, i) =
   | Sil.Float_lit x -> Hashtbl.replace opnd v (Printf.sprintf "0x%016LX" (Int64.bits_of_float x))
   | Sil.String_lit s -> Hashtbl.replace opnd v (add_string_const s)
   | Sil.Alloc_stack _ -> () (* emitted in the entry block by the given gen_allocas — see §2 *)
-  | Sil.Load a -> let r = fresh () in p (Printf.sprintf "  %s = load %s, ptr %s\n" r (llty (vty v)) (op a));
+  | Sil.Load a ->
+      let r = fresh () in
+      p (Printf.sprintf "  %s = load %s, ptr %s\n" r (llty (vty v)) (op a));
       Hashtbl.replace opnd v r
   | Sil.Store (x, a) -> p (Printf.sprintf "  store %s %s, ptr %s\n" (llty (vty x)) (op x) (op a))
   | Sil.Binop (op0, l, r) -> gen_binop v op0 l r
@@ -179,7 +181,10 @@ let gen_instr (v, i) =
       Hashtbl.replace opnd v r
   | Sil.Func_ref name -> Hashtbl.replace opnd v ("@" ^ name)
   | Sil.Apply (fr, args) ->
-      let argstr = String.concat ", " (List.map (fun a -> Printf.sprintf "%s %s" (llty (vty a)) (op a)) args) in
+      let argstr =
+        String.concat ", "
+          (List.map (fun a -> Printf.sprintf "%s %s" (llty (vty a)) (op a)) args)
+      in
       let rt = vty v in
       if rt = Types.TVoid then p (Printf.sprintf "  call void %s(%s)\n" (op fr) argstr)
       else (let r = fresh () in p (Printf.sprintf "  %s = call %s %s(%s)\n" r (llty rt) (op fr) argstr);

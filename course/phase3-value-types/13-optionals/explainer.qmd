@@ -171,7 +171,12 @@ and gen_expr_as (b : builder) (e : Ast.expr) (expected : Types.ty) : Sil.value =
     Hashtbl.replace b.vars name addr;
     ignore (emit b (Sil.Store (pv, addr)) Types.TVoid);
     gen_block b then_blk; terminate b (Sil.Br merge.Sil.bid);
-    (match else_blk with Some e -> switch_to b else_b; gen_block b e; terminate b (Sil.Br merge.Sil.bid) | None -> ());
+    (match else_blk with
+    | Some e ->
+        switch_to b else_b;
+        gen_block b e;
+        terminate b (Sil.Br merge.Sil.bid)
+    | None -> ());
     switch_to b merge
 ```
 

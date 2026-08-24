@@ -188,7 +188,9 @@ Swift makes concurrent code data-race-free.
 The given runtime (C, linked):
 
 ```c
-void rt_async_spawn(swiftml_closure c) { /* new ucontext stack; makecontext(task_trampoline); enqueue */ }
+void rt_async_spawn(swiftml_closure c) {
+  /* new ucontext stack; makecontext(task_trampoline); enqueue */
+}
 void rt_async_yield(void) { if (current) swapcontext(&current->uctx, &sched_ctx); }
 void rt_async_run(void) {
   while (ready_head) {

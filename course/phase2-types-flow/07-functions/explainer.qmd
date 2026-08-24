@@ -175,13 +175,17 @@ and infer_call f args span : Types.ty =
   match Hashtbl.find_opt funcs f with
   | Some (ptypes, ret) ->
       let np = List.length ptypes and na = List.length args in
-      if np <> na then err span (Printf.sprintf "function '%s' expects %d argument(s) but %d given" f np na)
+      if np <> na then
+        err span
+          (Printf.sprintf "function '%s' expects %d argument(s) but %d given" f np na)
       else List.iter2 (fun a t -> check_expr a t) args ptypes;
       ret
   | None ->
       if f = "print" then (
         (match args with [a] -> ignore (infer a)
-         | _ -> err span "print(_:) expects exactly one argument"; List.iter (fun a -> ignore (infer a)) args);
+         | _ ->
+             err span "print(_:) expects exactly one argument";
+             List.iter (fun a -> ignore (infer a)) args);
         Types.TVoid)
       else (err span (Printf.sprintf "cannot find '%s' in scope" f); Types.TInt)
 
@@ -204,16 +208,23 @@ let check_func (f : Ast.func_decl) : unit =
   let ret = match f.Ast.ret with None -> Types.TVoid | Some n -> resolve_ty f.Ast.fspan n in
   let saved_env = !env and saved_ret = !current_ret in
   env := []; current_ret := Some ret;                 (* fresh scope; record the return type *)
-  List.iter (fun (pr:Ast.param) -> bind pr.Ast.pname (resolve_ty f.Ast.fspan pr.Ast.ptype, false)) f.Ast.params;
+  List.iter
+    (fun (pr : Ast.param) ->
+      bind pr.Ast.pname (resolve_ty f.Ast.fspan pr.Ast.ptype, false))
+    f.Ast.params;
   List.iter check_stmt f.Ast.body;
   env := saved_env; current_ret := saved_ret;
   if ret <> Types.TVoid && not (block_returns f.Ast.body) then
-    err f.Ast.fspan (Printf.sprintf "missing return in function expected to return '%s'" (Types.string_of_ty ret))
+    err f.Ast.fspan
+      (Printf.sprintf "missing return in function expected to return '%s'"
+         (Types.string_of_ty ret))
 
 (* PASS 1: signatures. PASS 2: bodies + top-level statements. *)
 List.iter (function
   | Ast.IFunc f ->
-      if Hashtbl.mem funcs f.Ast.fname then err f.Ast.fspan (Printf.sprintf "invalid redeclaration of '%s'" f.Ast.fname);
+      if Hashtbl.mem funcs f.Ast.fname then
+        err f.Ast.fspan
+          (Printf.sprintf "invalid redeclaration of '%s'" f.Ast.fname);
       let ptypes = List.map (fun (pr:Ast.param) -> resolve_silent pr.Ast.ptype) f.Ast.params in
       let ret = match f.Ast.ret with None -> Types.TVoid | Some n -> resolve_silent n in
       Hashtbl.replace funcs f.Ast.fname (ptypes, ret)

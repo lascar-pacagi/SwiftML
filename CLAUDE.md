@@ -87,6 +87,11 @@ from it alone. Required sections (see `PLAN.md` §3.1 and `_TEMPLATE-concept/exp
 **9** exercise solutions. Diagrams are **real figures** from `figs/` (matplotlib/graphviz),
 embedded with `![](figs/x.png)`. Render: `make explainer C=<dir>`.
 
+**Keep code-block lines short.** The explainers are mostly code, and a line that does not fit is
+worse than a line that is split: in the PDF it wraps mid-expression, losing the indentation that
+carries the meaning. Budget is **92 characters** (the prose wraps at 100); the PDF fits ~107 at its
+7.6pt code size, so 92 leaves room. Reflow at argument or `;` boundaries rather than shrinking type.
+
 **Always generate the figures — never leave a stub.** If an explainer references `figs/x.png`, that
 concept ships a `figs/make_figs.py` that produces it, and the PNG is generated and committed in the
 same change. No "(figure to be generated)" placeholders, ever — they read as done but break the
