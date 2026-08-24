@@ -9,8 +9,8 @@
      make lab       C=phase1-minimal/02-parser     concept + exercises
      make exercises C=phase1-minimal/02-parser     just this file
 
-   Both exercises are self-contained in this directory (parser.ml, and for `**` two new
-   constructors in token.ml / ast.ml). *)
+   Both exercises are self-contained in `parser.ml` — nothing here sends you back to
+   concept 01 to add a token, or to `ast.ml` to add a constructor. *)
 
 let mk_d (src : string) : Parser.t * Diagnostics.sink =
   let diags = Diagnostics.create () in
@@ -57,9 +57,9 @@ let test_ex1_recovery () =
   Alcotest.(check bool) "parsing recovered and kept the good statement" true has_print
 
 (* --- Exercise 2: right-associative `**` ------------------------------------------
-   `**` needs a token, a binding power above `*`, and right-recursion on `bp` rather than
-   `bp + 1`. The assertions go through the AST dump, so this file keeps compiling before
-   you add the `StarStar` / `Pow` constructors. *)
+   Done inside parser.ml: two ADJACENT `*` tokens are the operator (the spans say whether
+   they touch), it binds above `*`, it recurses at its own bp rather than bp + 1, and it
+   desugars to the call `pow(a, b)` rather than growing the AST. *)
 let dump_expr_of (src : string) : string = Ast.dump_expr (Parser.parse_expr (fst (mk_d src)))
 
 let ex2_started () =
@@ -68,12 +68,19 @@ let ex2_started () =
   | exception Failure _ -> false
   | _ -> Diagnostics.all d = []
 
+let ndiags_expr (src : string) : int =
+  let p, d = mk_d src in
+  ignore (Parser.parse_expr p);
+  List.length (Diagnostics.all d)
+
 let test_ex2_power () =
-  Alcotest.(check string) "** is RIGHT associative" "(** 2 (** 3 2))" (dump_expr_of "2 ** 3 ** 2");
-  Alcotest.(check string) "** binds tighter than *" "(* (** 2 3) 4)" (dump_expr_of "2 ** 3 * 4");
-  Alcotest.(check string) "...and tighter than +" "(+ 1 (** 2 3))" (dump_expr_of "1 + 2 ** 3");
+  Alcotest.(check string) "** is RIGHT associative" "(pow 2 (pow 3 2))" (dump_expr_of "2 ** 3 ** 2");
+  Alcotest.(check string) "** binds tighter than *" "(* (pow 2 3) 4)" (dump_expr_of "2 ** 3 * 4");
+  Alcotest.(check string) "...and tighter than +" "(+ 1 (pow 2 3))" (dump_expr_of "1 + 2 ** 3");
   (* a single star still means multiplication *)
-  Alcotest.(check string) "one star is unchanged" "(* 2 3)" (dump_expr_of "2 * 3")
+  Alcotest.(check string) "one star is unchanged" "(* 2 3)" (dump_expr_of "2 * 3");
+  (* and two stars that are NOT adjacent are not the operator *)
+  Alcotest.(check bool) "`2 * * 3` is still an error" true (ndiags_expr "2 * * 3" >= 1)
 
 let skip what () =
   Printf.printf "    (%s not started — this group activates as soon as it is)\n%!" what

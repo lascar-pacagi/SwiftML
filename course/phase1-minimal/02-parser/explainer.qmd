@@ -220,8 +220,12 @@ Not perf-critical in Phase 1. (Parsing throughput becomes interesting at stdlib 
 1. Make `parse_prefix` report a *good* error (with the offending token) instead of a placeholder,
    then implement `v1_recovery`: skip to the next `Newline` and keep parsing, so multiple errors
    are reported in one run.
-2. Add right-associative exponentiation `**` at a higher precedence and verify `2 ** 3 ** 2`
-   parses as `(** 2 (** 3 2))` (use `bp` instead of `bp + 1` for the right recursion).
+2. Add right-associative exponentiation `**`, binding tighter than `*`, and verify that
+   `2 ** 3 ** 2` groups as `2 ** (3 ** 2)` (use `bp` instead of `bp + 1` for the right
+   recursion). Do it **without touching the lexer**: `token.ml` and `lexer.ml` belong to
+   concept 01, and this concept's work is `parser.ml`. Two hints — the parser can see that
+   two `*` tokens are ADJACENT (their spans touch), and it can build the node out of what
+   `ast.ml` already has, rather than adding a constructor.
 
 ## 7. Recap & what's next
 
@@ -384,32 +388,53 @@ statement isn't a `Newline`/`Eof`, skip forward to the next `Newline` before con
 Now `1 +\nx === 5\nprint(2)` reports the two broken lines yet still parses `print(2)`. A unit test:
 assert `ndiags` ≥ 2 *and* that the good statement still appears in the program.
 
-### 2 — right-associative `**`
+### 2 — right-associative `**`, without leaving this directory
 
-`**` needs (a) a token, (b) an `infix_bp` above `*`, and (c) right-recursion with `bp` (not `bp + 1`).
-First lex two `*` as one token — in the lexer's `'*'` case, peek for a second star:
+The obvious route is a new token: add `StarStar` to `token.ml`, munch two stars in the lexer,
+add `Pow` to `Ast.binop`. It works, and it is what a real compiler does — Phase 2's lexer grows
+exactly this way for `==`, `<=`, `->`. But it drags you back into concept 01 for an exercise
+that belongs to the parser, so here is the local version.
 
-```ocaml
-| '*' ->
-    ignore (bump lx);
-    if peek_char lx = '*' then (ignore (bump lx); make lo lx Token.StarStar)
-    else make lo lx Token.Star
-```
-
-(add `StarStar` to `token.ml` and a `Pow` constructor to `Ast.binop`). Then in the parser:
+**The lexer cannot decide this anyway.** Whether `**` is one operator or two depends on where
+you are: C++ has the same problem with `>>` closing two templates versus shifting right, and
+solves it in the *parser*. The information you need is already in the tokens — two `*` are the
+exponent operator exactly when they are **adjacent**, which the spans tell you:
 
 ```ocaml
-let infix_bp = function
-  | Token.Plus | Token.Minus -> Some 10
-  | Token.Star | Token.Slash | Token.Percent -> Some 20
-  | Token.StarStar -> Some 30
-  | _ -> None
+let pow_bp = 30
 
-(* in the infix loop, recurse with bp (not bp + 1) for the right-associative ** : *)
-let right_min = if op_tok.Token.kind = Token.StarStar then bp else bp + 1 in
-let rhs = parse_expr_bp p right_min in
+let two_stars (p : t) : bool =
+  peek_kind p = Token.Star
+  && peek_kind_at p 1 = Token.Star
+  && p.pos + 1 < Array.length p.toks
+  && (p.toks.(p.pos)).Token.span.Token.hi.Token.offset
+     = (p.toks.(p.pos + 1)).Token.span.Token.lo.Token.offset
 ```
 
-`2 ** 3 ** 2` then parses as `(** 2 (** 3 2))` — using `bp` keeps grabbing same-level `**` on the
-right, which is what right-associativity means. Note there's **no oracle** here: real Swift has no
-`**` operator (exponentiation is `pow(_:_:)`), so this is a pure parsing exercise.
+Then take it before consulting `infix_bp`, and recurse at `pow_bp` rather than `pow_bp + 1` —
+that single missing `+ 1` is the whole of right-associativity:
+
+```ocaml
+let rec loop lhs =
+  if two_stars p && pow_bp >= min_bp then (
+    ignore (advance p); ignore (advance p);
+    let rhs = parse_expr_bp p pow_bp in
+    loop (Ast.Call ("pow", [ lhs; rhs ],
+                    span_between (Ast.expr_span lhs) (Ast.expr_span rhs))))
+  else match infix_bp (peek_kind p) with ...
+```
+
+And rather than growing the AST, **desugar**: `a ** b` becomes the call `pow(a, b)`, a node that
+already exists. Sema and SILGen need no changes either, once `pow` is a known function.
+
+```
+2 ** 3 ** 2   (pow 2 (pow 3 2))     right-associative
+2 ** 3 * 4    (* (pow 2 3) 4)       binds tighter than *
+1 + 2 ** 3    (+ 1 (pow 2 3))
+2 * 3         (* 2 3)               a single star is untouched
+2 * * 3       reports an error      NOT adjacent, so not an operator
+```
+
+That last line is why the adjacency test matters, and it is a reason spans are worth building
+even before anyone reports a diagnostic with one.
+
