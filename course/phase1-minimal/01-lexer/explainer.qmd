@@ -286,7 +286,9 @@ Open `lexer.ml` in this directory. The cursor type, `create`, and the helpers `h
 ```ocaml
 let take_while lx pred =
   let start = lx.pos in
-  while (not (at_end lx)) && pred (peek_char lx) do ignore (bump lx) done;
+  while (not (at_end lx)) && pred (peek_char lx) do
+    ignore (bump lx)
+  done;
   String.sub lx.src start (lx.pos - start)
 ```
 
@@ -747,14 +749,19 @@ let next (lx : t) : Token.t =
       else if c = '/' && peek2 lx = '/' then (
         (* line comment: consume to end of line, but leave the '\n' (it's a token). *)
         ignore (bump lx); ignore (bump lx);
-        while (not (at_end lx)) && peek_char lx <> '\n' do ignore (bump lx) done;
+        while (not (at_end lx)) && peek_char lx <> '\n' do
+          ignore (bump lx)
+        done;
         skip_trivia ())
       else if c = '/' && peek2 lx = '*' then (
         (* block comment: nests, unlike C. Track depth until it returns to 0. *)
         ignore (bump lx); ignore (bump lx);
         let depth = ref 1 in
         while !depth > 0 && not (at_end lx) do
-          if peek_char lx = '/' && peek2 lx = '*' then (ignore (bump lx); ignore (bump lx); incr depth)
+          if peek_char lx = '/' && peek2 lx = '*' then (
+            ignore (bump lx);
+            ignore (bump lx);
+            incr depth)
           else if peek_char lx = '*' && peek2 lx = '/' then (
             ignore (bump lx);
             ignore (bump lx);
@@ -777,13 +784,17 @@ let next (lx : t) : Token.t =
     if is_digit c then (
       (* integer literal — maximal munch over the run of digits *)
       let start = lx.pos in
-      while (not (at_end lx)) && is_digit (peek_char lx) do ignore (bump lx) done;
+      while (not (at_end lx)) && is_digit (peek_char lx) do
+        ignore (bump lx)
+      done;
       let n = int_of_string (String.sub lx.src start (lx.pos - start)) in
       make lo lx (Token.Int n))
     else if is_ident_head c then (
       (* identifier — head then run of ident chars; then the keyword table *)
       let start = lx.pos in
-      while (not (at_end lx)) && is_ident_cont (peek_char lx) do ignore (bump lx) done;
+      while (not (at_end lx)) && is_ident_cont (peek_char lx) do
+        ignore (bump lx)
+      done;
       let text = String.sub lx.src start (lx.pos - start) in
       make lo lx (Token.keyword_or_ident text))
     else
@@ -832,11 +843,15 @@ while !continue do
     let c = g !pos in
     if is_digit c then (
       incr pos;
-      while !pos < len && is_digit (g !pos) do incr pos done;
+      while !pos < len && is_digit (g !pos) do
+        incr pos
+      done;
       push t_int s !pos)
     else if is_ident_head c then (
       incr pos;
-      while !pos < len && is_ident_cont (g !pos) do incr pos done;
+      while !pos < len && is_ident_cont (g !pos) do
+        incr pos
+      done;
       push t_ident s !pos)
     else (
       let tag = match c with
@@ -875,7 +890,9 @@ to consume `_` along with digits, then strip the `_`s before converting:
 ```ocaml
 if is_digit c then (
   let start = lx.pos in
-  while (not (at_end lx)) && (let d = peek_char lx in is_digit d || d = '_') do ignore (bump lx) done;
+  while (not (at_end lx)) && (let d = peek_char lx in is_digit d || d = '_') do
+    ignore (bump lx)
+  done;
     make lo lx (Token.Int (int_of_string (String.sub lx.src start (lx.pos - start)))))
 ```
 
@@ -896,7 +913,9 @@ else if c = '/' && peek2 lx = '*' then (
   let opener = here lx in                       (* <- before consuming the opener *)
   ignore (bump lx); ignore (bump lx);
   let depth = ref 1 in
-  while !depth > 0 && not (at_end lx) do ... done;
+  while !depth > 0 && not (at_end lx) do
+    ...
+  done;
   if !depth > 0 then (
     let eof = here lx in
     error lx eof "unterminated '/*' comment";

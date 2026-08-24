@@ -35,7 +35,8 @@ expression (and reports diagnostics as a side effect):
 
 ```
 check_expr env (Int_lit _)        = TInt
-check_expr env (Var x)            = if x in env then TInt else error "cannot find 'x' in scope"; TInt
+check_expr env (Var x)            = if x in env then TInt
+                                    else error "cannot find 'x' in scope"; TInt
 check_expr env (Unary(_, e))      = check_expr env e            (* must be Int *)
 check_expr env (Binary(_, l, r))  = check_expr env l; check_expr env r; TInt
 check_expr env (Call("print",[a])) = check_expr env a; TInt

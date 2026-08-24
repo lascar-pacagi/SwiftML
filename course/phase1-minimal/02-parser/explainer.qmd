@@ -289,7 +289,11 @@ let rec parse_expr_bp (p : t) (min_bp : int) : Ast.expr =
     match infix_bp (peek_kind p) with
     | Some bp when bp >= min_bp ->
         let op_tok = advance p in
-        let op = match binop_of_kind op_tok.Token.kind with Some o -> o | None -> assert false in
+        let op =
+          match binop_of_kind op_tok.Token.kind with
+          | Some o -> o
+          | None -> assert false
+        in
         let rhs = parse_expr_bp p (bp + 1) in (* bp + 1 ⇒ left-associative *)
         loop (Ast.Binary (op, lhs, rhs, span_between (Ast.expr_span lhs) (Ast.expr_span rhs)))
     | _ -> lhs
@@ -325,7 +329,9 @@ let parse_stmt (p : t) : Ast.stmt =
       let name, _ = parse_ident p "identifier" in
       ignore (expect p Token.Eq "'='");
       let value = parse_expr p in
-      Ast.Let { name; is_var; value; span = span_between kw.Token.span (Ast.expr_span value) }
+      Ast.Let
+        { name; is_var; value;
+          span = span_between kw.Token.span (Ast.expr_span value) }
   | Token.Ident name when peek_kind_at p 1 = Token.Eq ->
       let id = advance p in
       ignore (advance p (* '=' *));
