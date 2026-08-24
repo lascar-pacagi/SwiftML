@@ -20,9 +20,10 @@ You'll turn the flat token list into a **tree** — the AST — that captures st
   consume it.
 - **Two rungs** (the README's version table). `v0_parse` is what you are about to write: it accepts
   the grammar and reports what it cannot parse. **`v1_recovery`** is the optional second rung —
-  after a diagnostic, resync to the next newline so one broken line does not cascade into five
-  errors. §6's first exercise *is* that rung, and §9 measures the difference: six diagnostics
-  become two.
+  after a diagnostic, resync to the next newline instead of stumbling on token by token. The
+  difference is measurable: `x === 5` on its own draws **four** diagnostics from `v0_parse`, and a
+  two-broken-line file draws six, where the recovering parser reports one per broken line. §6's
+  first exercise *is* that rung.
 
 ## 2. Concepts in depth
 
