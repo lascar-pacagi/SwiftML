@@ -52,30 +52,72 @@ the SSA rule constrains *registers*, not memory cells. Every `x = …` becomes a
 slot. That is exactly what `clang -O0` emits for C, and Phase 4's `mem2reg` pass is what later
 promotes those slots into real SSA registers.
 
-For Phase 1 you need a sliver of the language:
+For Phase 1 you need a sliver of the language — this much, which is `let x = 42` /
+`print(x * 2)` exactly as your own compiler will print it (`swiftml --emit-llvm`):
 
 ```llvm
-; a format string and the C printf, to print an Int + newline
-@.fmt = private constant [5 x i8] c"%lld\0A\00"
+; swiftml Phase-1 LLVM IR
+@.fmt = private unnamed_addr constant [6 x i8] c"%lld\0A\00"
+
 declare i32 @printf(ptr, ...)
 
 define i32 @main() {
 entry:
-  %x = alloca i64                  ; a stack slot for a let/var
-  store i64 42, ptr %x             ; let x = 42
-  %1 = load i64, ptr %x            ; read x
-  %2 = mul i64 %1, 2               ; x * 2
-  call i32 (ptr, ...) @printf(ptr @.fmt, i64 %2)
+  %x.addr = alloca i64
+  store i64 42, ptr %x.addr
+  %t1 = load i64, ptr %x.addr
+  %t2 = mul i64 %t1, 2
+  %t3 = call i32 (ptr, ...) @printf(ptr @.fmt, i64 %t2)
   ret i32 0
 }
 ```
 
-Key facts: every computed value is a fresh `%N` register, written once and never again (that is
-the SSA rule above); `i64` is our `Int`; `alloca` gives a stack slot you `store`/`load`; arithmetic
-is `add/sub/mul/sdiv/srem i64`; `printf` with `%lld` prints a 64-bit int. Note how the two kinds of
-name divide the work: `%x` is an *address* (what `alloca` returned) and `%1` is a *value* (what
-`load` produced). Phase 4's mem2reg will *remove* the allocas by promoting them to SSA registers —
-but writing them now is the simple, correct start.
+**Sigils.** `@` names are *global* (module-level: functions, constants) and `%` names are *local* to
+a function (registers and labels). Names are arbitrary — `%x.addr`, `%t1` — and chosen by the
+emitter to be readable; LLVM only cares that each is defined once.
+
+**The format string.** `@.fmt` is a global holding the bytes `printf` will interpret.
+
+| piece | meaning |
+|---|---|
+| `private` | not visible outside this module — the linker never sees the name |
+| `unnamed_addr` | the *address* is irrelevant, only the contents; lets LLVM merge duplicates |
+| `constant` | read-only (as opposed to `global`, which is mutable) |
+| `[6 x i8]` | the type: an array of 6 bytes. `%`, `l`, `l`, `d`, newline, NUL |
+| `c"%lld\0A\00"` | the bytes, C-string style: `\0A` is `\n`, `\00` is the terminator |
+
+`%lld` is printf's "long long decimal" — our `Int` is `i64`, so that is the conversion that matches.
+The trailing `\00` matters: C strings are NUL-terminated, and LLVM does *not* add it for you.
+
+**`declare` vs `define`.** `declare` says "this function exists somewhere else, here is its type";
+`define` provides a body. `@printf` comes from libc, which the linker supplies, so we only declare
+it. `i32 @printf(ptr, ...)` is its C signature: returns `int`, takes a pointer, then `...` — any
+number of further arguments, of types the callee cannot know.
+
+**`define i32 @main()`** is the C entry point the linker looks for, and `ret i32 0` is its exit
+code — the `0` a shell sees as success. `entry:` is a **label** starting a *basic block*: a run of
+instructions with no branches in or out, which is the unit control flow jumps to. Phase 1 has
+exactly one; Phase 2's `if`/`while` is where they multiply.
+
+**The three memory instructions** are how a variable lives here:
+
+```llvm
+%x.addr = alloca i64             ; reserve 8 bytes of stack; %x.addr is its ADDRESS
+store i64 42, ptr %x.addr        ; write the value 42 into that slot
+%t1 = load i64, ptr %x.addr      ; read it back — %t1 is a VALUE
+```
+
+Keeping that distinction straight is most of what codegen is: `%x.addr` is *where* `x` lives and
+never changes; `%t1` is *what it held* at one moment. Arithmetic works on values only —
+`%t2 = mul i64 %t1, 2` — and every operation names its type, because LLVM has no implicit
+conversions.
+
+**The call.** `call i32 (ptr, ...) @printf(ptr @.fmt, i64 %t2)` repeats the *whole function type*
+before the callee name, which is unusual and specific to variadics: LLVM needs to know where the
+fixed parameters stop and the varargs begin, since those are passed differently by the ABI. A
+non-variadic call just names the return type, as your other functions will in Phase 2:
+`%t4 = call i64 @add(i64 %t2, i64 %t3)`. The result `%t3` here is printf's character count, which
+we ignore — but SSA still requires a name for it.
 
 ### Lowering = a recursive walk that returns "where the value is"
 
