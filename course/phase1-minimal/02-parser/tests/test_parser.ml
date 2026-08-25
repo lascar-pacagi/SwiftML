@@ -149,6 +149,12 @@ let test_program_blank_lines () =
     (List.length (prog "\n// just a comment\n\nlet a = 1\n\nprint(a)\n").Ast.stmts);
   Alcotest.(check int) "a last line without a newline still counts" 1
     (List.length (prog "print(1)").Ast.stmts);
+  (* ...and is not an error: Eof terminates the last statement just as a newline would.
+     A file need not end with a blank line, and every test that builds a source string
+     in OCaml (concept 03's, for one) ends without one. *)
+  Alcotest.(check int) "a last line without a newline is CLEAN" 0 (ndiags "print(1)");
+  Alcotest.(check int) "...also after several statements" 0
+    (ndiags "let a = 1\nvar b = 2\nprint(a + b)");
   (* runs of newlines before, between and after the statements *)
   Alcotest.(check (list string)) "multiple blank lines everywhere"
     [ "(let a 1)"; "(print a)" ]
