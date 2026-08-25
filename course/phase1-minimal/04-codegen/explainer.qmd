@@ -52,8 +52,8 @@ the SSA rule constrains *registers*, not memory cells. Every `x = …` becomes a
 slot. That is exactly what `clang -O0` emits for C, and Phase 4's `mem2reg` pass is what later
 promotes those slots into real SSA registers.
 
-For Phase 1 you need a sliver of the language — this much, which is `let x = 42` /
-`print(x * 2)` exactly as your own compiler will print it (`swiftml --emit-llvm`):
+Phase 1 needs only a sliver of the language. Here is all of it: the output of
+`swiftml --emit-llvm` on `let x = 42` / `print(x * 2)`.
 
 ```llvm
 ; swiftml Phase-1 LLVM IR
