@@ -254,7 +254,10 @@ Diagnostics.emit diags
     message = "change 'let' to 'var' to make it mutable" }
 ```
 
-`has_errors` must not change: one error, one note, and a `var` assignment stays silent.
+Emit it as a `Note`, not as a second error. The driver decides whether to stop before IRGen by
+calling `Diagnostics.has_errors`, which counts `Error` entries only — so a note must leave that
+answer untouched. `let k = 1` / `k = 2` produces **one error and one note**; `var v = 1` / `v = 2`
+produces neither, since there is nothing to complain about.
 
 ## 7. Recap & what's next
 
