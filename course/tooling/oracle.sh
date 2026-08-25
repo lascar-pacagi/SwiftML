@@ -58,5 +58,16 @@ fi
 if [[ $ok -eq 1 ]]; then
   echo "OK  $F  (status=$rs exit=$rrc)"; exit 0
 else
-  echo "----- swiftml compile output -----"; cat "$tmp/mine.cerr"; exit 1
+  echo "----- swiftml compile output -----"; cat "$tmp/mine.cerr"
+  if grep -q 'TODO(' "$tmp/mine.cerr"; then
+    cat >&2 <<'HINT'
+
+  ^ swiftml stopped at an unfinished concept. The oracle runs the WHOLE pipeline
+    (lex -> parse -> sema -> IRGen -> clang -> run), so it cannot go green until
+    codegen exists. While you are still in the front end, compare that instead:
+
+        dune exec swiftml -- --typecheck FILE      vs      swiftc -typecheck FILE
+HINT
+  fi
+  exit 1
 fi

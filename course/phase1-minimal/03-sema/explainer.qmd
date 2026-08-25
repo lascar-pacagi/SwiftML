@@ -170,9 +170,24 @@ OK  /tmp/bad.swift  (status=compile-error exit=0)
 ```
 
 Green — and meaningless. swiftc refused because `y` is undeclared; we refused because `Sema.check`
-is still `failwith "TODO"`. So: use `make oracle` to pin down *accept vs reject* (that is what
-Exercise 1 below asks you to do), and read the messages yourself with the two `-typecheck`
-commands from §2. The alcotest file is where the wording gets locked in for good.
+is still `failwith "TODO"`. So: use `make oracle` to pin down *accept vs reject*, and read the
+messages yourself with the two `-typecheck` commands from §2. The alcotest file is where the
+wording gets locked in for good.
+
+And note what it does on a **valid** program while you are standing here in concept 03:
+
+```console
+$ make oracle F=tests/programs/arith.swift
+DIVERGENCE: swiftc=ok but swiftml=compile-error (one compiled, the other didn't)
+----- swiftml compile output -----
+Fatal error: exception Failure("TODO(04-codegen): implement IRGen.emit_llvm …")
+```
+
+Also correct, also nothing to do with Sema. The oracle compiles *and runs* the program, so it needs
+the whole pipeline; IRGen is the next concept. Your front end got as far as it can and handed a
+checked AST to a stage that does not exist yet. `make oracle F=tests/programs/arith.swift` going
+green is the Phase-1 milestone — it happens at the end of **04-codegen**, and it is worth doing
+`swiftml --typecheck` vs `swiftc -typecheck` until then.
 
 ## 5. Benchmark it
 
@@ -181,8 +196,9 @@ Not perf-relevant in Phase 1.
 ## 6. Exercises
 
 1. Disallow re-declaring a name in the same scope (`let x = 1; let x = 2` ⇒ error), matching Swift
-   at top level? (Check what swiftc actually does first with `make oracle` — Swift *allows*
-   top-level redeclaration shadowing in scripts; decide and match it.)
+   at top level? Ask the oracle before you decide — and at this point in the course ask it with
+   `swiftc -typecheck redecl.swift`, not `make oracle`, which needs an IRGen you have not written
+   yet. The answer is in §9, and it is not the one most people guess.
 2. Reject assigning to a `let` (`let x = 1; x = 2`). The AST already has `Ast.Assign` (see §9 for
    why it landed in Phase 1) — extend your env to record let-vs-var, and match swiftc's
    "cannot assign to value: 'x' is a 'let' constant".
