@@ -90,9 +90,11 @@ what our Phase-1 sema treats as one rule:
 | `let a = a` (in a func) | `use of local variable 'a' before its declaration` | *(no funcs yet)* |
 
 Both compilers *reject* all four; we match two of the messages and consciously pick one wording for
-the third, because Phase 1 has one flat scope and no notion of a reference cycle. Matching text is a
-goal, not a fetish — but a divergence you chose and documented is a different thing from one you
-never noticed.
+the third, because Phase 1 has one flat scope and no notion of a reference cycle. Copying swiftc's
+text is something we aim for, not something to chase at any cost: it is not worth inventing
+cycle detection just to print `circular reference`. What matters is which kind of difference it is.
+A divergence you decided on and wrote down is a **design decision**. The very same divergence, if
+you never noticed it, is a **bug you have not found yet**.
 
 ## 3. Build it, step by step
 
