@@ -244,14 +244,11 @@ c1.swift:1:1: note: change 'let' to 'var' to make it mutable
 ```
 
 Two new things. Your `scope` has to remember **where** each name was declared (`Ast.Let` carries
-its `span`, and its `lo` is the `let` keyword — exactly where swiftc puts the note). And a note is
-not an error: `Diagnostics` gives you `error` and `warning` shorthands but no `note`, so emit the
-record directly, as concept 01's exercise 2 does —
+its `span`, and its `lo` is the `let` keyword — exactly where swiftc puts the note). And the
+diagnostic is a *note*, which the sink emits like any other:
 
 ```ocaml
-Diagnostics.emit diags
-  { Diagnostics.severity = Note; span = decl_span;
-    message = "change 'let' to 'var' to make it mutable" }
+Diagnostics.note diags decl_span "change 'let' to 'var' to make it mutable"
 ```
 
 Emit it as a `Note`, not as a second error. The driver decides whether to stop before IRGen by
@@ -366,9 +363,8 @@ error it already produced:
         if not is_var then (
           Diagnostics.error diags span
             (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" name);
-          Diagnostics.emit diags
-            { Diagnostics.severity = Note; span = decl;
-              message = "change 'let' to 'var' to make it mutable" }));
+          Diagnostics.note diags decl
+            "change 'let' to 'var' to make it mutable"));
     ignore (check_expr value)
 ```
 

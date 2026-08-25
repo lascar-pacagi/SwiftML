@@ -25,6 +25,12 @@ let error (s : sink) (span : Token.span) (message : string) = emit s { severity 
 let warning (s : sink) (span : Token.span) (message : string) =
   emit s { severity = Warning; span; message }
 
+(* A note is not a problem in its own right: it explains the diagnostic above it, or points
+   at the code that caused it (swiftc: `note: change 'let' to 'var' to make it mutable`).
+   It never makes [has_errors] true. *)
+let note (s : sink) (span : Token.span) (message : string) =
+  emit s { severity = Note; span; message }
+
 let has_errors (s : sink) = List.exists (fun d -> d.severity = Error) s.diags
 let all (s : sink) : t list = List.rev s.diags
 

@@ -213,6 +213,7 @@ type sink = { mutable diags : t list }          (* threaded through the front en
 val create     : unit -> sink
 val error      : sink -> Token.span -> string -> unit
 val warning    : sink -> Token.span -> string -> unit
+val note       : sink -> Token.span -> string -> unit   (* explains the diagnostic above it *)
 val has_errors : sink -> bool
 val print      : sink -> unit                   (* swiftc-style `line:col: error: message` *)
 ```
