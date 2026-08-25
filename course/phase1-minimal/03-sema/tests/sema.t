@@ -39,3 +39,32 @@ Assigning to a `let` constant is rejected (a `var` in the same spot would be fin
   cannot assign to value: 'k' is a 'let' constant
   $ swiftml --typecheck c1.swift >/dev/null 2>&1; echo "exit=$?"
   exit=1
+
+Several problems in one file are ALL reported, in source order, each at its own
+line:column — one run tells you everything it can see:
+
+  $ printf 'print(p + q)\nlet a = 1\nfoo(a)\n' > multi.swift
+  $ swiftml --typecheck multi.swift
+  1:7: error: cannot find 'p' in scope
+  1:11: error: cannot find 'q' in scope
+  3:1: error: cannot find 'foo' in scope
+  [1]
+
+A call to anything but print(_:) is an unknown name, and its arguments are still
+checked (both messages, exactly as swiftc reports them):
+
+  $ printf 'bar(z)\n' > call.swift
+  $ swiftml --typecheck call.swift
+  1:1: error: cannot find 'bar' in scope
+  1:5: error: cannot find 'z' in scope
+  [1]
+
+print(_:) takes exactly one argument, and a well-formed call is silent:
+
+  $ printf 'print(1, 2)\n' > arity.swift
+  $ swiftml --typecheck arity.swift
+  1:1: error: print(_:) expects exactly one argument
+  [1]
+  $ printf 'let a = 2\nprint(-(a * (a + 1)) %% 7)\n' > ok2.swift
+  $ swiftml --typecheck ok2.swift; echo "exit=$?"
+  exit=0
