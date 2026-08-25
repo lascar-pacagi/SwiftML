@@ -224,13 +224,17 @@ redecl.swift:2:5: error: invalid redeclaration of 'x'
 redecl.swift:1:5: note: 'x' previously declared here
 ```
 
-So: an error, and `var y` after `let y` is one too — same name, same scope. Match the message
-`invalid redeclaration of 'x'` (the note is exercise 2's business), keep the *first* binding, and
-keep walking: the bad declaration's initializer still gets checked, so
-`let w = 1` / `let w = q` reports the redeclaration **and** `cannot find 'q' in scope`. Your
-diagnostic lands at column 1 where swiftc's lands at column 5, because our `Ast.Let` span starts at
-the keyword and swiftc points at the name — matching that too would mean recording the name's own
-span in the parser.
+So: an error, and `var y` after `let y` is one too — same name, same scope. **Only the error is
+asked of you here**; swiftc's second line, `note: 'x' previously declared here`, needs the *first*
+declaration's span, and remembering that is exercise 2's job. Do the error now and the note comes
+almost free once the env grows.
+
+Match the message `invalid redeclaration of 'x'`, keep the *first* binding (so a later `x = 3` is
+judged against `let x = 1`, as swiftc does), and keep walking: the bad declaration's initializer
+still gets checked, so `let w = 1` / `let w = q` reports the redeclaration **and**
+`cannot find 'q' in scope`. Your diagnostic lands at column 1 where swiftc's lands at column 5,
+because our `Ast.Let` span starts at the keyword and swiftc points at the name — matching that too
+would mean recording the name's own span in the parser.
 
 **2 — add swiftc's note to the immutability error.** Rejecting `k = 2` is already the concept's
 work; what swiftc adds is a second diagnostic that says how to fix it, pointing at the
@@ -250,6 +254,18 @@ diagnostic is a *note*, which the sink emits like any other:
 ```ocaml
 Diagnostics.note diags decl_span "change 'let' to 'var' to make it mutable"
 ```
+
+Once `scope` carries spans, **finish exercise 1's diagnostic too**: swiftc pairs
+`invalid redeclaration of 'x'` with a note at the earlier declaration, and you now have exactly
+what that needs.
+
+```console
+redecl.swift:2:5: error: invalid redeclaration of 'x'
+redecl.swift:1:5: note: 'x' previously declared here
+```
+
+The test checks that note only if you did exercise 1 — one note per rejected assignment, one per
+rejected redeclaration.
 
 Emit it as a `Note`, not as a second error. The driver decides whether to stop before IRGen by
 calling `Diagnostics.has_errors`, which counts `Error` entries only — so a note must leave that
@@ -340,7 +356,9 @@ name is already bound, and keep the first binding:
 ```
 
 The `else` is what keeps the first binding: a redeclared name stays whatever it was declared as
-first, so a later `x = 3` is judged against `let x = 1`, like swiftc.
+first, so a later `x = 3` is judged against `let x = 1`, like swiftc. swiftc also prints
+`note: 'x' previously declared here`, which you cannot yet — the note goes at the *earlier*
+declaration and nothing in `scope` remembers where that was. Exercise 2 fixes precisely that.
 
 ### 2 — the "change 'let' to 'var'" note
 
@@ -350,8 +368,21 @@ The env grows a span, so `scope` maps a name to *both* facts about it:
 let scope : (string, bool * Token.span) Hashtbl.t = Hashtbl.create 16 in
 ```
 
-`Let` stores the declaration's span alongside `is_var`, and `Assign` emits the note next to the
-error it already produced:
+`Let` stores the declaration's span alongside `is_var` — and, now that it has the earlier span in
+hand, completes exercise 1's diagnostic:
+
+```ocaml
+| Ast.Let { name; is_var; value; span } ->
+    ignore (check_expr value);
+    (match Hashtbl.find_opt scope name with
+    | Some (_, prev) ->
+        Diagnostics.error diags span
+          (Printf.sprintf "invalid redeclaration of '%s'" name);
+        Diagnostics.note diags prev (Printf.sprintf "'%s' previously declared here" name)
+    | None -> Hashtbl.replace scope name (is_var, span))
+```
+
+`Assign` emits its own note next to the error it already produced:
 
 ```ocaml
 | Ast.Assign { name; value; span } ->
@@ -372,6 +403,6 @@ Note the shape of the pair: `Some (is_var, decl)`. Widening the env is a one-lin
 two-line ripple — which is the point. Every later phase widens this same table (types in Phase 2,
 scopes in concept 06, generic parameters in Phase 5), and this is what that always feels like.
 
-Both exercises are pinned by `tests/test_exercises.ml`; with the two arms above it reports
-`ex1 redeclaration … checked` and `ex2 mutability note … checked` instead of "skipped", and the
-seven core tests keep passing — a note is not an error, so nothing else moves.
+Both exercises are pinned by `tests/test_exercises.ml`; with the arms above it reports
+`ex1 redeclaration … checked` and `ex2 notes … checked` instead of "skipped", and the seven core
+tests keep passing — a note is not an error, so nothing else moves.

@@ -53,10 +53,12 @@ let test_ex1_redeclaration () =
   Alcotest.(check bool) "and its initializer is still checked" true
     (List.mem "cannot find 'q' in scope" both)
 
-(* --- Exercise 2: swiftc's note on the immutability error --------------------------
+(* --- Exercise 2: the notes -------------------------------------------------------
    swiftc:  c1.swift:2:1: error: cannot assign to value: 'k' is a 'let' constant
             c1.swift:1:1: note: change 'let' to 'var' to make it mutable
-   The error you already emit; the note is new, and it must point at the DECLARATION. *)
+   The error you already emit; the note is new, and it must point at the DECLARATION.
+   Once `scope` remembers spans, the redeclaration of exercise 1 gets its companion note
+   too — that half is checked only if exercise 1 is done. *)
 let letassign = "let k = 1\nk = 2\n"
 let ex2_started () = notes letassign <> []
 
@@ -84,7 +86,20 @@ let test_ex2_note () =
     (notes "u = 1\n");
   (* a second offence against the same constant notes it again *)
   Alcotest.(check int) "one note per rejected assignment" 2
-    (List.length (notes "let k = 1\nk = 2\nk = 3\n"))
+    (List.length (notes "let k = 1\nk = 2\nk = 3\n"));
+  (* and if exercise 1 is done, its error carries swiftc's companion note, pointing at
+     the EARLIER declaration *)
+  if List.mem "invalid redeclaration of 'x'" (errors redecl) then (
+    Alcotest.(check (list string))
+      "the redeclaration names where 'x' came from"
+      [ "'x' previously declared here" ] (notes redecl);
+    let note =
+      List.find
+        (fun (x : Diagnostics.t) -> x.Diagnostics.severity = Diagnostics.Note)
+        (diags_of redecl)
+    in
+    Alcotest.(check int) "...on the FIRST declaration's line" 1
+      note.Diagnostics.span.Token.lo.Token.line)
 
 let skip what () =
   Printf.printf "    (%s not started — this group activates as soon as it is)\n%!" what
@@ -100,5 +115,5 @@ let () =
   Alcotest.run "sema exercises"
     [
       group "ex1 redeclaration" ex1_started "the redeclaration check" test_ex1_redeclaration;
-      group "ex2 mutability note" ex2_started "the 'change let to var' note" test_ex2_note;
+      group "ex2 notes" ex2_started "the notes" test_ex2_note;
     ]
