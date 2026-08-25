@@ -40,7 +40,16 @@ let test_undeclared () =
 (* used before declaration *)
 
 let test_immutability () =
-  has_error "let k = 1\nk = 2" "cannot assign to value: 'k' is a 'let' constant"
+  has_error "let k = 1\nk = 2" "cannot assign to value: 'k' is a 'let' constant";
+  accepted "var v = 1\nv = 2"
+
+(* an assignment has two halves and BOTH are checked: the target must be a declared
+   var, and the right-hand side is an expression like any other *)
+let test_assign_rhs () =
+  has_error "var v = 1\nv = w" "cannot find 'w' in scope";
+  has_error "let k = 1\nk = w" "cannot find 'w' in scope";
+  has_error "var v = 1\nv = v + z" "cannot find 'z' in scope";
+  accepted "var v = 1\nlet a = 2\nv = v + a"
 
 let test_print_arity () =
   has_error "print(1, 2)" "print(_:) expects exactly one argument";
@@ -70,7 +79,11 @@ let () =
     [
       ("accept", [ Alcotest.test_case "valid programs have no errors" `Quick test_accept ]);
       ("scope", [ Alcotest.test_case "undeclared / use-before-decl" `Quick test_undeclared ]);
-      ("immutability", [ Alcotest.test_case "assign to a let constant" `Quick test_immutability ]);
+      ( "immutability",
+        [
+          Alcotest.test_case "assign to a let constant" `Quick test_immutability;
+          Alcotest.test_case "the assigned expression is checked" `Quick test_assign_rhs;
+        ] );
       ( "calls",
         [
           Alcotest.test_case "print arity" `Quick test_print_arity;
