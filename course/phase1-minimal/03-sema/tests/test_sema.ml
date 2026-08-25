@@ -42,7 +42,28 @@ let test_undeclared () =
 let test_immutability () =
   has_error "let k = 1\nk = 2" "cannot assign to value: 'k' is a 'let' constant"
 
-let test_print_arity () = has_error "print(1, 2)" "print(_:) expects exactly one argument"
+let test_print_arity () =
+  has_error "print(1, 2)" "print(_:) expects exactly one argument";
+  has_error "print()" "print(_:) expects exactly one argument";
+  accepted "print(1)"
+
+(* the only callable in Phase 1 is print(_:); anything else is an unknown name — the
+   same message swiftc gives for a call to an undefined function *)
+let test_unknown_callee () =
+  has_error "foo(1)" "cannot find 'foo' in scope";
+  has_error "let a = 1\nbar(a)" "cannot find 'bar' in scope"
+
+(* a bad call must not stop the walk: the arguments are still checked, so one run
+   reports every problem it can see rather than one per recompile *)
+let test_reports_keep_going () =
+  Alcotest.(check (list string))
+    "a bad call still reports its arguments"
+    [ "print(_:) expects exactly one argument"; "cannot find 'y' in scope" ]
+    (sema_errors "print(1, y)");
+  Alcotest.(check (list string))
+    "and later statements are still checked"
+    [ "cannot find 'p' in scope"; "cannot find 'q' in scope" ]
+    (sema_errors "print(p)\nprint(q)")
 
 let () =
   Alcotest.run "sema"
@@ -50,5 +71,11 @@ let () =
       ("accept", [ Alcotest.test_case "valid programs have no errors" `Quick test_accept ]);
       ("scope", [ Alcotest.test_case "undeclared / use-before-decl" `Quick test_undeclared ]);
       ("immutability", [ Alcotest.test_case "assign to a let constant" `Quick test_immutability ]);
-      ("calls", [ Alcotest.test_case "print arity" `Quick test_print_arity ]);
+      ( "calls",
+        [
+          Alcotest.test_case "print arity" `Quick test_print_arity;
+          Alcotest.test_case "unknown callee" `Quick test_unknown_callee;
+        ] );
+      ( "recovery",
+        [ Alcotest.test_case "one run reports every error" `Quick test_reports_keep_going ] );
     ]

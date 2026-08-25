@@ -85,16 +85,22 @@ what our Phase-1 sema treats as one rule:
 | program | swiftc says | swiftml says |
 |---|---|---|
 | `print(y)` | `cannot find 'y' in scope` | same |
+| `foo(1)` | `cannot find 'foo' in scope` | same |
 | `let k = 1; k = 2` | `cannot assign to value: 'k' is a 'let' constant` | same |
 | `let a = a` (top level) | `circular reference` | `cannot find 'a' in scope` |
 | `let a = a` (in a func) | `use of local variable 'a' before its declaration` | *(no funcs yet)* |
+| `print(1, 2)` | *accepted* — prints `1 2` | `print(_:) expects exactly one argument` |
+| `print()` | *accepted* — prints a blank line | `print(_:) expects exactly one argument` |
 
-Both compilers *reject* all four; we match two of the messages and consciously pick one wording for
-the third, because Phase 1 has one flat scope and no notion of a reference cycle. Copying swiftc's
-text is something we aim for, not something to chase at any cost: it is not worth inventing
-cycle detection just to print `circular reference`. What matters is which kind of difference it is.
-A divergence you decided on and wrote down is a **design decision**. The very same divergence, if
-you never noticed it, is a **bug you have not found yet**.
+The first three we match exactly. The last two are not a wording difference at all but a **subset
+restriction**: the real `print` is variadic with two defaulted parameters — its full name is
+`print(_:separator:terminator:)` — so swiftc happily accepts any number of arguments. Phase 1
+supports exactly one, and says so in swiftc's naming style without claiming to be swiftc.
+
+Copying swiftc's text is something we aim for, not something to chase at any cost: it is not worth
+inventing cycle detection just to print `circular reference`. What matters is which kind of
+difference it is. A divergence you decided on and wrote down is a **design decision**. The very
+same divergence, if you never noticed it, is a **bug you have not found yet**.
 
 ## 3. Build it, step by step
 
@@ -102,8 +108,15 @@ Open `sema.ml` in this directory. Implement `check (prog) (diags)`:
 
 1. Keep a mutable `env` (e.g. `let env = Hashtbl.create 16` or a `ref []`).
 2. Write a local `check_expr : expr -> ty` that recurses as in §2, using
-   `Diagnostics.error diags (Ast.expr_span e) "cannot find '<name>' in scope"` for unknown `Var`,
-   and an arity/`print`-name check for `Call`.
+   `Diagnostics.error diags (Ast.expr_span e) "cannot find '<name>' in scope"` for unknown `Var`.
+   `Call` has two rules, and the tests pin both messages verbatim:
+   - the callee must be `print` — anything else is `cannot find '<f>' in scope`, the same message
+     an unknown variable gets (and the same one swiftc gives for an undefined function);
+   - `print` takes exactly one argument — otherwise `print(_:) expects exactly one argument`.
+
+   In both cases **report and keep going**: still `check_expr` each argument, so
+   `print(1, y)` reports the arity *and* `cannot find 'y' in scope` in one run. A checker that
+   stops at the first problem makes the user recompile once per mistake.
 3. Walk the statements:
    - `Ast.Let { name; is_var; value; _ }` ⇒ `ignore (check_expr value)`; **then** record `name`
      (store `is_var` so assignment can check mutability).
