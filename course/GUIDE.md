@@ -95,9 +95,18 @@ For each concept, in order:
    ```bash
    make lab C=phase1-minimal/01-lexer
    ```
-5. **Check parity** against the real compiler:
+5. **Check parity** against the real compiler — *once the concept can produce a program to
+   run*. `make oracle` compiles a `.swift` with both compilers and compares what they print,
+   so it needs the whole pipeline down to codegen:
    ```bash
-   make oracle F=tests/programs/arith.swift
+   make oracle F=tests/programs/arith.swift        # green from 04-codegen onward
+   ```
+   In a front-end concept (01–03) there is no back end yet, and the oracle stops at IRGen's
+   `TODO` — expected, not a failure of your work. Compare the front ends instead, which is the
+   same oracle applied to the stage you are actually writing:
+   ```bash
+   swiftc -typecheck foo.swift                     # what the real compiler says
+   dune exec swiftml -- --typecheck foo.swift      # what yours says
    ```
 6. **Stuck?** Read the explainer's **Appendix** (full commented solution) or the matching
    `../swift/lib/…` file, or `solution/`. Try first — the struggle is the learning.
@@ -272,7 +281,9 @@ _TEMPLATE-concept/    skeleton for a new concept
 
 - **The tests are the spec.** Read the failing test to see exactly what's expected.
 - **`swiftc` is the answer key for behavior.** `make oracle F=…` shows exactly how the real
-  compiler treats your program; match it.
+  compiler treats your program; match it. Before a back end exists, ask the same question of the
+  front end with `swiftc -typecheck` next to `swiftml --typecheck` — accepted or rejected, and
+  with what message.
 - **`../swift/lib/…` is the answer key for design.** When you build the parser, read `Parser.cpp`;
   when you build the ARC optimizer, read `lib/SILOptimizer/ARC/` and `docs/SIL/ARCOptimization.md`.
 - **Start each version from the previous one.** The ladder is designed so each rung is a small,
@@ -287,5 +298,6 @@ cd course
 make setup
 ```
 Then open `phase0-setup/00-setup/README.md` and follow the loop in §4. Phase 0 is tiny on
-purpose — it's where you learn the *rhythm* (read → fill skeleton → `make lab` → `make oracle`)
+purpose — it's where you learn the *rhythm* (read → fill skeleton → `make lab`, then `make oracle`
+once a phase reaches its back end)
 and get the whole pipeline running end-to-end on a one-integer program.

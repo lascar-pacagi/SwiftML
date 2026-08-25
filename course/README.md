@@ -15,7 +15,7 @@ make build                                # compile the compiler
 make explainer C=phase1-minimal/01-lexer  # render the lesson (Quarto)
 make lab C=phase1-minimal/01-lexer        # that concept's tests  (RED until you fill it in)
 make exercises C=phase1-minimal/01-lexer  # just the §6 exercises (they also run in `make lab`)
-make oracle F=tests/programs/arith.swift  # differential vs swiftc
+make oracle F=tests/programs/arith.swift  # differential vs swiftc (needs a back end: 04+)
 
 # where a concept has bench/ (01-lexer, 20-llvm-opt)
 make bench C=phase1-minimal/01-lexer      # how fast?
