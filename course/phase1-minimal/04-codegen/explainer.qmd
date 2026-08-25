@@ -20,7 +20,39 @@ oracle can compare them to `swiftc` byte-for-byte.
 
 ### LLVM IR in one page
 
-LLVM IR is a typed, SSA assembly. For Phase 1 you need a sliver of it:
+LLVM IR is a typed assembly language in **SSA form**. Both halves of that need a word.
+
+*Typed*: every value carries a type — `i64`, `i1`, `ptr` — and the verifier rejects a mismatch, so
+a great many codegen bugs become a refusal to compile rather than a wrong program.
+
+*SSA* — **static single assignment** — is the rule that **every register is written exactly once,
+textually**. There is no "reassign `%1`". If a value changes, a *new* register holds the new value:
+
+```llvm
+%1 = add i64 %0, 1      ; not "%0 = %0 + 1" — that spelling does not exist here
+%2 = mul i64 %1, 2
+```
+
+"Static" is doing real work in that name: it is one assignment per register **in the text of the
+program**, not per execution — a register inside a loop is written once in the listing and once per
+iteration at run time.
+
+Why anyone bothers: it makes the question *"where did this value come from?"* free. Given `%2`,
+there is exactly one instruction that defines it, so the definition is a lookup rather than a search
+backwards through the code for the last store that might have run. Every optimization in Phase 4 —
+constant folding, common-subexpression elimination, dead-code elimination — leans on that. It is
+the single most important structural idea in modern compiler IRs, which is why it gets a whole
+concept of its own (**16-mem2reg-ssa**) where you *build* SSA from scratch instead of being handed
+it.
+
+The catch is that Swift `var`s are, by definition, assigned more than once — so how does a mutable
+variable live in an IR where nothing may be written twice? The classic answer, and the one we use
+below, is to dodge the question: keep variables in **memory** (`alloca` + `load`/`store`), because
+the SSA rule constrains *registers*, not memory cells. Every `x = …` becomes a `store` to the same
+slot. That is exactly what `clang -O0` emits for C, and Phase 4's `mem2reg` pass is what later
+promotes those slots into real SSA registers.
+
+For Phase 1 you need a sliver of the language:
 
 ```llvm
 ; a format string and the C printf, to print an Int + newline
@@ -38,10 +70,12 @@ entry:
 }
 ```
 
-Key facts: every computed value is a fresh `%N` register assigned exactly once (SSA);
-`i64` is our `Int`; `alloca` gives a stack slot you `store`/`load`; arithmetic is `add/sub/mul/
-sdiv/srem i64`; `printf` with `%lld` prints a 64-bit int. (Phase 4's mem2reg will *remove* the
-allocas by promoting them to SSA registers — but writing them now is the simple, correct start.)
+Key facts: every computed value is a fresh `%N` register, written once and never again (that is
+the SSA rule above); `i64` is our `Int`; `alloca` gives a stack slot you `store`/`load`; arithmetic
+is `add/sub/mul/sdiv/srem i64`; `printf` with `%lld` prints a 64-bit int. Note how the two kinds of
+name divide the work: `%x` is an *address* (what `alloca` returned) and `%1` is a *value* (what
+`load` produced). Phase 4's mem2reg will *remove* the allocas by promoting them to SSA registers —
+but writing them now is the simple, correct start.
 
 ### Lowering = a recursive walk that returns "where the value is"
 
