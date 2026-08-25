@@ -205,13 +205,56 @@ Not perf-relevant in Phase 1.
 
 ## 6. Exercises
 
-1. Disallow re-declaring a name in the same scope (`let x = 1; let x = 2` ⇒ error), matching Swift
-   at top level? Ask the oracle before you decide — and at this point in the course ask it with
-   `swiftc -typecheck redecl.swift`, not `make oracle`, which needs an IRGen you have not written
-   yet. The answer is in §9, and it is not the one most people guess.
-2. Reject assigning to a `let` (`let x = 1; x = 2`). The AST already has `Ast.Assign` (see §9 for
-   why it landed in Phase 1) — extend your env to record let-vs-var, and match swiftc's
-   "cannot assign to value: 'x' is a 'let' constant".
+Both are self-contained in `sema.ml`, and both are checked by `tests/test_exercises.ml` — which
+skips itself until it sees your sema behave differently from the stock one:
+
+```bash
+make exercises C=phase1-minimal/03-sema      # just these
+make lab       C=phase1-minimal/03-sema      # concept + exercises
+```
+
+**1 — reject redeclaration.** Does `let x = 1` followed by `let x = 2` shadow, as it would in a REPL,
+or is it an error? Don't guess; the oracle answers in one command (`-diagnostic-style=llvm` prints
+plain `line:col:` instead of the source-quoting display):
+
+```console
+$ printf 'let x = 1\nlet x = 2\nprint(x)\n' > redecl.swift
+$ swiftc -typecheck -diagnostic-style=llvm redecl.swift
+redecl.swift:2:5: error: invalid redeclaration of 'x'
+redecl.swift:1:5: note: 'x' previously declared here
+```
+
+So: an error, and `var y` after `let y` is one too — same name, same scope. Match the message
+`invalid redeclaration of 'x'` (the note is exercise 2's business), keep the *first* binding, and
+keep walking: the bad declaration's initializer still gets checked, so
+`let w = 1` / `let w = q` reports the redeclaration **and** `cannot find 'q' in scope`. Your
+diagnostic lands at column 1 where swiftc's lands at column 5, because our `Ast.Let` span starts at
+the keyword and swiftc points at the name — matching that too would mean recording the name's own
+span in the parser.
+
+**2 — add swiftc's note to the immutability error.** Rejecting `k = 2` is already the concept's
+work; what swiftc adds is a second diagnostic that says how to fix it, pointing at the
+*declaration*:
+
+```console
+$ printf 'let k = 1\nk = 2\n' > c1.swift
+$ swiftc -typecheck -diagnostic-style=llvm c1.swift
+c1.swift:2:1: error: cannot assign to value: 'k' is a 'let' constant
+c1.swift:1:1: note: change 'let' to 'var' to make it mutable
+```
+
+Two new things. Your `scope` has to remember **where** each name was declared (`Ast.Let` carries
+its `span`, and its `lo` is the `let` keyword — exactly where swiftc puts the note). And a note is
+not an error: `Diagnostics` gives you `error` and `warning` shorthands but no `note`, so emit the
+record directly, as concept 01's exercise 2 does —
+
+```ocaml
+Diagnostics.emit diags
+  { Diagnostics.severity = Note; span = decl_span;
+    message = "change 'let' to 'var' to make it mutable" }
+```
+
+`has_errors` must not change: one error, one note, and a `var` assignment stays silent.
 
 ## 7. Recap & what's next
 
@@ -281,29 +324,55 @@ Why it's shaped this way:
 
 ## 9. Exercise solutions
 
-### 1 — reject redeclaration (check the oracle first!)
+### 1 — reject redeclaration
 
-Ask the behavioral oracle what swiftc actually does — and it **rejects** top-level redeclaration:
-`let x = 1` then `let x = 2` gives *invalid redeclaration of 'x'* (so the parenthetical guess about
-"script shadowing" does **not** hold for swiftc 6.3.2; always verify rather than assume). Match it by
-erroring when the name is already bound, instead of silently overwriting with `Hashtbl.replace`:
+The oracle settles it: swiftc **rejects** top-level redeclaration (`invalid redeclaration of 'x'`),
+so the "it's a script, it shadows" guess is wrong — always ask rather than assume. Error when the
+name is already bound, and keep the first binding:
 
 ```ocaml
 | Ast.Let { name; is_var; value; span } ->
-    ignore (check_expr value);
+    ignore (check_expr value);          (* still checked, even for a bad declaration *)
     if Hashtbl.mem scope name then
-      Diagnostics.error diags span (Printf.sprintf "invalid redeclaration of '%s'" name)
-    else Hashtbl.add scope name is_var
+      Diagnostics.error diags span
+        (Printf.sprintf "invalid redeclaration of '%s'" name)
+    else Hashtbl.replace scope name is_var
 ```
 
-(The `Let` record already carries its `span`, so point the diagnostic there.) This is the lab's
-mantra in miniature: the **oracle is ground truth**, and a plausible assumption was wrong.
+The `else` is what keeps the first binding: a redeclared name stays whatever it was declared as
+first, so a later `x = 3` is judged against `let x = 1`, like swiftc.
 
-### 2 — reject assigning to a `let`
+### 2 — the "change 'let' to 'var'" note
 
-This is **already done** in the Phase-1 base solution. The exercise text predates a design decision:
-the Phase-1 corpus reassigns a `var` (`c = c * 2`), so we brought assignment into Phase 1 as an
-`Ast.Assign` node rather than deferring it to Phase 2. `check`'s `Assign` arm therefore already
-reports *cannot assign to value: 'x' is a 'let' constant* when the target's `is_var` is `false` — see
-the `Assign` case in §8, and the `immutability` case in `tests/test_sema.ml`. Nothing further to add;
-the seam this exercise anticipated is the `is_var` flag we store in `scope`.
+The env grows a span, so `scope` maps a name to *both* facts about it:
+
+```ocaml
+let scope : (string, bool * Token.span) Hashtbl.t = Hashtbl.create 16 in
+```
+
+`Let` stores the declaration's span alongside `is_var`, and `Assign` emits the note next to the
+error it already produced:
+
+```ocaml
+| Ast.Assign { name; value; span } ->
+    (match Hashtbl.find_opt scope name with
+    | None ->
+        Diagnostics.error diags span
+          (Printf.sprintf "cannot find '%s' in scope" name)
+    | Some (is_var, decl) ->
+        if not is_var then (
+          Diagnostics.error diags span
+            (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" name);
+          Diagnostics.emit diags
+            { Diagnostics.severity = Note; span = decl;
+              message = "change 'let' to 'var' to make it mutable" }));
+    ignore (check_expr value)
+```
+
+Note the shape of the pair: `Some (is_var, decl)`. Widening the env is a one-line type change and a
+two-line ripple — which is the point. Every later phase widens this same table (types in Phase 2,
+scopes in concept 06, generic parameters in Phase 5), and this is what that always feels like.
+
+Both exercises are pinned by `tests/test_exercises.ml`; with the two arms above it reports
+`ex1 redeclaration … checked` and `ex2 mutability note … checked` instead of "skipped", and the
+seven core tests keep passing — a note is not an error, so nothing else moves.
