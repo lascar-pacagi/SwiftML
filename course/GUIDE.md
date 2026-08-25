@@ -32,6 +32,12 @@ LLVM IR ──► clang ──► arm64 executable                      (Backend
    └─(Phase 8) our ARM64 backend: isel → register allocation → machine code  (Backend B)
 ```
 
+*SSA* there is **static single assignment**: an IR where every register is written exactly once in
+the text of the program, so the definition of a value is a lookup rather than a search backwards
+through the code. It is what makes the optimizer's job tractable, and you meet it properly twice —
+in `04-codegen`, where LLVM IR is already in that form, and in `16-mem2reg-ssa`, where you build it
+yourself.
+
 The thread through every phase: **start naive and correct, then make it fast — and prove both,
 against the real `swiftc`, at every step.**
 

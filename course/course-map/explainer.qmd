@@ -57,8 +57,11 @@ build them:
 **SIL is the hinge.** Everything above it is shared; everything below it is a backend. That is
 exactly why we spend a whole phase (Phase 4) optimizing *SIL* — improvements there help **both**
 backends. The reason SIL is *memory-based* (values live in `alloc_stack` slots, not SSA registers)
-is pedagogical: it lets us **learn SSA properly** later, by *building* `mem2reg` ourselves in
-`phase4-optimizer/16-mem2reg-ssa` and watching a loop turn into block-argument (φ) form.
+is pedagogical. **SSA** — static single assignment — is the form in which every register is written
+exactly once in the program text, so each value has exactly one defining instruction and "where did
+this come from?" costs a lookup instead of a backwards search; virtually every optimization assumes
+it. Handing it to you would waste the lesson, so SIL starts in memory and you **build SSA yourself**
+in `phase4-optimizer/16-mem2reg-ssa`, watching a loop turn into block-argument (φ) form.
 
 ![The intermediate representations, and the stage that produces each.](figs/datastructures.png)
 
