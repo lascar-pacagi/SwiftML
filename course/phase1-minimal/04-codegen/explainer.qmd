@@ -166,7 +166,7 @@ preamble.
 > emitting via LLVM's `IRBuilder`. We emit text for clarity; the structure (recursive lower,
 > return an operand) is identical. Phase 2 moves this onto SIL.
 
-![From AST to LLVM IR: each node emits instructions and returns its result operand.](figs/lowering.png)
+![From AST to LLVM IR for `print(1 + 2 * 3)`: each node emits its instructions and returns the operand holding its result, in post-order — children first, so their operands exist before the parent names them. The literals emit nothing at all. The `print` node is last, and its "result" is the dummy operand `"0"`: a `print` statement's value is discarded, but `gen_expr` must return *something* because every expression case does.](figs/lowering.png)
 
 *(regenerate: `make figs C=phase1-minimal/04-codegen`)*
 
