@@ -229,6 +229,27 @@ make oracle F=tests/programs/vars.swift
 The cram test compiles a program with `swiftml`, runs it, and checks stdout. `make oracle` is the
 headline check: identical output to `swiftc`.
 
+**Which compiler does it run?** Nothing is inferred from `C=` or from where you are in the course.
+`make oracle` passes `F` and `B` straight to `tooling/oracle.sh`, whose default is
+`BIN="${2:-swiftml}"` — the Phase-1 binary. That is the right one *here*, and from Phase 2 on you
+name the binary yourself:
+
+```bash
+make oracle F=prog.swift            # swiftml   — Phase 1
+make oracle F=prog.swift B=swiftml4 # swiftml4  — Phase 4, etc.
+```
+
+And `swiftml` is *your* compiler, not a stashed reference build. `phase1-minimal/bin/dune` declares
+it as an executable over `swiftml_codegen`, the library built from **this** directory
+(`irgen.ml` + `driver.ml`), which depends on `swiftml_sema` (03) → `swiftml_parser` (02) →
+`swiftml_lexer` (01). So the binary is exactly the chain of concept directories you have been
+filling in, and `oracle.sh` runs `dune build` before using it — your latest edit is always what
+gets compared against `swiftc`.
+
+That is also the difference from `make lab`, which builds a `./lab.exe` from *one* concept's
+library so a concept's tests exercise that directory alone. `make oracle` always goes through the
+whole phase binary, because it needs to produce a running program.
+
 ## 5. Benchmark it
 
 ```bash
