@@ -181,6 +181,14 @@ dune exec swiftml -- --emit-ast foo.swift      # inspect the parser
 dune exec swiftml -- --emit-sil foo.swift      # inspect SIL          (Phase 2+)
 dune exec swiftml -- --emit-llvm foo.swift     # inspect LLVM IR
 dune exec swiftml -- --emit-asm foo.swift      # inspect native asm   (Phase 8)
+```
+
+The bare `--` separates *dune's* arguments from your compiler's. Without it, dune would read
+`--emit-llvm` as one of its own options and stop with "unknown option"; after `--`, everything is
+handed to `swiftml` untouched. It is the usual Unix end-of-options marker, the same one that lets
+you write `rm -- -weird-filename`.
+
+```bash
 
 make test          # ALL concept tests — RED by design on the shipped skeletons
 make test-all      # everything
