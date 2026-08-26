@@ -5,28 +5,46 @@
    *shape* of the emitted LLVM IR, so a wrong opcode is caught and localized here rather
    than showing up as a wrong number at the end.
 
-   They are also arranged so you can WORK INCREMENTALLY. `emit_llvm` is one function, but
-   the groups below climb from "the module wrapper alone" to "whole programs", and each
-   layer needs only what the layers before it needed:
+   `irgen.ml` exposes its lowering steps, so each group tests ONE of them and you can
+   write them in any order:
 
-     arithmetic  `gen_expr` ALONE — every program is a bare expression statement, so
-                 no wrapper, no print, no slots are needed for this group to pass
-     literals    the printf call, and that an immediate emits no instruction
-     module      the wrapper: preamble, `define i32 @main`, `entry:`, `ret i32 0`
-     slots       let/var: alloca, store, load, and slot REUSE
+     arithmetic  Irgen.emit_expr, called directly — needs nothing else to exist
+     literals    emit_expr's `print` case (the printf call)
+     slots       Irgen.slot_of + Irgen.emit_stmt (alloca / store / load, and slot REUSE)
+     module      Irgen.emit_llvm (the preamble, `define i32 @main`, `ret i32 0`)
      (cram)      codegen.t builds and RUNS real programs — needs all of the above
 
-   They are independent, so you can write `gen_expr` first, with an `emit_llvm` that is
-   nothing but `... ; Buffer.contents buf`, and watch `arithmetic` go green while the rest
-   is still red. Run one group at a time:
+   Run one while you work on it:
 
-     dune exec ./phase1-minimal/04-codegen/tests/test_irgen.exe -- test module 0
+     dune exec ./phase1-minimal/04-codegen/tests/test_irgen.exe -- test arithmetic
 
-   RED until you implement `irgen.ml : emit_llvm`; GREEN against `solution/irgen.ml`. *)
+   RED until you implement `irgen.ml`; GREEN against `solution/irgen.ml`. *)
 
+let diags () = Diagnostics.create ()
+
+let parse_expr (src : string) : Ast.expr =
+  let d = diags () in
+  Parser.parse_expr (Parser.create (Lexer.tokenize (Lexer.create src d)) d)
+
+(* emit_expr IN ISOLATION: lower one expression into a fresh context, and return both
+   halves of its contract — the instructions it emitted, and the operand it handed back. *)
+let lower (src : string) : string list * string =
+  let c = Irgen.create () in
+  let operand = Irgen.emit_expr c (parse_expr src) in
+  let lines =
+    String.split_on_char '\n' (Buffer.contents c.Irgen.buf)
+    |> List.map String.trim
+    |> List.filter (fun l -> l <> "")
+  in
+  (lines, operand)
+
+let instrs (src : string) : string list = fst (lower src)
+let operand (src : string) : string = snd (lower src)
+
+(* whole-program lowering, for the groups that need it *)
 let emit (src : string) : string =
-  let diags = Diagnostics.create () in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src diags)) diags) in
+  let d = diags () in
+  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
   Irgen.emit_llvm p
 
 let contains haystack needle =
@@ -41,28 +59,6 @@ let lacks src needle =
   Alcotest.(check bool)
     (Printf.sprintf "%S must NOT emit %S" src needle)
     false (contains (emit src) needle)
-
-(* The instructions of `main`, with the module wrapper filtered out — comments, globals,
-   `declare`, `define`, `entry:`, `ret i32 0`, `}`. Whatever is left is what your lowering
-   emitted.
-
-   This is how you test `gen_expr` BEFORE anything else exists. The filter does not
-   require the wrapper to be there, so you can start with
-
-     let emit_llvm prog = ... ; Buffer.contents buf     (* no preamble/main yet *)
-
-   write `gen_expr`, and have the `arithmetic` groups pass while `module` and `literals`
-   are still red. A bare expression statement (`1 + 2 * 3`) lowers to `ignore (gen_expr e)`
-   and contributes nothing else, so the comparison below is exact, not a grep. *)
-let is_wrapper (l : string) : bool =
-  l = "" || l = "}" || l = "entry:" || l = "ret i32 0"
-  || String.length l > 0 && (l.[0] = ';' || l.[0] = '@')
-  || (String.length l >= 7 && String.sub l 0 7 = "declare")
-  || (String.length l >= 6 && String.sub l 0 6 = "define")
-
-let body (src : string) : string list =
-  String.split_on_char '\n' (emit src) |> List.map String.trim
-  |> List.filter (fun l -> not (is_wrapper l))
 
 (* count non-overlapping occurrences — how many allocas, how many loads *)
 let count (src : string) (needle : string) : int =
@@ -102,51 +98,50 @@ let test_literals () =
   Alcotest.(check int) "one printf call per print" 2
     (count "print(1)\nprint(2)" "call i32 (ptr, ...) @printf")
 
-(* --- layer 2: arithmetic ------------------------------------------------------------
-   Every program here is a BARE expression statement, which lowers to `ignore (gen_expr e)`.
-   So this whole group needs `gen_expr` and nothing else — not the module wrapper, not the
-   print call, not the slot map. Write `gen_expr` first and these go green first. *)
+(* --- group `arithmetic`: emit_expr, on its own ---------------------------------------
+   These call `Irgen.emit_expr` directly, so they pass as soon as that one function is
+   written — no module wrapper, no `print`, no slot map needed. *)
 let test_opcodes () =
-  has "1 + 2" "add i64";
-  has "3 - 1" "sub i64";
-  has "2 * 3" "mul i64";
-  has "9 / 3" "sdiv i64";
-  has "9 % 4" "srem i64";
+  let op src instr =
+    Alcotest.(check (list string)) (Printf.sprintf "%S" src) [ instr ] (instrs src)
+  in
+  op "1 + 2" "%t1 = add i64 1, 2";
+  op "3 - 1" "%t1 = sub i64 3, 1";
+  op "2 * 3" "%t1 = mul i64 2, 3";
+  op "9 / 3" "%t1 = sdiv i64 9, 3";
+  op "9 % 4" "%t1 = srem i64 9, 4";
   (* unary minus is lowered as 0 - x — LLVM has no integer negate *)
-  has "-5" "sub i64 0,"
+  op "-5" "%t1 = sub i64 0, 5"
+
+let test_operands () =
+  (* the other half of emit_expr's contract: WHAT it returns *)
+  Alcotest.(check string) "a literal returns itself, emitting nothing" "42" (operand "42");
+  Alcotest.(check (list string)) "...nothing at all" [] (instrs "42");
+  Alcotest.(check string) "an operator returns its register" "%t1" (operand "1 + 2");
+  Alcotest.(check string) "nested: the OUTER register is returned" "%t2" (operand "1 + 2 * 3")
 
 let test_signedness () =
   (* the signed-vs-unsigned choice matters for parity — never the unsigned forms *)
-  lacks "9 / 3" "udiv";
-  lacks "9 % 4" "urem"
+  Alcotest.(check bool) "no udiv" false (List.exists (fun l -> contains l "udiv") (instrs "9 / 3"));
+  Alcotest.(check bool) "no urem" false (List.exists (fun l -> contains l "urem") (instrs "9 % 4"))
 
 let test_nesting () =
-  (* post-order: the inner multiply is emitted BEFORE the add that consumes it *)
-  Alcotest.(check int) "one mul" 1 (count "1 + 2 * 3" "mul i64");
-  Alcotest.(check int) "one add" 1 (count "1 + 2 * 3" "add i64");
-  (* deeper nesting still emits exactly one instruction per operator *)
-  Alcotest.(check int) "four operators, four instructions" 4
-    (List.length (body "1 + 2 * 3 - 4 / 2"))
-
-(* Expressions ALONE, with nothing else in the program. `1 + 2 * 3` as a statement emits
-   exactly what `gen_expr` emitted — so these compare the whole instruction sequence, which
-   pins evaluation order, operand threading and the fresh-name discipline in one go. *)
-let test_expr_alone () =
-  Alcotest.(check (list string)) "a literal alone emits nothing" [] (body "42");
-  Alcotest.(check (list string))
-    "one operator, one instruction" [ "%t1 = add i64 1, 2" ] (body "1 + 2");
+  (* post-order, and the inner register threaded into the outer instruction *)
   Alcotest.(check (list string))
     "inner first, and its register feeds the outer"
     [ "%t1 = mul i64 2, 3"; "%t2 = add i64 1, %t1" ]
-    (body "1 + 2 * 3");
+    (instrs "1 + 2 * 3");
   Alcotest.(check (list string))
     "left-to-right within a level"
     [ "%t1 = mul i64 2, 3"; "%t2 = sdiv i64 8, 4"; "%t3 = add i64 %t1, %t2" ]
-    (body "2 * 3 + 8 / 4");
+    (instrs "2 * 3 + 8 / 4");
   Alcotest.(check (list string))
-    "unary minus is 0 - x, applied after its operand"
+    "unary applies after its operand"
     [ "%t1 = mul i64 2, 3"; "%t2 = sub i64 0, %t1" ]
-    (body "-(2 * 3)")
+    (instrs "-(2 * 3)");
+  (* one instruction per operator, however deep *)
+  Alcotest.(check int) "four operators, four instructions" 4
+    (List.length (instrs "1 + 2 * 3 - 4 / 2"))
 
 (* --- group `slots`: the slot model -------------------------------------------------------- *)
 let test_slot_model () =
@@ -175,10 +170,10 @@ let () =
         [ Alcotest.test_case "immediates + the printf call" `Quick test_literals ] );
       ( "arithmetic",
         [
-          Alcotest.test_case "opcode mapping (gen_expr only)" `Quick test_opcodes;
+          Alcotest.test_case "opcode mapping (emit_expr alone)" `Quick test_opcodes;
+          Alcotest.test_case "what emit_expr returns" `Quick test_operands;
           Alcotest.test_case "signed div/rem, not unsigned" `Quick test_signedness;
-          Alcotest.test_case "one instruction per operator" `Quick test_nesting;
-          Alcotest.test_case "exact instruction sequence" `Quick test_expr_alone;
+          Alcotest.test_case "post-order + exact sequence" `Quick test_nesting;
         ] );
       ( "slots",
         [

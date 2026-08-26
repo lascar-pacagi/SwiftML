@@ -220,65 +220,60 @@ What you write:
 **Tip:** keep `entry:` as a single basic block in Phase 1 — no branches yet, control flow arrives
 in Phase 2.
 
-### Write it in any order — the tests come apart
+### Four holes, four test groups, any order
 
-`emit_llvm` is one function, which makes it look like an all-or-nothing job. It is not:
-`tests/test_irgen.ml` has four independent groups, and each one needs only its own piece.
+`irgen.ml` gives you the shared state and its two helpers, and leaves four functions to
+write. Each one is exported, so each is tested on its own:
 
-| group | needs | nothing else |
-|---|---|---|
-| `arithmetic` | `gen_expr`: `Int_lit`, `Unary`, `Binary` | no wrapper, no `print`, no slots |
-| `literals` | the `printf` call | |
-| `module` | the wrapper: preamble, `define i32 @main()`, `entry:`, `ret i32 0` | no lowering at all |
-| `slots` | the name→slot map: `Let`, assignment, `Var` | |
+```ocaml
+type ctx = { buf : Buffer.t; mutable next_reg : int; slots : (string, string) Hashtbl.t }
+val create   : unit -> ctx
+val emit     : ctx -> string -> unit     (* given: append one indented instruction *)
+val fresh    : ctx -> string             (* given: %t1, %t2, … *)
 
-So you can start with `gen_expr` alone. Every program in the `arithmetic` group is a **bare
-expression statement** — `1 + 2 * 3`, not `print(1 + 2 * 3)` — which lowers to
-`ignore (gen_expr e)` and contributes nothing else, and the tests strip the module wrapper before
-comparing. An `emit_llvm` that ends in `Buffer.contents buf`, with no preamble and no `main` yet,
-passes all four `arithmetic` cases while the other groups stay red:
-
-```console
-$ dune exec ./phase1-minimal/04-codegen/tests/test_irgen.exe
-[FAIL]  module       0   the wrapper: preamble, main, ret.
-[FAIL]  literals     0   immediates + the printf call.
-[OK]    arithmetic   0   opcode mapping (gen_expr only).
-[OK]    arithmetic   1   signed div/rem, not unsigned.
-[OK]    arithmetic   2   one instruction per operator.
-[OK]    arithmetic   3   exact instruction sequence.
-[FAIL]  slots        0   alloca/store/load.
-[FAIL]  slots        1   a var reuses its slot.
+val slot_of   : ctx -> string -> string       (* TODO(04b)  →  group `slots`   *)
+val emit_expr : ctx -> Ast.expr -> string     (* TODO(04a)  →  group `arithmetic` *)
+val emit_stmt : ctx -> Ast.stmt -> unit       (* TODO(04c)  →  group `slots`   *)
+val emit_llvm : Ast.program -> string         (* TODO(04d)  →  group `module`  *)
 ```
 
-Run one group while you work on it:
+That is the same split swiftc makes, minus the C++: `IRGenFunction` (`IRGenFunction.h:77`)
+carries the builder, the value namer and the local-value map, and the lowering methods hang off
+it. Ours is a record and four functions.
+
+**Start with `emit_expr`.** It is the heart of the concept, and the `arithmetic` group calls it
+*directly* — no module, no `print`, no slots required:
+
+```ocaml
+let c = Irgen.create () in
+Irgen.emit_expr c (parse_expr "1 + 2 * 3")     (* returns "%t2" *)
+(* c.buf now holds:  %t1 = mul i64 2, 3
+                     %t2 = add i64 1, %t1      *)
+```
+
+The tests assert *both* halves of that contract — the instruction list and the returned operand —
+so evaluation order, operand threading and the fresh-name discipline are all pinned. Leave the
+`Var` case as `failwith` until you write `slot_of`; nothing in `arithmetic` needs it.
+
+Then, in whatever order suits you:
+
+| write | turns green |
+|---|---|
+| `emit_expr`'s `Call("print", [a])` case | `literals` |
+| `slot_of` and `emit_stmt` | `slots` |
+| `emit_llvm` — preamble, `define i32 @main()`, `entry:`, body, `ret i32 0`, `}` | `module` |
 
 ```bash
 dune exec ./phase1-minimal/04-codegen/tests/test_irgen.exe -- test arithmetic
 make lab C=phase1-minimal/04-codegen        # everything, including the cram runs
 ```
 
-`arithmetic 3` is the one to watch while writing `gen_expr`: it compares the **whole instruction
-sequence**, so it pins evaluation order, operand threading and fresh-name discipline at once —
-
-```ocaml
-Alcotest.(check (list string)) "inner first, and its register feeds the outer"
-  [ "%t1 = mul i64 2, 3"; "%t2 = add i64 1, %t1" ] (body "1 + 2 * 3");
-```
-
-The same view at the shell, once the wrapper exists:
-
-```console
-$ printf '1 + 2 * 3\n' > e.swift && swiftml --emit-llvm e.swift
-define i32 @main() {
-entry:
-  %t1 = mul i64 2, 3
-  %t2 = add i64 1, %t1
-  ret i32 0
-}
-```
-
-The cram tests (`codegen.t`) are the ones that need everything at once — they build and run real
+The cram tests (`codegen.t`) are the ones that need all four at once — they build and run real
 programs. Leave them for last.
+
+Two notes. `emit` indents by two spaces for a function body, so the module-level preamble is not
+written with it — build the final string around `Buffer.contents c.buf`. And keep `entry:` as a
+single basic block in Phase 1: no branches yet, control flow arrives in Phase 2.
 
 ## 4. Test it
 
@@ -375,95 +370,112 @@ a place to live. The lowering you just wrote moves from "AST → LLVM" to "AST �
 
 ## 8. Appendix — full solution
 
-Mirrors `solution/irgen.ml` — the complete `emit_llvm`. **Try §3 first — this is the answer.**
+Mirrors `solution/irgen.ml`. **Try §3 first — this is the answer.**
 
 ```ocaml
-let emit_llvm (prog : Ast.program) : string =
-  let buf = Buffer.create 256 in
-  let next_reg = ref 0 in
-  let fresh () = incr next_reg; Printf.sprintf "%%t%d" !next_reg in
-  (* name -> the `alloca` pointer register holding that binding's slot. *)
-  let slots : (string, string) Hashtbl.t = Hashtbl.create 16 in
-  let slot_of (name : string) : string =
-    match Hashtbl.find_opt slots name with
-    | Some r -> r
-    | None ->
-        let r = Printf.sprintf "%%%s.addr" name in
-        Buffer.add_string buf (Printf.sprintf "  %s = alloca i64\n" r);
-        Hashtbl.add slots name r;
-        r
-  in
-  (* Lower an expression; return the operand string (an i64 literal or a register). *)
-  let rec gen_expr (e : Ast.expr) : string =
-    match e with
-    | Ast.Int_lit (n, _) -> string_of_int n
-    | Ast.Var (x, _) ->
-        let r = fresh () in
-        Buffer.add_string buf (Printf.sprintf "  %s = load i64, ptr %s\n" r (slot_of x));
-        r
-    | Ast.Unary (Ast.Neg, e, _) ->
-        let v = gen_expr e in
-        let r = fresh () in
-        Buffer.add_string buf (Printf.sprintf "  %s = sub i64 0, %s\n" r v);
-        r
-    | Ast.Binary (op, l, r0, _) ->
-        let lv = gen_expr l in
-        let rv = gen_expr r0 in
-        let r = fresh () in
-        let opcode = match op with
-          | Ast.Add -> "add" | Ast.Sub -> "sub" | Ast.Mul -> "mul"
-          | Ast.Div -> "sdiv" (* Phase 1: plain signed ops; trapping div/overflow is Phase 2 *)
-          | Ast.Mod -> "srem"
+(* The state the lowering shares. swiftc bundles the same three things in
+   `IRGenFunction` (IRGenFunction.h:77): somewhere to put instructions, a way to name
+   values, and the map from source names to their storage. *)
+type ctx = {
+  buf : Buffer.t; (* the instructions of `main`, in order *)
+  mutable next_reg : int; (* how many %tN names have been handed out *)
+  slots : (string, string) Hashtbl.t; (* source name -> the alloca register holding it *)
+}
+
+let create () : ctx = { buf = Buffer.create 256; next_reg = 0; slots = Hashtbl.create 16 }
+
+(* append one instruction, indented like the body of a function *)
+let emit (c : ctx) (line : string) : unit = Buffer.add_string c.buf ("  " ^ line ^ "\n")
+
+(* a register name nobody has used yet: %t1, %t2, … ("%%" is a literal '%') *)
+let fresh (c : ctx) : string =
+  c.next_reg <- c.next_reg + 1;
+  Printf.sprintf "%%t%d" c.next_reg
+
+(* The slot a name lives in — the register `alloca` returned. First use emits the
+   `alloca`; later uses find the same register, so a reassigned `var` stores into its
+   existing slot instead of allocating a second one. *)
+let slot_of (c : ctx) (name : string) : string =
+  match Hashtbl.find_opt c.slots name with
+  | Some r -> r
+  | None ->
+      let r = Printf.sprintf "%%%s.addr" name in
+      emit c (Printf.sprintf "%s = alloca i64" r);
+      Hashtbl.add c.slots name r;
+      r
+
+(* Lower an expression: emit its instructions, return the operand holding its result —
+   an immediate like "42", or a register like "%t3". *)
+let rec emit_expr (c : ctx) (e : Ast.expr) : string =
+  match e with
+  | Ast.Int_lit (n, _) -> string_of_int n
+  | Ast.Var (x, _) ->
+      let r = fresh c in
+      emit c (Printf.sprintf "%s = load i64, ptr %s" r (slot_of c x));
+      r
+  | Ast.Unary (Ast.Neg, e, _) ->
+      let v = emit_expr c e in
+      let r = fresh c in
+      emit c (Printf.sprintf "%s = sub i64 0, %s" r v);
+      r
+  | Ast.Binary (op, l, r0, _) ->
+      let lv = emit_expr c l in
+      let rv = emit_expr c r0 in
+      let r = fresh c in
+      let opcode =
+        match op with
+        | Ast.Add -> "add"
+        | Ast.Sub -> "sub"
+        | Ast.Mul -> "mul"
+        (* Phase 1: plain signed ops; trapping div/overflow is Phase 2 *)
+        | Ast.Div -> "sdiv"
+        | Ast.Mod -> "srem"
+      in
+      emit c (Printf.sprintf "%s = %s i64 %s, %s" r opcode lv rv);
+      r
+  | Ast.Call (f, args, _) ->
+      if f = "print" then (
+        let v =
+          match args with [ a ] -> emit_expr c a | _ -> failwith "IRGen: print arity"
         in
-        Buffer.add_string buf (Printf.sprintf "  %s = %s i64 %s, %s\n" r opcode lv rv);
-        r
-    | Ast.Call (f, args, _) ->
-        if f = "print" then (
-          let v = match args with [ a ] -> gen_expr a | _ -> failwith "IRGen: print arity" in
-          let r = fresh () in
-          Buffer.add_string buf
-            (Printf.sprintf "  %s = call i32 (ptr, ...) @printf(ptr @.fmt, i64 %s)\n" r v);
-          "0" (* print is Void in Swift; Phase 1 never uses its value *))
-        else failwith (Printf.sprintf "IRGen: unsupported call to '%s'" f)
-  in
-  let gen_stmt (s : Ast.stmt) : unit =
-    match s with
-    | Ast.Let { name; value; _ } ->
-        let addr = slot_of name in
-        let v = gen_expr value in
-        Buffer.add_string buf (Printf.sprintf "  store i64 %s, ptr %s\n" v addr)
-    | Ast.Assign { name; value; _ } ->
-        let addr = slot_of name in
-        let v = gen_expr value in
-        Buffer.add_string buf (Printf.sprintf "  store i64 %s, ptr %s\n" v addr)
-    | Ast.Expr_stmt (e, _) -> ignore (gen_expr e)
-  in
-  List.iter gen_stmt prog.Ast.stmts;
-  let body = Buffer.contents buf in
-  (* No target triple/datalayout on purpose — the driver passes -Wno-override-module
-     and clang fills in the host triple. *)
+        let r = fresh c in
+        emit c (Printf.sprintf "%s = call i32 (ptr, ...) @printf(ptr @.fmt, i64 %s)" r v);
+        (* print is Void in Swift; Phase 1 never uses its value. *)
+        "0")
+      else failwith (Printf.sprintf "IRGen: unsupported call to '%s'" f)
+
+(* Lower a statement. Declarations and assignments both end in a store to the name's
+   slot; a bare expression is emitted for its instructions and its operand dropped. *)
+let emit_stmt (c : ctx) (s : Ast.stmt) : unit =
+  match s with
+  | Ast.Let { name; value; _ } ->
+      let addr = slot_of c name in
+      let v = emit_expr c value in
+      emit c (Printf.sprintf "store i64 %s, ptr %s" v addr)
+  | Ast.Assign { name; value; _ } ->
+      let addr = slot_of c name in
+      let v = emit_expr c value in
+      emit c (Printf.sprintf "store i64 %s, ptr %s" v addr)
+  | Ast.Expr_stmt (e, _) -> ignore (emit_expr c e)
+
+(* The whole module: the preamble, one `define i32 @main`, the statements in order.
+   No target triple/datalayout on purpose — the driver passes -Wno-override-module and
+   clang fills in the host triple. *)
+let emit_llvm (prog : Ast.program) : string =
+  let c = create () in
+  List.iter (emit_stmt c) prog.Ast.stmts;
   String.concat ""
-    [ "; swiftml Phase-1 LLVM IR\n";
+    [
+      "; swiftml Phase-1 LLVM IR\n";
       "@.fmt = private unnamed_addr constant [6 x i8] c\"%lld\\0A\\00\"\n\n";
       "declare i32 @printf(ptr, ...)\n\n";
       "define i32 @main() {\n";
       "entry:\n";
-      body;
+      Buffer.contents c.buf;
       "  ret i32 0\n";
-      "}\n" ]
+      "}\n";
+    ]
 ```
-
-Why it's shaped this way:
-
-- **Stack model.** Every binding gets an `alloca i64`; reads are `load`, writes are `store`. It's
-  deliberately naive — **Phase 4's mem2reg** promotes these slots to SSA values and deletes the
-  allocas/loads/stores, which is why this is the perf baseline, not the perf target.
-- **`gen_expr` returns an operand string** (a literal like `7`, or a register like `%t3`), so a
-  constant needs no instruction and a `Binary` emits exactly one. The `fresh` counter names temps.
-- **`slot_of` is idempotent** — first use of a name emits the `alloca`; reassignment (`Ast.Assign`)
-  reuses the same slot, so `c = c * 2` stores back into `%c.addr`.
-- **Opaque pointers (`ptr`)** and a libc `printf("%lld\n", …)` preamble keep the IR tiny and
-  portable; Phase 1 stays in a single `entry:` block (no control flow until Phase 2).
 
 ## 9. Exercise solutions
 

@@ -9,77 +9,97 @@
    Design oracle: swift/lib/IRGen/* ; LLVM LangRef. We emit opaque-pointer IR (`ptr`),
    which Apple clang (LLVM 15+) consumes directly, and print via libc `printf`. *)
 
-let emit_llvm (prog : Ast.program) : string =
-  let buf = Buffer.create 256 in
-  let next_reg = ref 0 in
-  let fresh () =
-    incr next_reg;
-    Printf.sprintf "%%t%d" !next_reg
-  in
-  (* name -> the `alloca` pointer register holding that binding's slot. *)
-  let slots : (string, string) Hashtbl.t = Hashtbl.create 16 in
-  let slot_of (name : string) : string =
-    match Hashtbl.find_opt slots name with
-    | Some r -> r
-    | None ->
-        let r = Printf.sprintf "%%%s.addr" name in
-        Buffer.add_string buf (Printf.sprintf "  %s = alloca i64\n" r);
-        Hashtbl.add slots name r;
-        r
-  in
-  (* Lower an expression; return the operand string (an i64 literal or a register). *)
-  let rec gen_expr (e : Ast.expr) : string =
-    match e with
-    | Ast.Int_lit (n, _) -> string_of_int n
-    | Ast.Var (x, _) ->
-        let r = fresh () in
-        Buffer.add_string buf (Printf.sprintf "  %s = load i64, ptr %s\n" r (slot_of x));
-        r
-    | Ast.Unary (Ast.Neg, e, _) ->
-        let v = gen_expr e in
-        let r = fresh () in
-        Buffer.add_string buf (Printf.sprintf "  %s = sub i64 0, %s\n" r v);
-        r
-    | Ast.Binary (op, l, r0, _) ->
-        let lv = gen_expr l in
-        let rv = gen_expr r0 in
-        let r = fresh () in
-        let opcode =
-          match op with
-          | Ast.Add -> "add"
-          | Ast.Sub -> "sub"
-          | Ast.Mul -> "mul"
-          | Ast.Div -> "sdiv" (* Phase 1: plain signed ops; trapping div/overflow is Phase 2 *)
-          | Ast.Mod -> "srem"
+(* The state the lowering shares. swiftc bundles the same three things in
+   `IRGenFunction` (IRGenFunction.h:77): somewhere to put instructions, a way to name
+   values, and the map from source names to their storage. *)
+type ctx = {
+  buf : Buffer.t; (* the instructions of `main`, in order *)
+  mutable next_reg : int; (* how many %tN names have been handed out *)
+  slots : (string, string) Hashtbl.t; (* source name -> the alloca register holding it *)
+}
+
+let create () : ctx = { buf = Buffer.create 256; next_reg = 0; slots = Hashtbl.create 16 }
+
+(* append one instruction, indented like the body of a function *)
+let emit (c : ctx) (line : string) : unit = Buffer.add_string c.buf ("  " ^ line ^ "\n")
+
+(* a register name nobody has used yet: %t1, %t2, … ("%%" is a literal '%') *)
+let fresh (c : ctx) : string =
+  c.next_reg <- c.next_reg + 1;
+  Printf.sprintf "%%t%d" c.next_reg
+
+(* The slot a name lives in — the register `alloca` returned. First use emits the
+   `alloca`; later uses find the same register, so a reassigned `var` stores into its
+   existing slot instead of allocating a second one. *)
+let slot_of (c : ctx) (name : string) : string =
+  match Hashtbl.find_opt c.slots name with
+  | Some r -> r
+  | None ->
+      let r = Printf.sprintf "%%%s.addr" name in
+      emit c (Printf.sprintf "%s = alloca i64" r);
+      Hashtbl.add c.slots name r;
+      r
+
+(* Lower an expression: emit its instructions, return the operand holding its result —
+   an immediate like "42", or a register like "%t3". *)
+let rec emit_expr (c : ctx) (e : Ast.expr) : string =
+  match e with
+  | Ast.Int_lit (n, _) -> string_of_int n
+  | Ast.Var (x, _) ->
+      let r = fresh c in
+      emit c (Printf.sprintf "%s = load i64, ptr %s" r (slot_of c x));
+      r
+  | Ast.Unary (Ast.Neg, e, _) ->
+      let v = emit_expr c e in
+      let r = fresh c in
+      emit c (Printf.sprintf "%s = sub i64 0, %s" r v);
+      r
+  | Ast.Binary (op, l, r0, _) ->
+      let lv = emit_expr c l in
+      let rv = emit_expr c r0 in
+      let r = fresh c in
+      let opcode =
+        match op with
+        | Ast.Add -> "add"
+        | Ast.Sub -> "sub"
+        | Ast.Mul -> "mul"
+        (* Phase 1: plain signed ops; trapping div/overflow is Phase 2 *)
+        | Ast.Div -> "sdiv"
+        | Ast.Mod -> "srem"
+      in
+      emit c (Printf.sprintf "%s = %s i64 %s, %s" r opcode lv rv);
+      r
+  | Ast.Call (f, args, _) ->
+      if f = "print" then (
+        let v =
+          match args with [ a ] -> emit_expr c a | _ -> failwith "IRGen: print arity"
         in
-        Buffer.add_string buf (Printf.sprintf "  %s = %s i64 %s, %s\n" r opcode lv rv);
-        r
-    | Ast.Call (f, args, _) ->
-        if f = "print" then (
-          let v = match args with [ a ] -> gen_expr a | _ -> failwith "IRGen: print arity" in
-          let r = fresh () in
-          Buffer.add_string buf
-            (Printf.sprintf "  %s = call i32 (ptr, ...) @printf(ptr @.fmt, i64 %s)\n" r v);
-          (* print is Void in Swift; Phase 1 never uses its value. *)
-          "0")
-        else failwith (Printf.sprintf "IRGen: unsupported call to '%s'" f)
-  in
-  let gen_stmt (s : Ast.stmt) : unit =
-    match s with
-    | Ast.Let { name; value; _ } ->
-        let addr = slot_of name in
-        let v = gen_expr value in
-        Buffer.add_string buf (Printf.sprintf "  store i64 %s, ptr %s\n" v addr)
-    | Ast.Assign { name; value; _ } ->
-        let addr = slot_of name in
-        let v = gen_expr value in
-        Buffer.add_string buf (Printf.sprintf "  store i64 %s, ptr %s\n" v addr)
-    | Ast.Expr_stmt (e, _) -> ignore (gen_expr e)
-  in
-  List.iter gen_stmt prog.Ast.stmts;
-  let body = Buffer.contents buf in
-  (* No target triple/datalayout on purpose — the driver passes -Wno-override-module
-     and clang fills in the host triple. *)
+        let r = fresh c in
+        emit c (Printf.sprintf "%s = call i32 (ptr, ...) @printf(ptr @.fmt, i64 %s)" r v);
+        (* print is Void in Swift; Phase 1 never uses its value. *)
+        "0")
+      else failwith (Printf.sprintf "IRGen: unsupported call to '%s'" f)
+
+(* Lower a statement. Declarations and assignments both end in a store to the name's
+   slot; a bare expression is emitted for its instructions and its operand dropped. *)
+let emit_stmt (c : ctx) (s : Ast.stmt) : unit =
+  match s with
+  | Ast.Let { name; value; _ } ->
+      let addr = slot_of c name in
+      let v = emit_expr c value in
+      emit c (Printf.sprintf "store i64 %s, ptr %s" v addr)
+  | Ast.Assign { name; value; _ } ->
+      let addr = slot_of c name in
+      let v = emit_expr c value in
+      emit c (Printf.sprintf "store i64 %s, ptr %s" v addr)
+  | Ast.Expr_stmt (e, _) -> ignore (emit_expr c e)
+
+(* The whole module: the preamble, one `define i32 @main`, the statements in order.
+   No target triple/datalayout on purpose — the driver passes -Wno-override-module and
+   clang fills in the host triple. *)
+let emit_llvm (prog : Ast.program) : string =
+  let c = create () in
+  List.iter (emit_stmt c) prog.Ast.stmts;
   String.concat ""
     [
       "; swiftml Phase-1 LLVM IR\n";
@@ -87,7 +107,7 @@ let emit_llvm (prog : Ast.program) : string =
       "declare i32 @printf(ptr, ...)\n\n";
       "define i32 @main() {\n";
       "entry:\n";
-      body;
+      Buffer.contents c.buf;
       "  ret i32 0\n";
       "}\n";
     ]
