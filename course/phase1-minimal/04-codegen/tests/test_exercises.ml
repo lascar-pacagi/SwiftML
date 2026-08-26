@@ -145,38 +145,47 @@ let test_ex1b_unassigned_var () =
   let ls = instrs "let k = 7\nvar u = 2\nvar v = 1\nv = v + k + u\nprint(v)" in
   Alcotest.(check int) "one slot, for the one assigned name" 1 (n_with "alloca" ls)
 
-(* --- Exercise 2: fold constant arithmetic ------------------------------------------ *)
-let ex3_started () =
-  match expr_instrs "2 * 3" with exception _ -> false | ls, _ -> ls = []
+(* --- Exercise 2: fold constant arithmetic ------------------------------------------
+   Checked through whole programs, not through `emit_expr`, because folding can live in
+   either place: inside the lowering (both operands came back as literals) or as a pass
+   over the AST before lowering starts. Both are right; the IR is what must change. *)
+let ex2_started () =
+  match instrs "print(2 * 3)" with
+  | exception _ -> false
+  | ls -> n_with "= mul i64" ls = 0
 
-let test_ex3_folding () =
+let test_ex2_folding () =
+  (* a constant expression collapses to a single call with the answer in it *)
   let folds src expected =
-    let ls, operand = expr_instrs src in
-    Alcotest.(check (list string)) (Printf.sprintf "%S emits nothing" src) [] ls;
-    Alcotest.(check string) (Printf.sprintf "%S folds to %S" src expected) expected operand
+    Alcotest.(check (list string))
+      (Printf.sprintf "%S folds to %s" src expected)
+      [ Printf.sprintf "%%t1 = call i32 (ptr, ...) @printf(ptr @.fmt, i64 %s)" expected ]
+      (instrs (Printf.sprintf "print(%s)" src))
   in
   folds "2 * 3" "6";
   folds "1 + 2" "3";
   folds "10 - 4" "6";
   folds "9 / 3" "3";
   folds "9 % 4" "1";
-  (* nested folding: the whole tree collapses to one operand *)
+  (* nested: the whole tree collapses, not just the innermost operator *)
   folds "1 + 2 * 3 - 4" "3";
-  (* Swift's integer division truncates toward zero, and the remainder follows the
-     dividend's sign — fold the way the machine would, or -O and -O0 disagree *)
+  folds "2 * (3 + 4) * 5" "70";
+  (* unary too, and Swift's truncation: -7 / 2 is -3, -7 %% 2 is -1 *)
+  folds "-(2 - 5) * -2" "-6";
   folds "-7 / 2" "-3";
   folds "-7 % 2" "-1";
-  (* division by zero must NOT be folded: it has to trap at run time, not in the compiler *)
-  let ls, _ = expr_instrs "1 / 0" in
-  Alcotest.(check int) "1 / 0 still emits an sdiv" 1 (n_with "= sdiv i64" ls);
-  let ls, _ = expr_instrs "1 % 0" in
-  Alcotest.(check int) "1 %% 0 still emits an srem" 1 (n_with "= srem i64" ls);
-  (* A non-constant operand blocks the fold. Note the reassignment: if you also did
-     exercise 1, a `var` that is never assigned to becomes an operand like any literal,
-     and `v * 2` folds after all. Every assertion here has to hold whether or not the
-     other exercise is done. *)
-  let ls = instrs "var v = 1\nv = v + 1\nprint(v * 2)" in
-  Alcotest.(check int) "a loaded value is not folded" 1 (n_with "= mul i64" ls)
+  (* division and remainder by zero must NOT be folded: the program has to trap where
+     Swift traps, and folding it would raise Division_by_zero inside the compiler *)
+  Alcotest.(check int) "1 / 0 still emits an sdiv" 1 (n_with "= sdiv i64" (instrs "print(1 / 0)"));
+  Alcotest.(check int) "1 %% 0 still emits an srem" 1 (n_with "= srem i64" (instrs "print(1 % 0)"));
+  (* a value that is not known at compile time blocks the fold *)
+  Alcotest.(check int) "a loaded value is not folded" 1
+    (n_with "= mul i64" (instrs "var v = 1\nv = v + 1\nprint(v * 2)"));
+  (* folding must not disturb what the program stores *)
+  Alcotest.(check bool) "a folded initializer is stored as an immediate" true
+    (List.exists
+       (fun l -> contains l "store i64 42")
+       (instrs "var x = 6 * 7\nx = x + 1\nprint(x)"))
 
 let skip what () =
   Printf.printf "    (%s not started — this group activates as soon as it is)\n%!" what
@@ -194,5 +203,5 @@ let () =
       group "ex1a let values" ex1a_started "the let half of slot-skipping" test_ex1a_let_value;
       group "ex1b unassigned vars" ex1b_started "the var half of slot-skipping"
         test_ex1b_unassigned_var;
-      group "ex2 constant folding" ex3_started "constant folding" test_ex3_folding;
+      group "ex2 constant folding" ex2_started "constant folding" test_ex2_folding;
     ]
