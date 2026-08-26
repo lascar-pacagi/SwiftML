@@ -106,7 +106,20 @@ let index_where (p : string -> bool) (ls : string list) : int =
   let rec go i = function [] -> -1 | l :: rest -> if p l then i else go (i + 1) rest in
   go 0 ls
 
-let starts_with pre l = String.length l >= String.length pre && String.sub l 0 (String.length pre) = pre
+let starts_with pre l =
+  String.length l >= String.length pre && String.sub l 0 (String.length pre) = pre
+
+(* the name an instruction defines: everything before " = ", or None for instructions
+   that produce no value (`store`, a void call). Deliberately does NOT require the name
+   to look like a register — checking that is the point of one of the tests. *)
+let lhs_of (l : string) : string option =
+  let n = String.length l in
+  let rec go i =
+    if i + 3 > n then None
+    else if String.sub l i 3 = " = " then Some (String.sub l 0 i)
+    else go (i + 1)
+  in
+  go 0
 
 (* --- group `module`: emit_llvm, the whole file -------------------------------------
    Nothing here needs an expression: an EMPTY program is still a valid module with a
@@ -283,6 +296,21 @@ let test_well_formed_operands () =
             false (bad_ptr l))
         (stmts_of src))
     [ "let x = 5\nprint(x)"; "var v = 1\nv = v + 1\nprint(v)"; "let a = 1\nlet b = a + a" ];
+  (* and the DESTINATION of every instruction is a register too: `x = load …` is a bare
+     name where LLVM wants `%x`, and it stops at "expected instruction opcode" *)
+  List.iter
+    (fun src ->
+      List.iter
+        (fun l ->
+          match lhs_of l with
+          | Some d ->
+              Alcotest.(check bool)
+                (Printf.sprintf "%S: %S defines %S, which must start with '%%'" src l d)
+                true
+                (String.length d > 1 && d.[0] = '%')
+          | None -> ())
+        (stmts_of src))
+    [ "let x = 5\nprint(x)"; "var v = 1\nv = v + 1\nprint(v)"; "let a = 1\nlet b = a + a" ];
   (* slot_of hands back a register, so its result can be used as an operand directly *)
   let c = Irgen.create () in
   let r = Irgen.slot_of c "x" in
@@ -295,13 +323,7 @@ let test_well_formed_operands () =
 let test_single_assignment () =
   List.iter
     (fun src ->
-      let defs =
-        stmts_of src
-        |> List.filter_map (fun l ->
-               match String.index_opt l ' ' with
-               | Some i when String.length l > 0 && l.[0] = '%' -> Some (String.sub l 0 i)
-               | _ -> None)
-      in
+      let defs = List.filter_map lhs_of (stmts_of src) in
       Alcotest.(check int)
         (Printf.sprintf "%S: every register is defined exactly once" src)
         (List.length defs)
