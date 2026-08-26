@@ -34,16 +34,6 @@ let instrs (src : string) : string list =
   |> List.map String.trim
   |> List.filter (fun l -> not (is_wrapper l))
 
-let expr_instrs (src : string) : string list * string =
-  let d = diags () in
-  let e = Parser.parse_expr (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
-  let c = Irgen.create () in
-  let operand = Irgen.emit_expr c e in
-  ( String.split_on_char '\n' (Buffer.contents c.Irgen.buf)
-    |> List.map String.trim
-    |> List.filter (fun l -> l <> ""),
-    operand )
-
 let contains haystack needle =
   let n = String.length haystack and m = String.length needle in
   let rec go i = i + m <= n && (String.sub haystack i m = needle || go (i + 1)) in
