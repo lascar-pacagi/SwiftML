@@ -317,12 +317,36 @@ not the ratio but *ours*: 4 ms for a thousand lines is the budget every later ph
 
 ## 6. Exercises
 
-1. Implement `v1_valuenum`: keep `let`s that are never reassigned in a `name→operand` map and skip
-   the alloca/load entirely. Confirm `--emit-llvm` shrinks and output is unchanged.
-2. Add a `--emit-llvm -O` path that pipes your IR through `clang -O2` and compare the runtime of a
-   loop-free arithmetic-heavy program (preview of the Phase-4 optimizer handoff).
-3. Make `print` of a negative number match swiftc exactly (it already should — verify, and note the
-   `%lld` format).
+Both are checked by `tests/test_exercises.ml`, which skips itself until it sees your IRGen
+behave differently from the stock one:
+
+```bash
+make exercises C=phase1-minimal/04-codegen     # just these
+make lab       C=phase1-minimal/04-codegen     # concept + exercises
+```
+
+**1 — skip the slot for never-reassigned `let`s.** A `let` that is never the target of an
+assignment already is single-assignment: it needs no `alloca`, no `store`, and no `load` at each
+use. Keep its operand in a `name → operand` map and hand that back for `Var` instead; a `var` that
+*is* reassigned keeps its slot. You will need a pass over the program before lowering — which names
+are assigned to? — and that is the first thing you have written that looks at the whole function
+rather than one node. The IR gets shorter, the output does not change, and you have hand-rolled the
+easy case of **mem2reg**, the pass you write properly in concept 16.
+
+**2 — fold constant arithmetic.** `print(2 * 3)` emits a `mul` for two numbers you already know.
+When both operands of a `Binary` come back as literals, compute the answer and return it as an
+immediate; same for `-` applied to a literal. Two cases must *not* fold: division and remainder by
+zero, which have to reach the machine so the program traps where Swift traps rather than the
+compiler crashing at compile time. And fold the way the hardware does — `-7 / 2` is `-3` and
+`-7 % 2` is `-1`, truncating toward zero — or your optimized and unoptimized builds disagree.
+
+> This one **invalidates part of `tests/test_irgen.ml`**, and that is worth sitting with. The
+> `arithmetic` group asserts one instruction per operator, which is exactly what folding removes,
+> so those cases go red the moment the exercise works. Nothing is broken: the tests encode a
+> lowering, you changed the lowering, so the tests describing the old one are now wrong.
+> `tests/test_exercises.ml` states the new contract, and updating the stale cases in the concept
+> suite is part of the exercise. This is the same bookkeeping every optimization pass in Phase 4
+> comes with.
 
 ## 7. Recap & what's next — **M1 reached**
 
@@ -444,7 +468,7 @@ let emit_llvm (prog : Ast.program) : string =
 
 ## 9. Exercise solutions
 
-### 1 — `v1_valuenum`: skip the alloca for never-reassigned `let`s
+### 1 — skip the slot for never-reassigned `let`s
 
 A `let` that is never the target of an assignment is single-assignment, so it needs no stack slot —
 keep its value operand in a `name → operand` map and reference it directly. First scan the program
@@ -465,29 +489,32 @@ let values : (string, string) Hashtbl.t = Hashtbl.create 16 in  (* name -> opera
 ```
 
 `--emit-llvm` then has no `alloca`/`load`/`store` for those bindings and the program's output is
-unchanged (assert both: shorter IR, identical stdout). This is a hand-rolled preview of **Phase 4's
-mem2reg**, which does the same promotion generally, via the dominator tree.
+unchanged. This is a hand-rolled preview of **Phase 4's mem2reg**, which does the same promotion
+generally, via the dominator tree.
 
-### 2 — an `--emit-llvm -O` path
+### 2 — fold constant arithmetic
 
-Pipe the emitted IR through clang's optimizer. Write the IR to a temp `.ll`, then shell out to
-`clang -O2`:
+One extra case in `emit_expr`'s `Binary` arm, before the general one: if both operands came back as
+literals, do the arithmetic here and return the answer as an immediate.
 
 ```ocaml
-(* to see optimized IR:   clang -O2 -S -emit-llvm tmp.ll -o -
-   to time it:            clang -O2 tmp.ll -o tmp && ./tmp  *)
-let ll = Irgen.emit_llvm prog in
-let path = Filename.temp_file "swiftml" ".ll" in
-(* ... write ll to path ... *)
-ignore (Sys.command (Printf.sprintf "clang -O2 -S -emit-llvm %s -o -" (Filename.quote path)))
+| Ast.Unary (Ast.Neg, e, _) -> (
+    let v = emit_expr c e in
+    match int_of_string_opt v with
+    | Some x -> string_of_int (-x)
+    | None -> (* …the general case: emit `sub i64 0, v`… *))
+
+| Ast.Binary (op, l, r, _) -> (
+    let a = emit_expr c l and b = emit_expr c r in
+    match (int_of_string_opt a, int_of_string_opt b, op) with
+    | Some x, Some y, Ast.Add -> string_of_int (x + y)
+    | Some x, Some y, Ast.Sub -> string_of_int (x - y)
+    | Some x, Some y, Ast.Mul -> string_of_int (x * y)
+    | Some x, Some y, Ast.Div when y <> 0 -> string_of_int (x / y)
+    | Some x, Some y, Ast.Mod when y <> 0 -> string_of_int (x mod y)
+    | _ -> (* …the general case: emit the instruction… *))
 ```
 
-On a loop-free, arithmetic-heavy program, `-O2` constant-folds the entire computation down to a
-single `printf` of a constant — the Phase-4 optimizer handoff in microcosm.
-
-### 3 — negative `print` parity
-
-Already correct — verified against the oracle: `print(-42)` → `-42`, `print(0 - 7)` → `-7`. The key
-is the format string: we declare `%lld` (a **signed** `long long`), and unary minus lowers to
-`sub i64 0, x`, so a negative `i64` prints with its sign exactly like swiftc. The bug to avoid is
-`%llu` (unsigned), which would print `-1` as `18446744073709551615`.
+The `y <> 0` guards matter: `1 / 0` must stay an `sdiv` so the program traps where Swift traps,
+rather than the compiler crashing while folding it. Concept 17 makes exactly this argument about
+its own constant folder, over SIL instead of the AST.

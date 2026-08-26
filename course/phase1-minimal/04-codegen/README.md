@@ -15,12 +15,15 @@ three earlier stages.
 [LLVM Language Reference](https://llvm.org/docs/LangRef.html). Note: real swiftc lowers **SIL** to
 LLVM IR; we lower the AST directly in Phase 1 and introduce SIL in Phase 2.
 
-## Versions
+## What you build
 
-| Version | What changes | Correctness | Perf |
-|---|---|---|---|
-| `v0_stack` | straightforward lowering: `alloca` per `let`/`var`, load/store, one register per subexpression | **`make oracle` parity** | — |
-| `v1_valuenum` *(optional)* | skip allocas for never-reassigned `let`s (a tiny pre-mem2reg); fewer load/store | same output | smaller IR; faster `-O0` |
+One lowering, in four exported pieces — `slot_of`, `emit_expr`, `emit_stmt`, `emit_llvm` — each
+tested on its own by `tests/test_irgen.ml`. The model is the straightforward one: an `alloca` per
+`let`/`var`, `load`/`store` at every use, one register per subexpression, and **`make oracle`
+parity** as the bar.
+
+Two of §6's exercises make it emit less (skipping the slot for never-reassigned `let`s, folding
+constant arithmetic); `tests/test_exercises.ml` checks them, and skips until you start.
 
 ## Workflow
 

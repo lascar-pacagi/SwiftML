@@ -5,6 +5,27 @@
 ; Alcotest unit tests for IRGen — assert emitted-IR shape (opcodes, slot model).
 (test
  (name test_irgen)
+ (modules test_irgen)
  (libraries alcotest swiftml_codegen)
  (flags
   (:standard -warn-error -a)))
+
+; The §6 EXERCISE tests. They run under `make lab` too, but each group probes whether you
+; have started that exercise and reports "skipped" if not.
+;   make exercises C=phase1-minimal/04-codegen
+(executable
+ (name test_exercises)
+ (modules test_exercises)
+ (libraries alcotest swiftml_codegen)
+ (flags
+  (:standard -warn-error -a)))
+
+(rule
+ (alias exercises)
+ (action
+  (run ./test_exercises.exe)))
+
+(rule
+ (alias runtest)
+ (action
+  (run ./test_exercises.exe)))

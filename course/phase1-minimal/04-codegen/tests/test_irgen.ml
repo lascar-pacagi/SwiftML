@@ -41,16 +41,24 @@ let lower (src : string) : string list * string =
 let instrs (src : string) : string list = fst (lower src)
 let operand (src : string) : string = snd (lower src)
 
-(* emit_stmt IN ISOLATION: lower every statement of a program into one fresh context.
-   Uses `emit_stmt`, never `emit_llvm`, so the `slots` group needs no module wrapper. *)
+(* The instructions a program lowers to. Taken from the whole module, because §6's first
+   exercise adds a pre-pass over the program inside `emit_llvm`, and folding `emit_stmt`
+   here would step around it.
+
+   For the same reason, every case below that asserts a SLOT uses a `var` that is actually
+   reassigned: that is the one binding which needs memory in every variant of this
+   lowering, so these tests hold whether or not you have done the exercises. *)
 let stmts_of (src : string) : string list =
   let d = diags () in
   let prog = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
-  let c = Irgen.create () in
-  List.iter (Irgen.emit_stmt c) prog.Ast.stmts;
-  String.split_on_char '\n' (Buffer.contents c.Irgen.buf)
+  String.split_on_char '\n' (Irgen.emit_llvm prog)
   |> List.map String.trim
-  |> List.filter (fun l -> l <> "")
+  |> List.filter (fun l ->
+         not
+           (l = "" || l = "}" || l = "entry:" || l = "ret i32 0"
+           || (String.length l > 0 && (l.[0] = ';' || l.[0] = '@'))
+           || (String.length l >= 7 && String.sub l 0 7 = "declare")
+           || (String.length l >= 6 && String.sub l 0 6 = "define")))
 
 (* whole-MODULE lowering — only the `module` group needs this *)
 let emit (src : string) : string =
@@ -420,12 +428,13 @@ let test_slot_of () =
   Alcotest.(check int) "two names, two allocas" 2 (n_with "alloca" ls)
 
 let test_slot_model () =
-  let ls = stmts_of "let x = 5\nprint(x)" in
+  let ls = stmts_of "var x = 5\nx = x + 1\nprint(x)" in
   Alcotest.(check int) "one alloca for one binding" 1 (n_with "alloca i64" ls);
-  Alcotest.(check int) "stored once" 1 (n_with "store i64" ls);
-  Alcotest.(check int) "loaded once" 1 (n_with "load i64" ls);
+  Alcotest.(check int) "stored twice: the declaration and the assignment" 2
+    (n_with "store i64" ls);
+  Alcotest.(check int) "loaded at each use" 2 (n_with "load i64" ls);
   Alcotest.(check int) "two bindings, two allocas" 2
-    (n_with "alloca i64" (stmts_of "let x = 1\nlet y = 2\nprint(x + y)"));
+    (n_with "alloca i64" (stmts_of "var x = 1\nvar y = 2\nx = y\ny = x\nprint(x + y)"));
   (* the slot is allocated before it is stored into *)
   Alcotest.(check bool) "alloca precedes the store" true
     (index_where (fun l -> contains l "alloca") ls
@@ -436,18 +445,21 @@ let test_slot_reuse () =
   let ls = stmts_of "var c = 1\nc = c * 2\nprint(c)" in
   Alcotest.(check int) "reassignment reuses the slot" 1 (n_with "alloca i64" ls);
   Alcotest.(check int) "...and stores twice into it" 2 (n_with "store i64" ls);
-  (* every read of a binding is a load — the value is not cached across uses *)
-  Alcotest.(check int) "each use loads" 2 (n_with "load i64" (stmts_of "let x = 1\nprint(x + x)"));
-  Alcotest.(check int) "...across statements too" 2
-    (n_with "load i64" (stmts_of "let x = 1\nprint(x)\nprint(x)"))
+  (* every read of a slot is a load — the value is not cached across uses *)
+  Alcotest.(check int) "each use loads" 3
+    (n_with "load i64" (stmts_of "var x = 1\nx = x + 1\nprint(x + x)"));
+  Alcotest.(check int) "...across statements too" 3
+    (n_with "load i64" (stmts_of "var x = 1\nx = x + 1\nprint(x)\nprint(x)"))
 
 let test_stmt_kinds () =
   (* a bare expression statement emits its instructions and drops the operand *)
   Alcotest.(check (list string)) "an expression statement still computes"
     [ "%t1 = add i64 1, 2" ] (stmts_of "1 + 2");
-  (* a let stores its initializer's operand *)
+  (* a declaration stores its initializer's operand into the slot *)
   Alcotest.(check bool) "the stored value is the multiply's register" true
-    (List.exists (fun l -> contains l "store i64 %t1") (stmts_of "let x = 6 * 7"));
+    (List.exists
+       (fun l -> contains l "store i64 %t1")
+       (stmts_of "var x = 6 * 7\nx = x + 1"));
   (* an assignment reads the right-hand side, computes, and stores last *)
   let ls = stmts_of "var v = 1\nv = v + 1" in
   let last_where p = List.length ls - 1 - index_where p (List.rev ls) in
@@ -471,22 +483,6 @@ let test_many_statements () =
   Alcotest.(check int) "twelve loads" 12 (n_with "load i64" ls);
   Alcotest.(check int) "three calls" 3 (n_with "call i32 (ptr, ...) @printf" ls)
 
-(* emit_llvm must lower the program through emit_stmt, not by some other path: the body
-   of `main` is exactly the instructions the statements produce, in the same order. *)
-let test_module_body_matches () =
-  List.iter
-    (fun src ->
-      Alcotest.(check (list string))
-        (Printf.sprintf "%S: main's body is the statements' instructions" src)
-        (stmts_of src) (body src))
-    [
-      "";
-      "print(1)";
-      "let x = 5\nprint(x * 2)";
-      "var v = 1\nv = v + 1\nprint(v)";
-      "var a = 3\nvar b = 4\na = a * a + b * b\nprint(a % b + a / b)";
-    ]
-
 let () =
   Alcotest.run "irgen"
     [
@@ -495,7 +491,6 @@ let () =
           Alcotest.test_case "preamble + main + ret" `Quick test_preamble;
           Alcotest.test_case "module shape and ordering" `Quick test_module_shape;
           Alcotest.test_case "statements in source order" `Quick test_statement_order;
-          Alcotest.test_case "main's body is the lowered statements" `Quick test_module_body_matches;
         ] );
       ( "literals",
         [
