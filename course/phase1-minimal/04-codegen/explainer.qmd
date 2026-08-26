@@ -249,6 +249,18 @@ the only check that can catch a lowering which is well-formed but means somethin
 and its expected values come from `swiftc` on the same source — so a passing run is a
 parity claim, not just self-consistency.
 
+When a case fails, look at what you actually emitted:
+
+```bash
+printf '1 + 2 * 3\n' > e.swift
+dune exec swiftml -- --emit-llvm e.swift            # print the IR
+dune exec swiftml -- --emit-llvm e.swift | clang -x ir - -o e && ./e   # ...and run it
+```
+
+A bare expression statement lowers to `emit_expr` and nothing else, so that first command
+is the shortest way to see one construct on its own. Piping to clang adds LLVM's verifier,
+which rejects malformed IR and names the offending line.
+
 Then the oracle, on the two corpus programs:
 
 ```bash
