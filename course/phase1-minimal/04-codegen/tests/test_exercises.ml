@@ -111,15 +111,36 @@ let test_ex1b_unassigned_var () =
     (n_with "alloca" (instrs "var w = 9\nprint(w)"));
   Alcotest.(check int) "...but an assigned one still does" 1
     (n_with "alloca" (instrs "var w = 9\nw = 10\nprint(w)"));
-  (* THE trap: a var assigned LATER must not have its initializer substituted at an
-     earlier use. Promote every binding without the pre-pass and this program prints
-     1 and 1, where swiftc prints 1 and 2 — a miscompile no shape assertion elsewhere
-     would notice, because the IR it produces is perfectly well-formed. *)
-  let ls = instrs "var v = 1\nprint(v)\nv = 2\nprint(v)" in
-  Alcotest.(check int) "a later assignment forces a slot" 1 (n_with "alloca" ls);
-  Alcotest.(check int) "both reads load it" 2 (n_with "load i64" ls);
-  Alcotest.(check bool) "neither print takes the initializer as an immediate" false
-    (List.exists (fun l -> contains l "@printf(ptr @.fmt, i64 1)") ls);
+  (* THE trap. A var assigned LATER must not keep handing out its old value. There is
+     more than one right way to avoid it — scan for assignment targets before lowering,
+     or drop the name from the map when you lower an assignment — so this checks the
+     SEMANTICS rather than the strategy: the two prints must receive different operands.
+
+     `var v = 1; print(v); v = 2; print(v)` prints 1 then 2. An implementation that
+     promotes every binding and never invalidates prints 1 twice, with IR that is
+     perfectly well-formed — nothing but a check of this shape catches it. *)
+  let printf_args (src : string) : string list =
+    instrs src
+    |> List.filter_map (fun l ->
+           if contains l "@printf(ptr @.fmt, i64 " then
+             match String.rindex_opt l ' ' with
+             | Some i ->
+                 let a = String.sub l (i + 1) (String.length l - i - 1) in
+                 Some (String.concat "" (String.split_on_char ')' a))
+             | None -> None
+           else None)
+  in
+  let args = printf_args "var v = 1\nprint(v)\nv = 2\nprint(v)" in
+  Alcotest.(check int) "two prints" 2 (List.length args);
+  Alcotest.(check bool) "the two prints do NOT share an operand" true
+    (List.nth args 0 <> List.nth args 1);
+  (* and after an assignment, the initializer's value is gone for good *)
+  Alcotest.(check bool) "a read after the assignment is not the old immediate" true
+    (match printf_args "var v = 1\nv = 2\nprint(v)" with [ a ] -> a <> "1" | _ -> false);
+  Alcotest.(check bool) "...nor after two of them" true
+    (match printf_args "var v = 1\nv = 2\nv = 3\nprint(v)" with
+    | [ a ] -> a <> "1" && a <> "2"
+    | _ -> false);
   (* mixed program: the let and the untouched var are promoted, the assigned var is not *)
   let ls = instrs "let k = 7\nvar u = 2\nvar v = 1\nv = v + k + u\nprint(v)" in
   Alcotest.(check int) "one slot, for the one assigned name" 1 (n_with "alloca" ls)

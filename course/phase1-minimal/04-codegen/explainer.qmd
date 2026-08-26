@@ -333,10 +333,15 @@ Two kinds qualify, and they cost different amounts of work:
 
 - a **`let`** never qualifies for a slot at all — sema has already proved no assignment targets it
   (concept 03 rejects `k = 2` after `let k = 1`), so no analysis is needed here;
-- a **`var`** qualifies only if the program never assigns to it, which you cannot know while
-  lowering one statement. It takes a pass over the whole program first, collecting the names that
-  appear as assignment targets — the first thing you write that looks at the function as a whole
-  rather than at one node.
+- a **`var`** qualifies only if the program never assigns to it. Two ways to get this right:
+  scan the whole program for assignment targets *before* lowering — the first thing you write that
+  looks at the function as a whole rather than at one node — or drop the name from the map when
+  you lower an assignment, so later reads fall back to the slot. Both work here; the test checks
+  the behaviour, not which you chose.
+
+  What must not happen is promoting a binding and then ignoring a later write to it: `var v = 1`,
+  `print(v)`, `v = 2`, `print(v)` then prints `1` twice. The IR is perfectly well-formed, so only
+  running the program — or the exercise test — tells you.
 
 The IR gets shorter, the output does not change, and you have hand-rolled the easy case of
 **mem2reg**, the pass you write properly in concept 16 — where the hard part is precisely what
