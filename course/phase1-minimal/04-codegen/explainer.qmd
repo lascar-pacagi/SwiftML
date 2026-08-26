@@ -235,20 +235,6 @@ it. Ours is a record and four functions.
 make lab C=phase1-minimal/04-codegen
 ```
 
-Two suites run, and they fail in different ways, which is the useful part.
-
-`tests/test_irgen.ml` reads the IR you emit without running it. It calls your four
-functions directly, so a failure names the one that is wrong: the opcode for `%`, the
-order of `sdiv`'s operands, an expression that emitted an instruction for a literal, a
-`var` that allocated a second slot, a register defined twice. These are the errors that
-still produce a *program* — one that prints the wrong number, or that clang refuses —
-and they are much easier to read here than in a diff of program output.
-
-`tests/codegen.t` compiles and runs real programs, and compares what they print. That is
-the only check that can catch a lowering which is well-formed but means something else,
-and its expected values come from `swiftc` on the same source — so a passing run is a
-parity claim, not just self-consistency.
-
 When a case fails, look at what you actually emitted:
 
 ```bash
