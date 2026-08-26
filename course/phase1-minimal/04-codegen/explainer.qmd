@@ -7,8 +7,15 @@ format:
 
 ## 1. What you'll build, and why
 
-The back half of the compiler: lower the checked AST into **LLVM IR** text, which `clang` then
-turns into a native arm64 executable. After this, `swiftml build` produces real programs and the
+The back half of the compiler: **lower** the checked AST into **LLVM IR** text, which `clang` then
+turns into a native arm64 executable.
+
+*Lowering* is the word for translating a program into a representation closer to the machine,
+giving up structure the target does not have. A tree of nested expressions becomes a flat sequence
+of instructions; a named variable becomes an address or a register; `print(x)` becomes a call to
+libc. Nothing is added — the meaning is preserved — but each step throws away a little of what the
+source made explicit, and the pipeline is a series of such steps: AST → SIL in Phase 2, SIL → LLVM
+IR after that, LLVM IR → ARM64 in Phase 8. This concept is the first one. After this, `swiftml build` produces real programs and the
 oracle can compare them to `swiftc` byte-for-byte.
 
 - **You implement:** `irgen.ml : emit_llvm` (this dir) — returns a complete `.ll` module as a string.

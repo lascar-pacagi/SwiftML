@@ -22,7 +22,7 @@ Swift source
    │  Sema             (type checking + name resolution)
    ▼
 typed AST
-   │  SILGen           (lower to SIL — Swift's own SSA IR)
+   │  SILGen           (lower to SIL — Swift's own SSA IR)*
    ▼
   SIL  ── SIL optimizer (mem2reg, inlining, specialization, ARC opt, …)  ◄── the spine
    │  IRGen
@@ -31,6 +31,10 @@ LLVM IR ──► clang ──► arm64 executable                      (Backend
    │
    └─(Phase 8) our ARM64 backend: isel → register allocation → machine code  (Backend B)
 ```
+
+*Lowering (\*) is translating a program into a representation closer to the machine, giving up
+structure the target does not have: nested expressions become a flat instruction sequence, named
+variables become addresses or registers. Every arrow in that diagram is a lowering step.
 
 *SSA* there is **static single assignment**: an IR where every register is written exactly once in
 the text of the program, so the definition of a value is a lookup rather than a search backwards
