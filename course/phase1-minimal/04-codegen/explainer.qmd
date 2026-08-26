@@ -241,20 +241,6 @@ That is the same split swiftc makes, minus the C++: `IRGenFunction` (`IRGenFunct
 carries the builder, the value namer and the local-value map, and the lowering methods hang off
 it. Ours is a record and four functions.
 
-Any order works, so run the group you are working on:
-
-```bash
-dune exec ./phase1-minimal/04-codegen/tests/test_irgen.exe -- test arithmetic
-make lab C=phase1-minimal/04-codegen        # everything, including the cram runs
-```
-
-The cram tests (`codegen.t`) are the ones that need all four at once — they build and run real
-programs. Leave them for last.
-
-Two notes. `emit` indents by two spaces for a function body, so the module-level preamble is not
-written with it — build the final string around `Buffer.contents c.buf`. And keep `entry:` as a
-single basic block in Phase 1: no branches yet, control flow arrives in Phase 2.
-
 ## 4. Test it
 
 ```bash
