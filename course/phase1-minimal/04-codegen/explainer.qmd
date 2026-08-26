@@ -244,12 +244,50 @@ links `swiftml_codegen` → sema → parser → lexer), and `oracle.sh` rebuilds
 
 ## 5. Benchmark it
 
-```bash
-make bench C=phase1-minimal/04-codegen
+There is no `bench/` in this concept — the real perf story starts in Phase 4, with an optimizer to
+measure. What you can do now, in three commands, is *record the baseline you will be beating*, and
+each one tells you something.
+
+**How bad is the memory model?** Count what you emit for `let x = 42` / `var t = 0` /
+`t = x * 2` / `print(t)`:
+
+```console
+$ swiftml --emit-llvm b.swift | grep -cE 'alloca|store|load'
+7
+$ swiftml --emit-llvm b.swift | grep -cE '= (add|sub|mul|sdiv|srem)'
+1
 ```
 
-Compile-time per line, and (with `v1_valuenum`) IR size / `-O0` runtime. The real perf story starts
-in Phase 4 (the optimizer); here just record a baseline.
+Seven memory instructions to support one multiply. That ratio *is* the "deliberately naive" note
+from §2, in numbers: nothing here is wrong, but almost nothing here is work.
+
+**What would a real optimizer do with it?** Hand the same text to LLVM and look:
+
+```console
+$ swiftml --emit-llvm b.swift | clang -x ir -O2 -S -emit-llvm - -o -
+define noundef i32 @main() local_unnamed_addr {
+entry:
+  %t4 = tail call i32 (ptr, ...) @printf(ptr nonnull @.fmt, i64 84)
+  ret i32 0
+}
+```
+
+Every alloca, store and load is gone (that is mem2reg — concept 16) and `42 * 2` has been folded to
+`84` (constant folding — concept 17). Twelve instructions became one call. Phase 4 is you writing
+those passes over SIL, so that the same collapse happens *before* LLVM ever sees the program.
+
+**How fast is the compiler itself?** On a generated 1002-line program (`var acc = 0` followed by a
+thousand `acc = acc + N * 3`), ten runs of the whole front end plus IRGen:
+
+| | 10 runs | per run |
+|---|---|---|
+| `swiftml --emit-llvm` | 0.04 s | ~4 ms |
+| `swiftc -typecheck` | 4.95 s | ~495 ms |
+
+Read that honestly before enjoying it: `swiftc` is loading the standard library, running real type
+inference with overload resolution, and paying ~65 ms of process startup even on a one-line file.
+We lex, parse, walk a flat scope where everything is `Int`, and print text. The number to keep is
+not the ratio but *ours*: 4 ms for a thousand lines is the budget every later phase spends from.
 
 ## 6. Exercises
 
