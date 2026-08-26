@@ -9,13 +9,16 @@
    the groups below climb from "the module wrapper alone" to "whole programs", and each
    layer needs only what the layers before it needed:
 
-     layer 0  module      the preamble, `define i32 @main`, `ret i32 0`   (no expressions)
-     layer 1  literals    `print(1)` — an immediate operand and the printf call
-     layer 2  arithmetic  the binop/unary opcode mapping, in post-order
-     layer 3  slots       let/var: alloca, store, load, and slot REUSE
-     layer 4  (cram)      codegen.t builds and runs real programs
+     arithmetic  `gen_expr` ALONE — every program is a bare expression statement, so
+                 no wrapper, no print, no slots are needed for this group to pass
+     literals    the printf call, and that an immediate emits no instruction
+     module      the wrapper: preamble, `define i32 @main`, `entry:`, `ret i32 0`
+     slots       let/var: alloca, store, load, and slot REUSE
+     (cram)      codegen.t builds and RUNS real programs — needs all of the above
 
-   Implement in that order and watch them go green one at a time:
+   They are independent, so you can write `gen_expr` first, with an `emit_llvm` that is
+   nothing but `... ; Buffer.contents buf`, and watch `arithmetic` go green while the rest
+   is still red. Run one group at a time:
 
      dune exec ./phase1-minimal/04-codegen/tests/test_irgen.exe -- test module 0
 
@@ -39,19 +42,27 @@ let lacks src needle =
     (Printf.sprintf "%S must NOT emit %S" src needle)
     false (contains (emit src) needle)
 
-(* The instructions of `main`, without the module wrapper: everything between `entry:`
-   and the closing `ret i32 0`, trimmed. This is how you test `gen_expr` ALONE — a bare
-   expression statement lowers to `ignore (gen_expr e)`, so nothing else contributes a
-   line, and the result can be compared exactly rather than grepped. *)
+(* The instructions of `main`, with the module wrapper filtered out — comments, globals,
+   `declare`, `define`, `entry:`, `ret i32 0`, `}`. Whatever is left is what your lowering
+   emitted.
+
+   This is how you test `gen_expr` BEFORE anything else exists. The filter does not
+   require the wrapper to be there, so you can start with
+
+     let emit_llvm prog = ... ; Buffer.contents buf     (* no preamble/main yet *)
+
+   write `gen_expr`, and have the `arithmetic` groups pass while `module` and `literals`
+   are still red. A bare expression statement (`1 + 2 * 3`) lowers to `ignore (gen_expr e)`
+   and contributes nothing else, so the comparison below is exact, not a grep. *)
+let is_wrapper (l : string) : bool =
+  l = "" || l = "}" || l = "entry:" || l = "ret i32 0"
+  || String.length l > 0 && (l.[0] = ';' || l.[0] = '@')
+  || (String.length l >= 7 && String.sub l 0 7 = "declare")
+  || (String.length l >= 6 && String.sub l 0 6 = "define")
+
 let body (src : string) : string list =
-  let lines = String.split_on_char '\n' (emit src) in
-  let rec after_entry = function
-    | [] -> []
-    | l :: rest -> if String.trim l = "entry:" then rest else after_entry rest
-  in
-  after_entry lines
-  |> List.map String.trim
-  |> List.filter (fun l -> l <> "" && l <> "}" && l <> "ret i32 0")
+  String.split_on_char '\n' (emit src) |> List.map String.trim
+  |> List.filter (fun l -> not (is_wrapper l))
 
 (* count non-overlapping occurrences — how many allocas, how many loads *)
 let count (src : string) (needle : string) : int =
@@ -64,7 +75,7 @@ let count (src : string) (needle : string) : int =
   in
   go 0 0
 
-(* --- layer 0: the module wrapper -------------------------------------------------
+(* --- group `module`: the wrapper -------------------------------------------------
    Nothing here needs an expression: an EMPTY program is still a valid module with a
    `main` that returns 0. Write this first — every later layer prints inside it. *)
 let test_module () =
@@ -78,7 +89,7 @@ let test_module () =
   (* main's body is one basic block in Phase 1 *)
   has "" "entry:"
 
-(* --- layer 1: literals and the print call ------------------------------------------
+(* --- group `literals`: the print call ------------------------------------------
    `print(1)` is the smallest program with a statement in it. An integer literal is an
    IMMEDIATE — it needs no instruction of its own, it is just written into the operand. *)
 let test_literals () =
@@ -91,39 +102,31 @@ let test_literals () =
   Alcotest.(check int) "one printf call per print" 2
     (count "print(1)\nprint(2)" "call i32 (ptr, ...) @printf")
 
-(* --- layer 2: arithmetic ------------------------------------------------------------ *)
+(* --- layer 2: arithmetic ------------------------------------------------------------
+   Every program here is a BARE expression statement, which lowers to `ignore (gen_expr e)`.
+   So this whole group needs `gen_expr` and nothing else — not the module wrapper, not the
+   print call, not the slot map. Write `gen_expr` first and these go green first. *)
 let test_opcodes () =
-  has "print(1 + 2)" "add i64";
-  has "print(3 - 1)" "sub i64";
-  has "print(2 * 3)" "mul i64";
-  has "print(9 / 3)" "sdiv i64";
-  has "print(9 % 4)" "srem i64";
+  has "1 + 2" "add i64";
+  has "3 - 1" "sub i64";
+  has "2 * 3" "mul i64";
+  has "9 / 3" "sdiv i64";
+  has "9 % 4" "srem i64";
   (* unary minus is lowered as 0 - x — LLVM has no integer negate *)
-  has "print(-5)" "sub i64 0,"
+  has "-5" "sub i64 0,"
 
 let test_signedness () =
   (* the signed-vs-unsigned choice matters for parity — never the unsigned forms *)
-  lacks "print(9 / 3)" "udiv";
-  lacks "print(9 % 4)" "urem"
+  lacks "9 / 3" "udiv";
+  lacks "9 % 4" "urem"
 
 let test_nesting () =
-  (* post-order: the inner multiply is emitted BEFORE the add that consumes it, and the
-     add's operand is the register the multiply produced *)
-  let ir = emit "print(1 + 2 * 3)" in
-  let idx needle =
-    let n = String.length ir and m = String.length needle in
-    let rec go i = if i + m > n then -1 else if String.sub ir i m = needle then i else go (i + 1) in
-    go 0
-  in
-  Alcotest.(check bool) "mul is emitted before add" true (idx "mul i64" < idx "add i64");
-  Alcotest.(check bool) "mul comes first and is not itself constant-folded" true (idx "mul i64" > 0);
-  (* two operators, two instructions — no more, no fewer *)
-  Alcotest.(check int) "one mul" 1 (count "print(1 + 2 * 3)" "mul i64");
-  Alcotest.(check int) "one add" 1 (count "print(1 + 2 * 3)" "add i64");
+  (* post-order: the inner multiply is emitted BEFORE the add that consumes it *)
+  Alcotest.(check int) "one mul" 1 (count "1 + 2 * 3" "mul i64");
+  Alcotest.(check int) "one add" 1 (count "1 + 2 * 3" "add i64");
   (* deeper nesting still emits exactly one instruction per operator *)
   Alcotest.(check int) "four operators, four instructions" 4
-    (count "print(1 + 2 * 3 - 4 / 2)" " i64 "
-    - count "print(1 + 2 * 3 - 4 / 2)" "call i32 (ptr, ...) @printf(ptr @.fmt, i64 ")
+    (List.length (body "1 + 2 * 3 - 4 / 2"))
 
 (* Expressions ALONE, with nothing else in the program. `1 + 2 * 3` as a statement emits
    exactly what `gen_expr` emitted — so these compare the whole instruction sequence, which
@@ -145,7 +148,7 @@ let test_expr_alone () =
     [ "%t1 = mul i64 2, 3"; "%t2 = sub i64 0, %t1" ]
     (body "-(2 * 3)")
 
-(* --- layer 3: the slot model -------------------------------------------------------- *)
+(* --- group `slots`: the slot model -------------------------------------------------------- *)
 let test_slot_model () =
   has "let x = 5\nprint(x)" "alloca i64";
   has "let x = 5\nprint(x)" "store i64";
@@ -167,20 +170,19 @@ let test_slot_reuse () =
 let () =
   Alcotest.run "irgen"
     [
-      ("module", [ Alcotest.test_case "layer 0 — preamble, main, ret" `Quick test_module ]);
-      ("literals", [ Alcotest.test_case "layer 1 — immediates + the printf call" `Quick test_literals ]);
+      ("module", [ Alcotest.test_case "the wrapper: preamble, main, ret" `Quick test_module ]);
+      ( "literals",
+        [ Alcotest.test_case "immediates + the printf call" `Quick test_literals ] );
       ( "arithmetic",
         [
-          Alcotest.test_case "layer 2 — opcode mapping" `Quick test_opcodes;
-          Alcotest.test_case "layer 2 — signed div/rem, not unsigned" `Quick test_signedness;
-          Alcotest.test_case "layer 2 — post-order, one instruction per operator" `Quick
-            test_nesting;
-          Alcotest.test_case "layer 2 — gen_expr alone, exact instruction sequence" `Quick
-            test_expr_alone;
+          Alcotest.test_case "opcode mapping (gen_expr only)" `Quick test_opcodes;
+          Alcotest.test_case "signed div/rem, not unsigned" `Quick test_signedness;
+          Alcotest.test_case "one instruction per operator" `Quick test_nesting;
+          Alcotest.test_case "exact instruction sequence" `Quick test_expr_alone;
         ] );
       ( "slots",
         [
-          Alcotest.test_case "layer 3 — alloca/store/load" `Quick test_slot_model;
-          Alcotest.test_case "layer 3 — a var reuses its slot" `Quick test_slot_reuse;
+          Alcotest.test_case "alloca/store/load" `Quick test_slot_model;
+          Alcotest.test_case "a var reuses its slot" `Quick test_slot_reuse;
         ] );
     ]

@@ -220,32 +220,52 @@ What you write:
 **Tip:** keep `entry:` as a single basic block in Phase 1 — no branches yet, control flow arrives
 in Phase 2.
 
-### Build it in four steps, testing after each
+### Write it in any order — the tests come apart
 
-`emit_llvm` is one function, so it is tempting to write the whole thing and only then find out
-whether it works. Don't: `tests/test_irgen.ml` is layered so that each step above turns a group
-green on its own, and you can run one group at a time.
+`emit_llvm` is one function, which makes it look like an all-or-nothing job. It is not:
+`tests/test_irgen.ml` has four independent groups, and each one needs only its own piece.
 
-| step | write | turns green |
+| group | needs | nothing else |
 |---|---|---|
-| 0 | the wrapper: preamble, `define i32 @main()`, `entry:`, `ret i32 0` | `module` |
-| 1 | `Int_lit` (an immediate — no instruction) and the `print` call | `literals` |
-| 2 | `Binary` and `Unary` — the opcode table from §2 | `arithmetic` |
-| 3 | the slot map: `Let`, assignment, `Var` | `slots` |
+| `arithmetic` | `gen_expr`: `Int_lit`, `Unary`, `Binary` | no wrapper, no `print`, no slots |
+| `literals` | the `printf` call | |
+| `module` | the wrapper: preamble, `define i32 @main()`, `entry:`, `ret i32 0` | no lowering at all |
+| `slots` | the name→slot map: `Let`, assignment, `Var` | |
+
+So you can start with `gen_expr` alone. Every program in the `arithmetic` group is a **bare
+expression statement** — `1 + 2 * 3`, not `print(1 + 2 * 3)` — which lowers to
+`ignore (gen_expr e)` and contributes nothing else, and the tests strip the module wrapper before
+comparing. An `emit_llvm` that ends in `Buffer.contents buf`, with no preamble and no `main` yet,
+passes all four `arithmetic` cases while the other groups stay red:
+
+```console
+$ dune exec ./phase1-minimal/04-codegen/tests/test_irgen.exe
+[FAIL]  module       0   the wrapper: preamble, main, ret.
+[FAIL]  literals     0   immediates + the printf call.
+[OK]    arithmetic   0   opcode mapping (gen_expr only).
+[OK]    arithmetic   1   signed div/rem, not unsigned.
+[OK]    arithmetic   2   one instruction per operator.
+[OK]    arithmetic   3   exact instruction sequence.
+[FAIL]  slots        0   alloca/store/load.
+[FAIL]  slots        1   a var reuses its slot.
+```
+
+Run one group while you work on it:
 
 ```bash
-dune exec ./phase1-minimal/04-codegen/tests/test_irgen.exe -- test module 0
+dune exec ./phase1-minimal/04-codegen/tests/test_irgen.exe -- test arithmetic
 make lab C=phase1-minimal/04-codegen        # everything, including the cram runs
 ```
 
-Step 0 is worth doing literally first: `emit_llvm` on an *empty* program is still a valid module,
-and `swiftml --emit-llvm empty.swift | clang -x ir - -o e && ./e` proves your wrapper links and
-runs before a single expression exists. From there each step adds one AST case, and the next group
-tells you whether it landed.
+`arithmetic 3` is the one to watch while writing `gen_expr`: it compares the **whole instruction
+sequence**, so it pins evaluation order, operand threading and fresh-name discipline at once —
 
-**Testing `gen_expr` on its own.** It is a closure inside `emit_llvm`, so a test cannot call it —
-but it can *isolate* it, because a bare expression statement lowers to `ignore (gen_expr e)` and
-contributes nothing else:
+```ocaml
+Alcotest.(check (list string)) "inner first, and its register feeds the outer"
+  [ "%t1 = mul i64 2, 3"; "%t2 = add i64 1, %t1" ] (body "1 + 2 * 3");
+```
+
+The same view at the shell, once the wrapper exists:
 
 ```console
 $ printf '1 + 2 * 3\n' > e.swift && swiftml --emit-llvm e.swift
@@ -257,28 +277,8 @@ entry:
 }
 ```
 
-No printf, no alloca, no slot map — those two lines are exactly what your `gen_expr` emitted. The
-`arithmetic 3` test group does this and compares the **whole sequence**, so it pins evaluation
-order, operand threading and fresh-name discipline at once, instead of grepping for an opcode.
-
-**Tip: run the IR without leaving the shell.**
-
-```bash
-dune exec swiftml -- --emit-llvm p.swift | clang -x ir - -o p && ./p
-```
-
-`--emit-llvm` prints the IR to stdout; `clang -x ir` says "treat the input as LLVM IR" (`-x` sets
-the input language explicitly, which is needed because clang normally decides from the file
-extension), and the lone `-` means "read it from stdin". So the pipe hands your text straight to
-clang, which assembles, optimizes and links it into `p`, exactly as `swiftml build` does internally
-via a temporary `.ll` file.
-
-Two reasons this is the tip worth remembering. You can *see* the IR you are about to run, so a
-wrong answer and the instructions that produced it are on one screen. And clang runs LLVM's
-**verifier** first, which rejects malformed IR — a type mismatch, a use of an undefined register, a
-block with no terminator — naming the offending line. That verifier is your first debugger in this
-concept: a program that fails to build is telling you which instruction you got wrong, while a
-program that builds and prints the wrong number is telling you your *lowering* is wrong.
+The cram tests (`codegen.t`) are the ones that need everything at once — they build and run real
+programs. Leave them for last.
 
 ## 4. Test it
 
