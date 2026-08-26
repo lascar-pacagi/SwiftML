@@ -255,6 +255,77 @@ let test_nesting () =
   Alcotest.(check int) "four operators, four instructions" 4
     (List.length (instrs "1 + 2 * 3 - 4 / 2"))
 
+(* Every operator in one expression, with the exact sequence its precedence implies.
+   `1 + 2 * 3 - 8 / 4 % 3` is 1 + 6 - ((8/4) % 3) = 5, and the instruction order is the
+   proof: `*` `/` `%` bind tighter than `+` `-`, and each level runs left to right. *)
+let test_all_operators () =
+  Alcotest.(check (list string))
+    "five binops and the precedence between them"
+    [
+      "%t1 = mul i64 2, 3";
+      "%t2 = add i64 1, %t1";
+      "%t3 = sdiv i64 8, 4";
+      "%t4 = srem i64 %t3, 3";
+      "%t5 = sub i64 %t2, %t4";
+    ]
+    (instrs "1 + 2 * 3 - 8 / 4 % 3");
+  (* unary mixed in, including a negated parenthesised subtraction and a negated literal *)
+  Alcotest.(check (list string))
+    "unary around and inside a product"
+    [
+      "%t1 = sub i64 2, 5"; "%t2 = sub i64 0, %t1"; "%t3 = sub i64 0, 2";
+      "%t4 = mul i64 %t2, %t3";
+    ]
+    (instrs "-(2 - 5) * -2")
+
+(* Non-commutative operators: getting the operands the wrong way round still produces a
+   plausible-looking module, and only the ANSWER is wrong. Pin the order, and pin that
+   chains group to the left the way Swift's grammar says. *)
+let test_operand_order () =
+  Alcotest.(check (list string)) "subtraction keeps its order" [ "%t1 = sub i64 9, 4" ]
+    (instrs "9 - 4");
+  Alcotest.(check (list string)) "division keeps its order" [ "%t1 = sdiv i64 9, 3" ]
+    (instrs "9 / 3");
+  Alcotest.(check (list string)) "remainder keeps its order" [ "%t1 = srem i64 9, 4" ]
+    (instrs "9 % 4");
+  Alcotest.(check (list string))
+    "a / b / c is (a / b) / c"
+    [ "%t1 = sdiv i64 100, 5"; "%t2 = sdiv i64 %t1, 2" ]
+    (instrs "100 / 5 / 2");
+  Alcotest.(check (list string))
+    "a %% b %% c is (a %% b) %% c"
+    [ "%t1 = srem i64 10, 7"; "%t2 = srem i64 %t1, 2" ]
+    (instrs "10 % 7 % 2");
+  Alcotest.(check (list string))
+    "parentheses override the grouping"
+    [ "%t1 = add i64 3, 4"; "%t2 = mul i64 2, %t1"; "%t3 = mul i64 %t2, 5" ]
+    (instrs "2 * (3 + 4) * 5")
+
+(* A long expression: nothing special happens, which is the point — one instruction per
+   operator, each consuming the previous register, and the LAST one is what is returned. *)
+let test_deep_expression () =
+  let src = "1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10" in
+  let ls = instrs src in
+  Alcotest.(check int) "nine operators, nine instructions" 9 (List.length ls);
+  Alcotest.(check string) "the last register is returned" "%t9" (operand src);
+  Alcotest.(check (list string)) "a left-leaning chain"
+    [ "%t1 = add i64 1, 2"; "%t2 = add i64 %t1, 3" ]
+    (List.filteri (fun i _ -> i < 2) ls);
+  (* a wide, mixed expression: still one instruction per operator *)
+  let wide = "(1 + 2) * (3 - 4) / (5 % 6) - (7 + 8) * (9 - 10)" in
+  (* + - % * / + - * -  = nine operators, however they are parenthesised *)
+  Alcotest.(check int) "nine operators, nine instructions" 9 (List.length (instrs wide))
+
+(* Literals at the edges of the grammar. *)
+let test_literal_edges () =
+  Alcotest.(check (list string)) "zero is an operand like any other" [ "%t1 = add i64 0, 0" ]
+    (instrs "0 + 0");
+  Alcotest.(check (list string)) "double negation is two instructions"
+    [ "%t1 = sub i64 0, 5"; "%t2 = sub i64 0, %t1" ] (instrs "-(-5)");
+  Alcotest.(check string) "a lone zero returns itself" "0" (operand "0");
+  (* no instruction is invented to materialise a constant *)
+  Alcotest.(check (list string)) "a bare literal emits nothing" [] (instrs "1000000")
+
 let test_fresh_names () =
   (* every result gets a NAME OF ITS OWN — reusing one would break SSA, and LLVM would
      reject the module *)
@@ -386,6 +457,36 @@ let test_stmt_kinds () =
     (index_where (fun l -> contains l "load i64") ls < add_at
     && add_at < last_where (starts_with "store"))
 
+(* Many statements, and the slot bookkeeping that has to survive them. *)
+let test_many_statements () =
+  let src =
+    "var a = 3\nvar b = 4\na = a * a + b * b\nb = a - b * 2\nprint(a)\nprint(b)\n\
+     print(a % b + a / b)"
+  in
+  let ls = stmts_of src in
+  Alcotest.(check int) "two names, two allocas" 2 (n_with "alloca i64" ls);
+  (* two declarations plus two reassignments *)
+  Alcotest.(check int) "four stores" 4 (n_with "store i64" ls);
+  (* one load per READ: a,a,b,b then a,b then a then b then a,b,a,b *)
+  Alcotest.(check int) "twelve loads" 12 (n_with "load i64" ls);
+  Alcotest.(check int) "three calls" 3 (n_with "call i32 (ptr, ...) @printf" ls)
+
+(* emit_llvm must lower the program through emit_stmt, not by some other path: the body
+   of `main` is exactly the instructions the statements produce, in the same order. *)
+let test_module_body_matches () =
+  List.iter
+    (fun src ->
+      Alcotest.(check (list string))
+        (Printf.sprintf "%S: main's body is the statements' instructions" src)
+        (stmts_of src) (body src))
+    [
+      "";
+      "print(1)";
+      "let x = 5\nprint(x * 2)";
+      "var v = 1\nv = v + 1\nprint(v)";
+      "var a = 3\nvar b = 4\na = a * a + b * b\nprint(a % b + a / b)";
+    ]
+
 let () =
   Alcotest.run "irgen"
     [
@@ -394,6 +495,7 @@ let () =
           Alcotest.test_case "preamble + main + ret" `Quick test_preamble;
           Alcotest.test_case "module shape and ordering" `Quick test_module_shape;
           Alcotest.test_case "statements in source order" `Quick test_statement_order;
+          Alcotest.test_case "main's body is the lowered statements" `Quick test_module_body_matches;
         ] );
       ( "literals",
         [
@@ -403,6 +505,10 @@ let () =
       ( "arithmetic",
         [
           Alcotest.test_case "opcode mapping (emit_expr alone)" `Quick test_opcodes;
+          Alcotest.test_case "every operator in one expression" `Quick test_all_operators;
+          Alcotest.test_case "operand order and associativity" `Quick test_operand_order;
+          Alcotest.test_case "long and wide expressions" `Quick test_deep_expression;
+          Alcotest.test_case "literal edges" `Quick test_literal_edges;
           Alcotest.test_case "what emit_expr returns" `Quick test_operands;
           Alcotest.test_case "signed div/rem, not unsigned" `Quick test_signedness;
           Alcotest.test_case "post-order + exact sequence" `Quick test_nesting;
@@ -416,5 +522,6 @@ let () =
           Alcotest.test_case "alloca/store/load" `Quick test_slot_model;
           Alcotest.test_case "a var reuses its slot" `Quick test_slot_reuse;
           Alcotest.test_case "each statement kind" `Quick test_stmt_kinds;
+          Alcotest.test_case "a longer program's bookkeeping" `Quick test_many_statements;
         ] );
     ]

@@ -69,3 +69,43 @@ Reassignment really mutates the slot, and later reads see the new value:
   $ swiftml build w.swift -o w && ./w
   25
   20
+
+Harder arithmetic — every operator, precedence, associativity, unary minus, and the two
+that trip people up: integer division truncates toward zero, and the remainder takes the
+sign of the dividend. Every expected value here was taken from `swiftc` on the same file:
+
+  $ cat > hard.swift <<'EOF'
+  > print(1 + 2 * 3 - 8 / 4 % 3)
+  > print(-(2 - 5) * -2)
+  > print(100 / 5 / 2)
+  > print(10 % 7 % 2)
+  > print(2 * (3 + 4) * 5)
+  > print(-7 / 2)
+  > print(-7 % 2)
+  > print(1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10)
+  > EOF
+  $ swiftml build hard.swift -o hard && ./hard
+  5
+  -6
+  10
+  1
+  70
+  -3
+  -1
+  55
+
+Several variables, reassigned in terms of each other and of themselves:
+
+  $ cat > many.swift <<'EOF'
+  > var a = 3
+  > var b = 4
+  > a = a * a + b * b
+  > b = a - b * 2
+  > print(a)
+  > print(b)
+  > print(a % b + a / b)
+  > EOF
+  $ swiftml build many.swift -o many && ./many
+  25
+  17
+  9

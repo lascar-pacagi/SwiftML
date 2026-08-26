@@ -232,34 +232,32 @@ it. Ours is a record and four functions.
 ## 4. Test it
 
 ```bash
-make lab C=phase1-minimal/04-codegen          # compiles + runs the sample programs
-make oracle F=tests/programs/arith.swift      # parity vs swiftc  (the real bar)
+make lab C=phase1-minimal/04-codegen
+```
+
+Two suites run, and they fail in different ways, which is the useful part.
+
+`tests/test_irgen.ml` reads the IR you emit without running it. It calls your four
+functions directly, so a failure names the one that is wrong: the opcode for `%`, the
+order of `sdiv`'s operands, an expression that emitted an instruction for a literal, a
+`var` that allocated a second slot, a register defined twice. These are the errors that
+still produce a *program* — one that prints the wrong number, or that clang refuses —
+and they are much easier to read here than in a diff of program output.
+
+`tests/codegen.t` compiles and runs real programs, and compares what they print. That is
+the only check that can catch a lowering which is well-formed but means something else,
+and its expected values come from `swiftc` on the same source — so a passing run is a
+parity claim, not just self-consistency.
+
+Then the oracle, on the two corpus programs:
+
+```bash
+make oracle F=tests/programs/arith.swift
 make oracle F=tests/programs/vars.swift
 ```
 
-The cram test compiles a program with `swiftml`, runs it, and checks stdout. `make oracle` is the
-headline check: identical output to `swiftc`.
-
-`tests/test_irgen.ml` is the other half, and it is the one to lean on *while writing*: it calls
-your four functions directly, so each group passes as soon as its function is right. Run one:
-
-```bash
-dune exec ./phase1-minimal/04-codegen/tests/test_irgen.exe -- test arithmetic
-```
-
-| group | checks |
-|---|---|
-| `module` | the preamble, one `define`/`entry:`/`ret`, globals before the define, `}` last, statements in source order, no `br`/`phi` (Phase 1 has no control flow) |
-| `literals` | an immediate emits *no* instruction and is written verbatim into its consumer; the variadic call shape; one call per `print`; the argument evaluated before the call |
-| `arithmetic` | the opcode mapping (`/` is `sdiv`, never `udiv`), what `emit_expr` *returns*, post-order with the inner register threaded outward, associativity, one instruction per operator, a fresh register per result |
-| `slots` | `slot_of` gives the same register for the same name and allocates once; alloca before store; two bindings two allocas; a reassigned `var` reuses its slot; every use is its own `load` |
-
-Those are the mistakes that produce a *wrong number* rather than a broken build — materialising a
-constant, reusing a register, allocating a second slot for a `var` — so catching them here saves
-you the hunt at runtime.
-
-**Which compiler does it run?** Nothing is inferred from `C=` or from where you are in the course.
-`make oracle` passes `F` and `B` straight to `tooling/oracle.sh`, whose default is
+**Which compiler does it run?** Nothing is inferred from `C=` or from where you are in the
+course. `make oracle` passes `F` and `B` straight to `tooling/oracle.sh`, whose default is
 `BIN="${2:-swiftml}"` — the Phase-1 binary. That is the right one *here*, and from Phase 2 on you
 name the binary yourself:
 
