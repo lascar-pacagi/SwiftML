@@ -159,17 +159,26 @@ let fresh () = incr next_reg; Printf.sprintf "%%t%d" !next_reg in
 accidentally reuse one. (`%%` in the format string is a literal `%`, since `Printf` reads `%` as the
 start of a conversion.)
 
-With those, codegen mirrors the AST recursion. `gen_expr e` emits instructions and **returns the
+With those, codegen mirrors the AST recursion. `emit_expr e` emits instructions and **returns the
 operand** holding the result — a register name like `"%t3"`, or an immediate like `"42"`:
 
 ```
-gen_expr (Int_lit n)        = string_of_int n                      (* an immediate operand *)
-gen_expr (Var x)            = emit "%k = load i64, ptr %x"; "%k"
-gen_expr (Unary(Neg, e))    = let v = gen_expr e in emit "%k = sub i64 0, v"; "%k"
-gen_expr (Binary(op, l, r)) = let a = gen_expr l and b = gen_expr r in
-                              emit "%k = <llop op> i64 a, b"; "%k"
-gen_expr (Call("print",[a]))= let v = gen_expr a in emit "call ... @printf(... i64 v)"; "0"
+emit_expr (Int_lit n)        = string_of_int n                     (* an immediate operand *)
+emit_expr (Var x)            = emit "%k = load i64, ptr %x"; "%k"
+emit_expr (Unary(Neg, e))    = let v = emit_expr e in emit "%k = sub i64 0, v"; "%k"
+emit_expr (Binary(op, l, r)) = let a = emit_expr l and b = emit_expr r in
+                               emit "%k = <llop op> i64 a, b"; "%k"
+emit_expr (Call("print",[a]))= let v = emit_expr a in
+                               emit "%k = call ... @printf(... i64 v)"; "0"
 ```
+
+**The operand it returns is always an `i64`.** Callers drop it straight into a `store`, an
+arithmetic instruction or a printf argument without asking where it came from, so that invariant is
+what makes the recursion compose. Note where it nearly breaks: the `print` case returns `"0"`, not
+`%k`. `print` is `Void` in Swift and nothing consumes its value — and `%k` there holds *printf's*
+result, which is an `i32`. Propagate that and `let x = print(1)` lowers to
+`store i64 %k` with `%k : i32`, which clang rejects: *'%k' defined with type 'i32' but expected
+'i64'*.
 
 Read that as pseudo-code: `%k` stands for whatever `fresh ()` just returned, and `v`, `a`, `b`
 inside the strings are the operand strings the recursive calls handed back — in real code each line
@@ -179,46 +188,22 @@ The shape to notice is the end of every case: *emit the instruction, then return
 register that now holds the value*. That returned string is the only thing a caller needs — which
 is why a literal costs no instruction at all. It returns `"42"`, and the parent drops it straight
 into its own operand slot. Statements: `let`/`var` ⇒ allocate a slot (a map from source
-name to its `%name` alloca), `gen_expr` the initializer, `store` it; assignment (`var` reuse) ⇒
-`gen_expr` then `store`. Wrap it all in `define i32 @main() { entry: … ret i32 0 }` plus the
+name to its `%name` alloca), `emit_expr` the initializer, `store` it; assignment (`var` reuse) ⇒
+`emit_expr` then `store`. Wrap it all in `define i32 @main() { entry: … ret i32 0 }` plus the
 preamble.
 
 > Oracle: `../../swift/lib/IRGen/GenExpr.cpp` does this for SIL instructions rather than AST nodes,
 > emitting via LLVM's `IRBuilder`. We emit text for clarity; the structure (recursive lower,
 > return an operand) is identical. Phase 2 moves this onto SIL.
 
-![From AST to LLVM IR for `print(1 + 2 * 3)`: each node emits its instructions and returns the operand holding its result, in post-order — children first, so their operands exist before the parent names them. The literals emit nothing at all. The `print` node is last, and its "result" is the dummy operand `"0"`: a `print` statement's value is discarded, but `gen_expr` must return *something* because every expression case does.](figs/lowering.png)
+![From AST to LLVM IR for `print(1 + 2 * 3)`: each node emits its instructions and returns the operand holding its result, in post-order — children first, so their operands exist before the parent names them. The literals emit nothing at all. The `print` node is last, and its "result" is the dummy operand `"0"`: a `print` statement's value is discarded, but `emit_expr` must return *something* because every expression case does — an `i64`
+operand, so `"0"` rather than printf's `i32` result.](figs/lowering.png)
 
 *(regenerate: `make figs C=phase1-minimal/04-codegen`)*
 
 ## 3. Build it, step by step
 
-Open `irgen.ml` in this directory. Build the module as a `Buffer.t`.
-
-The buffer and its two helpers are **given** at the top of `emit_llvm`:
-
-```ocaml
-let buf = Buffer.create 256 in
-let emit (line : string) : unit = Buffer.add_string buf ("  " ^ line ^ "\n") in
-let next_reg = ref 0 in
-let fresh () : string = incr next_reg; Printf.sprintf "%%t%d" !next_reg in
-```
-
-What you write:
-
-1. **A name→slot map** for `let`/`var`: `let slots : (string,string) Hashtbl.t = Hashtbl.create 16`.
-   The first time a name is seen, emit its `alloca i64` and remember the register; later uses find
-   it. A `var` reassignment must reuse the same slot, not allocate a second one.
-2. **`gen_expr : Ast.expr -> string`** as in §2 — append instructions with `emit`, return the
-   operand string. Map `Ast.binop` to `add/sub/mul/sdiv/srem`.
-3. **`gen_stmt`** for `Let` / assignment / `Expr_stmt`; a `print` call goes through `printf`.
-4. **Assemble:** the preamble (`@.fmt` and `declare i32 @printf(ptr, ...)`), then
-   `define i32 @main() {`, `entry:`, the body from `buf`, `ret i32 0`, `}`. Return the string.
-   Note the preamble is *module*-level, so it is not written with `emit` (which indents for a
-   function body) — build the final string around `Buffer.contents buf`.
-
-**Tip:** keep `entry:` as a single basic block in Phase 1 — no branches yet, control flow arrives
-in Phase 2.
+Open `irgen.ml` in this directory.
 
 ### Four holes, four test groups, any order
 
@@ -469,11 +454,11 @@ List.iter (function Ast.Assign { name; _ } -> Hashtbl.replace reassigned name ()
   prog.Ast.stmts;
 let values : (string, string) Hashtbl.t = Hashtbl.create 16 in  (* name -> operand *)
 
-(* in gen_expr, before the alloca path: *)
+(* in emit_expr, before the alloca path: *)
 | Ast.Var (x, _) when Hashtbl.mem values x -> Hashtbl.find values x
-(* in gen_stmt: a never-reassigned let binds name -> operand, emits no alloca/store *)
+(* in emit_stmt: a never-reassigned let binds name -> operand, no alloca/store *)
 | Ast.Let { name; value; _ } when not (Hashtbl.mem reassigned name) ->
-    Hashtbl.replace values name (gen_expr value)
+    Hashtbl.replace values name (emit_expr c value)
 ```
 
 `--emit-llvm` then has no `alloca`/`load`/`store` for those bindings and the program's output is
