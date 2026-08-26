@@ -150,22 +150,14 @@ gen_expr (Binary(op, l, r)) = let a = gen_expr l and b = gen_expr r in
 gen_expr (Call("print",[a]))= let v = gen_expr a in emit "call ... @printf(... i64 v)"; "0"
 ```
 
-Read that as pseudo-code: `%k` is whatever `fresh ()` just returned, and `v`, `a`, `b` inside the
-strings are the operand strings the recursive calls handed back — in real code the line is built
-with `Printf.sprintf`, e.g.
+Read that as pseudo-code: `%k` stands for whatever `fresh ()` just returned, and `v`, `a`, `b`
+inside the strings are the operand strings the recursive calls handed back — in real code each line
+is assembled with `Printf.sprintf`.
 
-```ocaml
-| Ast.Unary (Ast.Neg, e, _) ->
-    let v = gen_expr e in
-    let r = fresh () in
-    emit (Printf.sprintf "%s = sub i64 0, %s" r v);
-    r
-```
-
-The shape to notice is the last two lines of every case: *emit the instruction, then return the name
-of the register that now holds the value*. That returned string is the only thing a caller needs —
-which is why a literal costs no instruction at all (it returns `"42"`, and the parent drops it
-straight into its own operand slot). Statements: `let`/`var` ⇒ allocate a slot (a map from source
+The shape to notice is the end of every case: *emit the instruction, then return the name of the
+register that now holds the value*. That returned string is the only thing a caller needs — which
+is why a literal costs no instruction at all. It returns `"42"`, and the parent drops it straight
+into its own operand slot. Statements: `let`/`var` ⇒ allocate a slot (a map from source
 name to its `%name` alloca), `gen_expr` the initializer, `store` it; assignment (`var` reuse) ⇒
 `gen_expr` then `store`. Wrap it all in `define i32 @main() { entry: … ret i32 0 }` plus the
 preamble.
@@ -182,18 +174,49 @@ preamble.
 
 Open `irgen.ml` in this directory. Build the module as a `Buffer.t`.
 
-1. **Preamble:** emit the `@.fmt` constant and `declare i32 @printf(ptr, ...)`.
-2. **A fresh-name counter:** `let k = ref 0 in let fresh () = incr k; "%t" ^ string_of_int !k`.
-3. **A name→slot map** for `let`/`var`: `let slots : (string,string) Hashtbl.t = Hashtbl.create 16`.
-   For `let x`, pick `"%x"` (sanitize/uniquify if needed) and emit `alloca i64`.
-4. **`gen_expr : Ast.expr -> string`** as in §2, appending instructions to the buffer and returning
-   the operand string. Map `Ast.binop` to `add/sub/mul/sdiv/srem`.
-5. **`gen_stmt`** for `Let`/assignment/`Expr_stmt`; print calls go through `printf`.
-6. **Wrap** in `define i32 @main() { entry: <body> ret i32 0 }` and return `Buffer.contents`.
+The buffer and its two helpers are **given** at the top of `emit_llvm`:
 
-**Tip:** keep `entry:` as a single basic block in Phase 1 (no branches yet — control flow arrives
-in Phase 2). Test the raw IR directly with `dune exec swiftml -- --emit-llvm p.swift | clang -x ir
-- -o p && ./p`.
+```ocaml
+let buf = Buffer.create 256 in
+let emit (line : string) : unit = Buffer.add_string buf ("  " ^ line ^ "\n") in
+let next_reg = ref 0 in
+let fresh () : string = incr next_reg; Printf.sprintf "%%t%d" !next_reg in
+```
+
+What you write:
+
+1. **A name→slot map** for `let`/`var`: `let slots : (string,string) Hashtbl.t = Hashtbl.create 16`.
+   The first time a name is seen, emit its `alloca i64` and remember the register; later uses find
+   it. A `var` reassignment must reuse the same slot, not allocate a second one.
+2. **`gen_expr : Ast.expr -> string`** as in §2 — append instructions with `emit`, return the
+   operand string. Map `Ast.binop` to `add/sub/mul/sdiv/srem`.
+3. **`gen_stmt`** for `Let` / assignment / `Expr_stmt`; a `print` call goes through `printf`.
+4. **Assemble:** the preamble (`@.fmt` and `declare i32 @printf(ptr, ...)`), then
+   `define i32 @main() {`, `entry:`, the body from `buf`, `ret i32 0`, `}`. Return the string.
+   Note the preamble is *module*-level, so it is not written with `emit` (which indents for a
+   function body) — build the final string around `Buffer.contents buf`.
+
+**Tip:** keep `entry:` as a single basic block in Phase 1 — no branches yet, control flow arrives
+in Phase 2.
+
+**Tip: run the IR without leaving the shell.**
+
+```bash
+dune exec swiftml -- --emit-llvm p.swift | clang -x ir - -o p && ./p
+```
+
+`--emit-llvm` prints the IR to stdout; `clang -x ir` says "treat the input as LLVM IR" (`-x` sets
+the input language explicitly, which is needed because clang normally decides from the file
+extension), and the lone `-` means "read it from stdin". So the pipe hands your text straight to
+clang, which assembles, optimizes and links it into `p`, exactly as `swiftml build` does internally
+via a temporary `.ll` file.
+
+Two reasons this is the tip worth remembering. You can *see* the IR you are about to run, so a
+wrong answer and the instructions that produced it are on one screen. And clang runs LLVM's
+**verifier** first, which rejects malformed IR — a type mismatch, a use of an undefined register, a
+block with no terminator — naming the offending line. That verifier is your first debugger in this
+concept: a program that fails to build is telling you which instruction you got wrong, while a
+program that builds and prints the wrong number is telling you your *lowering* is wrong.
 
 ## 4. Test it
 
