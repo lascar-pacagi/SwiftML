@@ -121,8 +121,25 @@ we ignore — but SSA still requires a name for it.
 
 ### Lowering = a recursive walk that returns "where the value is"
 
-Codegen mirrors the AST recursion. `gen_expr e` emits instructions and **returns the operand**
-holding the result (a register name like `"%3"`, or an immediate like `"42"`):
+We are emitting *text*, so the whole back end writes into one `Buffer.t`, and two three-line
+helpers are all the machinery there is:
+
+```ocaml
+let buf = Buffer.create 256 in
+(* append one instruction, indented like the rest of a function body *)
+let emit line = Buffer.add_string buf ("  " ^ line ^ "\n") in
+(* hand out register names nobody has used yet: %t1, %t2, … *)
+let next_reg = ref 0 in
+let fresh () = incr next_reg; Printf.sprintf "%%t%d" !next_reg in
+```
+
+`emit` returns `unit` — it appends and nothing more. `fresh ()` returns a *name*, and is where SSA's
+"written exactly once" is enforced in practice: ask for a new name for every result and you cannot
+accidentally reuse one. (`%%` in the format string is a literal `%`, since `Printf` reads `%` as the
+start of a conversion.)
+
+With those, codegen mirrors the AST recursion. `gen_expr e` emits instructions and **returns the
+operand** holding the result — a register name like `"%t3"`, or an immediate like `"42"`:
 
 ```
 gen_expr (Int_lit n)        = string_of_int n                      (* an immediate operand *)
@@ -133,7 +150,22 @@ gen_expr (Binary(op, l, r)) = let a = gen_expr l and b = gen_expr r in
 gen_expr (Call("print",[a]))= let v = gen_expr a in emit "call ... @printf(... i64 v)"; "0"
 ```
 
-A counter hands out fresh `%k` names. Statements: `let`/`var` ⇒ allocate a slot (a map from source
+Read that as pseudo-code: `%k` is whatever `fresh ()` just returned, and `v`, `a`, `b` inside the
+strings are the operand strings the recursive calls handed back — in real code the line is built
+with `Printf.sprintf`, e.g.
+
+```ocaml
+| Ast.Unary (Ast.Neg, e, _) ->
+    let v = gen_expr e in
+    let r = fresh () in
+    emit (Printf.sprintf "%s = sub i64 0, %s" r v);
+    r
+```
+
+The shape to notice is the last two lines of every case: *emit the instruction, then return the name
+of the register that now holds the value*. That returned string is the only thing a caller needs —
+which is why a literal costs no instruction at all (it returns `"42"`, and the parent drops it
+straight into its own operand slot). Statements: `let`/`var` ⇒ allocate a slot (a map from source
 name to its `%name` alloca), `gen_expr` the initializer, `store` it; assignment (`var` reuse) ⇒
 `gen_expr` then `store`. Wrap it all in `define i32 @main() { entry: … ret i32 0 }` plus the
 preamble.
