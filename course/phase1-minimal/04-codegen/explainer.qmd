@@ -15,8 +15,10 @@ giving up structure the target does not have. A tree of nested expressions becom
 of instructions; a named variable becomes an address or a register; `print(x)` becomes a call to
 libc. Nothing is added — the meaning is preserved — but each step throws away a little of what the
 source made explicit, and the pipeline is a series of such steps: AST → SIL in Phase 2, SIL → LLVM
-IR after that, LLVM IR → ARM64 in Phase 8. This concept is the first one. After this, `swiftml build` produces real programs and the
-oracle can compare them to `swiftc` byte-for-byte.
+IR after that, LLVM IR → ARM64 in Phase 8. This concept is the first one.
+
+After it, `swiftml build` produces real programs and the oracle can compare them to `swiftc`
+byte-for-byte.
 
 - **You implement:** `irgen.ml : emit_llvm` (this dir) — returns a complete `.ll` module as a string.
 - **The driver is done for you:** `driver.ml` (this dir) writes the string to a temp `.ll` and runs
