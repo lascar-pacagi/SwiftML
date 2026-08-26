@@ -116,8 +116,19 @@ conversions.
 before the callee name, which is unusual and specific to variadics: LLVM needs to know where the
 fixed parameters stop and the varargs begin, since those are passed differently by the ABI. A
 non-variadic call just names the return type, as your other functions will in Phase 2:
-`%t4 = call i64 @add(i64 %t2, i64 %t3)`. The result `%t3` here is printf's character count, which
-we ignore — but SSA still requires a name for it.
+`%t4 = call i64 @add(i64 %t2, i64 %t3)`.
+
+**`%t3` is the odd one out in this module, and it is worth a second look.** Every other register
+here is an `i64`; `%t3` is an `i32`, because that is what C's `printf` returns — the number of
+characters printed. We named it only because SSA requires a call's result to have a name, and then
+we never use it: `print` is `Void` in Swift, so no Swift expression can observe that value.
+
+Which is the answer to the question the line invites — *do I need a cast?* No: there is nothing to
+convert, because nothing consumes it. LLVM's integer conversions do exist (`sext` to widen signed,
+`zext` to widen unsigned, `trunc` to narrow), so `%t4 = sext i32 %t3 to i64` is what a cast *would*
+look like — but emitting one here would be inventing work for a value we discard. What matters is
+the other direction: your lowering must not hand `%t3` back as the expression's operand, or a
+consumer will use an `i32` where an `i64` is required and clang will reject the module.
 
 **The arithmetic**, which is the whole of Phase 1's expression language:
 
