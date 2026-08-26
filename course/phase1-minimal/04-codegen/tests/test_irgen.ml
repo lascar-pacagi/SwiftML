@@ -259,6 +259,59 @@ let test_fresh_names () =
 
 (* --- group `slots`: slot_of and emit_stmt -------------------------------------------
    These use `slot_of` and `emit_stmt` directly — the module wrapper is not involved. *)
+(* Every value in LLVM is `%name` (local) or `@name` (global) or a literal. A bare
+   identifier — `ptr x.addr` instead of `ptr %x.addr` — is not a value at all, and clang
+   stops at "expected value token". These two cases check the shapes the counting tests
+   above cannot see. *)
+let test_well_formed_operands () =
+  let bad_ptr l =
+    (* "ptr " followed by anything that is not % or @ *)
+    let rec go i =
+      i + 4 <= String.length l
+      && ((String.sub l i 4 = "ptr " && i + 4 < String.length l
+           && l.[i + 4] <> '%' && l.[i + 4] <> '@')
+         || go (i + 1))
+    in
+    go 0
+  in
+  List.iter
+    (fun src ->
+      List.iter
+        (fun l ->
+          Alcotest.(check bool)
+            (Printf.sprintf "%S: pointer operands are registers, not bare names (%S)" src l)
+            false (bad_ptr l))
+        (stmts_of src))
+    [ "let x = 5\nprint(x)"; "var v = 1\nv = v + 1\nprint(v)"; "let a = 1\nlet b = a + a" ];
+  (* slot_of hands back a register, so its result can be used as an operand directly *)
+  let c = Irgen.create () in
+  let r = Irgen.slot_of c "x" in
+  Alcotest.(check bool) (Printf.sprintf "slot_of returned %S, which must start with '%%'" r) true
+    (String.length r > 1 && r.[0] = '%')
+
+(* SSA in one line: a register is written once. `%t1 = alloca` followed by
+   `%t1 = load` is the classic slip — reusing the slot's own register for the value
+   loaded out of it. *)
+let test_single_assignment () =
+  List.iter
+    (fun src ->
+      let defs =
+        stmts_of src
+        |> List.filter_map (fun l ->
+               match String.index_opt l ' ' with
+               | Some i when String.length l > 0 && l.[0] = '%' -> Some (String.sub l 0 i)
+               | _ -> None)
+      in
+      Alcotest.(check int)
+        (Printf.sprintf "%S: every register is defined exactly once" src)
+        (List.length defs)
+        (List.length (List.sort_uniq compare defs)))
+    [
+      "let x = 5\nprint(x)";
+      "var v = 1\nv = v + 1\nprint(v)";
+      "let a = 1\nlet b = 2\nprint(a + b + a)";
+    ]
+
 let test_slot_of () =
   (* the map is the point: the SAME name gives the same register, and allocates once *)
   let c = Irgen.create () in
@@ -335,6 +388,8 @@ let () =
         ] );
       ( "slots",
         [
+          Alcotest.test_case "operands are well-formed values" `Quick test_well_formed_operands;
+          Alcotest.test_case "every register defined once (SSA)" `Quick test_single_assignment;
           Alcotest.test_case "slot_of: one slot per name" `Quick test_slot_of;
           Alcotest.test_case "alloca/store/load" `Quick test_slot_model;
           Alcotest.test_case "a var reuses its slot" `Quick test_slot_reuse;
