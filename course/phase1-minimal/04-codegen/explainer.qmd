@@ -241,27 +241,7 @@ That is the same split swiftc makes, minus the C++: `IRGenFunction` (`IRGenFunct
 carries the builder, the value namer and the local-value map, and the lowering methods hang off
 it. Ours is a record and four functions.
 
-**Start with `emit_expr`.** It is the heart of the concept, and the `arithmetic` group calls it
-*directly* — no module, no `print`, no slots required:
-
-```ocaml
-let c = Irgen.create () in
-Irgen.emit_expr c (parse_expr "1 + 2 * 3")     (* returns "%t2" *)
-(* c.buf now holds:  %t1 = mul i64 2, 3
-                     %t2 = add i64 1, %t1      *)
-```
-
-The tests assert *both* halves of that contract — the instruction list and the returned operand —
-so evaluation order, operand threading and the fresh-name discipline are all pinned. Leave the
-`Var` case as `failwith` until you write `slot_of`; nothing in `arithmetic` needs it.
-
-Then, in whatever order suits you:
-
-| write | turns green |
-|---|---|
-| `emit_expr`'s `Call("print", [a])` case | `literals` |
-| `slot_of` and `emit_stmt` | `slots` |
-| `emit_llvm` — preamble, `define i32 @main()`, `entry:`, body, `ret i32 0`, `}` | `module` |
+Any order works, so run the group you are working on:
 
 ```bash
 dune exec ./phase1-minimal/04-codegen/tests/test_irgen.exe -- test arithmetic
