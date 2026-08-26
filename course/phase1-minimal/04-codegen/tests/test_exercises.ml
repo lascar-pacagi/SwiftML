@@ -51,7 +51,7 @@ let contains haystack needle =
 
 let n_with needle ls = List.length (List.filter (fun l -> contains l needle) ls)
 
-(* --- Exercise 1: never-reassigned `let`s need no slot ----------------------------- *)
+(* --- Exercise 1: a slot only for what is actually assigned ----------------------------- *)
 let ex1_started () =
   match instrs "let x = 5\nprint(x)" with
   | exception _ -> false
@@ -87,9 +87,15 @@ let test_ex1_no_slot () =
   let ls = instrs "var v = 1\nv = v + 1\nprint(v)" in
   Alcotest.(check int) "a reassigned var still gets one slot" 1 (n_with "alloca" ls);
   Alcotest.(check int) "...and is stored twice" 2 (n_with "store i64" ls);
-  (* mixed: the let is promoted, the var is not *)
+  (* mixed: the assigned var keeps its slot, the let does not get one *)
   let ls = instrs "let k = 7\nvar v = 1\nv = v + k\nprint(v)" in
-  Alcotest.(check int) "only the var allocates" 1 (n_with "alloca" ls)
+  Alcotest.(check int) "only the assigned var allocates" 1 (n_with "alloca" ls);
+  (* a `var` the program never assigns to needs no slot either — that is the half that
+     requires looking at the whole program before lowering it *)
+  Alcotest.(check int) "an unassigned var needs no slot" 0
+    (n_with "alloca" (instrs "var w = 9\nprint(w)"));
+  Alcotest.(check int) "...while an assigned one still does" 1
+    (n_with "alloca" (instrs "var w = 9\nw = 10\nprint(w)"))
 
 (* --- Exercise 2: fold constant arithmetic ------------------------------------------ *)
 let ex3_started () =
@@ -137,6 +143,6 @@ let group name started what test =
 let () =
   Alcotest.run "irgen exercises"
     [
-      group "ex1 no slot for plain lets" ex1_started "the slot-skipping let" test_ex1_no_slot;
+      group "ex1 slots only where assigned" ex1_started "slot-skipping" test_ex1_no_slot;
       group "ex2 constant folding" ex3_started "constant folding" test_ex3_folding;
     ]

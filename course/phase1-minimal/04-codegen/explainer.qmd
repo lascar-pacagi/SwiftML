@@ -325,13 +325,23 @@ make exercises C=phase1-minimal/04-codegen     # just these
 make lab       C=phase1-minimal/04-codegen     # concept + exercises
 ```
 
-**1 — skip the slot for never-reassigned `let`s.** A `let` that is never the target of an
-assignment already is single-assignment: it needs no `alloca`, no `store`, and no `load` at each
-use. Keep its operand in a `name → operand` map and hand that back for `Var` instead; a `var` that
-*is* reassigned keeps its slot. You will need a pass over the program before lowering — which names
-are assigned to? — and that is the first thing you have written that looks at the whole function
-rather than one node. The IR gets shorter, the output does not change, and you have hand-rolled the
-easy case of **mem2reg**, the pass you write properly in concept 16.
+**1 — give a slot only to what is actually assigned.** A binding needs memory because it can
+change; one that never changes can live in a register. Keep such a binding's operand in a
+`name → operand` map and hand that back for `Var`, emitting no `alloca`, no `store` and no `load`.
+
+Two kinds qualify, and they cost different amounts of work:
+
+- a **`let`** never qualifies for a slot at all — sema has already proved no assignment targets it
+  (concept 03 rejects `k = 2` after `let k = 1`), so no analysis is needed here;
+- a **`var`** qualifies only if the program never assigns to it, which you cannot know while
+  lowering one statement. It takes a pass over the whole program first, collecting the names that
+  appear as assignment targets — the first thing you write that looks at the function as a whole
+  rather than at one node.
+
+The IR gets shorter, the output does not change, and you have hand-rolled the easy case of
+**mem2reg**, the pass you write properly in concept 16 — where the hard part is precisely what
+Phase 1 lets you skip: with branches in the picture, "never assigned after this point" stops being
+a question you can answer by scanning a list.
 
 **2 — fold constant arithmetic.** `print(2 * 3)` emits a `mul` for two numbers you already know.
 When both operands of a `Binary` come back as literals, compute the answer and return it as an
@@ -468,12 +478,11 @@ let emit_llvm (prog : Ast.program) : string =
 
 ## 9. Exercise solutions
 
-### 1 — skip the slot for never-reassigned `let`s
+### 1 — give a slot only to what is actually assigned
 
-A `let` that is never the target of an assignment is single-assignment, so it needs no stack slot —
-keep its value operand in a `name → operand` map and reference it directly. First scan the program
-for names that *are* reassigned (those still need the alloca/store path); everything else can be
-value-numbered:
+Scan the program once for the names that appear as assignment targets; every other binding — every
+`let`, and any `var` the program never writes to again — can keep its value in a `name → operand`
+map instead of a stack slot:
 
 ```ocaml
 let reassigned : (string, unit) Hashtbl.t = Hashtbl.create 16 in
