@@ -51,28 +51,40 @@ let contains haystack needle =
 
 let n_with needle ls = List.length (List.filter (fun l -> contains l needle) ls)
 
-(* --- Exercise 1: a slot only for what is actually assigned ----------------------------- *)
-let ex1_started () =
+(* --- Exercise 1a: a `let`'s value reaches its uses directly ------------------------
+   The half that needs no analysis. `let x = 5` binds a name to an operand; every `Var x`
+   should hand that operand back, so the literal turns up INSIDE the instruction that uses
+   it and no memory is touched at all. This group activates on its own, so you can do the
+   `let` half first and see it pass before starting the `var` half below. *)
+let ex1a_started () =
   match instrs "let x = 5\nprint(x)" with
   | exception _ -> false
   | ls -> n_with "alloca" ls = 0
 
-let test_ex1_no_slot () =
-  (* a let bound to a literal disappears entirely: its operand IS the literal *)
-  let ls = instrs "let x = 5\nprint(x)" in
-  Alcotest.(check int) "no alloca" 0 (n_with "alloca" ls);
-  Alcotest.(check int) "no store" 0 (n_with "store" ls);
-  Alcotest.(check int) "no load" 0 (n_with "load" ls);
-  Alcotest.(check (list string)) "the literal is passed straight to printf"
-    [ "%t1 = call i32 (ptr, ...) @printf(ptr @.fmt, i64 5)" ] ls;
-  (* A computed initializer is evaluated once and its register reused at every use. The
-     value has to be one no constant folder could reduce — every literal in Phase 1 is
-     known at compile time, so if you also did exercise 3, `let y = 2 * 3` is just `6`.
-     A reassigned var is the one source of a genuinely runtime value. *)
+let test_ex1a_let_value () =
+  (* the literal is substituted into the call — not stored and loaded back *)
+  Alcotest.(check (list string)) "the let's value reaches printf directly"
+    [ "%t1 = call i32 (ptr, ...) @printf(ptr @.fmt, i64 5)" ] (instrs "let x = 5\nprint(x)");
+  (* substitution survives being used in arithmetic, and through another binding *)
+  let no_memory src =
+    let ls = instrs src in
+    Alcotest.(check int)
+      (Printf.sprintf "%S touches no memory" src)
+      0
+      (n_with "alloca" ls + n_with "store" ls + n_with "load" ls)
+  in
+  no_memory "let a = 2\nlet b = 3\nprint(a * b)";
+  no_memory "let a = 5\nlet b = a\nprint(b)";
+  no_memory "let a = 1\nlet b = a + a\nlet c = b + b\nprint(c)";
+  (* the operand really is the VALUE: printing a let bound to another let still passes 5 *)
+  Alcotest.(check bool) "a let bound to a let passes the same operand" true
+    (List.exists
+       (fun l -> contains l "@printf(ptr @.fmt, i64 5)")
+       (instrs "let a = 5\nlet b = a\nprint(b)"));
+  (* a computed initializer is evaluated ONCE and its register reused — substitution must
+     not duplicate work. Use a value no constant folder can reduce (see exercise 2). *)
   let ls = instrs "var v = 1\nv = v + 1\nlet y = v * 3\nprint(y + y)" in
   Alcotest.(check int) "one multiply, for the let's initializer" 1 (n_with "= mul i64" ls);
-  Alcotest.(check int) "only the var allocates" 1 (n_with "alloca" ls);
-  (* both operands of the add are the SAME register: y was computed once *)
   let same_operands (l : string) : bool =
     match String.split_on_char ',' l with
     | [ lhs; rhs ] -> (
@@ -81,21 +93,36 @@ let test_ex1_no_slot () =
         | [] -> false)
     | _ -> false
   in
-  Alcotest.(check bool) "the multiply's register is used for both uses of y" true
+  Alcotest.(check bool) "both uses of y are the same register" true
     (List.exists (fun l -> contains l "= add i64 %" && same_operands l) ls);
-  (* a var that IS reassigned keeps its slot — the exercise must not break mutation *)
-  let ls = instrs "var v = 1\nv = v + 1\nprint(v)" in
-  Alcotest.(check int) "a reassigned var still gets one slot" 1 (n_with "alloca" ls);
-  Alcotest.(check int) "...and is stored twice" 2 (n_with "store i64" ls);
-  (* mixed: the assigned var keeps its slot, the let does not get one *)
-  let ls = instrs "let k = 7\nvar v = 1\nv = v + k\nprint(v)" in
-  Alcotest.(check int) "only the assigned var allocates" 1 (n_with "alloca" ls);
-  (* a `var` the program never assigns to needs no slot either — that is the half that
-     requires looking at the whole program before lowering it *)
+  (* and the program still says what it said before *)
+  Alcotest.(check bool) "the assigned var keeps its slot" true
+    (n_with "alloca" ls = 1)
+
+(* --- Exercise 1b: a `var` gets a slot only if something assigns to it ---------------
+   The half that needs the pre-pass. Activates separately from 1a. *)
+let ex1b_started () =
+  match instrs "var w = 9\nprint(w)" with
+  | exception _ -> false
+  | ls -> n_with "alloca" ls = 0
+
+let test_ex1b_unassigned_var () =
   Alcotest.(check int) "an unassigned var needs no slot" 0
     (n_with "alloca" (instrs "var w = 9\nprint(w)"));
-  Alcotest.(check int) "...while an assigned one still does" 1
-    (n_with "alloca" (instrs "var w = 9\nw = 10\nprint(w)"))
+  Alcotest.(check int) "...but an assigned one still does" 1
+    (n_with "alloca" (instrs "var w = 9\nw = 10\nprint(w)"));
+  (* THE trap: a var assigned LATER must not have its initializer substituted at an
+     earlier use. Promote every binding without the pre-pass and this program prints
+     1 and 1, where swiftc prints 1 and 2 — a miscompile no shape assertion elsewhere
+     would notice, because the IR it produces is perfectly well-formed. *)
+  let ls = instrs "var v = 1\nprint(v)\nv = 2\nprint(v)" in
+  Alcotest.(check int) "a later assignment forces a slot" 1 (n_with "alloca" ls);
+  Alcotest.(check int) "both reads load it" 2 (n_with "load i64" ls);
+  Alcotest.(check bool) "neither print takes the initializer as an immediate" false
+    (List.exists (fun l -> contains l "@printf(ptr @.fmt, i64 1)") ls);
+  (* mixed program: the let and the untouched var are promoted, the assigned var is not *)
+  let ls = instrs "let k = 7\nvar u = 2\nvar v = 1\nv = v + k + u\nprint(v)" in
+  Alcotest.(check int) "one slot, for the one assigned name" 1 (n_with "alloca" ls)
 
 (* --- Exercise 2: fold constant arithmetic ------------------------------------------ *)
 let ex3_started () =
@@ -143,6 +170,8 @@ let group name started what test =
 let () =
   Alcotest.run "irgen exercises"
     [
-      group "ex1 slots only where assigned" ex1_started "slot-skipping" test_ex1_no_slot;
+      group "ex1a let values" ex1a_started "the let half of slot-skipping" test_ex1a_let_value;
+      group "ex1b unassigned vars" ex1b_started "the var half of slot-skipping"
+        test_ex1b_unassigned_var;
       group "ex2 constant folding" ex3_started "constant folding" test_ex3_folding;
     ]
