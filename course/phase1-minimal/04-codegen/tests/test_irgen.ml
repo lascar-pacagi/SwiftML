@@ -451,6 +451,26 @@ let test_slot_reuse () =
   Alcotest.(check int) "...across statements too" 3
     (n_with "load i64" (stmts_of "var x = 1\nx = x + 1\nprint(x)\nprint(x)"))
 
+(* Reassignment where the new value does not depend on the old one. Whatever strategy
+   §6's first exercise leads you to, one fact cannot change: the value printed after
+   `x = 42` is not the 12 it was declared with. *)
+let test_reassignment () =
+  let ls = stmts_of "var x = 12\nx = 42\nprint(x)" in
+  Alcotest.(check int) "one slot for x" 1 (n_with "alloca i64" ls);
+  Alcotest.(check bool) "42 is stored" true (List.exists (fun l -> contains l "store i64 42") ls);
+  Alcotest.(check bool) "the print does not take the initializer" false
+    (List.exists (fun l -> contains l "@printf(ptr @.fmt, i64 12)") ls);
+  (* three writes, and only the last one can be the value printed *)
+  let ls = stmts_of "var y = 1\ny = 2\ny = 3\nprint(y)" in
+  Alcotest.(check bool) "3 is stored" true (List.exists (fun l -> contains l "store i64 3") ls);
+  List.iter
+    (fun stale ->
+      Alcotest.(check bool)
+        (Printf.sprintf "the print does not take the stale %s" stale)
+        false
+        (List.exists (fun l -> contains l (Printf.sprintf "@printf(ptr @.fmt, i64 %s)" stale)) ls))
+    [ "1"; "2" ]
+
 let test_stmt_kinds () =
   (* a bare expression statement emits its instructions and drops the operand *)
   Alcotest.(check (list string)) "an expression statement still computes"
@@ -516,6 +536,7 @@ let () =
           Alcotest.test_case "slot_of: one slot per name" `Quick test_slot_of;
           Alcotest.test_case "alloca/store/load" `Quick test_slot_model;
           Alcotest.test_case "a var reuses its slot" `Quick test_slot_reuse;
+          Alcotest.test_case "reassignment replaces the value" `Quick test_reassignment;
           Alcotest.test_case "each statement kind" `Quick test_stmt_kinds;
           Alcotest.test_case "a longer program's bookkeeping" `Quick test_many_statements;
         ] );

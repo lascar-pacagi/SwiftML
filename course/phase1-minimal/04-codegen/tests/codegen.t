@@ -109,3 +109,25 @@ Several variables, reassigned in terms of each other and of themselves:
   25
   17
   9
+
+Plain reassignment, where each value replaces the last rather than being computed from
+it — a compiler that keeps handing out a variable's first value still prints something
+plausible here, just the wrong thing:
+
+  $ cat > re.swift <<'EOF'
+  > var x = 12
+  > print(x)
+  > x = 42
+  > print(x)
+  > x = x + x
+  > print(x)
+  > var y = 1
+  > y = 2
+  > y = 3
+  > print(y)
+  > EOF
+  $ swiftml build re.swift -o re && ./re
+  12
+  42
+  84
+  3
