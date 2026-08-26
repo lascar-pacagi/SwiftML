@@ -39,6 +39,20 @@ let lacks src needle =
     (Printf.sprintf "%S must NOT emit %S" src needle)
     false (contains (emit src) needle)
 
+(* The instructions of `main`, without the module wrapper: everything between `entry:`
+   and the closing `ret i32 0`, trimmed. This is how you test `gen_expr` ALONE — a bare
+   expression statement lowers to `ignore (gen_expr e)`, so nothing else contributes a
+   line, and the result can be compared exactly rather than grepped. *)
+let body (src : string) : string list =
+  let lines = String.split_on_char '\n' (emit src) in
+  let rec after_entry = function
+    | [] -> []
+    | l :: rest -> if String.trim l = "entry:" then rest else after_entry rest
+  in
+  after_entry lines
+  |> List.map String.trim
+  |> List.filter (fun l -> l <> "" && l <> "}" && l <> "ret i32 0")
+
 (* count non-overlapping occurrences — how many allocas, how many loads *)
 let count (src : string) (needle : string) : int =
   let s = emit src in
@@ -111,6 +125,26 @@ let test_nesting () =
     (count "print(1 + 2 * 3 - 4 / 2)" " i64 "
     - count "print(1 + 2 * 3 - 4 / 2)" "call i32 (ptr, ...) @printf(ptr @.fmt, i64 ")
 
+(* Expressions ALONE, with nothing else in the program. `1 + 2 * 3` as a statement emits
+   exactly what `gen_expr` emitted — so these compare the whole instruction sequence, which
+   pins evaluation order, operand threading and the fresh-name discipline in one go. *)
+let test_expr_alone () =
+  Alcotest.(check (list string)) "a literal alone emits nothing" [] (body "42");
+  Alcotest.(check (list string))
+    "one operator, one instruction" [ "%t1 = add i64 1, 2" ] (body "1 + 2");
+  Alcotest.(check (list string))
+    "inner first, and its register feeds the outer"
+    [ "%t1 = mul i64 2, 3"; "%t2 = add i64 1, %t1" ]
+    (body "1 + 2 * 3");
+  Alcotest.(check (list string))
+    "left-to-right within a level"
+    [ "%t1 = mul i64 2, 3"; "%t2 = sdiv i64 8, 4"; "%t3 = add i64 %t1, %t2" ]
+    (body "2 * 3 + 8 / 4");
+  Alcotest.(check (list string))
+    "unary minus is 0 - x, applied after its operand"
+    [ "%t1 = mul i64 2, 3"; "%t2 = sub i64 0, %t1" ]
+    (body "-(2 * 3)")
+
 (* --- layer 3: the slot model -------------------------------------------------------- *)
 let test_slot_model () =
   has "let x = 5\nprint(x)" "alloca i64";
@@ -141,6 +175,8 @@ let () =
           Alcotest.test_case "layer 2 — signed div/rem, not unsigned" `Quick test_signedness;
           Alcotest.test_case "layer 2 — post-order, one instruction per operator" `Quick
             test_nesting;
+          Alcotest.test_case "layer 2 — gen_expr alone, exact instruction sequence" `Quick
+            test_expr_alone;
         ] );
       ( "slots",
         [

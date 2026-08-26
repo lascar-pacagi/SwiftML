@@ -243,6 +243,24 @@ and `swiftml --emit-llvm empty.swift | clang -x ir - -o e && ./e` proves your wr
 runs before a single expression exists. From there each step adds one AST case, and the next group
 tells you whether it landed.
 
+**Testing `gen_expr` on its own.** It is a closure inside `emit_llvm`, so a test cannot call it —
+but it can *isolate* it, because a bare expression statement lowers to `ignore (gen_expr e)` and
+contributes nothing else:
+
+```console
+$ printf '1 + 2 * 3\n' > e.swift && swiftml --emit-llvm e.swift
+define i32 @main() {
+entry:
+  %t1 = mul i64 2, 3
+  %t2 = add i64 1, %t1
+  ret i32 0
+}
+```
+
+No printf, no alloca, no slot map — those two lines are exactly what your `gen_expr` emitted. The
+`arithmetic 3` test group does this and compares the **whole sequence**, so it pins evaluation
+order, operand threading and fresh-name discipline at once, instead of grepping for an opcode.
+
 **Tip: run the IR without leaving the shell.**
 
 ```bash
