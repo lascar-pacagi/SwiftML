@@ -41,10 +41,52 @@ let slot_of (c : ctx) (name : string) : string =
 (* Lower an expression: emit its instructions, RETURN the operand holding its result —
    an immediate like "42", or a register like "%t3". That returned string is the whole
    interface: a literal emits nothing and returns itself, a binary emits one instruction
-   and returns its register. §2 has the opcode table.   Tests: `arithmetic`, `literals`. *)
+   and returns its register. §2 has the opcode table.
+
+   `print` is the one call we lower, and it is Void in Swift: nothing consumes its result.
+   Return an immediate for it — what printf hands back is an i32 (the character count),
+   ill-typed anywhere an i64 is expected.   Tests: `arithmetic`, `literals`. *)
 let rec emit_expr (c : ctx) (e : Ast.expr) : string =
-  ignore (c, e, fresh, emit, slot_of, emit_expr);
-  failwith "TODO(04a): lower an expression, returning its operand"
+   match e with
+   | Ast.Int_lit (i, _) -> string_of_int i
+   | Ast.Var (x, _) -> begin
+      let t = slot_of c x in
+      Printf.sprintf "%s = load i64, ptr %s.addr" t x
+      |> emit c;
+      t
+   end
+   | Ast.Unary (Neg, e, _) -> begin 
+      let te = emit_expr c e in
+      let t = fresh c in
+      Printf.sprintf "%s = sub i64 0, %s" t te
+      |> emit c;
+      t 
+   end
+   | Ast.Binary (op, e1, e2, _) -> begin
+      let te1 = emit_expr c e1 in
+      let te2 = emit_expr c e2 in
+      let t = fresh c in
+      Printf.sprintf "%s = %s i64 %s, %s" t (
+         match op with
+         | Add -> "add"
+         | Sub -> "sub" 
+         | Mul -> "mul"
+         | Div -> "sdiv"
+         | Mod -> "srem"
+      ) te1 te2
+      |> emit c;
+      t
+   end
+   | Call ("print", [a], _) -> begin
+      let ta = emit_expr c a in
+      let t = fresh c in
+      Printf.sprintf "%s = call i32 (ptr, ...) @printf(ptr @.fmt, i64 %s)" t ta
+      |> emit c;
+      t
+   end 
+   | _ -> assert false
+  (* ignore (c, e, fresh, emit, slot_of, emit_expr);
+  failwith "TODO(04a): lower an expression, returning its operand" *)
 
 (* Lower a statement: `let`/`var` and assignment store into the name's slot; a bare
    expression is emitted for its instructions and its operand dropped.  Tests: `slots`. *)

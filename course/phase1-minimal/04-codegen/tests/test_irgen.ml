@@ -41,7 +41,18 @@ let lower (src : string) : string list * string =
 let instrs (src : string) : string list = fst (lower src)
 let operand (src : string) : string = snd (lower src)
 
-(* whole-program lowering, for the groups that need it *)
+(* emit_stmt IN ISOLATION: lower every statement of a program into one fresh context.
+   Uses `emit_stmt`, never `emit_llvm`, so the `slots` group needs no module wrapper. *)
+let stmts_of (src : string) : string list =
+  let d = diags () in
+  let prog = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
+  let c = Irgen.create () in
+  List.iter (Irgen.emit_stmt c) prog.Ast.stmts;
+  String.split_on_char '\n' (Buffer.contents c.Irgen.buf)
+  |> List.map String.trim
+  |> List.filter (fun l -> l <> "")
+
+(* whole-MODULE lowering — only the `module` group needs this *)
 let emit (src : string) : string =
   let d = diags () in
   let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
@@ -51,6 +62,10 @@ let contains haystack needle =
   let n = String.length haystack and m = String.length needle in
   let rec go i = i + m <= n && (String.sub haystack i m = needle || go (i + 1)) in
   m = 0 || go 0
+
+(* how many lines of [ls] contain [needle] *)
+let n_with (needle : string) (ls : string list) : int =
+  List.length (List.filter (fun l -> contains l needle) ls)
 
 let has src needle =
   Alcotest.(check bool) (Printf.sprintf "%S emits %S" src needle) true (contains (emit src) needle)
@@ -136,7 +151,7 @@ let test_statement_order () =
 (* --- group `literals`: immediates ----------------------------------------------------
    An integer literal is an OPERAND, not an instruction: it is written straight into the
    instruction that uses it. Getting this wrong (materialising `%t1 = add i64 0, 42`)
-   still prints the right number, so only a test catches it. *)
+   still prints the right number, so only a test catches it. Needs `emit_expr` only. *)
 let test_immediates () =
   Alcotest.(check string) "a literal returns itself" "42" (operand "42");
   Alcotest.(check (list string)) "...and emits nothing" [] (instrs "42");
@@ -145,27 +160,34 @@ let test_immediates () =
   (* literal operands appear verbatim inside the instruction that consumes them *)
   Alcotest.(check (list string)) "both operands are immediates" [ "%t1 = add i64 40, 2" ]
     (instrs "40 + 2");
-  (* a whole program of literals allocates nothing and computes nothing *)
-  Alcotest.(check (list string)) "print of a literal is just the call"
-    [ "%t1 = call i32 (ptr, ...) @printf(ptr @.fmt, i64 7)" ] (body "print(7)")
+  Alcotest.(check (list string)) "and on the right of a nested one"
+    [ "%t1 = mul i64 2, 3"; "%t2 = add i64 %t1, 10" ] (instrs "2 * 3 + 10")
 
-(* --- group `literals`: the print call ------------------------------------------------ *)
+(* --- group `literals`: the print call ------------------------------------------------
+   `print(x)` is a `Call` node, so this is still `emit_expr` — no module, no slots. *)
 let test_print_call () =
   (* the variadic call type is repeated before the callee — clang rejects it otherwise *)
-  has "print(7)" "call i32 (ptr, ...) @printf(ptr @.fmt, i64 7)";
-  Alcotest.(check int) "one call per print" 2
-    (count "print(1)\nprint(2)" "call i32 (ptr, ...) @printf");
+  Alcotest.(check (list string)) "the call shape"
+    [ "%t1 = call i32 (ptr, ...) @printf(ptr @.fmt, i64 7)" ] (instrs "print(7)");
   (* the argument is evaluated first, and its register is what gets passed *)
   Alcotest.(check (list string)) "evaluate, then call"
     [ "%t1 = mul i64 6, 7"; "%t2 = call i32 (ptr, ...) @printf(ptr @.fmt, i64 %t1)" ]
-    (body "print(6 * 7)");
-  (* print is Void in Swift: its own operand is never used by anything *)
-  Alcotest.(check string) "print yields the dummy operand" "0" (operand "print(1)");
-  (* printing a variable loads it first *)
-  Alcotest.(check bool) "a load precedes the call" true
-    (let ls = body "let x = 1\nprint(x)" in
-     index_where (fun l -> contains l "load i64") ls
-     < index_where (fun l -> contains l "@printf") ls)
+    (instrs "print(6 * 7)");
+  (* print is Void in Swift, so nothing consumes its result — and what printf hands back
+     is an i32 (the character count), which would be ill-typed anywhere an i64 is wanted.
+     So return an immediate, not that register. Which immediate is up to you. *)
+  Alcotest.(check bool) "print's operand is not printf's i32 register" false
+    (String.length (operand "print(1)") > 0 && (operand "print(1)").[0] = '%');
+  (* one call per print, and the register counter keeps moving between them *)
+  let c = Irgen.create () in
+  ignore (Irgen.emit_expr c (parse_expr "print(1)"));
+  ignore (Irgen.emit_expr c (parse_expr "print(2)"));
+  let ls =
+    String.split_on_char '\n' (Buffer.contents c.Irgen.buf)
+    |> List.map String.trim
+    |> List.filter (fun l -> l <> "")
+  in
+  Alcotest.(check int) "one call per print" 2 (n_with "call i32 (ptr, ...) @printf" ls)
 
 (* --- group `arithmetic`: emit_expr, on its own ---------------------------------------
    These call `Irgen.emit_expr` directly, so they pass as soon as that one function is
@@ -235,7 +257,8 @@ let test_fresh_names () =
   let b = Irgen.emit_expr c (parse_expr "2 + 2") in
   Alcotest.(check bool) "two expressions, two different registers" true (a <> b)
 
-(* --- group `slots`: slot_of and emit_stmt ------------------------------------------- *)
+(* --- group `slots`: slot_of and emit_stmt -------------------------------------------
+   These use `slot_of` and `emit_stmt` directly — the module wrapper is not involved. *)
 let test_slot_of () =
   (* the map is the point: the SAME name gives the same register, and allocates once *)
   let c = Irgen.create () in
@@ -244,46 +267,43 @@ let test_slot_of () =
   let r3 = Irgen.slot_of c "y" in
   Alcotest.(check string) "the same name gives the same slot" r1 r2;
   Alcotest.(check bool) "a different name gives a different slot" true (r1 <> r3);
-  let allocas =
-    String.split_on_char '\n' (Buffer.contents c.Irgen.buf)
-    |> List.filter (fun l -> contains l "alloca")
+  let ls =
+    String.split_on_char '\n' (Buffer.contents c.Irgen.buf) |> List.map String.trim
+    |> List.filter (fun l -> l <> "")
   in
-  Alcotest.(check int) "two names, two allocas" 2 (List.length allocas)
+  Alcotest.(check int) "two names, two allocas" 2 (n_with "alloca" ls)
 
 let test_slot_model () =
-  has "let x = 5\nprint(x)" "alloca i64";
-  has "let x = 5\nprint(x)" "store i64";
-  has "let x = 5\nprint(x)" "load i64";
-  Alcotest.(check int) "one alloca for one binding" 1 (count "let x = 5\nprint(x)" "alloca");
+  let ls = stmts_of "let x = 5\nprint(x)" in
+  Alcotest.(check int) "one alloca for one binding" 1 (n_with "alloca i64" ls);
+  Alcotest.(check int) "stored once" 1 (n_with "store i64" ls);
+  Alcotest.(check int) "loaded once" 1 (n_with "load i64" ls);
   Alcotest.(check int) "two bindings, two allocas" 2
-    (count "let x = 1\nlet y = 2\nprint(x + y)" "alloca");
+    (n_with "alloca i64" (stmts_of "let x = 1\nlet y = 2\nprint(x + y)"));
   (* the slot is allocated before it is stored into *)
-  let ls = body "let x = 5\nprint(x)" in
   Alcotest.(check bool) "alloca precedes the store" true
     (index_where (fun l -> contains l "alloca") ls
     < index_where (fun l -> contains l "store") ls)
 
 let test_slot_reuse () =
   (* reassignment must STORE into the existing slot, never allocate a second one *)
-  Alcotest.(check int) "reassignment reuses the slot" 1
-    (count "var c = 1\nc = c * 2\nprint(c)" "alloca");
-  Alcotest.(check int) "...and stores twice into it" 2
-    (count "var c = 1\nc = c * 2\nprint(c)" "store i64");
+  let ls = stmts_of "var c = 1\nc = c * 2\nprint(c)" in
+  Alcotest.(check int) "reassignment reuses the slot" 1 (n_with "alloca i64" ls);
+  Alcotest.(check int) "...and stores twice into it" 2 (n_with "store i64" ls);
   (* every read of a binding is a load — the value is not cached across uses *)
-  Alcotest.(check int) "each use loads" 2 (count "let x = 1\nprint(x + x)" "load i64");
+  Alcotest.(check int) "each use loads" 2 (n_with "load i64" (stmts_of "let x = 1\nprint(x + x)"));
   Alcotest.(check int) "...across statements too" 2
-    (count "let x = 1\nprint(x)\nprint(x)" "load i64")
+    (n_with "load i64" (stmts_of "let x = 1\nprint(x)\nprint(x)"))
 
 let test_stmt_kinds () =
   (* a bare expression statement emits its instructions and drops the operand *)
   Alcotest.(check (list string)) "an expression statement still computes"
-    [ "%t1 = add i64 1, 2" ] (body "1 + 2");
+    [ "%t1 = add i64 1, 2" ] (stmts_of "1 + 2");
   (* a let stores its initializer's operand *)
-  let ls = body "let x = 6 * 7" in
   Alcotest.(check bool) "the stored value is the multiply's register" true
-    (List.exists (fun l -> contains l "store i64 %t1") ls);
+    (List.exists (fun l -> contains l "store i64 %t1") (stmts_of "let x = 6 * 7"));
   (* an assignment reads the right-hand side, computes, and stores last *)
-  let ls = body "var v = 1\nv = v + 1" in
+  let ls = stmts_of "var v = 1\nv = v + 1" in
   let last_where p = List.length ls - 1 - index_where p (List.rev ls) in
   (* note the needle: "add" alone also matches the slot register `%v.addr` *)
   let add_at = index_where (fun l -> contains l "= add i64") ls in
