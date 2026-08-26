@@ -355,6 +355,17 @@ zero, which have to reach the machine so the program traps where Swift traps rat
 compiler crashing at compile time. And fold the way the hardware does — `-7 / 2` is `-3` and
 `-7 % 2` is `-1`, truncating toward zero — or your optimized and unoptimized builds disagree.
 
+Where you put the fold decides whether it composes with exercise 1. On the AST,
+`let a = 6` / `let b = 7` / `print(a * b)` does **not** fold: at that stage `a` and `b` are
+still names, and their values only become literal operands while lowering. Fold on the
+*lowered* operands instead — both children of a `Binary` have just handed you strings — and it
+fires, because promotion already turned them into `6` and `7`. Keeping the AST pass and making
+it fold anyway means propagating constants into the tree first, then folding, then repeating.
+
+That is phase ordering in miniature, and the reason Phase 4's pipeline reads
+`mem2reg → fold → simplify → fold`: a folder cannot see through memory, so the pass that
+removes the memory runs first, and passes run again after the ones that expose new work for them.
+
 > This one **invalidates part of `tests/test_irgen.ml`**, and that is worth sitting with. The
 > `arithmetic` group asserts one instruction per operator, which is exactly what folding removes,
 > so those cases go red the moment the exercise works. Nothing is broken: the tests encode a
