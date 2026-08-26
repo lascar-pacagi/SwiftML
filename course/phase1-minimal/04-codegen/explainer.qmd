@@ -119,6 +119,27 @@ non-variadic call just names the return type, as your other functions will in Ph
 `%t4 = call i64 @add(i64 %t2, i64 %t3)`. The result `%t3` here is printf's character count, which
 we ignore — but SSA still requires a name for it.
 
+**The arithmetic**, which is the whole of Phase 1's expression language:
+
+| Swift | `Ast.binop` | LLVM instruction |
+|---|---|---|
+| `a + b` | `Add` | `add i64 a, b` |
+| `a - b` | `Sub` | `sub i64 a, b` |
+| `a * b` | `Mul` | `mul i64 a, b` |
+| `a / b` | `Div` | `sdiv i64 a, b` |
+| `a % b` | `Mod` | `srem i64 a, b` |
+| `-a` | `Neg` | `sub i64 0, a` |
+
+The `s` in `sdiv`/`srem` is *signed* — Swift's `Int` is signed, and LLVM makes you say so, because
+`udiv` on the same bits gives different answers for negatives. There is no integer negation
+instruction, hence `0 - a`. Phase 2's `Double` uses the parallel `fadd`/`fsub`/`fmul`/`fdiv` family,
+and comparisons arrive as `icmp slt` and friends.
+
+Honest gap: Swift traps on integer overflow and on `x / 0`, while plain `add` and `sdiv` do not —
+overflow wraps quietly and division by zero is undefined behaviour. Phase 1 accepts that
+divergence; matching Swift means the checked intrinsics (`llvm.sadd.with.overflow`) and an explicit
+zero test, which is why the trapping story belongs with the later phases.
+
 ### Lowering = a recursive walk that returns "where the value is"
 
 We are emitting *text*, so the whole back end writes into one `Buffer.t`, and two three-line
