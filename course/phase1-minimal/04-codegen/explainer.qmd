@@ -239,9 +239,6 @@ make oracle F=prog.swift            # swiftml   — Phase 1
 make oracle F=prog.swift B=swiftml4 # swiftml4  — Phase 4, etc.
 ```
 
-`swiftml` is built from the concept directories you have been filling in (`phase1-minimal/bin/dune`
-links `swiftml_codegen` → sema → parser → lexer), and `oracle.sh` rebuilds before running it.
-
 ## 5. Benchmark it
 
 There is no `bench/` in this concept — the real perf story starts in Phase 4, with an optimizer to
