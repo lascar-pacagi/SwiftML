@@ -183,25 +183,17 @@ emit_expr (Call("print",[a]))= let v = emit_expr a in
                                emit "%k = call ... @printf(... i64 v)"; "0"
 ```
 
-**The operand it returns is always an `i64`.** Callers drop it straight into a `store`, an
-arithmetic instruction or a printf argument without asking where it came from, so that invariant is
-what makes the recursion compose. Note where it nearly breaks: the `print` case returns `"0"`, not
-`%k`. `print` is `Void` in Swift and nothing consumes its value — and `%k` there holds *printf's*
-result, which is an `i32`. Propagate that and `let x = print(1)` lowers to
-`store i64 %k` with `%k : i32`, which clang rejects: *'%k' defined with type 'i32' but expected
-'i64'*.
+Read that as pseudo-code: `%k` is whatever `fresh` returned, and `v`, `a`, `b` are the operand
+strings the recursive calls handed back; real code builds each line with `Printf.sprintf`.
 
-Read that as pseudo-code: `%k` stands for whatever `fresh ()` just returned, and `v`, `a`, `b`
-inside the strings are the operand strings the recursive calls handed back — in real code each line
-is assembled with `Printf.sprintf`.
+Every case ends the same way — emit the instruction, return the operand that now holds the value.
+That operand is always an `i64`, which is why `print` returns `"0"` and not printf's `i32` result.
+A literal emits nothing at all: it returns `"42"`, and its parent writes that straight into its own
+instruction.
 
-The shape to notice is the end of every case: *emit the instruction, then return the name of the
-register that now holds the value*. That returned string is the only thing a caller needs — which
-is why a literal costs no instruction at all. It returns `"42"`, and the parent drops it straight
-into its own operand slot. Statements: `let`/`var` ⇒ allocate a slot (a map from source
-name to its `%name` alloca), `emit_expr` the initializer, `store` it; assignment (`var` reuse) ⇒
-`emit_expr` then `store`. Wrap it all in `define i32 @main() { entry: … ret i32 0 }` plus the
-preamble.
+Statements are shorter still: `let`/`var` allocate a slot, lower the initializer, `store` it;
+assignment reuses the slot and stores again. Wrap the lot in
+`define i32 @main() { entry: … ret i32 0 }` plus the preamble.
 
 > Oracle: `../../swift/lib/IRGen/GenExpr.cpp` does this for SIL instructions rather than AST nodes,
 > emitting via LLVM's `IRBuilder`. We emit text for clarity; the structure (recursive lower,
