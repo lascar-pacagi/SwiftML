@@ -2,9 +2,22 @@
 
    The headline correctness check for codegen is the *runtime* oracle (`make oracle`,
    compare stdout/exit vs swiftc). These unit tests are complementary: they pin the
-   *shape* of the emitted LLVM IR — the preamble, the alloca/load/store slot model, and
-   especially the opcode mapping (signed `sdiv`/`srem`, unary as `0 - x`) — so a wrong
-   mapping is caught and localized here, not just at runtime.
+   *shape* of the emitted LLVM IR, so a wrong opcode is caught and localized here rather
+   than showing up as a wrong number at the end.
+
+   They are also arranged so you can WORK INCREMENTALLY. `emit_llvm` is one function, but
+   the groups below climb from "the module wrapper alone" to "whole programs", and each
+   layer needs only what the layers before it needed:
+
+     layer 0  module      the preamble, `define i32 @main`, `ret i32 0`   (no expressions)
+     layer 1  literals    `print(1)` — an immediate operand and the printf call
+     layer 2  arithmetic  the binop/unary opcode mapping, in post-order
+     layer 3  slots       let/var: alloca, store, load, and slot REUSE
+     layer 4  (cram)      codegen.t builds and runs real programs
+
+   Implement in that order and watch them go green one at a time:
+
+     dune exec ./phase1-minimal/04-codegen/tests/test_irgen.exe -- test module 0
 
    RED until you implement `irgen.ml : emit_llvm`; GREEN against `solution/irgen.ml`. *)
 
@@ -22,22 +35,56 @@ let has src needle =
   Alcotest.(check bool) (Printf.sprintf "%S emits %S" src needle) true (contains (emit src) needle)
 
 let lacks src needle =
-  Alcotest.(check bool) (Printf.sprintf "%S must NOT emit %S" src needle) false (contains (emit src) needle)
+  Alcotest.(check bool)
+    (Printf.sprintf "%S must NOT emit %S" src needle)
+    false (contains (emit src) needle)
 
-let test_preamble () =
-  has "print(1)" "declare i32 @printf(ptr, ...)";
-  has "print(1)" "@.fmt";
-  has "print(1)" "define i32 @main()";
-  has "print(1)" "ret i32 0";
-  has "print(7)" "call i32 (ptr, ...) @printf"
+(* count non-overlapping occurrences — how many allocas, how many loads *)
+let count (src : string) (needle : string) : int =
+  let s = emit src in
+  let n = String.length s and m = String.length needle in
+  let rec go i acc =
+    if i + m > n then acc
+    else if String.sub s i m = needle then go (i + m) (acc + 1)
+    else go (i + 1) acc
+  in
+  go 0 0
 
+(* --- layer 0: the module wrapper -------------------------------------------------
+   Nothing here needs an expression: an EMPTY program is still a valid module with a
+   `main` that returns 0. Write this first — every later layer prints inside it. *)
+let test_module () =
+  has "" "declare i32 @printf(ptr, ...)";
+  has "" "@.fmt";
+  has "" "define i32 @main()";
+  has "" "ret i32 0";
+  (* the format string is a 6-byte C string: '%', 'l', 'l', 'd', '\n', NUL *)
+  has "" "[6 x i8]";
+  has "" "%lld";
+  (* main's body is one basic block in Phase 1 *)
+  has "" "entry:"
+
+(* --- layer 1: literals and the print call ------------------------------------------
+   `print(1)` is the smallest program with a statement in it. An integer literal is an
+   IMMEDIATE — it needs no instruction of its own, it is just written into the operand. *)
+let test_literals () =
+  has "print(7)" "call i32 (ptr, ...) @printf";
+  has "print(7)" "i64 7";
+  (* a literal costs no instruction: no arithmetic, no memory traffic *)
+  lacks "print(7)" "add i64";
+  lacks "print(7)" "alloca";
+  (* count CALLS, not the `declare` line, which also mentions @printf *)
+  Alcotest.(check int) "one printf call per print" 2
+    (count "print(1)\nprint(2)" "call i32 (ptr, ...) @printf")
+
+(* --- layer 2: arithmetic ------------------------------------------------------------ *)
 let test_opcodes () =
   has "print(1 + 2)" "add i64";
   has "print(3 - 1)" "sub i64";
   has "print(2 * 3)" "mul i64";
   has "print(9 / 3)" "sdiv i64";
   has "print(9 % 4)" "srem i64";
-  (* unary minus is lowered as 0 - x *)
+  (* unary minus is lowered as 0 - x — LLVM has no integer negate *)
   has "print(-5)" "sub i64 0,"
 
 let test_signedness () =
@@ -45,16 +92,59 @@ let test_signedness () =
   lacks "print(9 / 3)" "udiv";
   lacks "print(9 % 4)" "urem"
 
+let test_nesting () =
+  (* post-order: the inner multiply is emitted BEFORE the add that consumes it, and the
+     add's operand is the register the multiply produced *)
+  let ir = emit "print(1 + 2 * 3)" in
+  let idx needle =
+    let n = String.length ir and m = String.length needle in
+    let rec go i = if i + m > n then -1 else if String.sub ir i m = needle then i else go (i + 1) in
+    go 0
+  in
+  Alcotest.(check bool) "mul is emitted before add" true (idx "mul i64" < idx "add i64");
+  Alcotest.(check bool) "mul comes first and is not itself constant-folded" true (idx "mul i64" > 0);
+  (* two operators, two instructions — no more, no fewer *)
+  Alcotest.(check int) "one mul" 1 (count "print(1 + 2 * 3)" "mul i64");
+  Alcotest.(check int) "one add" 1 (count "print(1 + 2 * 3)" "add i64");
+  (* deeper nesting still emits exactly one instruction per operator *)
+  Alcotest.(check int) "four operators, four instructions" 4
+    (count "print(1 + 2 * 3 - 4 / 2)" " i64 "
+    - count "print(1 + 2 * 3 - 4 / 2)" "call i32 (ptr, ...) @printf(ptr @.fmt, i64 ")
+
+(* --- layer 3: the slot model -------------------------------------------------------- *)
 let test_slot_model () =
   has "let x = 5\nprint(x)" "alloca i64";
   has "let x = 5\nprint(x)" "store i64";
-  has "let x = 5\nprint(x)" "load i64"
+  has "let x = 5\nprint(x)" "load i64";
+  (* one binding, one slot *)
+  Alcotest.(check int) "one alloca for one binding" 1 (count "let x = 5\nprint(x)" "alloca");
+  Alcotest.(check int) "two bindings, two allocas" 2
+    (count "let x = 1\nlet y = 2\nprint(x + y)" "alloca")
+
+let test_slot_reuse () =
+  (* reassignment must STORE into the existing slot, never allocate a second one *)
+  Alcotest.(check int) "reassignment reuses the slot" 1
+    (count "var c = 1\nc = c * 2\nprint(c)" "alloca");
+  Alcotest.(check int) "...and stores twice into it" 2
+    (count "var c = 1\nc = c * 2\nprint(c)" "store i64");
+  (* every read of a binding is a load — the value is not cached across statements *)
+  Alcotest.(check int) "each use loads" 2 (count "let x = 1\nprint(x + x)" "load i64")
 
 let () =
   Alcotest.run "irgen"
     [
-      ("preamble", [ Alcotest.test_case "module preamble + main" `Quick test_preamble ]);
-      ("opcodes", [ Alcotest.test_case "binop / unary opcode mapping" `Quick test_opcodes ]);
-      ("signedness", [ Alcotest.test_case "signed div/rem, not unsigned" `Quick test_signedness ]);
-      ("slots", [ Alcotest.test_case "alloca/store/load model" `Quick test_slot_model ]);
+      ("module", [ Alcotest.test_case "layer 0 — preamble, main, ret" `Quick test_module ]);
+      ("literals", [ Alcotest.test_case "layer 1 — immediates + the printf call" `Quick test_literals ]);
+      ( "arithmetic",
+        [
+          Alcotest.test_case "layer 2 — opcode mapping" `Quick test_opcodes;
+          Alcotest.test_case "layer 2 — signed div/rem, not unsigned" `Quick test_signedness;
+          Alcotest.test_case "layer 2 — post-order, one instruction per operator" `Quick
+            test_nesting;
+        ] );
+      ( "slots",
+        [
+          Alcotest.test_case "layer 3 — alloca/store/load" `Quick test_slot_model;
+          Alcotest.test_case "layer 3 — a var reuses its slot" `Quick test_slot_reuse;
+        ] );
     ]
