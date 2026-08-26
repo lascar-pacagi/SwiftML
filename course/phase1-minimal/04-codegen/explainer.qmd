@@ -239,9 +239,13 @@ When a case fails, look at what you actually emitted:
 
 ```bash
 printf '1 + 2 * 3\n' > e.swift
-dune exec swiftml -- --emit-llvm e.swift            # print the IR
-dune exec swiftml -- --emit-llvm e.swift | clang -x ir - -o e && ./e   # ...and run it
+swiftml --emit-llvm e.swift                          # print the IR
+swiftml --emit-llvm e.swift | clang -x ir - -o e && ./e     # ...and run it
 ```
+
+(`swiftml` here and in §5 is the binary `dune build` links into
+`_build/install/default/bin` — put that directory on your PATH once, as `GUIDE.md` §7 shows,
+or spell each command `dune exec swiftml -- …`.)
 
 A bare expression statement lowers to `emit_expr` and nothing else, so that first command
 is the shortest way to see one construct on its own. Piping to clang adds LLVM's verifier,

@@ -183,6 +183,17 @@ dune exec swiftml -- --emit-llvm foo.swift     # inspect LLVM IR
 dune exec swiftml -- --emit-asm foo.swift      # inspect native asm   (Phase 8)
 ```
 
+Typing `dune exec swiftml --` in front of everything gets old. `dune build` keeps a symlink
+per phase binary under `_build/install/default/bin`, so put that on your PATH once and the
+examples in the explainers work verbatim:
+
+```bash
+export PATH="$PWD/_build/install/default/bin:$PATH"   # from course/, after `make build`
+swiftml --emit-llvm foo.swift                         # ...then just this
+```
+
+The symlink is refreshed by every build, so it always points at your latest code.
+
 The bare `--` separates *dune's* arguments from your compiler's. Without it, dune would read
 `--emit-llvm` as one of its own options and stop with "unknown option"; after `--`, everything is
 handed to `swiftml` untouched. It is the usual Unix end-of-options marker, the same one that lets
