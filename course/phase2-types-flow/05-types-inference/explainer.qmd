@@ -173,6 +173,48 @@ Concretely, what we deliberately simplify in concept 05 (all noted so you know t
 > "contextual type" down. That split *is* infer/check. The constraint system that backs it lives in
 > `CSGen.cpp`/`CSSolver.cpp`.
 
+### The subset you are growing into
+
+**New lexemes.** Five things the Phase-1 lexer never saw:
+
+| spelling | token | notes |
+|---|---|---|
+| `3.14` | `Token.Float` | a digit run, a `.`, another digit run — `1.` and `.5` are not literals |
+| `"hi"` | `Token.String` | contents only; the escapes `\n` `\t` `\"` `\\` are resolved while scanning |
+| `true` `false` | `Kw_true` `Kw_false` | *keywords*, like `let` — not identifiers that happen to spell true |
+| `==` `!=` `<` `<=` `>` `>=` | `EqEq` `Ne` `Lt` `Le` `Gt` `Ge` | maximal munch: `=` and `==` share a prefix, as do `<` and `<=` |
+| `:` | `Colon` | introduces a type annotation |
+
+`!` on its own is *not* a token here — nothing in this subset uses it, so it is a lex error until
+concept 13 gives it a meaning (force-unwrap). Everything else carries over unchanged: identifiers,
+integers, `+ - * / %`, `( )`, `=`, newline, `let`, `var`.
+
+**The grammar** — `<-- new` marks what this concept adds; precedence is what the parser's
+`infix_bp` table encodes, loosest first:
+
+```
+program    ::= { statement NEWLINE }
+statement  ::= ("let" | "var") ident [ ":" type ] "=" expr        <-- annotation is new
+             | ident "=" expr
+             | expr
+type       ::= "Int" | "Double" | "Bool" | "String"               <-- new
+
+expr       ::= comparison
+comparison ::= sum { ("==" | "!=" | "<" | "<=" | ">" | ">=") sum }   (bp 5)   <-- new
+sum        ::= product { ("+" | "-") product }                       (bp 10)
+product    ::= unary { ("*" | "/" | "%") unary }                     (bp 20)
+unary      ::= "-" unary | primary
+primary    ::= int | float | string | "true" | "false" | ident    <-- float/string/bools new
+             | ident "(" [ expr { "," expr } ] ")"
+             | "(" expr ")"
+```
+
+Two things to notice. The type annotation is the only place a *type* appears in the grammar — which
+is why inference has to do the rest of the work. And comparisons sit at the loosest precedence, so
+`a + 1 == b * 2` parses as `(a + 1) == (b * 2)` without parentheses; they are left-associative here,
+where Swift makes them non-associative (`a < b < c` is an error in Swift, and §6's first exercise
+fixes ours to match).
+
 ## 3. Build it, step by step
 
 Three skeletons, in order — your Phase-1 work is already filled in; you write only the `TODO(05)`
