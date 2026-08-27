@@ -180,10 +180,24 @@ Concretely, what we deliberately simplify in concept 05 (all noted so you know t
 | spelling | token | notes |
 |---|---|---|
 | `3.14` | `Token.Float` | a digit run, a `.`, another digit run — `1.` and `.5` are not literals |
-| `"hi"` | `Token.String` | contents only; the escapes `\n` `\t` `\"` `\\` are resolved while scanning |
+| `"hi"` | `Token.String` | carries the string's *value*, not its source text — see below |
 | `true` `false` | `Kw_true` `Kw_false` | *keywords*, like `let` — not identifiers that happen to spell true |
 | `==` `!=` `<` `<=` `>` `>=` | `EqEq` `Ne` `Lt` `Le` `Gt` `Ge` | maximal munch: `=` and `==` share a prefix, as do `<` and `<=` |
 | `:` | `Colon` | introduces a type annotation |
+
+**What a string token carries.** The value, not the spelling. The quotes are consumed and never
+appear in the payload, and each escape — which is *two* characters in the file, a backslash and a
+letter — becomes the single character it denotes. For the source `"a\nb"`:
+
+```
+file:     "   a   \   n   b   "        6 characters
+payload:      a   ⏎   b                3 characters  (97, 10, 98)
+```
+
+So `\n` `\t` `\"` `\\` are resolved *while scanning*, and every later stage — parser, sema, IRGen —
+handles real characters and never has to think about backslashes again. The one place the escaped
+form comes back is the emitted IR, where IRGen has to re-escape for LLVM's syntax: that is why the
+format string in concept 04 reads `c"%lld\0A\00"`.
 
 `!` on its own is *not* a token here — nothing in this subset uses it, so it is a lex error until
 concept 13 gives it a meaning (force-unwrap). Everything else carries over unchanged: identifiers,
