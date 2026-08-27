@@ -86,12 +86,41 @@ Synthesis of an operator is just a case analysis on the operand types. For the a
 
 The comparison operators all yield `Bool`:
 
-- `==` `!=` : on any two operands of the **same** type (`Int`, `Double`, `String`, `Bool`).
-- `<` `<=` `>` `>=` : on **ordered** types (`Int`, `Double`, `String`) — *not* `Bool` (Swift's `Bool`
-  isn't `Comparable`, so `true < false` is an error).
+- `==` `!=` : two operands of the **same** type (`Int`, `Double`, `String`, `Bool`).
+- `<` `<=` `>` `>=` : two operands of the same type, and that type must be **ordered** —
+  `Int`, `Double`, `String`, but *not* `Bool` (Swift's `Bool` isn't `Comparable`, so
+  `true < false` is an error).
 
-If the operands don't fit any rule, you emit
-`binary operator '<op>' cannot be applied to operands of type 'X' and 'Y'` — `swiftc`'s exact wording.
+Both rules say *same type on both sides*: there is no mixed comparison, and `Int` against `Double`
+is rejected exactly like `Int` against `String`.
+
+```swift
+let a: Int = 1
+let b: Double = 2.0
+a < b            // error: cannot be applied to operands of type 'Int' and 'Double'
+1 < 2.0          // fine — see the literal rule below: `1` becomes a Double literal
+```
+
+That second line is not an exception to the rule; it is the literal coercion doing its work
+*before* the comparison is typed. `1` has no committed type until something asks it for one.
+
+If the operands don't fit any rule, you emit `swiftc`'s wording. There are **two** of them, and
+which one you use depends on whether the operands agree:
+
+```
+1 < "a"        binary operator '<' cannot be applied to operands of type 'Int' and 'String'
+true < false   binary operator '<' cannot be applied to two 'Bool' operands
+```
+
+Two operands of the *same* rejected type get the second form — swiftc has nothing to contrast, so
+it names the type once. Your `bad ()` helper therefore branches on `tl = tr`, and both messages are
+pinned by `tests/test_sema.ml`.
+
+Honest limit: swiftc's real diagnostics come out of overload resolution, so it has more shapes than
+these two. `1 + true` gets `cannot convert value of type 'Bool' to expected argument type 'Int'`,
+because `+` has an `(Int, Int)` candidate and swiftc reports the argument that failed to match. We
+emit the uniform mismatch message there instead — a simpler checker gives a simpler explanation,
+and that is the trade this concept is making.
 
 ### The one coercion: integer literals
 

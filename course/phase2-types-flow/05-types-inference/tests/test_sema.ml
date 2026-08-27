@@ -39,7 +39,8 @@ let test_operators () =
   has_error "let b = 1 == \"a\""
     "binary operator '==' cannot be applied to operands of type 'Int' and 'String'";
   has_error "let b = true < false"
-    "binary operator '<' cannot be applied to operands of type 'Bool' and 'Bool'"
+    (* same type on both sides: swiftc words this one differently *)
+    "binary operator '<' cannot be applied to two 'Bool' operands"
 
 let test_scope () =
   has_error "print(nope)" "cannot find 'nope' in scope";

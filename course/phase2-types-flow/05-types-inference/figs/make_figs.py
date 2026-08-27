@@ -96,7 +96,7 @@ def make_bidir():
             fontstyle="italic")
     flow_along(ax, P, A, DOWN, side=-1)
     flow_along(ax, P, B, DOWN, side=1)
-    ax.text(8.6, 4.75, "check( \u00b7 , Double)  —  the expected type flows DOWN", ha="center",
+    ax.text(9.2, 4.75, "check( \u00b7 , Double)  \u2014  types flow DOWN", ha="center",
             fontsize=12.5, fontweight="bold", color=TEXT)
     ax.text(9.2, 0.42, "let d: Double = 1 + 2   (literals coerce)", ha="center", fontsize=9.5,
             color=DOWN, fontstyle="italic")

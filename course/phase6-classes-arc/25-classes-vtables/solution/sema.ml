@@ -303,9 +303,16 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
   and infer_binary_base op l r span : Types.ty =
     let tl = infer l and tr = infer r in
     let bad () =
+      (* swiftc has two wordings and picks by whether the operands agree:
+           1 < "a"      -> cannot be applied to operands of type 'Int' and 'String'
+           true < false -> cannot be applied to two 'Bool' operands *)
       err span
-        (Printf.sprintf "binary operator '%s' cannot be applied to operands of type '%s' and '%s'"
-           (Ast.string_of_binop op) (Types.string_of_ty tl) (Types.string_of_ty tr));
+        (if tl = tr then
+           Printf.sprintf "binary operator '%s' cannot be applied to two '%s' operands"
+             (Ast.string_of_binop op) (Types.string_of_ty tl)
+         else
+           Printf.sprintf "binary operator '%s' cannot be applied to operands of type '%s' and '%s'"
+             (Ast.string_of_binop op) (Types.string_of_ty tl) (Types.string_of_ty tr));
       Types.TInt
     in
     match op with

@@ -23,5 +23,66 @@ let string_of_ty = function TInt -> "Int"
    mutable. Every diagnostic is compared against swiftc's wording.
    Walk-through: explainer §3. *)
 let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
-  ignore (prog, diags, string_of_ty);
-  failwith "TODO(03-sema): implement Sema.check (scope + name resolution + Int typing)"
+  let env = Hashtbl.create 16 in
+  let rec check_expr e = 
+    match e with
+    | Ast.Int_lit _ -> TInt
+    | Ast.Var (x, span) -> begin
+      try 
+        let ty, _, _ = Hashtbl.find env x in ty
+      with Not_found ->
+        Diagnostics.error diags span 
+          (Printf.sprintf "cannot find '%s' in scope" x);
+        TInt 
+    end
+    | Ast.Unary (_, e', _) -> ignore (check_expr e'); TInt
+    | Ast.Binary (_, e1, e2, _) -> begin 
+      ignore (check_expr e1);
+      ignore (check_expr e2);
+      TInt
+    end
+    | Ast.Call ("print", args, span) -> begin
+      if List.length args <> 1 then
+        Diagnostics.error diags span
+          "print(_:) expects exactly one argument";
+      List.iter (fun e -> ignore (check_expr e)) args;
+      TInt
+    end
+    | Ast.Call (f, args, span) -> begin
+      Diagnostics.error diags span
+          (Printf.sprintf "cannot find '%s' in scope" f);
+      List.iter (fun e -> ignore (check_expr e)) args;
+      TInt
+    end  
+  in
+  let check_instr ins =
+    match ins with 
+    | Ast.Let { name; is_var; value; span } -> begin
+      let ty = check_expr value in
+      match Hashtbl.find_opt env name with
+      | Some (_, _, span') -> begin
+        Diagnostics.error diags span
+          (Printf.sprintf "invalid redeclaration of '%s'" name);
+        Diagnostics.note diags span'
+          (Printf.sprintf "'%s' previously declared here" name)
+      end
+      | None -> Hashtbl.add env name (ty, is_var, span)
+    end
+    | Ast.Assign { name; value; span } -> begin
+      ignore (check_expr value);
+      try
+        let _, is_var, span' = Hashtbl.find env name in        
+        if not is_var then begin
+          Diagnostics.error diags span
+            (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" name);
+          Diagnostics.note diags span' "change 'let' to 'var' to make it mutable"
+        end
+      with Not_found ->
+        Diagnostics.error diags span
+          (Printf.sprintf "cannot find '%s' in scope" name)
+    end
+    | Ast.Expr_stmt (e, _) -> ignore (check_expr e) 
+  in
+  List.iter check_instr prog.stmts
+  (* ignore (prog, diags, string_of_ty);
+  failwith "TODO(03-sema): implement Sema.check (scope + name resolution + Int typing)" *)
