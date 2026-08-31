@@ -1,7 +1,7 @@
 End-to-end via the `./lab.exe` binary: --emit-ast for the new syntax, --typecheck for the
 type checker. RED until lexer/parser/sema are implemented.
 
-The new literals and a type annotation parse into the AST:
+`3.14` / `true` / `"hi"` and a `: Double` annotation parse into the AST:
 
   $ printf 'let d: Double = 3.14\nlet b = true\nlet s = "hi"\n' > a.swift
   $ ./lab.exe --emit-ast a.swift
@@ -9,13 +9,13 @@ The new literals and a type annotation parse into the AST:
   (let b true)
   (let s "hi")
 
-Comparison operators bind looser than arithmetic:
+`1 + 2 < 3 * 4` parses as `(1+2) < (3*4)` — comparisons bind loosest:
 
   $ printf 'let c = 1 + 2 < 3 * 4\n' > c.swift
   $ ./lab.exe --emit-ast c.swift
   (let c (< (+ 1 2) (* 3 4)))
 
-A well-typed program type-checks with no diagnostics (exit 0). Note the integer-literal
+A well-typed program type-checks silently, exit 0. Note the integer-literal
 coercion in `1 + 2` against the Double annotation, and a reassigned var:
 
   $ printf 'let d: Double = 1 + 2\nvar n = 1\nn = 2\nprint(d)\n' > ok.swift
@@ -24,7 +24,7 @@ coercion in `1 + 2` against the Double annotation, and a reassigned var:
   $ test -s err.txt && cat err.txt || echo "no diagnostics"
   no diagnostics
 
-Ill-typed programs are rejected (nonzero) with the matching diagnostic:
+Ill-typed programs are rejected, exit 1, with swiftc's diagnostic wording:
 
   $ printf 'let x: Int = "s"\n' > b1.swift
   $ ./lab.exe --typecheck b1.swift 2>&1 | grep -o "cannot convert value of type 'String' to specified type 'Int'" || true

@@ -41,6 +41,7 @@ let is_ident_cont c = is_ident_head c || is_digit c
 
 (* scan a "..." string literal (the opening '"' is at the cursor); basic escapes *)
 let scan_string (lx : t) : string =
+  let opener = here lx in (* the '"' — where swiftc blames an unterminated literal *)
   ignore (bump lx (* opening quote *));
   let b = Buffer.create 16 in
   let rec loop () =
@@ -48,17 +49,26 @@ let scan_string (lx : t) : string =
     else
       let c = bump lx in
       if c = '\\' && not (at_end lx) then (
+        let esc = here lx in
         (match bump lx with
         | 'n' -> Buffer.add_char b '\n'
         | 't' -> Buffer.add_char b '\t'
+        | 'r' -> Buffer.add_char b '\r'
+        | '0' -> Buffer.add_char b '\000'
         | '"' -> Buffer.add_char b '"'
+        | '\'' -> Buffer.add_char b '\''
         | '\\' -> Buffer.add_char b '\\'
-        | other -> Buffer.add_char b other);
+        (* Swift's escape set is closed: anything else is `diag::lex_invalid_escape`.
+           swiftc points at the character after the backslash, so the span starts at [esc]. *)
+        | other -> error lx esc "invalid escape sequence in literal"; Buffer.add_char b other);
         loop ())
       else (Buffer.add_char b c; loop ())
   in
   loop ();
-  if not (at_end lx) then ignore (bump lx (* closing quote *));
+  (* `diag::lex_unterminated_string`, reported on the opening quote like swiftc; return what we
+     scanned so the parser still sees a String token and the run reports its errors too. *)
+  if at_end lx then error lx opener "unterminated string literal"
+  else ignore (bump lx (* closing quote *));
   Buffer.contents b
 
 let rec next (lx : t) : Token.t =

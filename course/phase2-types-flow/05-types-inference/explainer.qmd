@@ -229,6 +229,83 @@ is why inference has to do the rest of the work. And comparisons sit at the loos
 where Swift makes them non-associative (`a < b < c` is an error in Swift, and §6's first exercise
 fixes ours to match).
 
+### Diagnostics: where the error messages come from
+
+Every stage takes a `Diagnostics.sink` and **reports and recovers** — it pushes an error and keeps
+scanning, so one run reports every bad byte, and nothing ever raises. That doctrine is concept 01's;
+what is new here is that you now write code on the *reporting* side, so you have to know what to
+say. The wording is never a guess. It comes from one of three places, in this order:
+
+**1. `DiagnosticsParse.def` — the design oracle.** Every message swiftc's lexer and parser can print
+is declared in one file, under the `diag::` name our comments cite:
+
+```
+swift/include/swift/AST/DiagnosticsParse.def
+  :134  lex_unterminated_block_comment   "unterminated '/*' comment"
+  :140  lex_unterminated_string          "unterminated string literal"
+  :181  lex_invalid_character            "invalid character in source file"
+  :832  expected_type                    "expected type"
+ :1281  expected_expr                    "expected expression"
+```
+
+Sema's live next door in `DiagnosticsSema.def` — `cannot_find_in_scope` (:1186) and
+`cannot_convert_initializer_value` (:322) are the two §3 asks you to emit.
+
+**2. `swiftc` itself — the behavioural oracle.** Quicker than grepping when you know the *program*
+but not the diagnostic's name: write the bad snippet and read the answer.
+
+```bash
+$ printf 'let s = "oops\n' > /tmp/u.swift && swiftc -typecheck /tmp/u.swift
+/tmp/u.swift:1:9: error: unterminated string literal
+```
+
+**3. Invent one, in swiftc's house style** — only where our subset rejects something Swift accepts,
+so there is nothing to copy. Lowercase, no trailing period, literal syntax in single quotes.
+
+**The lexer's five.** Two are already written for you, each with its `diag::` name in a comment
+above it; three are yours — two inside the string scanner, one in the operator `match`:
+
+| message | where | source |
+|---|---|---|
+| `invalid character in source file` | given — the `_ ->` fallback | `diag::lex_invalid_character` |
+| `unterminated '/*' comment` | given — in `skip_trivia` | `diag::lex_unterminated_block_comment` |
+| `unterminated string literal` | **yours** — `scan_string` hits end of input | `diag::lex_unterminated_string` |
+| `invalid escape sequence in literal` | **yours** — a `\` followed by anything else | `diag::lex_invalid_escape` |
+| `expected '=' after '!'` | **yours** — a `!` that isn't `!=` | *invented* (source 3) |
+
+Only the last is invented, and only because swiftc has nothing to copy: `!` is a perfectly good
+Swift operator (prefix "not", postfix force-unwrap), so its *lexer* accepts it happily and the
+complaint arrives later, from the parser — `'!' is not a binary operator`. Our subset gives a lone
+`!` no meaning until concept 13, so we reject it while scanning and say what we were looking for.
+
+**A diagnostic is a message *and* a place**, and the lexer's five don't point alike. Match swiftc
+on each — run the snippet and read the column it prints:
+
+| input | swiftc's caret | ours |
+|---|---|---|
+| `1 @ 2` | the bad byte | `lo`, the token's start (the cursor has stepped past it) |
+| `print("\1")` | the character *after* the backslash, col 9 | the escape char — remember it before the `bump` |
+| `print("oops` | the **opening quote**, col 7 | the opener — remember it before consuming it |
+| `/* oops` | end of the comment text, **plus a note on the `/*`** | end of input; the note is §6's exercise 4 |
+
+The pattern behind the last two: a span is a *choice*, and the position you want to blame is often
+one you have to save before you consume it. `error lx lo msg` builds the span `{lo; hi = here lx}` —
+`lo` is where the caret goes, `hi` is how far the problem reaches.
+
+**The parser's, you never write.** Its diagnostics come out of two given helpers, both of which
+supply the `expected ` prefix themselves:
+
+```ocaml
+expect p Token.RParen "')'"      (* -> "expected ')'"          *)
+parse_ident p "a type name"      (* -> "expected a type name"  *)
+```
+
+So the annotation hole composes no message; it passes a `what` phrase, and the convention is either
+a quoted literal (`"')'"`) or a lowercase noun phrase. `expected expression` and `expected newline
+or end of statement` are given, on paths you don't touch. Note that swiftc words the annotation case
+just `expected type` (`diag::expected_type`) — ours is deliberately chattier, which is a legitimate
+divergence: the *shape* (report, recover, point at the first bad token) is what has to match.
+
 ## 3. Build it, step by step
 
 Three skeletons, in order — your Phase-1 work is already filled in; you write only the `TODO(05)`
@@ -237,12 +314,22 @@ holes.
 1. **`lexer.ml`** — add the new lexemes. The integer-scan is given; extend it so a `.` followed by a
    digit makes a `Token.Float` (`float_of_string` the whole lexeme). Add a `"` branch that scans a
    string literal to the closing quote (a `Buffer`, handle the `\n \t \" \\` escapes) → `Token.String`.
+   That loop has two exits and they are not the same: a closing quote (consume it) or end of input,
+   which is `error lx (here lx) "unterminated string literal"` (§2). Return the buffer either way;
+   recovering with a partial literal is what lets the rest of the file lex. Swift's escape set is
+   *closed* — `\0 \\ \t \n \r \" \'` and `\u{…}`, nothing else — so the catch-all branch is an
+   error, `invalid escape sequence in literal` (§2), not a "pass the character through" fallback:
+   `"\1"` is not an octal escape in Swift the way it is in C.
    In the operator `match`, make `=` peek for a second `=` (→ `EqEq`), and add `!=` `<` `<=` `>` `>=`
-   and `:` (`Colon`). The comparison tokens already have precedence wired in the parser.
+   and `:` (`Colon`). The comparison tokens already have precedence wired in the parser. A lone
+   `!` is the one place here that *reports*: `error lx lo "expected '=' after '!'"` — §2's
+   diagnostics table says where that wording comes from, and why the span is `lo`.
 2. **`parser.ml`** — two holes. In `parse_expr_bp`'s prefix `match`, turn the new literal tokens into
    `Ast.Double_lit` / `Ast.String_lit` / `Ast.Bool_lit` (mirror the given `Int_lit` case — advance,
    read payload + span). In `parse_annot`, if the next token is `Token.Colon`, consume it and read the
-   following identifier as the type *name*, returning `Some name`.
+   following identifier as the type *name*, returning `Some name`. Neither hole composes a
+   diagnostic of its own — the given `parse_ident` helper takes the `what` phrase
+   (`"a type name"`) and reports `expected …` itself. See §2.
 3. **`sema.ml`** — the type checker. Build it around the two judgments:
    - `infer e` — the literal cases are given. Add `Var` (look up `env`, else *cannot find … in
      scope*); `Unary '-'` (operand must be numeric); `Binary` (operator typing above — a helper that
@@ -260,11 +347,21 @@ Don't peek at §8 until you've tried it. The reference is `solution/sema.ml`.
 ## 4. Test it
 
 ```bash
-make lab C=phase2-types-flow/05-types-inference
+make lab C=phase2-types-flow/05-types-inference          # everything
+make lab C=phase2-types-flow/05-types-inference T=lexer-strings   # one file
 ```
 
-- **cram** (`tests/typecheck.t`): `--emit-ast` on the new literals/annotations, and `--typecheck`
-  accept/reject with the matching diagnostic substring.
+Each run prints a `PASS`/`FAIL` line per test, so you can watch the concept go green a hole at a
+time rather than waiting for all three stages. The cram files are split the same way the work is:
+
+- **`tests/lexer-strings.t`** — the string scanner alone, through `--emit-tokens` (the driver bails
+  right after lexing). Escapes decoded, and the two diagnostics with swiftc's exact spans. Goes
+  green when `scan_string` is done — no parser, no sema, not even the `=` operator (its programs
+  are written `print("…")` for exactly that reason).
+- **`tests/lexer-operators.t`** — maximal munch (`=` vs `==`, `<` vs `<=`), all six comparisons,
+  the `:`, and the lone-`!` diagnostic. Goes green when the operator hole is done.
+- **`tests/typecheck.t`** — the whole front end: `--emit-ast` on the new literals/annotations, and
+  `--typecheck` accept/reject with the matching diagnostic substring. Green only at the very end.
 - **alcotest** (`tests/test_parser.ml`, `tests/test_sema.ml`): AST structure for the new syntax, and
   the *exact* type-checker diagnostics (and that well-typed programs produce none).
 - **The headline test — the type-check oracle.** For each program, `swiftc -typecheck` and
@@ -289,6 +386,11 @@ perf gates when there's something to optimise.
    Now `let d: Double = Double(i)` works where `let d: Double = i` doesn't.
 3. **Sharper annotation errors.** Point the "cannot convert … to specified type" diagnostic at the
    *annotation's* span, and add a note showing the value's inferred type — closer to swiftc's output.
+4. **A note at the comment's opener.** The unterminated-comment error fires at end of input, which
+   is right, but swiftc also prints a second line: `note: comment started here`, on the `/*` itself
+   (`diag::lex_comment_start`). Record the opener in `skip_trivia` and add the
+   `Diagnostics.note` — the two-location shape you'll reuse all through Sema. Compare with
+   `swiftc -typecheck` on `let a = 1\n/* oops\n`.
 
 ## 7. Recap & what's next
 
@@ -461,3 +563,33 @@ Thread the annotation's span (add it to `Ast.Let`, or recompute it) and emit the
 plus a `Diagnostics.Note`: *"value of type 'Int' here"* pointing at the value. `swiftc` shows both the
 "cannot convert" error at the annotation and the inferred type at the expression; mirroring the
 two-location shape is good diagnostics practice you'll reuse throughout Sema.
+
+### 4 — a note at the comment's opener
+
+Same move as the string literal's span, one stage earlier: save the position before you consume the
+thing you'll want to blame. In `skip_trivia`'s block-comment branch:
+
+```ocaml
+      else if c = '/' && peek2 lx = '*' then (
+        let opener = here lx in                (* remember the '/*' *)
+        ignore (bump lx); ignore (bump lx);
+        ...
+        if !depth > 0 then (
+          error lx (here lx) "unterminated '/*' comment";
+          Diagnostics.note lx.diags { Token.lo = opener; hi = opener }
+            "comment started here");
+        skip_trivia ())
+```
+
+`Diagnostics.note` (see `diagnostics.ml`) is a severity that never makes `has_errors` true — it
+explains the error above it rather than being a problem of its own, so the driver still exits on
+the error and prints both lines:
+
+```
+2:1: note: comment started here
+```
+
+swiftc prints the same pair, with one difference worth knowing rather than chasing: its error sits
+at `2:8`, the last real character, where ours says `3:1` — our `here lx` is past the trailing
+newline the comment scan swallowed. The message and the two-location shape are the parity that
+matters; §6's exercise 3 is the same idea one stage up, in Sema.

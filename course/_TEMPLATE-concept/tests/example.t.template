@@ -1,9 +1,24 @@
-Rename to <topic>.t. Cram tests invoke ./lab.exe (this concept's own binary). State the RED
-condition in the header: which TODO(NN) holes must be filled before this goes green.
+Rename to <stage>-<hole>.t — ONE FILE PER TODO HOLE, not one per concept. `make lab` reports a
+PASS/FAIL line per file, so file granularity is how a learner sees which hole they just finished.
+State the RED condition in the header: which TODO(NN) hole must be filled before this goes green.
+
+The paragraph above each case IS ITS NAME in the report (its first sentence, up to ~76 chars).
+Write it as a claim that names the input and the expected outcome:
+
+  `a == b` lexes as one `==`, not two `=` — maximal munch.
+  The rest of the paragraph is detail for whoever reads the file; only the first sentence is
+  shown by the runner:
 
   $ printf 'print(1 + 2)\n' > p.swift
   $ ./lab.exe --emit-sil p.swift | grep -c 'integer_literal'
   2
+
+Keep each case inside its own stage: use the driver mode that stops there (`--emit-tokens` bails
+right after lexing; `--typecheck` runs lex→parse→sema first, so a later stage's `failwith` masks
+an earlier stage's diagnostic), and avoid syntax owned by another hole (the lexer's string cases
+say `print("...")`, not `let s = "..."`, because `=` belongs to the operator hole).
+
+Verify every golden by running the case against `solution/` — never hand-write expected output.
 
 Prefer assertions that a WRONG implementation would fail: exact counts, exact diagnostics,
 build-and-run with output compared against swiftc. Gotchas learned the hard way:

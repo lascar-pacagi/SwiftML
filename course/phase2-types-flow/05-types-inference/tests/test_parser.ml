@@ -32,7 +32,7 @@ let test_comparisons () =
 let () =
   Alcotest.run "parser-types"
     [
-      ("literals", [ Alcotest.test_case "new literal prefixes" `Quick test_literals ]);
-      ("annotations", [ Alcotest.test_case "type annotations" `Quick test_annotations ]);
-      ("comparisons", [ Alcotest.test_case "comparison operators + precedence" `Quick test_comparisons ]);
+      ("literals", [ Alcotest.test_case "Double/Bool/String prefixes" `Quick test_literals ]);
+      ("annotations", [ Alcotest.test_case "': Type' kept in the let" `Quick test_annotations ]);
+      ("comparisons", [ Alcotest.test_case "1+2<3*4 nests as (1+2)<(3*4)" `Quick test_comparisons ]);
     ]

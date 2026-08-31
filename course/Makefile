@@ -40,9 +40,26 @@ test-all:
 
 # Run just one concept's tests against your in-progress code in that directory:
 #   make lab C=phase1-minimal/01-lexer
+#   make lab C=phase2-types-flow/05-types-inference T=lexer   one cram file: tests/lexer.t
+# T= narrows the run to a single .t, so the diff you read is only about the part you're
+# writing (a whole-concept run mixes every stage's failures together).
 # (The concept's cram tests run ./lab.exe, built from THAT concept's library.)
+# Output is reformatted by tooling/labfmt.awk: one section per test file, and per failure the
+# command, what the test expected, and what your code printed. `RAW=1` for dune's own output.
 lab:
-	$(DUNE) build @$(C)/runtest --force
+	@if [ -z "$(C)" ]; then \
+	  echo "usage: make lab C=<concept dir> [T=<cram file, without .t>]"; \
+	  echo "   eg: make lab C=phase2-types-flow/05-types-inference T=lexer"; \
+	  echo "       (whole tree: make test)"; exit 2; fi
+	@out=$$(mktemp); \
+	$(DUNE) build @$(C)/$(if $(T),tests/$(T),runtest) --force >$$out 2>&1; rc=$$?; \
+	if [ -t 1 ]; then col=1; else col=0; fi; \
+	if [ -n "$(T)" ]; then cts="tests/$(T).t"; \
+	else cts=$$(cd $(C) && ls tests/*.t 2>/dev/null | tr '\n' ' '); fi; \
+	ats=$$(sed -n 's/.*Alcotest\.run "\([^"]*\)".*/\1/p' $(C)/tests/*.ml 2>/dev/null | tr '\n' ' '); \
+	if [ -n "$(T)" ]; then ats=""; fi; \
+	if [ -n "$(RAW)" ]; then cat $$out; else awk -v color=$$col -v prefix="$(C)/" -v cram_files="$$cts" -v alcotest_suites="$$ats" -f tooling/labfmt.awk $$out; fi; \
+	rm -f $$out; exit $$rc
 
 # Differential test a single program against swiftc:
 #   make oracle F=tests/programs/arith.swift            (defaults to the Phase-1 swiftml)

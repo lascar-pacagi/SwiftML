@@ -100,11 +100,58 @@ Typst/PDF render (HTML silently tolerates a missing image; PDF hard-fails). `mak
 are always current. A concept isn't done (DoD #4) until its figures come from a real run *and* both
 HTML and PDF render clean.
 
+## Tests are incremental and self-describing (STANDARD, 2026-08-31)
+
+A concept is built hole by hole, so its tests must be readable hole by hole. Established the hard
+way on 05 (the learner finished the string scanner and could not tell from `make lab` whether it
+worked). Two rules govern everything below: **red must be localisable, green must be visible.**
+
+**One `.t` per TODO hole, not one per concept.** `tests/lexer-strings.t` + `tests/lexer-operators.t`
+beside `tests/typecheck.t`, named `<stage>-<hole>.t`. For cram, *file granularity is reporting
+granularity* at the top level, so a finished hole shows up by name. `make lab C=… T=lexer-strings`
+runs one file.
+
+**Each stage's cases stay inside that stage.** Use the driver mode that stops there — `--emit-tokens`
+bails right after lexing, while `--typecheck` runs lex→parse→sema *then* reports, so a later stage's
+`failwith` masks an earlier stage's diagnostic. And avoid syntax owned by another hole: the lexer's
+string cases are written `print("…")`, not `let s = "…"`, because `=` belongs to the operator hole
+— otherwise a correct string scanner still shows red.
+
+**Every case carries a sentence, and it is the case's name in the report.** For cram that is the
+first sentence of the paragraph above the case (≤76 chars, else the runner elides it); write it as
+a claim naming the input and the outcome — *"`print("oops` reports an unterminated literal once, on
+the opening quote"*, not *"unterminated strings"*. For alcotest it is the `test_case` string, which
+**alcotest itself truncates near 34 characters** — keep those terse (`cannot find in scope; let
+const`) and put the detail in the group name.
+
+**`make lab` (`tooling/labfmt.awk`) is the contract:**
+- a `PASS`/`FAIL` line per test file *and* an `OK`/`FAIL` line per case inside it — including the
+  passing cases of a failing file, which is the progress signal;
+- under a failing case only, the two outputs whole: `the test wants:` / `your code printed:`
+  (line-by-line `- expected / + actual` is unreadable when the difference is a repeated or missing
+  line rather than a changed one);
+- a compile error passes through verbatim as `FAIL … (build)`, first, and everything it blocked is
+  `SKIP` — **never report a test that did not run as PASS**;
+- sections buffered and sorted (dune emits in completion order), ending in a tally;
+- `RAW=1` for dune's own output; exit status preserved so RED/GREEN checks still work.
+
+The roster of tests comes from `tests/*.t` plus each `Alcotest.run "…"`, because dune prints nothing
+at all for a green test — silence is not readable as a pass. Cram cases resolve individually: the
+command roster comes from the `.t`, and dune's diff names the commands that differ, so every case
+it does not mention ran and matched.
+
+**Goldens are produced, never written.** Run the case against `solution/` (or a scratch build of it)
+and paste what it prints; a hand-written expectation is how a test ends up asserting the wrong thing
+— 05's unterminated-literal golden said end-of-input while the explainer said opening quote, and the
+learner's correct code was marked wrong. Conventions live in `_TEMPLATE-concept/tests/`.
+
 ## Definition of done (per concept / version)
 
 A concept is done only when **all** hold:
 1. **Behavioral parity** against `swiftc` on the concept's programs (identical stdout + exit code).
-2. **FileCheck/unit assertions** pass (token stream / AST / SIL / LLVM IR / diagnostics shape).
+2. **FileCheck/unit assertions** pass (token stream / AST / SIL / LLVM IR / diagnostics shape),
+   split **one `.t` per TODO hole** and each case named by a sentence — see "Tests are incremental
+   and self-describing". A concept whose tests only go green all at once is not done.
 3. For perf-relevant concepts: the **perf gate** is green — `vK` beats `v(K-1)`, and generated
    code is within the target band of `swiftc -O` on the microbench suite.
 4. The explainer (`explainer.qmd`) renders and its figures come from real runs.
@@ -135,7 +182,16 @@ Run from `course/`:
 - Build everything: `make build` (`dune build`). One binary per phase: `dune exec swiftml|swiftml2|swiftml3|swiftml4 -- <args>`.
 - All tests: `make test` — on the shipped tree this is RED **by design** (skeleton TODOs fail
   their own tests); it goes green only with solutions in place.
-- One concept's tests: `make lab C=phase4-optimizer/16-mem2reg-ssa`. Each concept's cram tests
+- One concept's tests: `make lab C=phase4-optimizer/16-mem2reg-ssa` (add `T=<name>` to run a single
+  cram file — `T=lexer-strings` reads only that `.t`, so the report covers one hole, not every one).
+  Output goes through `tooling/labfmt.awk`: a **PASS/FAIL line per test** (roster from `tests/*.t`
+  plus each `Alcotest.run "…"`, since dune prints nothing for a green test) and a PASS/FAIL line
+  per alcotest case inside a failing suite, with each failure's
+  detail under it — the command, then the output the test wants and the output the run produced,
+  as whole blocks. No diff plumbing, no stack traces. Compile errors come through verbatim as a
+  `FAIL … (build)` and everything they blocked is `SKIP`, never PASS. Ends with a tally. `RAW=1`
+  for dune's own output; exit status preserved, so RED/GREEN checks still work. `RAW=1` for dune's
+  own output. Exit status is preserved, so RED/GREEN checks still work. Each concept's cram tests
   run `./lab.exe`, built from THAT concept's library — so they test the code in that directory,
   not the phase binary. RED on the skeleton, GREEN with `solution/` swapped in.
 - Differential vs swiftc: `make oracle F=tests/programs/arith.swift` (`B=swiftml4` to pick a

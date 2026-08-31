@@ -50,8 +50,8 @@ let test_scope () =
 let () =
   Alcotest.run "sema-types"
     [
-      ("accept", [ Alcotest.test_case "well-typed programs" `Quick test_accept ]);
-      ("annotations", [ Alcotest.test_case "type mismatches" `Quick test_mismatch ]);
-      ("operators", [ Alcotest.test_case "operator typing" `Quick test_operators ]);
-      ("scope", [ Alcotest.test_case "names & types in scope" `Quick test_scope ]);
+      ("accept", [ Alcotest.test_case "well-typed: no diagnostics" `Quick test_accept ]);
+      ("annotations", [ Alcotest.test_case "cannot convert value of type" `Quick test_mismatch ]);
+      ("operators", [ Alcotest.test_case "operator cannot be applied" `Quick test_operators ]);
+      ("scope", [ Alcotest.test_case "cannot find in scope; let const" `Quick test_scope ]);
     ]
