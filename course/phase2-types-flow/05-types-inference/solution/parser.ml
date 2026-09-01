@@ -26,6 +26,9 @@ let expect (p : t) (k : Token.kind) (what : string) : Token.t =
     Diagnostics.error p.diags tok.Token.span (Printf.sprintf "expected %s" what);
     tok)
 
+(* `as` sits at Swift's CastingPrecedence: above the comparisons, below arithmetic. *)
+let cast_bp = 7
+
 (* binding powers: comparisons bind looser than arithmetic *)
 let infix_bp : Token.kind -> int option = function
   | Token.Star | Token.Slash | Token.Percent -> Some 20
@@ -49,6 +52,16 @@ let binop_of_kind : Token.kind -> Ast.binop option = function
 
 let unary_bp = 100
 let span_between (lo : Token.span) (hi : Token.span) : Token.span = { Token.lo = lo.Token.lo; hi = hi.Token.hi }
+
+(* reading the type name after `as`; `parse_ident` itself is defined below the expression
+   parser, so the one line it needs is inlined here *)
+let parse_ident_ty (p : t) (what : string) : string * Token.span =
+  match peek_kind p with
+  | Token.Ident s -> let t = advance p in (s, t.Token.span)
+  | _ ->
+      let t = peek p in
+      Diagnostics.error p.diags t.Token.span (Printf.sprintf "expected %s" what);
+      ("_", t.Token.span)
 
 let rec parse_expr_bp (p : t) (min_bp : int) : Ast.expr =
   let lhs =
@@ -82,6 +95,13 @@ let rec parse_expr_bp (p : t) (min_bp : int) : Ast.expr =
         Ast.Int_lit (0, t.Token.span)
   in
   let rec loop lhs =
+    (* `as` is not a binary operator — its right side is a TYPE NAME, not an expression — but it
+       binds like one, at Swift's CastingPrecedence: looser than `+`, tighter than a comparison. *)
+    if peek_kind p = Token.Kw_as && cast_bp >= min_bp then (
+      ignore (advance p);
+      let name, tspan = parse_ident_ty p "a type name" in
+      loop (Ast.Ascribe (lhs, name, span_between (Ast.expr_span lhs) tspan)))
+    else
     match infix_bp (peek_kind p) with
     | Some bp when bp >= min_bp ->
         let op_tok = advance p in

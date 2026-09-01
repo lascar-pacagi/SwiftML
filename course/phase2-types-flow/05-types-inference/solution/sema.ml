@@ -58,11 +58,22 @@ let rec infer (cx : ctx) (e : Ast.expr) : Types.ty =
           t)
     | Ast.Binary (op, l, r, span) -> infer_binary cx op l r span
     | Ast.Call (f, args, span) -> infer_call cx f args span
+    (* The one place `infer` calls `check`: the type is written down, so there is nothing to
+       synthesise — the operand is CHECKED against it, which is what lets `1 as Double` work
+       and `i as Double` fail. *)
+    | Ast.Ascribe (e0, tyname, span) -> (
+        match Types.of_name tyname with
+        | Some t ->
+            check_expr cx e0 t;
+            t
+        | None ->
+            err cx span (Printf.sprintf "cannot find type '%s' in scope" tyname);
+            infer cx e0)
   and infer_binary cx op l r span : Types.ty =
     let tl = infer cx l and tr = infer cx r in
     let bad () =
       (* swiftc has two wordings, and picks by whether the operands agree:
-           1 + true   -> cannot be applied to operands of type 'Int' and 'Bool'
+           1 + true     -> cannot be applied to operands of type 'Int' and 'Bool'
            true < false -> cannot be applied to two 'Bool' operands *)
       err cx span
         (if tl = tr then
@@ -70,30 +81,27 @@ let rec infer (cx : ctx) (e : Ast.expr) : Types.ty =
              (Ast.string_of_binop op) (Types.string_of_ty tl)
          else
            Printf.sprintf "binary operator '%s' cannot be applied to operands of type '%s' and '%s'"
-             (Ast.string_of_binop op) (Types.string_of_ty tl) (Types.string_of_ty tr));
-      Types.TInt
+             (Ast.string_of_binop op) (Types.string_of_ty tl) (Types.string_of_ty tr))
     in
-    match op with
-    | Ast.Add -> (
-        match unify l tl r tr with
-        | Some ((Types.TInt | Types.TDouble) as t) -> t
-        | Some Types.TString -> Types.TString
-        | _ -> bad ())
-    | Ast.Sub | Ast.Mul | Ast.Div -> (
-        match unify l tl r tr with Some ((Types.TInt | Types.TDouble) as t) -> t | _ -> bad ())
-    | Ast.Mod -> ( match unify l tl r tr with Some Types.TInt -> Types.TInt | _ -> bad ())
-    | Ast.Eq | Ast.Ne -> (
-        match unify l tl r tr with
-        | Some _ -> Types.TBool
-        | None ->
-            ignore (bad ());
-            Types.TBool)
-    | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge -> (
-        match unify l tl r tr with
-        | Some (Types.TInt | Types.TDouble | Types.TString) -> Types.TBool
-        | _ ->
-            ignore (bad ());
-            Types.TBool)
+    let is_ordered t = Types.is_numeric t || t = Types.TString in
+    (* Match on the UNIFIED type, not on tl/tr: the coercion happens inside [unify], so a guard
+       over the raw operand types cannot see it — `1 == 2.0` would look like Int vs Double and be
+       rejected, and `i + 2.0` would look acceptable right up until [unify] returned None. *)
+    match (unify l tl r tr, op) with
+    | Some t, Ast.Add when Types.is_numeric t -> t
+    | Some Types.TString, Ast.Add -> Types.TString (* `+` concatenates *)
+    | Some t, (Ast.Sub | Ast.Mul | Ast.Div) when Types.is_numeric t -> t
+    | Some Types.TInt, Ast.Mod -> Types.TInt (* no `%` on Double, as in Swift *)
+    | Some _, (Ast.Eq | Ast.Ne) -> Types.TBool (* any single type may be compared *)
+    | Some t, (Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge) when is_ordered t -> Types.TBool
+    (* Everything else is an error. The recovery type differs: a failed comparison is still a
+       Bool, or the enclosing `if` reports a second problem nobody wrote. *)
+    | _, (Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge) ->
+        bad ();
+        Types.TBool
+    | _ ->
+        bad ();
+        Types.TInt
   and infer_call cx f args span : Types.ty =
     if f = "print" then (
       (match args with
@@ -106,10 +114,10 @@ let rec infer (cx : ctx) (e : Ast.expr) : Types.ty =
       err cx span (Printf.sprintf "cannot find '%s' in scope" f);
       List.iter (fun a -> ignore (infer cx a)) args;
       Types.TInt)
-  (* The checking direction. It calls [infer] as its fallback, and [infer] never calls back — so
-   this is NOT part of the knot above. In a fuller language, where a construct's own type depends
-   on an expectation pushed into a subterm, the two judgments do become mutually recursive. *)
-let rec check_expr (cx : ctx) (e : Ast.expr) (expected : Types.ty) : unit =
+  (* The checking direction — and the other half of a genuine knot: [check_expr] falls back to
+   [infer], and [infer] calls [check_expr] for `e as T`. Neither can be defined without the
+   other, which is what "the two judgments are mutually recursive" means in practice. *)
+and check_expr (cx : ctx) (e : Ast.expr) (expected : Types.ty) : unit =
   match e with
   | Ast.Int_lit _ ->
       (* integer literal: ExpressibleBy both Int and Double *)

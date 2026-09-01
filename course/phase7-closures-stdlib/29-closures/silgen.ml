@@ -88,6 +88,7 @@ let is_nil = function Ast.Nil _ -> true | _ -> false
 let rec fv_expr (bound : string list) (e : Ast.expr) : string list =
   let go = fv_expr bound in
   match e with
+  | Ast.Ascribe (e0, _, _) -> go e0
   | Ast.Var (x, _) -> if List.mem x bound then [] else [ x ]
   | Ast.Int_lit _ | Ast.Double_lit _ | Ast.Bool_lit _ | Ast.String_lit _ | Ast.Nil _ -> []
   | Ast.Unary (_, a, _) | Ast.Force_unwrap (a, _) | Ast.Cast (a, _, _, _) -> go a
@@ -181,6 +182,9 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
   | Ast.Double_lit (f, _) -> emit b (Sil.Float_lit f) Types.TDouble
   | Ast.Bool_lit (x, _) -> emit b (Sil.Bool_lit x) Types.TBool
   | Ast.String_lit (s, _) -> emit b (Sil.String_lit s) Types.TString
+  (* `e as T` is a *type-level* coercion: sema only accepts it where the operand
+     already checks at T, so there is nothing to emit. *)
+  | Ast.Ascribe (e0, _, _) -> gen_expr b e0
   | Ast.Var (x, _) -> (
       match Hashtbl.find_opt b.borrows x with
       | Some v -> v (* a guaranteed parameter: the SSA value itself, no memory (27) *)
@@ -542,6 +546,16 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
    pairs the value with its witness table); an existing `any P` passes through. *)
 and gen_expr_as (b : builder) (e : Ast.expr) (expected : Types.ty) : Sil.value =
   match (e, expected) with
+  (* An integer literal that CHECKS at Double is born a Double. Without this the slot has type
+     Double but receives an i64 bit-pattern, and `let d: Double = 1` reads back as 4.94e-324.
+     The recursion mirrors sema's `is_int_literal`: the whole literal tree flexes, not just a leaf. *)
+  | Ast.Int_lit (n, _), Types.TDouble -> emit b (Sil.Float_lit (float_of_int n)) Types.TDouble
+  | Ast.Unary (op, e0, _), Types.TDouble ->
+      let v = gen_expr_as b e0 Types.TDouble in
+      emit b (Sil.Unop (op, v)) Types.TDouble
+  | Ast.Binary (((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div) as op), l, r, _), Types.TDouble ->
+      let lv = gen_expr_as b l Types.TDouble and rv = gen_expr_as b r Types.TDouble in
+      emit b (Sil.Binop (op, lv, rv)) Types.TDouble
   | Ast.Nil _, Types.TOptional _ -> emit b (Sil.Enum (0, [])) expected
   | _, Types.TOptional _ ->
       let v = gen_expr b e in

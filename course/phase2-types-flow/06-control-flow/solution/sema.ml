@@ -55,6 +55,16 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
           t)
     | Ast.Binary (op, l, r, span) -> infer_binary op l r span
     | Ast.Call (f, args, span) -> infer_call f args span
+    (* `e as T`: the type is written, so there is nothing to synthesise — CHECK the
+       operand against it. The one arm where `infer` calls `check_expr`. *)
+    | Ast.Ascribe (e0, tyname, span) -> (
+        match Types.of_name tyname with
+        | Some t ->
+            check_expr e0 t;
+            t
+        | None ->
+            err span (Printf.sprintf "cannot find type '%s' in scope" tyname);
+            infer e0)
   and infer_binary op l r span : Types.ty =
     let tl = infer l and tr = infer r in
     let bad () =

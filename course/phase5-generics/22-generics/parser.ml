@@ -54,6 +54,18 @@ let binop_of_kind : Token.kind -> Ast.binop option = function
 let unary_bp = 100
 let span_between (lo : Token.span) (hi : Token.span) : Token.span = { Token.lo = lo.Token.lo; hi = hi.Token.hi }
 
+(* `as` sits at Swift's CastingPrecedence: above the comparisons, below arithmetic. *)
+let cast_bp = 7
+
+(* Reading the type name after `as`; `parse_ident` is defined below the expression parser. *)
+let parse_ident_ty (p : t) (what : string) : string * Token.span =
+  match peek_kind p with
+  | Token.Ident s -> let t = advance p in (s, t.Token.span)
+  | _ ->
+      let t = peek p in
+      Diagnostics.error p.diags t.Token.span (Printf.sprintf "expected %s" what);
+      ("_", t.Token.span)
+
 let rec parse_expr_bp (p : t) (min_bp : int) : Ast.expr =
   let lhs =
     match peek_kind p with
@@ -91,6 +103,12 @@ let rec parse_expr_bp (p : t) (min_bp : int) : Ast.expr =
   let coalesce_bp = 6 in
   let ternary_bp = 2 in
   let rec loop lhs =
+    (* `e as T` — not a binary operator (its right side is a type NAME) but it binds like one. *)
+    if peek_kind p = Token.Kw_as && cast_bp >= min_bp then (
+      ignore (advance p);
+      let name, tspan = parse_ident_ty p "a type name" in
+      loop (Ast.Ascribe (lhs, name, span_between (Ast.expr_span lhs) tspan)))
+    else
     if peek_kind p = Token.Question && peek_kind_at p 1 = Token.Question && coalesce_bp >= min_bp then (
       ignore (advance p);
       ignore (advance p);

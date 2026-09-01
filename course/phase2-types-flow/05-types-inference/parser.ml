@@ -1,6 +1,6 @@
 (* Parser — concept 05 (skeleton). Phase-1 recursive-descent + Pratt is given; you add the new
    prefixes (Double/Bool/String literals), the comparison operators (their `Ast` mapping and
-   their binding power), and the type annotation (the TODO(05) holes).
+   their binding power), the `e as T` coercion, and the type annotation (the TODO(05) holes).
    Reference: solution/parser.ml. *)
 
 type t = { toks : Token.t array; mutable pos : int; diags : Diagnostics.sink }
@@ -26,6 +26,19 @@ let expect (p : t) (k : Token.kind) (what : string) : Token.t =
   else (
     Diagnostics.error p.diags tok.Token.span (Printf.sprintf "expected %s" what);
     tok)
+
+(* `as` sits at Swift's CastingPrecedence: above the comparisons, below arithmetic (§2). *)
+let cast_bp = 7
+
+(* Reading the type name after `as` (given): `parse_ident` is defined below the expression
+   parser, so the one line it needs is inlined here. *)
+let parse_ident_ty (p : t) (what : string) : string * Token.span =
+  match peek_kind p with
+  | Token.Ident s -> let t = advance p in (s, t.Token.span)
+  | _ ->
+      let t = peek p in
+      Diagnostics.error p.diags t.Token.span (Printf.sprintf "expected %s" what);
+      ("_", t.Token.span)
 
 (* Binding powers — the Pratt loop keeps consuming while the operator's power is high enough,
    so a BIGGER number binds TIGHTER. Phase 1's two rows are given. *)
@@ -78,6 +91,9 @@ let rec parse_expr_bp (p : t) (min_bp : int) : Ast.expr =
         Ast.Int_lit (0, t.Token.span)
   in
   let rec loop lhs =
+    (* TODO(05f): `e as T`. It is not a binary operator — its right side is a TYPE NAME, not an
+       expression — but it binds like one, at `cast_bp`. Consume the `as`, read the name with
+       [parse_ident_ty], and build `Ast.Ascribe`; the span runs from lhs to the name. *)
     match infix_bp (peek_kind p) with
     | Some bp when bp >= min_bp ->
         let op_tok = advance p in

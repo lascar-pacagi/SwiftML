@@ -20,6 +20,9 @@ type expr =
   | Unary of unop * expr * Token.span
   | Binary of binop * expr * expr * Token.span
   | Call of string * expr list * Token.span
+  (* NEW (concept 05): `e as T` — a *coercion*. The type is written, so `infer` has
+     nothing to synthesise and must CHECK the operand against it. *)
+  | Ascribe of expr * string * Token.span
 
 type stmt =
   | Let of { name : string; is_var : bool; annot : string option; value : expr; span : Token.span }
@@ -59,6 +62,7 @@ let expr_span = function
   | Binary (_, _, _, s)
   | Call (_, _, s) ->
       s
+  | Ascribe (_, _, s) -> s
 
 let string_of_binop = function
   | Add -> "+" | Sub -> "-" | Mul -> "*" | Div -> "/" | Mod -> "%"
@@ -76,6 +80,7 @@ let rec dump_expr = function
   | Unary (op, e, _) -> Printf.sprintf "(%s %s)" (string_of_unop op) (dump_expr e)
   | Binary (op, l, r, _) ->
       Printf.sprintf "(%s %s %s)" (string_of_binop op) (dump_expr l) (dump_expr r)
+  | Ascribe (e, t, _) -> Printf.sprintf "(as %s %s)" t (dump_expr e)
   | Call (f, args, _) -> Printf.sprintf "(%s %s)" f (String.concat " " (List.map dump_expr args))
 
 let rec dump_stmt = function

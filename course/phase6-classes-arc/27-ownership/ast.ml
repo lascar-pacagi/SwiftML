@@ -30,6 +30,9 @@ type expr =
   (* NEW (concept 23): dynamic casts on existentials. `e as? T` (conditional -> T?) and
      `e as! T` (forced -> T, aborts on mismatch). *)
   | Cast of expr * string * bool (* conditional? *) * Token.span
+  (* NEW (concept 05): `e as T` — a *coercion*. The type is written, so `infer` has
+     nothing to synthesise and must CHECK the operand against it. *)
+  | Ascribe of expr * string * Token.span
 
 (* a call/init argument may carry an external label, e.g. `Point(x: 1)` — concept 10 *)
 type arg = string option * expr
@@ -128,6 +131,7 @@ let expr_span = function
   | Unary (_, _, s)
   | Binary (_, _, _, s)
   | Call (_, _, s)
+  | Ascribe (_, _, s)
   | Member (_, _, s)
   | Method_call (_, _, _, s)
   | Nil s
@@ -154,6 +158,7 @@ let rec dump_expr = function
   | Cast (e, t, c, _) -> Printf.sprintf "(as%s %s %s)" (if c then "?" else "!") (dump_expr e) t
   | Binary (op, l, r, _) ->
       Printf.sprintf "(%s %s %s)" (string_of_binop op) (dump_expr l) (dump_expr r)
+  | Ascribe (e, t, _) -> Printf.sprintf "(as %s %s)" t (dump_expr e)
   | Call (f, args, _) ->
       Printf.sprintf "(%s %s)" f (String.concat " " (List.map dump_arg args))
   | Member (e, fld, _) -> Printf.sprintf "(. %s %s)" (dump_expr e) fld

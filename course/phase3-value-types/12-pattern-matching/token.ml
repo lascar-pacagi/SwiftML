@@ -16,6 +16,7 @@ type kind =
   | Kw_var
   | Kw_true
   | Kw_false
+  | Kw_as (* NEW (concept 05): the `e as T` coercion *)
   | Kw_if
   | Kw_else
   | Kw_while
@@ -67,6 +68,7 @@ let string_of_kind = function
   | Kw_var -> "var"
   | Kw_true -> "true"
   | Kw_false -> "false"
+  | Kw_as -> "as"
   | Kw_if -> "if"
   | Kw_else -> "else"
   | Kw_while -> "while"
@@ -113,6 +115,7 @@ let keyword_or_ident (s : string) : kind =
   | "var" -> Kw_var
   | "true" -> Kw_true
   | "false" -> Kw_false
+  | "as" -> Kw_as
   | "if" -> Kw_if
   | "else" -> Kw_else
   | "while" -> Kw_while

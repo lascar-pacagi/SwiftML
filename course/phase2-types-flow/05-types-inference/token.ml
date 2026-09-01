@@ -28,6 +28,7 @@ type kind =
   | Kw_var
   | Kw_true (* NEW: Bool literals are keywords *)
   | Kw_false
+  | Kw_as (* NEW: the `e as T` coercion *)
   (* arithmetic operators *)
   | Plus
   | Minus
@@ -62,6 +63,7 @@ let string_of_kind = function
   | Kw_var -> "var"
   | Kw_true -> "true"
   | Kw_false -> "false"
+  | Kw_as -> "as"
   | Plus -> "+"
   | Minus -> "-"
   | Star -> "*"
@@ -86,6 +88,7 @@ let keyword_or_ident (s : string) : kind =
   match s with
   | "let" -> Kw_let
   | "var" -> Kw_var
+  | "as" -> Kw_as
   (* TODO(05): `true` and `false` are KEYWORDS in Swift, not identifiers that happen to spell
      them — a program can't rebind `true`. Two arms, and `truely` must stay an `Ident`. §2. *)
   | _ -> Ident s

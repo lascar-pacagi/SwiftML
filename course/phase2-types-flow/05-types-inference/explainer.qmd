@@ -46,6 +46,58 @@ the operands. That works for a lot — but it falls apart on the two things Swif
 
 The fix is **bidirectional type checking**: *two* judgments that call each other.
 
+**"Couldn't `check` just call `infer` and compare?"** It is the right question to ask, because in
+this subset it very nearly works: keep a single rule saying *a tree of integer literals may be a
+Double*, and almost every program lands on the same verdict as the real thing. Almost. Strip the
+push-down out and one case flips:
+
+```
+let d: Double = 1 % 2
+  with push-down    error: cannot convert value of type 'Int' to specified type 'Double'
+  infer + compare   ACCEPTED                                     <- wrong
+  swiftc            error: '%' is unavailable: For floating point
+                           numbers use truncatingRemainder instead
+```
+
+`1 % 2` *is* a tree of integer literals, so the blanket rule waves it through — but `%` does not
+exist on `Double`. The question that has to be asked is per-operator: *does this operator exist at
+the type you want?* Only an expectation travelling **into** the operator can ask it. And read
+swiftc's wording again: it complains that `%` is unavailable **for floating point**, which means
+swiftc resolved `%` at type `Double`. That diagnostic is evidence of the same mechanism.
+
+Be careful about how much `as` proves, though. `1 as Double` is *not* beyond synthesis: infer
+`Int`, then allow the same literal exception, and you get the right answer. What it cannot be is
+synthesis with a plain *promotion* rule — "an `Int` may become a `Double`" — because that would
+also accept `i as Double`, and Swift rejects it. The line is drawn around literals, not around
+types:
+
+```
+(1 + 1) as Double     accepted by both      every leaf is a literal
+(i + 1) as Double     rejected by both      one Int variable fixes the tree at Int
+```
+
+So `as` is not proof that checking is *necessary*; it is where checking is the natural shape — the
+type is given, and the only question left is whether the operand can be it. That is what makes
+`infer` call `check_expr` in the code, and the mutual recursion real.
+
+The push-down also aims the error better. In `let d: Double = 1 + i`, checking downward blames `i`
+— the operand that cannot be a Double — where infer-and-compare can only blame the whole
+expression.
+
+But the reason it is the *architecture* rather than a refinement is what arrives later. Some
+expressions have no type to synthesise at all:
+
+| expression | what synthesis gives | what it needs |
+|---|---|---|
+| `nil` (concept 13) | nothing — `Optional<what>`? | the expected type |
+| `.someCase` (concept 11) | which enum? | the expected type |
+| `{ x in x + 1 }` (concept 29) | `x`'s type is unknown | the expected function type |
+| `[]` (concept 31) | element type? | the expected array type |
+
+For those, `check` is not "infer and compare" — there is nothing to infer. The bridge has to run
+downward, and building it now, while both directions still fit on one page, is cheaper than
+retrofitting it in concept 13.
+
 ### The two judgments
 
 ```
@@ -63,9 +115,34 @@ check       Γ ⊢ e ⇐ τ        "e checks against the expected type τ"      
 
 ![Bidirectional checking on `1 + 2`: `infer` flows types up; `check(·, Double)` pushes the expected type down, which is what lets the literals coerce.](figs/bidir.png)
 
-In the general presentation the two are mutually recursive; in the subset we implement only one
-direction is actually used — `check` falls back to `infer`, and no rule here makes `infer` push an
-expectation into a subterm. The **default bridge** between them is one rule: *to check `e` against
+The two are **mutually recursive**, and you can see both directions in this concept. `check`
+falls back to `infer` when it has no smarter rule. And `infer` calls `check` on any form whose
+type is *written down rather than deduced* — here, the coercion `e as T`:
+
+```ocaml
+| Ast.Ascribe (e0, tyname, span) -> (
+    match Types.of_name tyname with
+    | Some t -> check_expr cx e0 t; t     (* infer -> check *)
+    | None -> err cx span (…); infer cx e0)
+```
+
+There is nothing to synthesise from `1 as Double`: the type is right there in the source, and the
+only question is whether the operand can *be* that type — a check, not an inference. Try writing
+that arm with `check_expr` defined separately from `infer` and OCaml stops you with `Unbound value
+check_expr`; the knot is not a stylistic choice, it is what the rule requires.
+
+The general shape is the same for every **elimination form** — the classic application rule
+
+```
+Γ ⊢ f ⇒ A → B      Γ ⊢ e ⇐ A
+-----------------------------
+Γ ⊢ f e ⇒ B
+```
+
+*synthesise* the function's type, then *check* each argument against the parameter type you just
+learned. `07-functions` does exactly that once parameters have declared types
+(`List.iter2 (fun a t -> check_expr a t) args ptypes`); `e as T` is the same idea with the type
+written by hand instead of read off a signature. The **default bridge** between them is one rule: *to check `e` against
 `τ`, when there's no smarter rule, `infer` its type and compare.*
 
 ```
@@ -105,6 +182,31 @@ a < b            // error: cannot be applied to operands of type 'Int' and 'Doub
 
 That second line is not an exception to the rule; it is the literal coercion doing its work
 *before* the comparison is typed. `1` has no committed type until something asks it for one.
+
+**Where to put the case analysis.** The rules above are eleven operators over five outcomes, and
+the shape that stays readable is one match arm per rule — with the operand types already
+*unified*:
+
+```ocaml
+match unify l tl r tr, op with
+| Some t, Ast.Add when Types.is_numeric t -> t
+| Some Types.TString, Ast.Add -> Types.TString
+| Some t, (Ast.Sub | Ast.Mul | Ast.Div) when Types.is_numeric t -> t
+| Some Types.TInt, Ast.Mod -> Types.TInt
+| Some _, (Ast.Eq | Ast.Ne) -> Types.TBool
+| Some t, (Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge) when is_ordered t -> Types.TBool
+| _, (Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge) -> bad (); Types.TBool
+| _ -> bad (); Types.TInt
+```
+
+Match on the *pair* `(unify …, op)`, never on `op` alone with a guard over `tl`/`tr`: the coercion
+happens **inside** `unify`, so a guard over the raw operand types cannot see it. `1 == 2.0` would
+look like `Int` against `Double` and be rejected — Swift accepts it — and `i + 2.0` would look
+perfectly numeric right up until `unify` returned `None`, which is a crash if you reach for
+`Option.get`. `None` is not an exceptional case here; it is the thing you report.
+
+The last two arms are separate because **the recovery type differs**: a failed comparison still
+yields `Bool`, or the enclosing `if` reports a second problem nobody wrote.
 
 If the operands don't fit any rule, you emit `swiftc`'s wording. There are **two** of them, and
 which one you use depends on whether the operands agree:
@@ -201,6 +303,20 @@ Concretely, what we deliberately simplify in concept 05 (all noted so you know t
 - **Literal flexibility** beyond the integer-literal-to-Double case (e.g. collection literals, the
   full `ExpressibleBy…` protocol family).
 - **Overloading, subtyping, generics** — all constraint-solver territory.
+- **`print`'s result type.** In Swift `print(_:)` returns `Void`, spelled `()`. We have no `TVoid`
+  until concept 07 brings functions and `->`, so `infer` returns `TInt` as a placeholder. That is
+  sound only because `print(x)` is always a *statement* here, and `Expr_stmt` throws the type away
+  — the moment you use the result, we diverge:
+
+  ```
+  let x = print(1)     swiftc: accepted, warns "'x' inferred to have type '()'"
+                       ours:   accepted silently, x : Int
+  let y: Int = x       swiftc: error — cannot convert value of type '()' to specified type 'Int'
+                       ours:   accepted  <- wrong, and it is the placeholder's fault
+  ```
+
+  Concept 07 fixes it properly by adding `TVoid`; until then it is a known hole rather than a
+  design.
 
 > Oracle: open `../../../swift/lib/Sema/TypeCheckExpr.cpp` — the `visit*` methods synthesise a type
 > for each expression node, and `coerceToType` / `TypeChecker::typeCheckExpression` push an expected
@@ -218,6 +334,7 @@ Concretely, what we deliberately simplify in concept 05 (all noted so you know t
 | `true` `false` | `Kw_true` `Kw_false` | *keywords*, like `let` — not identifiers that happen to spell true |
 | `==` `!=` `<` `<=` `>` `>=` | `EqEq` `Ne` `Lt` `Le` `Gt` `Ge` | maximal munch: `=` and `==` share a prefix, as do `<` and `<=` |
 | `:` | `Colon` | introduces a type annotation |
+| `as` | `Kw_as` | the coercion `e as T` — a *keyword*, like `let` |
 
 **Why the token is `Float` but the type is `Double`.** The token names the *spelling*, not the
 type — at lexing time `3.14` has no type at all. swiftc draws the same line and is careful about
@@ -281,7 +398,8 @@ statement  ::= ("let" | "var") ident [ ":" type ] "=" expr        <-- annotation
 type       ::= "Int" | "Double" | "Bool" | "String"               <-- new
 
 expr       ::= comparison
-comparison ::= sum { ("==" | "!=" | "<" | "<=" | ">" | ">=") sum }   (bp 5)   <-- new
+comparison ::= cast { ("==" | "!=" | "<" | "<=" | ">" | ">=") cast }  (bp 5)   <-- new
+cast       ::= sum { "as" type }                                     (bp 7)   <-- new
 sum        ::= product { ("+" | "-") product }                       (bp 10)
 product    ::= unary { ("*" | "/" | "%") unary }                     (bp 20)
 unary      ::= "-" unary | primary
@@ -301,10 +419,13 @@ bigger number binds tighter. Phase 1 gave you two rows; the comparisons are the 
 |---|---|---|---|
 | tightest | `*` `/` `%` | 20 | `MultiplicationPrecedence` |
 | | `+` `-` | 10 | `AdditionPrecedence` |
+| | `as` | 7 | `CastingPrecedence` |
 | loosest | `==` `!=` `<` `<=` `>` `>=` | 5 | `ComparisonPrecedence` |
 
-The gaps (20/10/5, not 3/2/1) are free room to slot a level in later without renumbering — `&&`
-and `||` arrive in concept 06 *below* the comparisons, `??` in concept 13 between them. Two things
+The gaps (20/10/7/5, not 4/3/2/1) are free room to slot a level in later without renumbering —
+`&&` and `||` arrive in concept 06 *below* the comparisons, `??` in concept 13 at 6, between the
+comparisons and `as`. That ordering is Swift's own: `ComparisonPrecedence` < `NilCoalescingPrecedence`
+< `CastingPrecedence` < `AdditionPrecedence`, which you can read off `Policy.swift`. Two things
 sit outside the table: prefix `-` binds tighter than any infix operator (its own `unary_bp`), and
 `(` parses a sub-expression at power 0, which is why parentheses always win.
 
@@ -433,6 +554,26 @@ names both types, `true < false` says *two 'Bool' operands*. And the unary one s
 not *operand*: this course shipped it without the "an" until the table was compiled, because no
 test asserted that string (now one does).
 
+**Every error path still returns a type.** `infer` is a function to `Types.ty`, so reporting is
+only half of what an error case has to do — the other half is handing back something so the walk
+can continue and the rest of the file still gets checked. There is no "no type" to return, so you
+pick a plausible one: `TInt`.
+
+It has a visible cost, and it is worth seeing before you write it:
+
+```
+let x = nope + true
+  swiftml   cannot find 'nope' in scope
+            binary operator '+' cannot be applied to operands of type 'Int' and 'Bool'   <- noise
+  swiftc    cannot find 'nope' in scope
+```
+
+The invented `Int` flows into `+`, meets `Bool`, and produces a second complaint about a program
+nobody wrote. swiftc avoids the cascade with a dedicated **`ErrorType`**
+(`swift/include/swift/AST/Types.h:1682`) carrying a `HasError` property: anything built from an
+erroneous type is itself erroneous, and diagnostics check that flag and stay quiet, so one mistake
+yields one message. Our four-constructor `Types.ty` has no such case — §6's exercise 5 adds it.
+
 The eighth message, `print(_:) expects exactly one argument`, is ours: Swift's `print` is variadic,
 so `print(1, 2)` is perfectly legal there and swiftc has nothing to copy.
 
@@ -481,18 +622,24 @@ what carries forward is given.
    *shape*: the `ctx` record (`env` + `diags`) and `err`, the five signatures, `infer`'s four
    literal arms as a model, and the `List.iter (check_stmt cx)` driver. Note which functions
    recurse and which don't — no `rec` is written for you, because that is a claim about the body
-   you are about to write. `check_expr` falls back to `infer`; `infer` never calls back, so in
-   this subset they are not mutually recursive (in a fuller language they would be). Everything
-   is top-level and takes `cx` explicitly, so `tests/test_units.ml` can call each piece on its own
-   and a failure names the function rather than "the checker". The five `TODO(05a…e)` bodies are
-   the rules:
+   you are about to write, and `infer`/`check_expr` need to be one `let rec … and …` group as soon
+   as you write the `as` rule (the compiler will say so). Everything is top-level and takes `cx`
+   explicitly, so `tests/test_units.ml` can call each piece on its own and a failure names the
+   function rather than "the checker". The `TODO(05a…g)` bodies are the rules:
    - `infer e` — the literal cases are given. Add `Var` (look up `env`, else *cannot find … in
      scope*); `Unary '-'` (operand must be numeric); `Binary` (operator typing above — a helper that
      `unify`s the operand types is the clean way, with an `is_int_literal` predicate so a literal can
-     flex to `Double`); `Call` (`print(_:)` takes one argument of any type).
+     flex to `Double`); `Call` (`print(_:)` takes one argument of *any* type — that phrase is about the argument, not
+     the result; its result is `Void` in Swift, and with no `TVoid` yet you return `TInt` as the
+     placeholder §2 describes). Every one of those
+     error paths must still **return a type** — report, then return a plausible one (`TInt`) and
+     keep walking, exactly as §2 describes; a checker that stops at the first bad name finds one
+     bug per run.
    - `check_expr e τ` — the **bidirectional** half. An `Int_lit` checks against `Int` *or* `Double`.
      For `Binary` arithmetic when τ is numeric, push τ into both operands. Everything else: `infer`
      and compare, erroring with *cannot convert value of type 'X' to specified type 'Y'*.
+   - `Ascribe (e, T)` — `e as T`, the coercion. Resolve `T` with `Types.of_name`, `check_expr` the
+     operand against it, return it. Two lines, and the only place `infer` calls `check`.
    - `check_stmt` — `Let`: if annotated, resolve the name with `Types.of_name` (*cannot find type …*
      if unknown) and `check_expr` the value against it; else `infer`. Bind `name ↦ (τ, is_var)`.
      `Assign`: target must exist, be a `var`, and the value `check_expr`s against its type.
@@ -523,6 +670,10 @@ files are split the same way the work is — one per `TODO(05)` hole:
   the `:`, and the lone-`!` diagnostic. Goes green when the operator hole is done.
 - **`tests/parser-precedence.t`** — `--emit-ast`: the tree shape of `1 + 2 < 3 * 4` and friends.
   Goes green with `binop_of_kind` + `infix_bp`.
+- **`tests/parser-ascription.t`** — `--emit-ast`: `1 as Double` is one `Ascribe` node, and `as`
+  groups looser than `+`, tighter than `<`. Goes green with the `cast_bp` arm in the Pratt loop.
+- **`tests/sema-ascription.t`** — `--typecheck`: `1 as Double` accepted, `i as Double` rejected,
+  unknown type names caught. Goes green with the rule where `infer` calls `check`.
 - **`tests/parser-literals.t`** — `--emit-ast`: the tokens become `Double_lit`/`String_lit`/
   `Bool_lit`. Goes green with the prefix hole in `parse_expr_bp`.
 - **`tests/parser-annotations.t`** — `--emit-ast`: `let d: Double = 3.14` keeps its annotation.
@@ -565,6 +716,12 @@ perf gates when there's something to optimise.
    (`diag::lex_comment_start`). Record the opener in `skip_trivia` and add the
    `Diagnostics.note` — the two-location shape you'll reuse all through Sema. Compare with
    `swiftc -typecheck` on `let a = 1\n/* oops\n`.
+5. **An error type, to stop the cascade.** `infer` returns `TInt` after an unknown name, and that
+   invented type then fails the *next* rule too: `nope + true` gets two errors from us and one from
+   swiftc. Add `TError` to `Types.ty`, return it from every error path, and teach the rules to stay
+   quiet when they see it — `unify` should accept it against anything, and the operator and
+   conversion diagnostics should not fire if either side is `TError`. This is swiftc's `ErrorType`
+   (`Types.h:1682`) in miniature, and it makes you revisit every rule you wrote.
 
 ## 7. Recap & what's next
 
@@ -633,11 +790,22 @@ let rec infer (cx : ctx) (e : Ast.expr) : Types.ty =
           t)
     | Ast.Binary (op, l, r, span) -> infer_binary cx op l r span
     | Ast.Call (f, args, span) -> infer_call cx f args span
+    (* The one place `infer` calls `check`: the type is written down, so there is nothing to
+       synthesise — the operand is CHECKED against it, which is what lets `1 as Double` work
+       and `i as Double` fail. *)
+    | Ast.Ascribe (e0, tyname, span) -> (
+        match Types.of_name tyname with
+        | Some t ->
+            check_expr cx e0 t;
+            t
+        | None ->
+            err cx span (Printf.sprintf "cannot find type '%s' in scope" tyname);
+            infer cx e0)
   and infer_binary cx op l r span : Types.ty =
     let tl = infer cx l and tr = infer cx r in
     let bad () =
       (* swiftc has two wordings, and picks by whether the operands agree:
-           1 + true   -> cannot be applied to operands of type 'Int' and 'Bool'
+           1 + true     -> cannot be applied to operands of type 'Int' and 'Bool'
            true < false -> cannot be applied to two 'Bool' operands *)
       err cx span
         (if tl = tr then
@@ -645,30 +813,27 @@ let rec infer (cx : ctx) (e : Ast.expr) : Types.ty =
              (Ast.string_of_binop op) (Types.string_of_ty tl)
          else
            Printf.sprintf "binary operator '%s' cannot be applied to operands of type '%s' and '%s'"
-             (Ast.string_of_binop op) (Types.string_of_ty tl) (Types.string_of_ty tr));
-      Types.TInt
+             (Ast.string_of_binop op) (Types.string_of_ty tl) (Types.string_of_ty tr))
     in
-    match op with
-    | Ast.Add -> (
-        match unify l tl r tr with
-        | Some ((Types.TInt | Types.TDouble) as t) -> t
-        | Some Types.TString -> Types.TString
-        | _ -> bad ())
-    | Ast.Sub | Ast.Mul | Ast.Div -> (
-        match unify l tl r tr with Some ((Types.TInt | Types.TDouble) as t) -> t | _ -> bad ())
-    | Ast.Mod -> ( match unify l tl r tr with Some Types.TInt -> Types.TInt | _ -> bad ())
-    | Ast.Eq | Ast.Ne -> (
-        match unify l tl r tr with
-        | Some _ -> Types.TBool
-        | None ->
-            ignore (bad ());
-            Types.TBool)
-    | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge -> (
-        match unify l tl r tr with
-        | Some (Types.TInt | Types.TDouble | Types.TString) -> Types.TBool
-        | _ ->
-            ignore (bad ());
-            Types.TBool)
+    let is_ordered t = Types.is_numeric t || t = Types.TString in
+    (* Match on the UNIFIED type, not on tl/tr: the coercion happens inside [unify], so a guard
+       over the raw operand types cannot see it — `1 == 2.0` would look like Int vs Double and be
+       rejected, and `i + 2.0` would look acceptable right up until [unify] returned None. *)
+    match (unify l tl r tr, op) with
+    | Some t, Ast.Add when Types.is_numeric t -> t
+    | Some Types.TString, Ast.Add -> Types.TString (* `+` concatenates *)
+    | Some t, (Ast.Sub | Ast.Mul | Ast.Div) when Types.is_numeric t -> t
+    | Some Types.TInt, Ast.Mod -> Types.TInt (* no `%` on Double, as in Swift *)
+    | Some _, (Ast.Eq | Ast.Ne) -> Types.TBool (* any single type may be compared *)
+    | Some t, (Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge) when is_ordered t -> Types.TBool
+    (* Everything else is an error. The recovery type differs: a failed comparison is still a
+       Bool, or the enclosing `if` reports a second problem nobody wrote. *)
+    | _, (Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge) ->
+        bad ();
+        Types.TBool
+    | _ ->
+        bad ();
+        Types.TInt
   and infer_call cx f args span : Types.ty =
     if f = "print" then (
       (match args with
@@ -681,10 +846,10 @@ let rec infer (cx : ctx) (e : Ast.expr) : Types.ty =
       err cx span (Printf.sprintf "cannot find '%s' in scope" f);
       List.iter (fun a -> ignore (infer cx a)) args;
       Types.TInt)
-  (* The checking direction. It calls [infer] as its fallback, and [infer] never calls back — so
-   this is NOT part of the knot above. In a fuller language, where a construct's own type depends
-   on an expectation pushed into a subterm, the two judgments do become mutually recursive. *)
-let rec check_expr (cx : ctx) (e : Ast.expr) (expected : Types.ty) : unit =
+  (* The checking direction — and the other half of a genuine knot: [check_expr] falls back to
+   [infer], and [infer] calls [check_expr] for `e as T`. Neither can be defined without the
+   other, which is what "the two judgments are mutually recursive" means in practice. *)
+and check_expr (cx : ctx) (e : Ast.expr) (expected : Types.ty) : unit =
   match e with
   | Ast.Int_lit _ ->
       (* integer literal: ExpressibleBy both Int and Double *)
@@ -823,3 +988,52 @@ swiftc prints the same pair, with one difference worth knowing rather than chasi
 at `2:8`, the last real character, where ours says `3:1` — our `here lx` is past the trailing
 newline the comment scan swallowed. The message and the two-location shape are the parity that
 matters; §6's exercise 3 is the same idea one stage up, in Sema.
+
+### 5 — an error type, to stop the cascade
+
+Three edits, and the third is the one that matters. In `types.ml`, a constructor and its two
+companions:
+
+```ocaml
+type ty =
+  | TError  (* recovery: a type we invented after reporting an error *)
+  | TInt | TBool | TDouble | TString
+
+let string_of_ty = function TError -> "<error>" | ...
+let is_numeric = function
+  | TInt | TDouble -> true
+  | TError -> true          (* accept it anywhere, so no second diagnostic fires *)
+  | TBool | TString -> false
+```
+
+In `sema.ml`, return it instead of the invented `TInt`:
+
+```ocaml
+    | None ->
+        err cx span (Printf.sprintf "cannot find '%s' in scope" x);
+        Types.TError
+```
+
+and then teach the rules to keep quiet about it — `unify` accepts it against anything, and the
+operator diagnostic doesn't fire when either side is already an error:
+
+```ocaml
+let unify l tl r tr : Types.ty option =
+  if tl = Types.TError || tr = Types.TError then Some Types.TError
+  else if Types.equal tl tr then Some tl
+  else ...
+
+    let bad () =
+      if tl = Types.TError || tr = Types.TError then Types.TError
+      else ( err cx span (...); Types.TInt)
+```
+
+That last guard is the whole exercise: an error type that still triggers diagnostics has just
+renamed the problem. With it, `let x = nope + true` reports once, like swiftc, while
+`let x = 1 + true` still reports its operator error. `check_expr`'s "cannot convert" needs the same
+guard, and so does the unary rule.
+
+Worth noticing what you have built: `TError` is a *bottom* type — compatible with everything,
+absorbing every operation. swiftc's `ErrorType` carries a `HasError` bit up through every
+composite type for the same reason, so a single mistake produces a single message no matter how
+deeply it is nested.

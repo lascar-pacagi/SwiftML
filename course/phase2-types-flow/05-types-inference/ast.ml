@@ -28,6 +28,10 @@ type expr =
   | Unary of unop * expr * Token.span
   | Binary of binop * expr * expr * Token.span
   | Call of string * expr list * Token.span
+  (* NEW: `e as T` — a *coercion*. The type is written, so the checker knows what the
+     expression must be before it looks at it: this is the one node where `infer` has to
+     call `check`. (Swift's `as?`/`as!` are dynamic casts; those arrive in concept 23.) *)
+  | Ascribe of expr * string * Token.span
 
 type stmt =
   | Let of {
@@ -52,6 +56,7 @@ let expr_span = function
   | Binary (_, _, _, s)
   | Call (_, _, s) ->
       s
+  | Ascribe (_, _, s) -> s
 
 let string_of_binop = function
   | Add -> "+"
@@ -78,6 +83,7 @@ let rec dump_expr = function
   | Unary (op, e, _) -> Printf.sprintf "(%s %s)" (string_of_unop op) (dump_expr e)
   | Binary (op, l, r, _) ->
       Printf.sprintf "(%s %s %s)" (string_of_binop op) (dump_expr l) (dump_expr r)
+  | Ascribe (e, t, _) -> Printf.sprintf "(as %s %s)" t (dump_expr e)
   | Call (f, args, _) -> Printf.sprintf "(%s %s)" f (String.concat " " (List.map dump_expr args))
 
 let dump_stmt = function

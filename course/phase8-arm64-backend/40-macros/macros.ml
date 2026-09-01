@@ -44,6 +44,7 @@ let rec ex (e : Ast.expr) : Ast.expr =
   | Ast.Unary (op, a, s) -> Ast.Unary (op, ex a, s)
   | Ast.Binary (op, a, b, s) -> Ast.Binary (op, ex a, ex b, s)
   | Ast.Call (f, args, s) -> Ast.Call (f, List.map (fun (l, a) -> (l, ex a)) args, s)
+  | Ast.Ascribe (a, t, s) -> Ast.Ascribe (ex a, t, s)
   | Ast.Member (a, m, s) -> Ast.Member (ex a, m, s)
   | Ast.Method_call (r, m, args, s) -> Ast.Method_call (ex r, m, List.map (fun (l, a) -> (l, ex a)) args, s)
   | Ast.Force_unwrap (a, s) -> Ast.Force_unwrap (ex a, s)

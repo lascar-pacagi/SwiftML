@@ -46,6 +46,12 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
   | Ast.Double_lit (f, _) -> emit b (Sil.Float_lit f) Types.TDouble
   | Ast.Bool_lit (x, _) -> emit b (Sil.Bool_lit x) Types.TBool
   | Ast.String_lit (s, _) -> emit b (Sil.String_lit s) Types.TString
+  (* `e as T` is a *type-level* coercion: sema only accepts it where the operand
+     already checks at T, so there is nothing to emit. *)
+  | Ast.Ascribe (e0, _, _) -> gen_expr b e0
+  (* `e as T` is a *type-level* coercion: sema only accepts it where the operand
+     already checks at T, so there is nothing to emit. *)
+  | Ast.Ascribe (e0, _, _) -> gen_expr b e0
   | Ast.Var (x, _) ->
       let addr = Hashtbl.find b.vars x in
       emit b (Sil.Load addr) (vty b addr) (* the slot's element type *)

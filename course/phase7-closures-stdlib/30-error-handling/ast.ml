@@ -42,6 +42,9 @@ type expr =
   | Closure of param list * string option * expr * Token.span
   (* NEW (concept 30): `try e` / `try? e` / `try! e` — the call site of a throwing call. *)
   | Try of try_kind * expr * Token.span
+  (* NEW (concept 05): `e as T` — a *coercion*. The type is written, so `infer` has
+     nothing to synthesise and must CHECK the operand against it. *)
+  | Ascribe of expr * string * Token.span
 
 (* a call/init argument may carry an external label, e.g. `Point(x: 1)` — concept 10 *)
 type arg = string option * expr
@@ -154,6 +157,7 @@ let expr_span = function
   | Unary (_, _, s)
   | Binary (_, _, _, s)
   | Call (_, _, s)
+  | Ascribe (_, _, s)
   | Member (_, _, s)
   | Method_call (_, _, _, s)
   | Nil s
@@ -187,6 +191,7 @@ let rec dump_expr = function
         (dump_expr body)
   | Binary (op, l, r, _) ->
       Printf.sprintf "(%s %s %s)" (string_of_binop op) (dump_expr l) (dump_expr r)
+  | Ascribe (e, t, _) -> Printf.sprintf "(as %s %s)" t (dump_expr e)
   | Call (f, args, _) ->
       Printf.sprintf "(%s %s)" f (String.concat " " (List.map dump_arg args))
   | Member (e, fld, _) -> Printf.sprintf "(. %s %s)" (dump_expr e) fld
