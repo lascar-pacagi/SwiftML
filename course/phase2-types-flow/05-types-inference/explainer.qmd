@@ -65,20 +65,20 @@ the type you want?* Only an expectation travelling **into** the operator can ask
 swiftc's wording again: it complains that `%` is unavailable **for floating point**, which means
 swiftc resolved `%` at type `Double`. That diagnostic is evidence of the same mechanism.
 
-Be careful about how much `as` proves, though. `1 as Double` is *not* beyond synthesis: infer
-`Int`, then allow the same literal exception, and you get the right answer. What it cannot be is
-synthesis with a plain *promotion* rule — "an `Int` may become a `Double`" — because that would
-also accept `i as Double`, and Swift rejects it. The line is drawn around literals, not around
-types:
+**What `as` shows, and what it doesn't.** It does not make checking unavoidable: `1 as Double`
+could be handled by synthesis too — infer `Int`, then allow the same literal exception the
+annotation rule already uses. What no synthesis rule can do is *promote*: "an `Int` may become a
+`Double`" would also accept `i as Double`, which Swift rejects. The line is drawn around
+literals, not around types:
 
 ```
 (1 + 1) as Double     accepted by both      every leaf is a literal
 (i + 1) as Double     rejected by both      one Int variable fixes the tree at Int
 ```
 
-So `as` is not proof that checking is *necessary*; it is where checking is the natural shape — the
-type is given, and the only question left is whether the operand can be it. That is what makes
-`infer` call `check_expr` in the code, and the mutual recursion real.
+So `as` is where checking is the natural *shape*, not where it is forced: the type is given, and
+the only question left is whether the operand can be it. That is what makes `infer` call
+`check_expr` in the code, and the mutual recursion real.
 
 The push-down also aims the error better. In `let d: Double = 1 + i`, checking downward blames `i`
 — the operand that cannot be a Double — where infer-and-compare can only blame the whole

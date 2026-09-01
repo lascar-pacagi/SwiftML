@@ -41,3 +41,17 @@ single identifiers as well:
   ident(variable)
   ident(true1)
   ident(_true)
+
+`as` is a keyword too, and `ascending` is not.
+The coercion `e as T` needs `as` to arrive as its own kind — otherwise the parser sees an
+identifier and the expression ends early. Same whole-lexeme rule as `true`:
+
+  $ printf 'print(1 as Double)\n' > k5.swift
+  $ ./lab.exe --emit-tokens k5.swift | grep -E '^(as|int)'
+  int(1)
+  as
+
+  $ printf 'print(ascending, classy)\n' > k6.swift
+  $ ./lab.exe --emit-tokens k6.swift | grep -E '^ident' | grep -v print
+  ident(ascending)
+  ident(classy)
