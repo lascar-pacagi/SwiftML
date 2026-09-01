@@ -30,6 +30,12 @@ format:
     include-in-header:
       - text: |
           #show raw: set text(size: 7.6pt)
+    # These explainers are dense with inline code, and justification stretches the spaces INSIDE
+    # a span like `let d: Double = 3.14` until it reads as separate words. This has to go in the
+    # BODY: a `#set par` in the header is overridden by Quarto's own template.
+    include-before-body:
+      - text: |
+          #set par(justify: false)
 
 # Cache executed code so re-renders are fast; explainers use static code blocks by default.
 execute:

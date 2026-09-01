@@ -58,7 +58,7 @@ lab:
 	else cts=$$(cd $(C) && ls tests/*.t 2>/dev/null | tr '\n' ' '); fi; \
 	ats=$$(sed -n 's/.*Alcotest\.run "\([^"]*\)".*/\1/p' $(C)/tests/*.ml 2>/dev/null | tr '\n' ' '); \
 	if [ -n "$(T)" ]; then ats=""; fi; \
-	if [ -n "$(RAW)" ]; then cat $$out; else awk -v color=$$col -v prefix="$(C)/" -v cram_files="$$cts" -v alcotest_suites="$$ats" -f tooling/labfmt.awk $$out; fi; \
+	if [ -n "$(RAW)" ]; then cat $$out; else awk -v color=$$col -v prefix="$(C)/" -v cram_files="$$cts" -v alcotest_suites="$$ats" -v detail_all="$(DETAIL)" -f tooling/labfmt.awk $$out; fi; \
 	rm -f $$out; exit $$rc
 
 # Differential test a single program against swiftc:

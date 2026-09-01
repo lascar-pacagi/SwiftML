@@ -1,5 +1,4 @@
-(* The Phase-2 type lattice — a *contract*: the types themselves are given, one TODO(05)
-   hole is yours (the annotation-name table at the bottom), and you implement the checker
+(* The Phase-2 type lattice — a *contract* (fully written; you implement the checker
    in sema.ml that produces and compares these).
 
    Phase 1 had a single type, `TInt`. Phase 2 adds `Bool`, `Double`, `String`. There are
@@ -37,6 +36,7 @@ let is_numeric : ty -> bool = function
    None if it isn't one of our known types (sema reports "cannot find type 'Foo'"). *)
 let of_name : string -> ty option = function
   | "Int" -> Some TInt
-  (* TODO(05): the three type names this concept adds. Everything else stays None, which is
-     what makes sema say "cannot find type 'Foo' in scope". *)
+  | "Bool" -> Some TBool
+  | "Double" -> Some TDouble
+  | "String" -> Some TString
   | _ -> None

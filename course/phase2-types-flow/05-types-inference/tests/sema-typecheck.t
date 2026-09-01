@@ -1,19 +1,5 @@
-End-to-end via the `./lab.exe` binary: --emit-ast for the new syntax, --typecheck for the
-type checker. RED until lexer/parser/sema are implemented.
-
-`3.14` / `true` / `"hi"` and a `: Double` annotation parse into the AST:
-
-  $ printf 'let d: Double = 3.14\nlet b = true\nlet s = "hi"\n' > a.swift
-  $ ./lab.exe --emit-ast a.swift
-  (let d : Double 3.14)
-  (let b true)
-  (let s "hi")
-
-`1 + 2 < 3 * 4` parses as `(1+2) < (3*4)` — comparisons bind loosest:
-
-  $ printf 'let c = 1 + 2 < 3 * 4\n' > c.swift
-  $ ./lab.exe --emit-ast c.swift
-  (let c (< (+ 1 2) (* 3 4)))
+The type checker, through `--typecheck` (lex -> parse -> sema, like `swiftc -typecheck`).
+Needs every earlier hole plus `TODO(05)` in sema.ml — this is the last file to go green.
 
 A well-typed program type-checks silently, exit 0. Note the integer-literal
 coercion in `1 + 2` against the Double annotation, and a reassigned var:

@@ -38,6 +38,9 @@ let test_operators () =
     "binary operator '+' cannot be applied to operands of type 'Int' and 'Bool'";
   has_error "let b = 1 == \"a\""
     "binary operator '==' cannot be applied to operands of type 'Int' and 'String'";
+  has_error "let n = -true"
+    (* swiftc: cannot_apply_unop_to_arg — note "an operand", not "operand" *)
+    "unary operator '-' cannot be applied to an operand of type 'Bool'";
   has_error "let b = true < false"
     (* same type on both sides: swiftc words this one differently *)
     "binary operator '<' cannot be applied to two 'Bool' operands"

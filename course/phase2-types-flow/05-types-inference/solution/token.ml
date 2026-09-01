@@ -1,11 +1,9 @@
-(* Tokens for the Phase-2 / concept-05 subset — a *contract*: the kinds are given, one
-   TODO(05) hole is yours (the keyword table below).
+(* Tokens for the Phase-2 / concept-05 subset — a *contract* (fully written).
 
    Carries Phase 1's kinds forward and adds what types need: float & string literals,
    the `true`/`false` keywords, the `:` for annotations, and the comparison operators.
    You produce these in lexer.ml (the Phase-1 scanning is given; you fill the TODO holes
-   for the new lexemes). Note WHERE keywords are recognised: not in lexer.ml, which scans
-   an identifier and hands the spelling to [keyword_or_ident] below.
+   for the new lexemes).
 
    Design oracle:
      swift/include/swift/Parse/Token.h
@@ -86,6 +84,6 @@ let keyword_or_ident (s : string) : kind =
   match s with
   | "let" -> Kw_let
   | "var" -> Kw_var
-  (* TODO(05): `true` and `false` are KEYWORDS in Swift, not identifiers that happen to spell
-     them — a program can't rebind `true`. Two arms, and `truely` must stay an `Ident`. §2. *)
+  | "true" -> Kw_true
+  | "false" -> Kw_false
   | _ -> Ident s

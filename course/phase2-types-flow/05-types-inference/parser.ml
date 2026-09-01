@@ -1,7 +1,7 @@
 (* Parser — concept 05 (skeleton). Phase-1 recursive-descent + Pratt is given; you add the new
-   prefixes (Double/Bool/String literals) and the type annotation (the TODO(05) holes). The
-   comparison operators are already wired through infix_bp / binop_of_kind. Reference:
-   solution/parser.ml. *)
+   prefixes (Double/Bool/String literals), the comparison operators (their `Ast` mapping and
+   their binding power), and the type annotation (the TODO(05) holes).
+   Reference: solution/parser.ml. *)
 
 type t = { toks : Token.t array; mutable pos : int; diags : Diagnostics.sink }
 
@@ -27,11 +27,13 @@ let expect (p : t) (k : Token.kind) (what : string) : Token.t =
     Diagnostics.error p.diags tok.Token.span (Printf.sprintf "expected %s" what);
     tok)
 
-(* binding powers: comparisons bind looser than arithmetic *)
+(* Binding powers — the Pratt loop keeps consuming while the operator's power is high enough,
+   so a BIGGER number binds TIGHTER. Phase 1's two rows are given. *)
 let infix_bp : Token.kind -> int option = function
   | Token.Star | Token.Slash | Token.Percent -> Some 20
   | Token.Plus | Token.Minus -> Some 10
-  | Token.EqEq | Token.Ne | Token.Lt | Token.Le | Token.Gt | Token.Ge -> Some 5
+  (* TODO(05): the six comparisons. They must bind LOOSER than `+`, so that
+     `a + 1 == b * 2` groups as `(a + 1) == (b * 2)` — §2 has the table. *)
   | _ -> None
 
 let binop_of_kind : Token.kind -> Ast.binop option = function
@@ -40,12 +42,8 @@ let binop_of_kind : Token.kind -> Ast.binop option = function
   | Token.Star -> Some Ast.Mul
   | Token.Slash -> Some Ast.Div
   | Token.Percent -> Some Ast.Mod
-  | Token.EqEq -> Some Ast.Eq
-  | Token.Ne -> Some Ast.Ne
-  | Token.Lt -> Some Ast.Lt
-  | Token.Le -> Some Ast.Le
-  | Token.Gt -> Some Ast.Gt
-  | Token.Ge -> Some Ast.Ge
+  (* TODO(05): the six comparison tokens -> Ast.Eq/Ne/Lt/Le/Gt/Ge. Same shape as the rows
+     above; `infix_bp` below decides how tightly they bind. *)
   | _ -> None
 
 let unary_bp = 100
