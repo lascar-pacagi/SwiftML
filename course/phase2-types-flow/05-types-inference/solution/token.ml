@@ -26,6 +26,7 @@ type kind =
   | Kw_var
   | Kw_true (* NEW: Bool literals are keywords *)
   | Kw_false
+  | Kw_as (* NEW: the `e as T` coercion *)
   (* arithmetic operators *)
   | Plus
   | Minus
@@ -60,6 +61,7 @@ let string_of_kind = function
   | Kw_var -> "var"
   | Kw_true -> "true"
   | Kw_false -> "false"
+  | Kw_as -> "as"
   | Plus -> "+"
   | Minus -> "-"
   | Star -> "*"
@@ -86,4 +88,5 @@ let keyword_or_ident (s : string) : kind =
   | "var" -> Kw_var
   | "true" -> Kw_true
   | "false" -> Kw_false
+  | "as" -> Kw_as
   | _ -> Ident s

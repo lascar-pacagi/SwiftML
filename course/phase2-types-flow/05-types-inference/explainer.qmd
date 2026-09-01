@@ -718,10 +718,7 @@ perf gates when there's something to optimise.
 ## 7. Recap & what's next
 
 You built a **bidirectional type checker**. `infer` synthesises a type bottom-up; `check` takes an
-expected type and pushes it down. Two rules do the interesting work: an integer literal may become
-a `Double` when one is expected, and a *value* of type `Int` may not. That pair is why `1 + 2`
-fits a `Double` annotation while `i` does not — Swift's polymorphic literals and its refusal to
-convert numeric types, from one small predicate.
+expected type and pushes it down.
 
 You also met the thing this approximates: Swift's constraint solver (Phase 5), which reaches the
 same answers by collecting constraints and solving them, rather than by pushing a type down.
