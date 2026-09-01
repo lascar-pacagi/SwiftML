@@ -70,8 +70,12 @@ let string_of_kind = function
    (Once it works, `swiftml --emit-tokens` can print it too: that is one line in
    concept 04's `driver.ml`, outside this concept, so it is optional and untested here.) *)
 let string_of_token (t : t) : string =
-  ignore t;
-  failwith "TODO(01-ex3): implement Token.string_of_token (kind + span)"
+  Printf.sprintf "%s @ %d:%d-%d:%d" 
+    (string_of_kind t.kind)
+    t.span.lo.line t.span.lo.col
+    t.span.hi.line t.span.hi.col
+  (* ignore t;
+  failwith "TODO(01-ex3): implement Token.string_of_token (kind + span)" *)
 
 (* Map an identifier spelling to a keyword kind, or keep it an identifier.
    Grows as the language does. *)

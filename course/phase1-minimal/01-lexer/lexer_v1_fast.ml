@@ -2,15 +2,13 @@
    after v0 works.  >>> You build this in phase1-minimal/01-lexer. <<<
 
    Same input, same output (`to_tokens` must rebuild the byte-identical `Token.t list`
-   v0 produces — kinds AND line/col spans), radically different representation. The tests
-   check each piece on its own, run the whole concept-01 corpus through BOTH rungs, and
-   assert they agree token-for-token; `make bench` fails if v1 isn't meaningfully faster.
+   v0 produces — kinds AND line/col spans), radically different representation. The
+   tests run the whole concept-01 corpus through BOTH rungs and then assert they agree
+   token-for-token; `make bench` fails if v1 isn't meaningfully faster than v0.
 
    Read explainer §5 first — it describes the three moves in detail. Design oracle:
    swift/lib/Parse/Lexer.cpp + swift/lib/Basic/SourceManager.cpp (`SourceLoc` is an
    offset; line/col are computed on demand).
-
-   Originally the concept-01 throughput bench.
 
    The reference `Lexer` (v0) is allocation-bound: every token is four heap records
    (the token, its `span`, and two `pos`es with line/col/offset), so building ~750k
@@ -61,11 +59,32 @@ let line_starts (src : string) : int array =
   Array.of_list (List.rev !acc)
 
 let pos_of (ls : int array) (off : int) : Token.pos =
-  (* TODO(01-v1b): a byte offset -> 1-based line/col, by binary search over [ls] (the
-     offsets of the line starts). The error path is its only caller, which is what lets
-     the scan above ignore positions entirely. Explainer §5. *)
-  ignore (ls, off);
-  failwith "TODO(01-v1b): implement Lexer_v1_fast.pos_of (lazy line/col)"
+  (* TODO(01-v1b): resolve a byte offset to a 1-based line/col, on demand.
+
+     [ls] holds the offset of the first byte of each line, ascending (given above).
+     Binary-search the LAST index [i] with [ls.(i) <= off]; then the position is
+       line   = i + 1                (1-based)
+       col    = off - ls.(i) + 1     (1-based)
+       offset = off
+     This is the whole reason the hot loop can ignore line/col: nobody pays for a
+     position until a diagnostic asks for one. swiftc's SourceManager does the same
+     search over its own line table. *)
+  let lo = ref 0 in
+  let hi = ref (Array.length ls) in
+  while !lo < !hi do 
+    let m = !lo + (!hi - !lo) / 2 in
+    if ls.(m) <= off then
+      lo := m + 1
+    else
+      hi := m
+  done;
+  let i = !hi - 1 in
+  let line = !hi in 
+  let col = off - ls.(i) + 1 in
+  Token.{ line; col; offset = off }
+  (* ignore (ls, off);
+  failwith "TODO(01-v1b): implement Lexer_v1_fast.pos_of (lazy line/col)" *)
+
 
 (* The single scanning pass: offsets only, no line/col, near-zero per-token allocation. *)
 let lex (src : string) (diags : Diagnostics.sink) : soup =
@@ -143,15 +162,74 @@ let lex (src : string) (diags : Diagnostics.sink) : soup =
         skip ())
       else ()
   in
-  (* TODO(01-v1a): the scan — the whole point of this rung. Offsets only: no Token.t,
-     no span, no String.sub, no int_of_string, no line/col. [skip ()] eats trivia,
-     [push tag s e] records a token, [error]/[note] take offsets and resolve positions
-     themselves. Report a byte outside the alphabet and carry on, like v0 does.
+  (* TODO(01-v1a): the scanning loop — the whole point of this rung.
 
-     [g] is String.unsafe_get, so reading past [len] does not raise — bounds-check
-     yourself, after [skip ()] and in every munch loop. Design: explainer §5. *)
-  ignore (push, g, skip, is_digit, is_ident_head, is_ident_cont);
-  failwith "TODO(01-v1a): implement Lexer_v1_fast.lex (the allocation-free scan)"
+     Loop until you have pushed [t_eof]:
+       - [skip ()] to step over trivia (given above);
+       - at end of input, [push t_eof len len] and stop;
+       - otherwise let [s = !pos] and dispatch on [g !pos]:
+           * digit        -> advance while [is_digit], then [push t_int s !pos]
+           * ident head   -> advance while [is_ident_cont], then [push t_ident s !pos]
+           * '+' '-' '*' '/' '%' '=' '(' ')' ',' '\n' -> [push <tag> s (s + 1)]
+           * anything else -> REPORT and skip it, exactly like v0 does:
+             [error s (s + 1) "invalid character in source file"], then carry on without
+             pushing a token, so one run reports every bad byte in the file.
+
+     [error] and [note] (given, just above) take plain OFFSETS and run them through [pos_of]
+     themselves — so the error path gets exact line/col while the loop still never computes
+     any.
+
+     The rules that make it fast, and that the bench will check:
+       - do NOT touch line/col — offsets only (that's what [pos_of] is for);
+       - do NOT build a Token.t, a span, a string, or an int here — [push] stores three
+         ints and [kind_of]/[to_tokens] resolve the rest on demand;
+       - do NOT call String.sub or int_of_string in this loop.
+     Anything you allocate per token shows up directly in `make profile` section 3.
+
+     When the loop is done, return the soup:
+       { tags = !tags; starts = !starts; ends = !ends; n = !n; src } *)
+  let bump () =
+    if !pos >= len then '\000'
+    else begin
+      let c = g !pos in 
+      incr pos;
+      c
+    end
+  in
+  while !pos < len do  
+    skip ();
+    let lo = !pos in    
+    match bump () with
+    | '\n' -> push t_newline lo !pos 
+    | c when is_digit c -> begin
+      while is_digit (g !pos) do 
+        ignore (bump ())
+      done;
+      push t_int lo !pos
+    end
+    | c when is_ident_head c -> begin 
+      while is_ident_cont (g !pos) do 
+        ignore (bump ())
+      done;
+      push t_ident lo !pos
+    end
+    | '+' -> push t_plus lo !pos 
+    | '-' -> push t_minus lo !pos
+    | '*' -> push t_star lo !pos
+    | '/' -> push t_slash lo !pos
+    | '%' -> push t_percent lo !pos
+    | '=' -> push t_eq lo !pos
+    | '(' -> push t_lparen lo !pos
+    | ')' -> push t_rparen lo !pos
+    | ',' -> push t_comma lo !pos
+    | '\000' -> ()
+    | _ -> error lo !pos "invalid character in source file"
+  done;
+  push t_eof len len;
+  { tags = !tags; starts = !starts; ends = !ends; n = !n; src }
+  (* ignore (push, g, skip, is_digit, is_ident_head, is_ident_cont);
+  failwith "TODO(01-v1a): implement Lexer_v1_fast.lex (the allocation-free scan)" *)
+
 
 (* resolve a keyword without allocating a substring *)
 let kw_or_ident (src : string) (s : int) (e : int) : Token.kind =

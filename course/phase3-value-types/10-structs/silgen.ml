@@ -48,12 +48,11 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
   | Ast.Double_lit (f, _) -> emit b (Sil.Float_lit f) Types.TDouble
   | Ast.Bool_lit (x, _) -> emit b (Sil.Bool_lit x) Types.TBool
   | Ast.String_lit (s, _) -> emit b (Sil.String_lit s) Types.TString
-  (* `e as T` is a *type-level* coercion: sema only accepts it where the operand
-     already checks at T, so there is nothing to emit. *)
-  | Ast.Ascribe (e0, _, _) -> gen_expr b e0
-  (* `e as T` is a *type-level* coercion: sema only accepts it where the operand
-     already checks at T, so there is nothing to emit. *)
-  | Ast.Ascribe (e0, _, _) -> gen_expr b e0
+  (* `e as T`: generate the operand AT the written type (see gen_expr_as). *)
+  | Ast.Ascribe (e0, tyname, _) -> (
+      match Types.of_name tyname with
+      | Some t -> gen_expr_as b e0 t
+      | None -> gen_expr b e0)
   | Ast.Var (x, _) ->
       let addr = Hashtbl.find b.vars x in
       emit b (Sil.Load addr) (vty b addr) (* the slot's element type *)
@@ -97,6 +96,20 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       ignore (e0, fld);
       failwith "TODO(10-silgen): lower member read (struct_extract)"
 
+(* Generate [e] AT an expected type. The only coercion this early is the integer literal that
+   checks at Double: it must be BORN a Double, or the slot receives an i64 bit-pattern and
+   `let d: Double = 1` reads back as 4.94e-324. The recursion mirrors sema's `is_int_literal`. *)
+and gen_expr_as (b : builder) (e : Ast.expr) (expected : Types.ty) : Sil.value =
+  match (e, expected) with
+  | Ast.Int_lit (n, _), Types.TDouble -> emit b (Sil.Float_lit (float_of_int n)) Types.TDouble
+  | Ast.Unary (op, e0, _), Types.TDouble ->
+      let v = gen_expr_as b e0 Types.TDouble in
+      emit b (Sil.Unop (op, v)) Types.TDouble
+  | Ast.Binary (((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div) as op), l, r, _), Types.TDouble ->
+      let lv = gen_expr_as b l Types.TDouble and rv = gen_expr_as b r Types.TDouble in
+      emit b (Sil.Binop (op, lv, rv)) Types.TDouble
+  | _ -> gen_expr b e
+
 (* --- lowering statements; gen_block stops after a terminator (dead code) --- *)
 let rec gen_block (b : builder) (stmts : Ast.stmt list) : unit =
   match stmts with
@@ -107,8 +120,13 @@ let rec gen_block (b : builder) (stmts : Ast.stmt list) : unit =
 
 and gen_stmt (b : builder) (s : Ast.stmt) : unit =
   match s with
-  | Ast.Let { name; value; _ } ->
-      let v = gen_expr b value in
+  | Ast.Let { name; annot; value; _ } ->
+      (* an annotation makes the slot that type, and the value is generated AT it *)
+      let v =
+        match annot with
+        | Some n -> ( match Types.of_name n with Some t -> gen_expr_as b value t | None -> gen_expr b value)
+        | None -> gen_expr b value
+      in
       let addr = emit b (Sil.Alloc_stack name) (vty b v) in
       Hashtbl.replace b.vars name addr;
       ignore (emit b (Sil.Store (v, addr)) Types.TVoid)

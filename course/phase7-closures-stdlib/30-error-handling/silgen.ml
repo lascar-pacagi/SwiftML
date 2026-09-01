@@ -215,9 +215,10 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
   | Ast.Double_lit (f, _) -> emit b (Sil.Float_lit f) Types.TDouble
   | Ast.Bool_lit (x, _) -> emit b (Sil.Bool_lit x) Types.TBool
   | Ast.String_lit (s, _) -> emit b (Sil.String_lit s) Types.TString
-  (* `e as T` is a *type-level* coercion: sema only accepts it where the operand
-     already checks at T, so there is nothing to emit. *)
-  | Ast.Ascribe (e0, _, _) -> gen_expr b e0
+  (* `e as T`: generate the operand AT the written type, exactly like an annotated `let`.
+     A literal tree that checks at Double must be BORN a Double — lowering it as an Int and
+     relabelling the type gives `icmp` on a float constant. *)
+  | Ast.Ascribe (e0, tyname, _) -> gen_expr_as b e0 (resolve_name b tyname)
   | Ast.Var (x, _) -> (
       match Hashtbl.find_opt b.borrows x with
       | Some v -> v (* a guaranteed parameter: the SSA value itself, no memory (27) *)

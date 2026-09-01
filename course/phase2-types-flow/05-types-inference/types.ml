@@ -1,6 +1,6 @@
 (* The Phase-2 type lattice — a *contract*: the types themselves are given, one TODO(05)
    hole is yours (the annotation-name table at the bottom), and you implement the checker
-   in sema.ml that produces and compares these).
+   in sema.ml that produces and compares these.
 
    Phase 1 had a single type, `TInt`. Phase 2 adds `Bool`, `Double`, `String`. There are
    still **no type variables**: concept 05 type-checks *bidirectionally* (push an expected
@@ -37,6 +37,9 @@ let is_numeric : ty -> bool = function
    None if it isn't one of our known types (sema reports "cannot find type 'Foo'"). *)
 let of_name : string -> ty option = function
   | "Int" -> Some TInt
+  | "Double" -> Some TDouble
+  | "Bool" -> Some TBool
+  | "String" -> Some TString
   (* TODO(05): the three type names this concept adds. Everything else stays None, which is
      what makes sema say "cannot find type 'Foo' in scope". *)
   | _ -> None

@@ -53,7 +53,10 @@ let infer (cx : ctx) (e : Ast.expr) : Types.ty =
        Binary    the operator table in §2, via [unify]; the two failure wordings are
                  "binary operator '%s' cannot be applied to operands of type 'X' and 'Y'"
                  and, when both sides agree, "... cannot be applied to two 'X' operands"
-       Call      only `print`, exactly one argument, any type
+       Call      only `print`, and exactly one argument of any type; the wrong count is
+                 "print(_:) expects exactly one argument" (ours — Swift's print is
+                 variadic), and any OTHER name is "cannot find '%s' in scope", the same
+                 message an unknown variable gets. Infer the arguments either way.
      TODO(05g): `Ascribe (e, tyname, span)` — `e as T`. Resolve the name with `Types.of_name`
        ("cannot find type '%s' in scope" if unknown) and CHECK the operand against it, then
        return it. This is the one arm where `infer` calls `check_expr`, which is what makes the

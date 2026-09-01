@@ -115,6 +115,13 @@ cram { next }
   if (nf >= 3) { desc = a[3]; for (k = 4; k <= nf; k++) desc = desc " " a[k]; line = a[1] " — " desc }
   sub(/\.$/, "", line)
   key = line; sub(/\.\.$/, "", key)                     # alcotest's box truncates 2 chars shorter
+  # A group reporting itself "skipped — … not started" is OPTIONAL work (a §6 exercise), not a
+  # pass: show it as TODO so it stays visible, and keep it out of both counts.
+  if (line ~ /skipped — /) {
+    sub(/ — skipped — /, " — ", line); sub(/ not start.*$/, "", line)
+    if (!seen[cur SUBSEP line]++) { put("  " Y "TODO" Z " " line D " (optional)" Z); nopt[cur]++ }
+    next
+  }
   if (!seen[cur SUBSEP substr(key, 1, 28)]++) {
     if (ok) nok[cur]++; else nbad[cur]++
     put(ok ? "  " G "OK  " Z " " line : "  " R "FAIL" Z " " line)
@@ -170,11 +177,15 @@ END {
         # suite's output too when a sibling in the same stanza fails, so "has output" is not
         # "has failed" — believing that reported a green suite as red.
         failing = (kind == "cram") ? (si && failedcram(si)) : (si && nbad[si] > 0)
+        optional = (kind == "alcotest" && si && nopt[si] > 0 && nbad[si] == 0)
         tf = prefix part[2]; unstarted = 0
         if (failing && kind == "cram") unstarted = (nblk[tf] > 0 && nfailing(si, tf) == nblk[tf])
         else if (failing) unstarted = (nbad[si] > 0 && nok[si] == 0)
         total++
-        if (unstarted && !detail_all) {
+        if (optional) {
+          out = out sprintf("%s%sTODO%s %s%s%s (%s) — optional\n", B, Y, Z, B, part[2], Z, kind)
+          nopts++
+        } else if (unstarted && !detail_all) {
           out = out sprintf("%s%sTODO%s %s%s%s (%s) — not started\n", B, Y, Z, B, part[2], Z, kind)
           ntodo++
         } else if (failing) {
@@ -194,11 +205,13 @@ END {
     }
     if (total == 0) continue
     if (good == total) printf "\n%s%s── %s: COMPLETE (%d/%d) ✔%s\n", B, G, st, good, total, Z
+    else if (out ~ /— optional/ && out !~ /FAIL|not started/)
+      printf "\n%s── %s: optional%s\n", B, st, Z
     else printf "\n%s── %s: %d of %d passing%s\n", B, st, good, total, Z
     printf "%s", out
   }
 
-  tail = (ntodo ? sprintf(", %d not started", ntodo) : "") (nskip ? sprintf(", %d not run", nskip) : "")
+  tail = (ntodo ? sprintf(", %d not started", ntodo) : "") (nopts ? sprintf(", %d optional", nopts) : "") (nskip ? sprintf(", %d not run", nskip) : "")
   if (nfail || ntodo) printf "\n%s%d passing, %d failing%s%s\n", B, npass, nfail, tail, Z
   else if (npass) printf "\n%s%d passing, 0 failing%s\n", G, npass, Z
   else printf "\n%sno tests ran%s\n", B, Z

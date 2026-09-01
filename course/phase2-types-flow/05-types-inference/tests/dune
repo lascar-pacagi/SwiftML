@@ -17,3 +17,19 @@
  (libraries alcotest swiftml_types)
  (flags
   (:standard -warn-error -a)))
+
+; The §6 EXERCISE tests. They run under `make lab`, but each group probes whether you have
+; started that exercise: untouched groups report as not started, and the runner shows them as
+; `TODO (optional)` — so they can never make `make lab` red, and are never forgotten either.
+(test
+ (name test_exercises)
+ (modules test_exercises)
+ (libraries alcotest swiftml_types)
+ (flags
+  (:standard -warn-error -a)))
+
+; …and a focused alias for working on them alone: make exercises C=phase2-types-flow/05-types-inference
+(rule
+ (alias exercises)
+ (action
+  (run ./test_exercises.exe)))

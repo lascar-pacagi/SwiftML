@@ -17,3 +17,15 @@ comparison sees it. Both groupings match swiftc (`1 + 2 as Double` prints 3.0 th
   $ ./lab.exe --emit-ast r2.swift
   (let y (as Double (+ 1 2)))
   (let z (< 1 (as Int 2)))
+
+`1 as 5` reports swiftc's own wording, at swiftc's own column.
+The type name is read by the given `parse_ident_ty`, which builds `"expected " ^ what` — so the
+`what` phrase *is* the message. Passing `"type after 'as'"` reproduces
+`diag::expected_type_after_as` exactly (swiftc: `1:14: error: expected type after 'as'`). The
+second line is the parser recovering: it did not consume a type, so the statement ends here.
+
+  $ printf 'let y = 1 as 5\n' > r3.swift
+  $ ./lab.exe --emit-ast r3.swift 2>&1; echo "exit=$?"
+  1:14: error: expected type after 'as'
+  1:14: error: expected newline or end of statement
+  exit=1

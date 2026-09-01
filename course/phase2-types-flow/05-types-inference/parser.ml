@@ -93,7 +93,9 @@ let rec parse_expr_bp (p : t) (min_bp : int) : Ast.expr =
   let rec loop lhs =
     (* TODO(05f): `e as T`. It is not a binary operator — its right side is a TYPE NAME, not an
        expression — but it binds like one, at `cast_bp`. Consume the `as`, read the name with
-       [parse_ident_ty], and build `Ast.Ascribe`; the span runs from lhs to the name. *)
+       [parse_ident_ty], and build `Ast.Ascribe`; the span runs from lhs to the name. Pass it the
+       `what` phrase "type after 'as'", so a bare `1 as` reports swiftc's own wording:
+       `expected type after 'as'` (diag::expected_type_after_as). *)
     match infix_bp (peek_kind p) with
     | Some bp when bp >= min_bp ->
         let op_tok = advance p in

@@ -46,58 +46,6 @@ the operands. That works for a lot — but it falls apart on the two things Swif
 
 The fix is **bidirectional type checking**: *two* judgments that call each other.
 
-**"Couldn't `check` just call `infer` and compare?"** It is the right question to ask, because in
-this subset it very nearly works: keep a single rule saying *a tree of integer literals may be a
-Double*, and almost every program lands on the same verdict as the real thing. Almost. Strip the
-push-down out and one case flips:
-
-```
-let d: Double = 1 % 2
-  with push-down    error: cannot convert value of type 'Int' to specified type 'Double'
-  infer + compare   ACCEPTED                                     <- wrong
-  swiftc            error: '%' is unavailable: For floating point
-                           numbers use truncatingRemainder instead
-```
-
-`1 % 2` *is* a tree of integer literals, so the blanket rule waves it through — but `%` does not
-exist on `Double`. The question that has to be asked is per-operator: *does this operator exist at
-the type you want?* Only an expectation travelling **into** the operator can ask it. And read
-swiftc's wording again: it complains that `%` is unavailable **for floating point**, which means
-swiftc resolved `%` at type `Double`. That diagnostic is evidence of the same mechanism.
-
-**What `as` shows, and what it doesn't.** It does not make checking unavoidable: `1 as Double`
-could be handled by synthesis too — infer `Int`, then allow the same literal exception the
-annotation rule already uses. What no synthesis rule can do is *promote*: "an `Int` may become a
-`Double`" would also accept `i as Double`, which Swift rejects. The line is drawn around
-literals, not around types:
-
-```
-(1 + 1) as Double     accepted by both      every leaf is a literal
-(i + 1) as Double     rejected by both      one Int variable fixes the tree at Int
-```
-
-So `as` is where checking is the natural *shape*, not where it is forced: the type is given, and
-the only question left is whether the operand can be it. That is what makes `infer` call
-`check_expr` in the code, and the mutual recursion real.
-
-The push-down also aims the error better. In `let d: Double = 1 + i`, checking downward blames `i`
-— the operand that cannot be a Double — where infer-and-compare can only blame the whole
-expression.
-
-But the reason it is the *architecture* rather than a refinement is what arrives later. Some
-expressions have no type to synthesise at all:
-
-| expression | what synthesis gives | what it needs |
-|---|---|---|
-| `nil` (concept 13) | nothing — `Optional<what>`? | the expected type |
-| `.someCase` (concept 11) | which enum? | the expected type |
-| `{ x in x + 1 }` (concept 29) | `x`'s type is unknown | the expected function type |
-| `[]` (concept 31) | element type? | the expected array type |
-
-For those, `check` is not "infer and compare" — there is nothing to infer. The bridge has to run
-downward, and building it now, while both directions still fit on one page, is cheaper than
-retrofitting it in concept 13.
-
 ### The two judgments
 
 ```
@@ -154,6 +102,47 @@ written by hand instead of read off a signature. The **default bridge** between 
 Everything interesting is the rules that fire *before* that fall-through — the rules that make
 `check` do something cleverer than "infer then compare."
 
+**How much cleverer, though?** It is worth asking whether those extra rules earn their keep. Give
+`check` nothing but the fall-through plus one exception — *a tree of integer literals may be a
+Double* — and almost every program in this subset lands on the same verdict. Almost:
+
+```
+                                let d: Double = 1 % 2
+  check = infer, then compare   accepted        <- wrong
+  check = push the type down    rejected
+  swiftc                        rejected: '%' is unavailable: For floating
+                                point numbers use truncatingRemainder instead
+```
+
+Follow the simpler rule through that program. It infers a type for `1 % 2`, gets `Int`, compares
+it with the expected `Double`, and — because they differ — reaches for its one exception: *this
+expression is built only from integer literals, so let it be a Double*. `1 % 2` is built only from
+integer literals, so it is accepted. But there is no `%` on `Double` for it to become: the
+exception answered "may these literals be Doubles?" when the question was "does `%` exist at
+`Double`?"
+
+Only an expectation travelling **into** the operator can ask the second question, because only
+there is the operator and the wanted type in the same place. swiftc's wording shows it asks the
+same one: it complains that `%` is unavailable **for floating point**, which it can only know
+after resolving `%` at `Double`.
+
+Pushing down also aims the error better: in `let d: Double = 1 + i` it blames `i`, the operand that
+cannot be a `Double`, where infer-and-compare can only blame the whole expression.
+
+**Why a second judgment exists at all.** You need it here — `1 % 2` above is this concept's own
+proof — and the need only grows. What is coming are expressions with no type to synthesise at all,
+where "infer and compare" has nothing to infer:
+
+| expression | what synthesis gives | what it needs |
+|---|---|---|
+| `nil` (concept 13) | nothing — `Optional<what>`? | the expected type |
+| `.someCase` (concept 11) | which enum? | the expected type |
+| `{ x in x + 1 }` (concept 29) | `x`'s type is unknown | the expected function type |
+| `[]` (concept 31) | element type? | the expected array type |
+
+So the second judgment is not scaffolding for later concepts that you are paying for early: it
+earns its place in this one, and later constructs simply cannot be typed without it.
+
 ### Operator typing
 
 Synthesis of an operator is just a case analysis on the operand types. For the arithmetic operators:
@@ -182,31 +171,6 @@ a < b            // error: cannot be applied to operands of type 'Int' and 'Doub
 
 That second line is not an exception to the rule; it is the literal coercion doing its work
 *before* the comparison is typed. `1` has no committed type until something asks it for one.
-
-**Where to put the case analysis.** The rules above are eleven operators over five outcomes, and
-the shape that stays readable is one match arm per rule — with the operand types already
-*unified*:
-
-```ocaml
-match unify l tl r tr, op with
-| Some t, Ast.Add when Types.is_numeric t -> t
-| Some Types.TString, Ast.Add -> Types.TString
-| Some t, (Ast.Sub | Ast.Mul | Ast.Div) when Types.is_numeric t -> t
-| Some Types.TInt, Ast.Mod -> Types.TInt
-| Some _, (Ast.Eq | Ast.Ne) -> Types.TBool
-| Some t, (Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge) when is_ordered t -> Types.TBool
-| _, (Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge) -> bad (); Types.TBool
-| _ -> bad (); Types.TInt
-```
-
-Match on the *pair* `(unify …, op)`, never on `op` alone with a guard over `tl`/`tr`: the coercion
-happens **inside** `unify`, so a guard over the raw operand types cannot see it. `1 == 2.0` would
-look like `Int` against `Double` and be rejected — Swift accepts it — and `i + 2.0` would look
-perfectly numeric right up until `unify` returned `None`, which is a crash if you reach for
-`Option.get`. `None` is not an exceptional case here; it is the thing you report.
-
-The last two arms are separate because **the recovery type differs**: a failed comparison still
-yields `Bool`, or the enclosing `if` reports a second problem nobody wrote.
 
 If the operands don't fit any rule, you emit `swiftc`'s wording. There are **two** of them, and
 which one you use depends on whether the operands agree:
@@ -529,24 +493,30 @@ convention is a quoted literal for punctuation, a lowercase noun phrase for a ca
 let d: = 1        1:8: error: expected a type name      <- parse_ident p "a type name"
 let x = (1 + 2    1:15: error: expected ')'             <- expect p Token.RParen "')'"
 let y = *         1:9: error: expected expression       <- given, in the prefix fallback
+let z = 1 as 5    1:14: error: expected type after 'as' <- parse_ident_ty p "type after 'as'"
 ```
+
+That last phrase is chosen to land on swiftc's own wording: `diag::expected_type_after_as`
+(`DiagnosticsParse.def:1430`) reads *expected type after 'as'*, and since the helper prepends
+`expected `, naming the phrase `"type after 'as'"` reproduces it exactly — same column, too. When
+the oracle has a message for precisely your construct, matching it costs one string.
 
 The third one and `expected newline or end of statement` are on paths you don't touch.
 
-**Sema's seven, copied from swiftc.** These are the ones the tests assert character for
-character, because here both compilers are checking the same rule — every wording below was taken
-from `DiagnosticsSema.def` and confirmed by running `swiftc -typecheck` on the program in the
-middle column:
+**Sema's eight.** These are the ones the tests assert character for character. Seven are swiftc's,
+taken from `DiagnosticsSema.def` and confirmed by running `swiftc -typecheck` on the program in the
+middle column; the last is ours, because Swift has nothing to copy there:
 
 | message | from | `diag::` |
 |---|---|---|
-| `cannot find 'x' in scope` | `let e = nope` | `cannot_find_in_scope` (:1186) |
+| `cannot find 'x' in scope` | `let e = nope`, and `foo(1)` — unknown names, whether used as values or called | `cannot_find_in_scope` (:1186) |
 | `cannot find type 'Foo' in scope` | `let f: Foo = 1` | `cannot_find_type_in_scope` (:1200) |
 | `binary operator '+' cannot be applied to operands of type 'Int' and 'Bool'` | `1 + true` | `cannot_apply_binop_to_args` (:215) |
 | `binary operator '<' cannot be applied to two 'Bool' operands` | `true < false` | `cannot_apply_binop_to_same_args` (:220) |
 | `unary operator '-' cannot be applied to an operand of type 'Bool'` | `-true` | `cannot_apply_unop_to_arg` (:224) |
 | `cannot convert value of type 'String' to specified type 'Int'` | `let d: Int = "s"` | `cannot_convert_initializer_value` (:323) |
 | `cannot assign to value: 'k' is a 'let' constant` | `k = 2` after `let k` | `assignment_lhs_is_immutable_variable` (:5377) |
+| `print(_:) expects exactly one argument` | `print(1, 2)` | **ours** — Swift's `print` is variadic |
 
 Two details in that list are easy to get wrong and are exactly why it is worth writing down. The
 binary operator has **two** wordings and swiftc picks by whether the operands agree — `1 + true`
@@ -574,8 +544,20 @@ nobody wrote. swiftc avoids the cascade with a dedicated **`ErrorType`**
 erroneous type is itself erroneous, and diagnostics check that flag and stay quiet, so one mistake
 yields one message. Our four-constructor `Types.ty` has no such case — §6's exercise 5 adds it.
 
-The eighth message, `print(_:) expects exactly one argument`, is ours: Swift's `print` is variadic,
-so `print(1, 2)` is perfectly legal there and swiftc has nothing to copy.
+**A bad `as` splits across the two stages**, along the same line as everything else: the parser
+judges *shape*, sema judges *meaning*.
+
+| program | reported by | our message | swiftc |
+|---|---|---|---|
+| `1 as 5` — not an identifier | parser | `expected type after 'as'` | same |
+| `1 as Foo` — unknown name | sema | `cannot find type 'Foo' in scope` | same |
+| `1 as x` — a *value*'s name | sema | `cannot find type 'x' in scope` | *type-casting operator expects a type on its right-hand side (got: let 'x')* |
+
+The last row is a real divergence, and worth knowing why we accept it. swiftc looks `x` up in the
+*value* namespace, finds a `let`, and says so. We have one namespace and no way to tell "no such
+name" from "a name, but not a type" — `Types.of_name` returns `None` for both, so `x` reads exactly
+like `Foo`. Consulting `env` before giving up would close the gap; it is a fair exercise, but not
+the rule this concept is about.
 
 **Parser wording is ours; Sema wording is swiftc's.** swiftc words the annotation case just
 `expected type` (`diag::expected_type`), and our subset's parser diverges from Swift's grammar in
@@ -592,8 +574,8 @@ what carries forward is given.
 
 1. **`token.ml`** — one hole, and it is *not* in `lexer.ml`. The scanner reads an identifier and
    hands the spelling to `Token.keyword_or_ident`, which is where a keyword is recognised; `let`
-   and `var` are there from Phase 1, and `true`/`false` are yours. Two arms. Keep `truely` an
-   identifier — the table is asked about the whole lexeme, never a prefix.
+   and `var` are there from Phase 1; `true`, `false` and `as` are yours. Three arms. Keep `truely`
+   an identifier — the table is asked about the whole lexeme, never a prefix.
 2. **`lexer.ml`** — add the new lexemes. The integer-scan is given; extend it so a `.` followed by a
    digit makes a `Token.Float` (`float_of_string` the whole lexeme). Add a `"` branch that scans a
    string literal to the closing quote (a `Buffer`, handle the `\n \t \" \\` escapes) → `Token.String`.
@@ -604,17 +586,20 @@ what carries forward is given.
    error, `invalid escape sequence in literal` (§2), not a "pass the character through" fallback:
    `"\1"` is not an octal escape in Swift the way it is in C.
    In the operator `match`, make `=` peek for a second `=` (→ `EqEq`), and add `!=` `<` `<=` `>` `>=`
-   and `:` (`Colon`). The comparison tokens already have precedence wired in the parser. A lone
+   and `:` (`Colon`). Their precedence is yours too, next door in `parser.ml`. A lone
    `!` is the one place here that *reports*: `error lx lo "expected '=' after '!'"` — §2's
    diagnostics table says where that wording comes from, and why the span is `lo`.
-3. **`parser.ml`** — four holes. `binop_of_kind` maps the six comparison tokens to their `Ast`
+3. **`parser.ml`** — five holes. `binop_of_kind` maps the six comparison tokens to their `Ast`
    operators, and `infix_bp` gives them a binding power (the table in §2 — looser than `+`).
    In `parse_expr_bp`'s prefix `match`, turn the new literal tokens into
    `Ast.Double_lit` / `Ast.String_lit` / `Ast.Bool_lit` (mirror the given `Int_lit` case — advance,
-   read payload + span). In `parse_annot`, if the next token is `Token.Colon`, consume it and read the
-   following identifier as the type *name*, returning `Some name`. Neither hole composes a
-   diagnostic of its own — the given `parse_ident` helper takes the `what` phrase
-   (`"a type name"`) and reports `expected …` itself. See §2.
+   read payload + span). In the Pratt loop, add `e as T`: it is not a binary operator — its right
+   side is a type *name*, so it cannot go through `binop_of_kind` — but it binds like one, at the
+   given `cast_bp`; read the name with the given `parse_ident_ty` and build `Ast.Ascribe`. In
+   `parse_annot`, if the next token is `Token.Colon`, consume it and read the following identifier
+   as the type *name*, returning `Some name`. None of these compose a diagnostic of their own — the
+   given `parse_ident`/`parse_ident_ty` helpers take the `what` phrase (`"a type name"`) and report
+   `expected …` themselves. See §2.
 4. **`types.ml`** — one hole at the bottom: `of_name` maps a written annotation (`: Double`) to a
    `ty`. `Int` carries over from Phase 1; add the three names this concept introduces, and leave
    everything else `None` — that `None` is what makes sema say *cannot find type 'Foo' in scope*.
@@ -629,9 +614,16 @@ what carries forward is given.
    - `infer e` — the literal cases are given. Add `Var` (look up `env`, else *cannot find … in
      scope*); `Unary '-'` (operand must be numeric); `Binary` (operator typing above — a helper that
      `unify`s the operand types is the clean way, with an `is_int_literal` predicate so a literal can
-     flex to `Double`); `Call` (`print(_:)` takes one argument of *any* type — that phrase is about the argument, not
+     flex to `Double`. Two things to get right: decide each operator against the type `unify`
+     *returned*, not against the operands' own types — the coercion happens inside `unify`, so a
+     test on the raw types cannot see it; and note that the type to fall back on after reporting
+     differs per operator, since a failed comparison is still a `Bool`); `Call` (`print(_:)` takes
+     one argument of *any* type — that phrase is about the argument, not
      the result; its result is `Void` in Swift, and with no `TVoid` yet you return `TInt` as the
-     placeholder §2 describes). Every one of those
+     placeholder §2 describes. `print` is the only function this subset has, so any other name is
+     *cannot find '%s' in scope* — the same message an unknown variable gets, because to the
+     checker it is the same question. Infer the arguments anyway, so a mistake inside them is
+     reported in the same run instead of hiding behind the unknown name). Every one of those
      error paths must still **return a type** — report, then return a plausible one (`TInt`) and
      keep walking, exactly as §2 describes; a checker that stops at the first bad name finds one
      bug per run.
@@ -725,10 +717,14 @@ perf gates when there's something to optimise.
 
 ## 7. Recap & what's next
 
-You built a **bidirectional type checker**: `infer` synthesises types bottom-up, `check` pushes an
-expected type top-down, and the bridge between them — plus the integer-literal coercion — is what
-makes Swift's literal behaviour and strict value typing fall out correctly. You also met the thing it
-*approximates*: Swift's constraint solver (Phase 5).
+You built a **bidirectional type checker**. `infer` synthesises a type bottom-up; `check` takes an
+expected type and pushes it down. Two rules do the interesting work: an integer literal may become
+a `Double` when one is expected, and a *value* of type `Int` may not. That pair is why `1 + 2`
+fits a `Double` annotation while `i` does not — Swift's polymorphic literals and its refusal to
+convert numeric types, from one small predicate.
+
+You also met the thing this approximates: Swift's constraint solver (Phase 5), which reaches the
+same answers by collecting constraints and solving them, rather than by pushing a type down.
 
 Next, **06-control-flow** puts your new `Bool` type to work: `if`/`else`, `while`, `for i in a..<b`,
 and short-circuit `&&`/`||` — the first time the program has more than one straight-line path, which

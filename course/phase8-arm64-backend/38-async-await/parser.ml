@@ -233,7 +233,7 @@ let rec parse_expr_bp (p : t) (min_bp : int) : Ast.expr =
     if peek_kind p = Token.Kw_as && cast_bp >= min_bp
        && peek_kind_at p 1 <> Token.Question && peek_kind_at p 1 <> Token.Bang then (
       ignore (advance p);
-      let name, tspan = parse_ident_ty p "a type name" in
+      let name, tspan = parse_ident_ty p "type after 'as'" in
       loop (Ast.Ascribe (lhs, name, span_between (Ast.expr_span lhs) tspan)))
     else
     if peek_kind p = Token.Question && peek_kind_at p 1 = Token.Question && coalesce_bp >= min_bp then (
