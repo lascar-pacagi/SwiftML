@@ -102,9 +102,28 @@ written by hand instead of read off a signature. The **default bridge** between 
 Everything interesting is the rules that fire *before* that fall-through — the rules that make
 `check` do something cleverer than "infer then compare."
 
-**How much cleverer, though?** It is worth asking whether those extra rules earn their keep. Give
-`check` nothing but the fall-through plus one exception — *a tree of integer literals may be a
-Double* — and almost every program in this subset lands on the same verdict. Almost:
+**How much cleverer, though?** Worth asking whether those extra rules earn their keep. Take the
+fall-through on its own first — `check e τ` is *only* "infer and compare", no exceptions:
+
+```
+                            pure fall-through   swiftc
+let d: Double = 1           REJECT              accept
+let d: Double = 1 + 2       REJECT              accept
+let a = 1 as Double         REJECT              accept
+var x: Double = 0; x = 3    REJECT              accept
+let e = 1 + 2.0             accept              accept
+```
+
+Every annotated `Double` holding an integer literal is refused, because `infer` committed `1 : Int`
+before the annotation was ever consulted — which is the failure §2 opened with, now measured. The
+last line survives for a reason worth noticing: `1 + 2.0` has no annotation, so it never goes
+through `check` at all; `unify` handles it inside `infer`.
+
+The obvious repair is the wrong one. Allowing *any* `Int` to become a `Double` — a promotion rule —
+buys those four programs at the cost of accepting `let d: Double = i`, which Swift rejects: the
+flexibility belongs to literals, not to the type. So the rule has to name literals, and now
+`check` needs one exception — *a tree of integer literals may be a Double*. With it, almost every
+program in this subset lands on the right verdict. Almost:
 
 ```
                                 let d: Double = 1 % 2
