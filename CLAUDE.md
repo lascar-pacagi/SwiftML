@@ -205,6 +205,10 @@ Run from `course/`:
   own output. Exit status is preserved, so RED/GREEN checks still work. Each concept's cram tests
   run `./lab.exe`, built from THAT concept's library — so they test the code in that directory,
   not the phase binary. RED on the skeleton, GREEN with `solution/` swapped in.
+- Answer key: `make check-solution C=<dir>` swaps `solution/*.ml` over the skeletons, runs that
+  concept's tests, and restores (a trap puts your work back even on an interrupt). It is the ONLY
+  thing that compiles `solution/`, so a reference that has drifted from the skeleton is caught by a
+  command instead of by chance — `solution/token.ml` once lost a keyword the skeleton had.
 - Differential vs swiftc: `make oracle F=tests/programs/arith.swift` (`B=swiftml4` to pick a
   later phase's binary).
 - Benchmark (concepts with a `bench/`: 01-lexer, 20-llvm-opt): `make bench C=phase4-optimizer/20-llvm-opt`.
