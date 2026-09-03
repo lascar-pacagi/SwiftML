@@ -1,6 +1,14 @@
+; The concept lab binary: the .t cram tests run ./lab.exe, which links THIS concept's library —
+; so they test the parser in this directory, not the phase binary (which links all of Phase 1).
+(executable
+ (name lab)
+ (modules lab)
+ (libraries swiftml_parser)
+ (flags
+  (:standard -warn-error -a)))
+
 (cram
- (deps
-  (package swiftml)))
+ (deps lab.exe oracle-corpus.txt))
 
 ; Alcotest unit tests for the parser — assert AST structure + diagnostics in-process.
 (test

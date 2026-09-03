@@ -204,12 +204,12 @@ let () =
   Alcotest.run "parser"
     [
       (* layer 1 — TODO(02a), needs only parse_expr *)
-      ("expr: precedence", [ Alcotest.test_case "precedence & associativity" `Quick test_expr_precedence ]);
+      ("expr: precedence", [ Alcotest.test_case "precedence, associativity" `Quick test_expr_precedence ]);
       ("expr: unary", [ Alcotest.test_case "unary minus" `Quick test_expr_unary ]);
       ("expr: calls", [ Alcotest.test_case "comma-separated args" `Quick test_expr_calls ]);
       ("expr: nesting", [ Alcotest.test_case "calls and parens nest" `Quick test_expr_nested_calls ]);
-      ("expr: errors", [ Alcotest.test_case "diagnostics from an expression" `Quick test_expr_errors ]);
-      ("expr: spans", [ Alcotest.test_case "spans cover their operands" `Quick test_expr_spans ]);
+      ("expr: errors", [ Alcotest.test_case "a diagnostic is raised" `Quick test_expr_errors ]);
+      ("expr: spans", [ Alcotest.test_case "spans cover operands" `Quick test_expr_spans ]);
       (* layer 2 — TODO(02b), needs parse_stmt (and your expression parser) *)
       ("stmt: kinds", [ Alcotest.test_case "statement kinds" `Quick test_stmt_kinds ]);
       ("stmt: errors", [ Alcotest.test_case "malformed bindings" `Quick test_stmt_errors ]);
@@ -218,5 +218,5 @@ let () =
       ("program: blank lines", [ Alcotest.test_case "newlines and eof" `Quick test_program_blank_lines ]);
       ("program: errors", [ Alcotest.test_case "statement separators" `Quick test_program_errors ]);
       ("program: recovery", [ Alcotest.test_case "reports and keeps going" `Quick test_program_recovery ]);
-      ("program: rejects", [ Alcotest.test_case "malformed programs are reported" `Quick test_program_rejects ]);
+      ("program: rejects", [ Alcotest.test_case "malformed is reported" `Quick test_program_rejects ]);
     ]

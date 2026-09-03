@@ -17,7 +17,8 @@ You'll turn the flat token list into a **tree** — the AST — that captures st
 
 - **You implement:** `parse_expr_bp`, `parse_stmt`, `parse_program` in `parser.ml` (this dir).
 - **Outcome:** `swiftml --emit-ast arith.swift` prints the correct tree; Sema (03) and IRGen (04)
-  consume it.
+  consume it. The tests reach each function on its own — `--emit-expr`, `--emit-stmt`,
+  `--emit-ast` on the lab binary — so `parse_expr_bp` can be green before `parse_stmt` exists.
 - **Two rungs** (the README's version table). `v0_parse` is what you are about to write: it accepts
   the grammar and reports what it cannot parse. **`v1_recovery`** is the optional second rung —
   after a diagnostic, resync to the next newline instead of stumbling on token by token. The
@@ -169,7 +170,7 @@ Open `parser.ml` in this directory. Helpers `peek`, `peek_kind`, `advance`, `exp
    — because its callers run explicit panic-mode recovery (`skipUntilDeclStmtRBrace` and
    friends) that consumes for it. The arm just above, for a token the *lexer* already rejected,
    does consume: "Eat an invalid token in an expression context." Either split works; what is
-   not allowed is neither side making progress. §9's first exercise moves us to swiftc's
+   not allowed is neither side making progress. §6's first exercise moves us to swiftc's
    arrangement, adding skip-to-the-next-newline recovery in `parse_program`.
 2. **The infix loop** completes `parse_expr_bp`. Starting from the `left` that `parse_prefix`
    returned, repeat until the next token is no longer an operator you may take:
@@ -206,16 +207,34 @@ Open `parser.ml` in this directory. Helpers `peek`, `peek_kind`, `advance`, `exp
 make lab C=phase1-minimal/02-parser
 ```
 
-The cram test checks `--emit-ast`. Precedence and associativity are the whole point:
+Four cram files and one unit suite, one per hole, in the order you fill them:
+
+- `parser-expr.t` — **`TODO(02a)`** through `--emit-expr`: precedence (`1 + 2 * 3`), parentheses,
+  left-associativity (`10 - 4 - 3`), the `/ %` level, unary minus, call arguments in order, and one
+  `*`-where-an-operand-should-be that must be reported rather than accepted.
+- `parser-stmt.t` — **`TODO(02b)`** through `--emit-stmt`: `let`, `var`, a reassignment, an
+  expression statement, and `let = 5`.
+- `parser-program.t` — **`TODO(02c)`** through `--emit-ast`: several statements in order, blank and
+  comment-only lines, a file with no trailing newline, two statements on one line (an error), and
+  two bad lines yielding two diagnostics — the parser recovers and keeps going.
+- `oracle.t` — the headline: every program in `oracle-corpus.txt` goes to `swiftc -typecheck` and
+  to your `--emit-ast`, and the two must agree on accept/reject. The corpus is otherwise-legal
+  Swift, so only syntax decides. A crash is reported as a crash, never counted as a rejection.
+- `test_parser.ml` — the same ground as alcotest cases, plus the spans and the error count.
+
+Each case is a sentence stating what is claimed; on a failure the report shows what the test wants
+and what your code printed, whole blocks side by side. The dump grammar to read them by:
 
 ```
 1 + 2 * 3     =>  (+ 1 (* 2 3))
 (1 + 2) * 3   =>  (* (+ 1 2) 3)
 10 - 4 - 3    =>  (- (- 10 4) 3)
 -5 + 8        =>  (+ (- 5) 8)
+let a = 6     =>  (let a 6)          c = c * 2  =>  (= c (* c 2))
 ```
 
-Record golden output with `dune promote` once correct.
+A hole you have not started shows as `TODO`, not as a failure; the `parser exercises` suite is
+optional and stays `TODO (optional)` until §6's work changes the parser's behaviour.
 
 ## 5. Benchmark it
 
