@@ -11,8 +11,8 @@ In Phase 1 every value was an `Int`, so the "type checker" only had to resolve n
 language has **four ground types** — `Int`, `Bool`, `Double`, `String` — and that changes everything:
 the same syntax (`1 + 2`, `a == b`, `let x = e`) means different things at different types, some
 combinations are errors (`1 + true`), and a literal like `1` can be an `Int` *or* a `Double`
-depending on where it sits. The compiler must work out the type of **every expression** and reject
-the programs that don't add up — exactly, identically to how `swiftc` does.
+depending on where it sits. The compiler must work out the type of **every expression**, and it
+must reject exactly the programs `swiftc` rejects.
 
 - **You implement:** the new lexemes (`lexer.ml`), the new syntax (`parser.ml`), and the heart of
   this concept — the **bidirectional type checker** in `sema.ml`.
@@ -90,8 +90,9 @@ The general shape is the same for every **elimination form** — the classic app
 *synthesise* the function's type, then *check* each argument against the parameter type you just
 learned. `07-functions` does exactly that once parameters have declared types
 (`List.iter2 (fun a t -> check_expr a t) args ptypes`); `e as T` is the same idea with the type
-written by hand instead of read off a signature. The **default bridge** between them is one rule: *to check `e` against
-`τ`, when there's no smarter rule, `infer` its type and compare.*
+written by hand instead of read off a signature. The **default bridge** between the two judgments
+is one rule: *to check `e` against `τ`, when there's no smarter rule, `infer` its type and
+compare.*
 
 ```
 Γ ⊢ e ⇒ σ      σ = τ
@@ -102,8 +103,8 @@ written by hand instead of read off a signature. The **default bridge** between 
 Everything interesting is the rules that fire *before* that fall-through — the rules that make
 `check` do something cleverer than "infer then compare."
 
-**How much cleverer, though?** Worth asking whether those extra rules earn their keep. Take the
-fall-through on its own first — `check e τ` is *only* "infer and compare", no exceptions:
+**How much cleverer, though?** It is worth asking whether those extra rules earn their keep. Take
+the fall-through on its own first — `check e τ` is *only* "infer and compare", no exceptions:
 
 ```
                             pure fall-through   swiftc
@@ -268,8 +269,8 @@ which is the degenerate case of what swiftc's constraint solver does with conver
 
 ### What Swift *actually* does — and what we simplify
 
-Our two-mode checker is a real, well-known technique (it's how a lot of production checkers handle the
-common cases), but Swift's full type checker is more powerful: it's a **constraint solver**.
+Our two-mode checker is a real, well-known technique — it is how many production checkers handle
+the common cases — but Swift's full type checker is more powerful: it is a **constraint solver**.
 `swift/lib/Sema/CSGen.cpp` walks the expression and *generates constraints* (`$T0 == $T1`,
 `$T2 conforms to ExpressibleByIntegerLiteral`, "this `+` is one of these N overloads"), and
 `CSSolver.cpp` solves them by **unification + overload resolution**, exploring choices and
@@ -308,7 +309,7 @@ Concretely, what we deliberately simplify in concept 05 (all noted so you know t
 
 ### The subset you are growing into
 
-**New lexemes.** Five things the Phase-1 lexer never saw:
+**New lexemes.** Six things the Phase-1 lexer never saw:
 
 | spelling | token | notes |
 |---|---|---|
@@ -417,7 +418,7 @@ low to interrupt a `+` at 10, so the left side finishes first. Get the order wro
 tighter than `+` — and you would silently build `a + (1 == b) * 2`, which is why
 `tests/parser-precedence.t` checks the *tree shape*, not just that it parses.
 
-Ours are **left-associative**, so `1 < 2 == true` is `(1 < 2) == true`. Swift makes comparisons
+Our comparisons are **left-associative**, so `1 < 2 == true` is `(1 < 2) == true`. Swift makes them
 **non-associative** and rejects `a < b < c` outright; §6's first exercise fixes ours to match.
 
 **How swiftc does it.** It does not bake precedence into the parser at all. Operators are ordinary
@@ -449,7 +450,7 @@ swift/include/swift/AST/DiagnosticsParse.def
 ```
 
 Sema's live next door in `DiagnosticsSema.def` — `cannot_find_in_scope` (:1186) and
-`cannot_convert_initializer_value` (:322) are the two §3 asks you to emit.
+`cannot_convert_initializer_value` (:323) are the two §3 asks you to emit.
 
 **2. `swiftc` itself — the behavioural oracle.** Quicker than grepping when you know the *program*
 but not the diagnostic's name: write the bad snippet and read the answer.
@@ -478,8 +479,8 @@ Swift operator (prefix "not", postfix force-unwrap), so its *lexer* accepts it h
 complaint arrives later, from the parser — `'!' is not a binary operator`. Our subset gives a lone
 `!` no meaning until concept 13, so we reject it while scanning and say what we were looking for.
 
-**A diagnostic is a message *and* a place**, and the lexer's five don't point alike. Match swiftc
-on each — run the snippet and read the column it prints:
+**A diagnostic is a message *and* a place.** Each of the five blames a different position, and
+swiftc's is the one to match — run the snippet and read the column it prints:
 
 | input | swiftc's caret | ours |
 |---|---|---|
@@ -520,7 +521,8 @@ That last phrase is chosen to land on swiftc's own wording: `diag::expected_type
 `expected `, naming the phrase `"type after 'as'"` reproduces it exactly — same column, too. When
 the oracle has a message for precisely your construct, matching it costs one string.
 
-The third one and `expected newline or end of statement` are on paths you don't touch.
+`expected expression` (the prefix fallback) and `expected newline or end of statement` come from
+given code; no hole of yours produces them.
 
 **Sema's eight.** These are the ones the tests assert character for character. Seven are swiftc's,
 taken from `DiagnosticsSema.def` and confirmed by running `swiftc -typecheck` on the program in the
@@ -630,22 +632,23 @@ what carries forward is given.
    as you write the `as` rule (the compiler will say so). Everything is top-level and takes `cx`
    explicitly, so `tests/test_units.ml` can call each piece on its own and a failure names the
    function rather than "the checker". The `TODO(05a…g)` bodies are the rules:
-   - `infer e` — the literal cases are given. Add `Var` (look up `env`, else *cannot find … in
-     scope*); `Unary '-'` (operand must be numeric); `Binary` (operator typing above — a helper that
-     `unify`s the operand types is the clean way, with an `is_int_literal` predicate so a literal can
-     flex to `Double`. Two things to get right: decide each operator against the type `unify`
-     *returned*, not against the operands' own types — the coercion happens inside `unify`, so a
-     test on the raw types cannot see it; and note that the type to fall back on after reporting
-     differs per operator, since a failed comparison is still a `Bool`); `Call` (`print(_:)` takes
-     one argument of *any* type — that phrase is about the argument, not
-     the result; its result is `Void` in Swift, and with no `TVoid` yet you return `TInt` as the
-     placeholder §2 describes. `print` is the only function this subset has, so any other name is
-     *cannot find '%s' in scope* — the same message an unknown variable gets, because to the
-     checker it is the same question. Infer the arguments anyway, so a mistake inside them is
-     reported in the same run instead of hiding behind the unknown name). Every one of those
-     error paths must still **return a type** — report, then return a plausible one (`TInt`) and
-     keep walking, exactly as §2 describes; a checker that stops at the first bad name finds one
-     bug per run.
+   - `infer e` — the literal cases are given; four arms are yours, and every error path must
+     still **return a type**: report, hand back a plausible one (`TInt`), keep walking. A checker
+     that stops at the first bad name finds one bug per run.
+     - `Var`: look it up in `env`, else *cannot find … in scope*.
+     - `Unary '-'`: the operand must be numeric, and keeps its type.
+     - `Binary`: the operator typing above. A helper that `unify`s the two operand types is the
+       clean shape, with `is_int_literal` letting a literal flex to `Double`. Two things to get
+       right: decide each operator against the type `unify` *returned*, not the operands' own
+       types — the coercion happens inside `unify`, so a test on the raw types cannot see it; and
+       the type to fall back on after reporting differs per operator, since a failed comparison
+       is still a `Bool`.
+     - `Call`: `print(_:)` takes one argument of *any* type — that phrase is about the argument,
+       not the result. Its result is `Void` in Swift; with no `TVoid` yet, return `TInt` as the
+       placeholder §2 describes. `print` is the only function this subset has, so any other name
+       is *cannot find '%s' in scope* — the same message an unknown variable gets, because to the
+       checker it is the same question. Infer the arguments anyway, so a mistake inside them is
+       reported in the same run instead of hiding behind the unknown name.
    - `check_expr e τ` — the **bidirectional** half. An `Int_lit` checks against `Int` *or* `Double`.
      For `Binary` arithmetic when τ is numeric, push τ into both operands — and for `Unary` `-e`
      likewise, into the operand, since `-1` must be able to become a `Double` too. Everything
@@ -670,7 +673,9 @@ Each run prints a `PASS`/`FAIL` line per test file and an `OK`/`FAIL` line per c
 watch the concept go green a hole at a time rather than waiting for all three stages. The cram
 files are split the same way the work is — one per `TODO(05)` hole:
 
-- **`tests/lexer-keywords.t`** — `true`/`false` reach the token stream as keywords, while
+Lexer, then parser, then types, then sema — the order you fill the holes in:
+
+- **`tests/lexer-keywords.t`** — `true`/`false`/`as` reach the token stream as keywords, while
   `truelle`, `falsette` and `variable` stay identifiers. Goes green when `token.ml`'s table is
   done.
 - **`tests/lexer-numbers.t`** — the number scanner alone, through `--emit-tokens` (the driver bails
@@ -683,29 +688,41 @@ files are split the same way the work is — one per `TODO(05)` hole:
   the `:`, and the lone-`!` diagnostic. Goes green when the operator hole is done.
 - **`tests/parser-precedence.t`** — `--emit-ast`: the tree shape of `1 + 2 < 3 * 4` and friends.
   Goes green with `binop_of_kind` + `infix_bp`.
-- **`tests/parser-ascription.t`** — `--emit-ast`: `1 as Double` is one `Ascribe` node, and `as`
-  groups looser than `+`, tighter than `<`. Goes green with the `cast_bp` arm in the Pratt loop.
-- **`tests/sema-ascription.t`** — `--typecheck`: `1 as Double` accepted, `i as Double` rejected,
-  unknown type names caught. Goes green with the rule where `infer` calls `check`.
 - **`tests/parser-literals.t`** — `--emit-ast`: the tokens become `Double_lit`/`String_lit`/
   `Bool_lit`. Goes green with the prefix hole in `parse_expr_bp`.
+- **`tests/parser-ascription.t`** — `--emit-ast`: `1 as Double` is one `Ascribe` node, `as`
+  groups looser than `+` and tighter than `<`, and `1 as 5` is *expected type after 'as'*. Goes
+  green with the `cast_bp` arm in the Pratt loop.
 - **`tests/parser-annotations.t`** — `--emit-ast`: `let d: Double = 3.14` keeps its annotation.
   Goes green with `parse_annot`.
-- **`tests/test_units.ml`** (alcotest `sema-units`) — each of the five holes called directly:
-  `is_int_literal` on hand-built trees, `unify` in both operand positions, `infer`/`check_expr`/
-  `check_stmt` against a `ctx` you construct, including that a bad name is *reported* rather than
-  raised. This is the suite that tells you which hole is wrong.
+- **`tests/test_parser.ml`** (alcotest `parser-types`) — the same syntax as AST structure.
+- **`tests/test_types.ml`** (alcotest `types`) — `of_name` on the four names, and that anything
+  else is `None`.
+- **`tests/test_units.ml`** (alcotest `sema-units`) — each of the five sema holes called
+  directly: `is_int_literal` on hand-built trees, `unify` in both operand positions,
+  `infer`/`check_expr`/`check_stmt` against a `ctx` you construct, including that a bad name is
+  *reported* rather than raised. This is the suite that tells you **which hole** is wrong.
 - **`tests/sema-coercion.t`** — `--typecheck` accept/reject across the one coercion's boundary:
   literal trees flex to `Double`, a typed variable never does, and one non-literal leaf stops it.
-  That is `is_int_literal` seen from outside, since it is local to `check`.
+  That is `is_int_literal` seen from outside, through whole programs.
+- **`tests/sema-ascription.t`** — `--typecheck`: `1 as Double` accepted, `i as Double` rejected,
+  unknown type names caught. Goes green with the rule where `infer` calls `check`.
 - **`tests/sema-typecheck.t`** — `--typecheck` accept/reject with the matching diagnostic. Needs
   every earlier hole plus the checker, so it is the last file to go green.
-- **alcotest** (`tests/test_parser.ml`, `tests/test_sema.ml`): AST structure for the new syntax, and
-  the *exact* type-checker diagnostics (and that well-typed programs produce none).
-- **The headline test — the type-check oracle.** For each program, `swiftc -typecheck` and
-  `swiftml2 --typecheck` must *agree* on accept/reject. The lab checks this on a corpus spanning
-  coercion (`let d: Double = 1 + 2` ✓), literal flex (`1 + 2.0` ✓), value mismatch
-  (`let d: Double = i` ✗), and `true < false` ✗ — the cases where a naive checker diverges from Swift.
+- **`tests/test_sema.ml`** (alcotest `sema-types`) — the *exact* type-checker diagnostics, and
+  that well-typed programs produce none.
+- **`tests/oracle.t` — the headline test, the type-check oracle.** Every program in
+  `oracle-corpus.txt` (32 of them) goes to `swiftc -typecheck` and to your `--typecheck`, and the
+  two must *agree* on accept/reject: coercion (`let d: Double = 1 + 2` ✓), literal flex
+  (`1 + 2.0` ✓), value mismatch (`let d: Double = i` ✗), `true < false` ✗, `let d: Double = 1 % 2`
+  ✗ — the cases where a naive checker diverges from Swift. It cannot judge your wording, only your
+  verdicts; a crash is reported as a crash, never as a rejection.
+- **`tests/test_exercises.ml`** — §6's exercises, optional: each group stays `TODO (optional)`
+  until a probe sees your checker behave differently from stock, then it must pass.
+
+A hole you have not started shows as `TODO` with the list of what it will check; a hole in
+progress shows `FAIL` with, under each failing case, what the test wants and what your code
+printed, as whole blocks.
 
 ## 5. Benchmark it
 
