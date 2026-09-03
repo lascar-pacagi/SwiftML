@@ -60,15 +60,15 @@ report to. Here it becomes the point. Every program that reaches Sema already le
 it is well-formed Swift text. So from this stage on, "the compiler rejected my program" **is** a
 message, and that message is the entire user-visible output of a failed compile. The wording is
 not decoration; it is the specification of the stage, and the tests treat it that way: the cram
-test greps the exact substring, and `tests/test_sema.ml` asserts the exact string with `List.mem`.
-`"cannot find 'y' in scope."` — one trailing period — fails.
+files compare the whole `line:col: error: message` line, and `tests/test_sema.ml` asserts the exact
+string with `List.mem`. `"cannot find 'y' in scope."` — one trailing period — fails.
 
 That raises an obvious question: *whose* wording? swiftc's. It is the behavioral oracle for
 messages exactly as it is for output, and asking it takes one command:
 
 ```bash
-swiftc -typecheck bad.swift                    # the authority
-dune exec swiftml -- --typecheck bad.swift     # ours, same stage, no codegen
+swiftc -typecheck bad.swift                                                # the authority
+_build/default/phase1-minimal/03-sema/tests/lab.exe --typecheck bad.swift  # ours, same stage
 ```
 
 `--typecheck` is our `swiftc -typecheck`: lex → parse → sema and stop. It exists so Sema can be
@@ -79,8 +79,8 @@ still a skeleton.
 `make oracle` (see §4) is the coarser, automatic version of the same comparison, and it is worth
 knowing precisely what it does and does not check.
 
-Where we knowingly diverge, say so rather than pretend. swiftc has three different messages for
-what our Phase-1 sema treats as one rule:
+Where we knowingly diverge, say so rather than pretend. Here is every program this concept
+rejects, with both compilers' words:
 
 | program | swiftc says | swiftml says |
 |---|---|---|
@@ -92,8 +92,10 @@ what our Phase-1 sema treats as one rule:
 | `print(1, 2)` | *accepted* — prints `1 2` | `print(_:) expects exactly one argument` |
 | `print()` | *accepted* — prints a blank line | `print(_:) expects exactly one argument` |
 
-The first three we match exactly. The last two are not a wording difference at all but a **subset
-restriction**: the real `print` is variadic with two defaulted parameters — its full name is
+The first three we match exactly, message and position: `1:7` for `print(y)` is the `y`, `2:1`
+for `k = 2` is the assignment. The `let a = a` rows are one rule for us — the name is not bound
+yet — where swiftc distinguishes a top-level cycle from a local use-before-declaration. The last
+two are not a wording difference at all but a **subset restriction**: the real `print` is variadic with two defaulted parameters — its full name is
 `print(_:separator:terminator:)` — so swiftc happily accepts any number of arguments. Phase 1
 supports exactly one, and says so in swiftc's naming style without claiming to be swiftc.
 

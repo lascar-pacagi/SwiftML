@@ -15,7 +15,7 @@ giving up structure the target does not have. A tree of nested expressions becom
 of instructions; a named variable becomes an address or a register; `print(x)` becomes a call to
 libc. Nothing is added — the meaning is preserved — but each step throws away a little of what the
 source made explicit, and the pipeline is a series of such steps: AST → SIL in Phase 2, SIL → LLVM
-IR after that, LLVM IR → ARM64 in Phase 8. This concept is the first one.
+IR after that, LLVM IR → ARM64 in Phase 8. This concept is the first of those steps.
 
 After it, `swiftml build` produces real programs and the oracle can compare them to `swiftc`
 byte-for-byte.

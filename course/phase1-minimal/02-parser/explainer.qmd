@@ -136,6 +136,28 @@ sees the tree. `swiftc` makes the same trade in `lib/Parse` (its recursive-desce
 `ParserStatus` and keep going). Where it doesn't recover well yet — a bad *prefix* token — is
 Exercise 1.
 
+### The parser's diagnostics
+
+Concept 01's lexer copied its wording from `DiagnosticsParse.def`; the parser's is **ours**. Swift's
+grammar is far larger and its messages name constructs we do not have (`expected pattern`,
+`expected ')' in expression list`), so the tests check that a malformed program is *reported* —
+how many errors, exit 1, parsing continued — and leave the words to you. These are the four
+situations, with the wording `solution/parser.ml` uses and what swiftc says for the same input,
+so you can compare positions:
+
+| input | where | ours | swiftc |
+|---|---|---|---|
+| `let b = *` | prefix position, no operand | `expected expression` | `unary operator cannot be separated from its operand` |
+| `let = 5` | `parse_ident` | `expected identifier` | `expected pattern` |
+| `print((1 + 2)` | `expect RParen` | `expected ')'` | `expected ')' in expression list` |
+| `let a = 1 2` | after a statement | `expected newline or end of statement` | `consecutive statements on a line must be separated by ';'` |
+
+The pattern is one function, `expect p kind what`, whose message is `expected <what>`, and two
+hand-written sites: the prefix position and the statement terminator. Every one is reported at the
+**offending token's span** — the token that was found, not the one that was hoped for — which is
+also where swiftc points (`1:5` for `let = 5`, the `=`). §6's first exercise makes the prefix
+message name the token it found.
+
 ## 3. Build it, step by step
 
 Open `parser.ml` in this directory. Helpers `peek`, `peek_kind`, `advance`, `expect`, `infix_bp`,
