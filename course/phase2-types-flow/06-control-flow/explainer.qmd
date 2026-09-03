@@ -94,9 +94,43 @@ and every backend works on this graph, not the tree. That representation is **SI
 concept is where you feel why the next one needs to exist. (It's also why we don't run loops yet —
 there's no graph-shaped IR to lower them into until SIL.)
 
+### The diagnostics you emit
+
+Same three sources as concept 05: swiftc's `.def` files where the construct exists, `swiftc
+-typecheck` on the snippet to confirm, our own wording only where the subset has nothing to copy.
+
+**Lexer** — three new arms report, all at the offending byte (`lo`), all recovering by skipping it:
+
+| input | message | source |
+|---|---|---|
+| `a & b` | `expected '&' after '&'` | ours — `&` alone is Swift's bitwise-and, meaningless here |
+| `a \| b` | `expected '\|' after '\|'` | ours, the same shape |
+| `0 .. 3`, `.5` | `unexpected character '.'` | ours — a `.` that does not start `..<` |
+
+**Parser** — nothing new to compose: the given `expect`/`parse_ident` helpers report `expected
+<what>`, and you choose the phrase: `'{'` after a condition, `'in'` and `'..<'` in a `for`, `a loop
+variable` for its name. Each lands on the token that was found instead.
+
+**Sema** — the tests compare these character for character:
+
+| program | message | swiftc |
+|---|---|---|
+| `if 1 { }`, `while "no" { }` | `cannot convert value of type 'Int' to specified type 'Bool'` | *integer literal value '1' cannot be used as a boolean; did you mean 'true'?* — a special case of the same rule |
+| `let b = 1 && true` | `binary operator '&&' cannot be applied to operands of type 'Int' and 'Bool'` | overload-resolution wording (see 05); ours is the uniform form |
+| `let b = 1 \|\| 2` | `binary operator '\|\|' cannot be applied to two 'Int' operands` | same shape |
+| `for i in 0 ..< 3 { i = 0 }` | `cannot assign to value: 'i' is a 'let' constant` | **same** — falls out of binding `i` as a `let` |
+| `for i in 0.0 ..< 3 { }` | `cannot convert value of type 'Double' to specified type 'Int'` | a `Range<Double>` complaint about `Stride`/`SignedInteger` — we have no `Range` type, so the bound rule stands in |
+| `continue` outside a loop | `'continue' is only allowed inside a loop` | **same** (`diag::continue_outside_loop`) |
+| `break` outside a loop | `'break' is only allowed inside a loop` | *'break' is only allowed inside a loop, if, do, or switch* — Swift's labeled `break` can leave an `if`; ours cannot, so the message says less |
+| `print(z)` after `if { let z … }` | `cannot find 'z' in scope` | **same** |
+
+The `Bool`-condition and `Int`-bound rules are not new messages at all: they are `check_expr` from
+concept 05 called with an expected type, and its *cannot convert* wording comes along. That is the
+bidirectional checker paying for itself — a statement rule is one call.
+
 ## 3. Build it, step by step
 
-Three skeletons; concepts 1–05 are filled in. Fill the `TODO(06)` holes.
+Three skeletons; concepts 01–05 are filled in. Fill the `TODO(06)` holes.
 
 1. **`lexer.ml`** — in the operator `match`: `{` → `LBrace`, `}` → `RBrace`; `&` then `&` → `AmpAmp`
    (error on a lone `&`); `|` then `|` → `PipePipe`; and `.` then `.<` → `DotDotLt` (the range; error
@@ -120,11 +154,32 @@ Reference: `solution/`. Don't peek until you've tried it.
 make lab C=phase2-types-flow/06-control-flow
 ```
 
-cram (`tests/typecheck.t`) dumps the control-flow AST and runs `--typecheck`; alcotest checks AST
-shape and the exact statement diagnostics. The **type-check oracle** is the headline: `swiftml2
---typecheck` must agree with `swiftc -typecheck` on the corpus — including the rejections that catch a
-naive checker (`if 1`, `break` at top level, `for i … { i = 9 }`, a block-local that escapes its
-braces, a `Double` range bound).
+Seven cram files, one per hole and stage, plus two unit suites and the oracle — in the order you
+fill the holes:
+
+- `lexer-flow.t` — `--emit-tokens`: `{ }`, `&&`, `||`, `..<` (with and without spaces), and the
+  three lone-character diagnostics with their columns. Green with the lexer arm alone.
+- `parser-logical.t` — `--emit-ast`: the precedence of `&&`/`||` (given rows) — green as soon
+  as the tokens exist.
+- `parser-if.t` — `if`, `if/else`, `else if` as a nested `if`, multi-statement and nested
+  blocks, a missing `{`. Green with `parse_block` + `parse_if`.
+- `parser-loops.t` — `while`, `for` with expression bounds, `break`/`continue`, nested loops,
+  a `for` without `in`, a `for` without `..<`. Green with the statement arms.
+- `test_parser.ml` (alcotest `parser-flow`) — the same syntax as AST structure.
+- `sema-logical.t` — `--typecheck`: `&&`/`||` accepted on Bools, both rejection wordings, and an
+  annotation mismatch on their Bool result. Green with the `infer_binary` arm.
+- `sema-flow.t` — the statement rules: conditions, the immutable loop variable and its scope,
+  Int bounds, `break`/`continue` in and out of loops, block scoping and shadowing.
+- `test_sema.ml` (alcotest `sema-flow`) — the exact diagnostics, in-process.
+- `oracle.t` — **the headline**: every program in `oracle-corpus.txt` (22, accept and reject
+  side by side) goes to `swiftc -typecheck` and to your `--typecheck`, and the verdicts must
+  agree. On a disagreement it prints our first diagnostic, so a rejection that is really an
+  unfinished stage (`invalid character in source file` from a lexer that does not know `{`)
+  reads as what it is.
+
+A hole you have not started shows as `TODO` with the list of what it will check; a hole in
+progress shows `FAIL` with, under each failing case, what the test wants and what your code
+printed.
 
 ## 5. Benchmark it
 

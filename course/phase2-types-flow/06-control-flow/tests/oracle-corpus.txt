@@ -1,0 +1,22 @@
+var n = 0\nwhile n < 3 {\n  n = n + 1\n}\nprint(n)
+let c = true\nif c {\n  print(1)\n} else {\n  print(2)\n}
+let n = 2\nif n == 1 {\n  print(1)\n} else if n == 2 {\n  print(2)\n} else {\n  print(0)\n}
+for i in 0 ..< 3 {\n  print(i)\n}
+var s = 0\nfor i in 0 ..< 3 {\n  var j = 0\n  while j < i {\n    s = s + j\n    j = j + 1\n  }\n}\nprint(s)
+while true {\n  if true {\n    break\n  }\n  continue\n}
+let a = true\nlet b: Bool = a && false || true\nprint(b)
+let n = 3\nlet b = n > 1 && n < 5\nprint(b)
+var n = 0\nif true {\n  n = n + 1\n}\nprint(n)
+let x = 1\nif true {\n  let x = "s"\n  print(x)\n}\nlet y: Int = x\nprint(y)
+if 1 {\n  print(1)\n}
+while "no" {\n  print(1)\n}
+for i in 0 ..< 3 {\n  i = 0\n}
+for i in 0.0 ..< 3 {\n  print(i)\n}
+for i in 0 ..< 3 {\n  print(i)\n}\nprint(i)
+break
+while true {\n  continue\n}\ncontinue
+if true {\n  let z = 1\n}\nprint(z)
+let b = 1 && true
+let b = 1 || 2
+let b: Int = true && false
+let a = true\nlet b = a & false

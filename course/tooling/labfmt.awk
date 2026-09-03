@@ -45,7 +45,17 @@ function first_sentence(p,   s) {
   s = p
   if (match(s, /\. /)) s = substr(s, 1, RSTART)          # first sentence
   sub(/[:.][[:space:]]*$/, "", s); sub(/^[[:space:]]+/, "", s)
-  if (length(s) > 76) s = substr(s, 1, 75) "…"
+  if (length(s) > 76) s = trunc_utf8(s, 75) "…"
+  return s
+}
+# awk here is byte-oriented: a cut inside a multibyte character (an em dash, a `…`) leaves a
+# partial sequence that later aborts the run ("towc: multibyte conversion failure").
+function trunc_utf8(s, n,   b) {
+  if (!("\200" in ord)) for (b = 0; b < 256; b++) ord[sprintf("%c", b)] = b
+  s = substr(s, 1, n)
+  while (length(s) && ord[substr(s, length(s), 1)] >= 128 && ord[substr(s, length(s), 1)] < 192)
+    s = substr(s, 1, length(s) - 1)                         # continuation bytes
+  if (length(s) && ord[substr(s, length(s), 1)] >= 192) s = substr(s, 1, length(s) - 1)  # lone lead
   return s
 }
 function load_t(file,   line, blk, prose, started) {
@@ -68,7 +78,7 @@ function load_t(file,   line, blk, prose, started) {
 # ---- section headers -------------------------------------------------------
 /^File "/ {
   match($0, /"[^"]+"/); f = substr($0, RSTART + 1, RLENGTH - 2)
-  flush(); drop_pending(); build = 0
+  flush(); drop_pending(); build = 0; pendblk = ""
   if (f ~ /\.t$/) { sub("^" prefix, "", f); sec("cram", f); tfile = prefix f; load_t(tfile); cram = 1 }
   else { cram = 0; pendfile = f; pend = $0 "\n" }        # maybe an error, maybe just dune noise
   next
