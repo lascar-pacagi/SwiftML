@@ -67,6 +67,12 @@ let test_check_expr () =
   let cx = Sema.create d in
   Sema.check_expr cx (int_ 1) Types.TDouble;          (* the coercion: silent *)
   Sema.check_expr cx (add_ (int_ 1) (int_ 2)) Types.TDouble;
+  (* A comparison does NOT receive the expectation: its result is Bool whatever the operands
+     are, so pushing Bool into `1` and `2` would reject a legal program. It must reach the
+     fall-through instead. *)
+  Sema.check_expr cx (Ast.Binary (Ast.Lt, int_ 1, int_ 2, sp)) Types.TBool;
+  Sema.check_expr cx (Ast.Binary (Ast.Eq, Ast.Bool_lit (true, sp), Ast.Bool_lit (false, sp), sp))
+    Types.TBool;
   Alcotest.(check int) "no diagnostics yet" 0 (List.length (Diagnostics.all d));
   Sema.check_expr cx (Ast.String_lit ("s", sp)) Types.TInt;
   match Diagnostics.all d with

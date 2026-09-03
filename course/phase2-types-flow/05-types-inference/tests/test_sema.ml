@@ -25,7 +25,10 @@ let test_accept () =
   accepted "let s = \"hi\"\nprint(s)";
   accepted "let b = 1 < 2";
   accepted "var n = 1\nn = 2";
-  accepted "let p: Bool = 1 == 1"
+  accepted "let p: Bool = 1 == 1";
+  (* the expectation must NOT be pushed into a comparison's operands *)
+  accepted "let b: Bool = 1 < 2";
+  accepted "let c: Bool = 1.5 >= 2.5"
 
 let test_mismatch () =
   has_error "let x: Int = \"s\"" "cannot convert value of type 'String' to specified type 'Int'";
