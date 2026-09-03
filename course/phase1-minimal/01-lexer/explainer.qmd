@@ -266,13 +266,8 @@ Open `lexer.ml` in this directory. The cursor type, `create`, and the helpers `h
 2. **Capture the start** with `let lo = here lx in`.
 3. **End of input:** `if at_end lx then make lo lx Token.Eof`.
 4. **Dispatch** on `peek_char lx`:
-   - `'0'..'9'`: scan digits into a substring, `int_of_string` it, `make lo lx (Token.Int n)`.
-     ```ocaml
-     let start = lx.pos in
-     while (not (at_end lx)) && (let c = peek_char lx in c >= '0' && c <= '9') do ignore (bump lx) done;
-     let n = int_of_string (String.sub lx.src start (lx.pos - start)) in
-     make lo lx (Token.Int n)
-     ```
+   - `'0'..'9'`: remember `lx.pos`, `bump` while the next char is a digit, take the substring
+     between the two positions, `int_of_string` it, `make lo lx (Token.Int n)`.
    - letter or `'_'`: scan an identifier the same way (first char letter/`_`, rest
      letters/digits/`_`), then `make lo lx (Token.keyword_or_ident text)`.
    - `'+'` → `Plus`, `'-'` → `Minus`, `'*'` → `Star`, `'/'` → `Slash` (only if not a comment, which
@@ -301,9 +296,12 @@ Don't peek at §8 until you've tried it.
 make lab C=phase1-minimal/01-lexer
 ```
 
-Two suites run: the cram test diffs the printed token stream from `swiftml --emit-tokens`, and
-`tests/test_lexer.ml` (alcotest) asserts kinds **and spans** in-process. Between them they pin the
-corners that are easy to get subtly wrong:
+Three suites run. `tests/lexer.t` diffs the token stream from `./lab.exe --emit-tokens` — a
+binary built from *this* directory's lexer, so it is your `next` under test and not the phase
+binary. `tests/test_lexer.ml` (alcotest) asserts kinds **and spans** in-process. And
+`tests/oracle.t` asks `swiftc` itself, every run, whether each program in `oracle-corpus.txt` is
+lexable — the goldens record what swiftc said once; the oracle keeps asking. Between them they
+pin the corners that are easy to get subtly wrong:
 
 - **every comment shape** — `/**/`, `/*/ */`, `/* a **/`, the nested `/*/**/*/`, three-deep nesting,
   `//` inside a block, `/*` inside a line comment, back-to-back comments, a comment as the whole file;
@@ -315,8 +313,9 @@ corners that are easy to get subtly wrong:
 - **CRLF files** lex like LF ones (`'\r'` is trivia);
 - end-of-file edges: no trailing newline, comment-at-eof, empty input.
 
-Because the exact stream is deterministic from `token.ml`, you can record/refresh the cram
-golden output with `dune promote` once your `next` is correct. Expected for `print(1 + 2)`:
+The goldens were produced by running the answer key; they are the specification, not a
+recording of your output — if `dune promote` looks tempting, the test is telling you something.
+Expected for `print(1 + 2)`:
 
 ```
 ident(print)
@@ -650,7 +649,7 @@ newline @ 1:10-2:1        (a span may cross a line break)
 
 Everything stays in this directory. Once it works, teaching `swiftml --emit-tokens` to use it is one
 line in concept 04's `driver.ml` — worth doing to see it end to end, but it is outside this concept,
-so nothing here depends on it (and it will turn `lex.t` red until you `dune promote` the goldens).
+and nothing here depends on it: `lexer.t` runs its own `lab.exe`, which prints kinds only.
 
 ### What exercise 2 has to produce
 

@@ -356,12 +356,12 @@ let suite (rung : string) (lex : rung) =
     (rung ^ " literals/idents", [ case "ints and identifiers" test_literals_idents ]);
     (rung ^ " keywords", [ case "keyword table + munch" test_keywords ]);
     (rung ^ " operators", [ case "operators and punctuation" test_operators ]);
-    (rung ^ " trivia", [ case "whitespace, comments, newlines" test_trivia ]);
+    (rung ^ " trivia", [ case "whitespace and comments" test_trivia ]);
     ( rung ^ " comments",
       [
         case "every valid comment shape" test_comments_valid;
-        case "unterminated comments are errors" test_comments_unterminated;
-        case "diagnostic wording, position and recovery" test_diagnostic_shape;
+        case "unterminated is an error" test_comments_unterminated;
+        case "wording, span, recovery" test_diagnostic_shape;
       ] );
     (rung ^ " line endings", [ case "CRLF" test_crlf ]);
     (rung ^ " calls", [ case "call token shape" test_call_shape ]);
@@ -399,7 +399,7 @@ let () =
       suite "v1_fast" v1
       @ [
           ( "equivalence",
-            [ Alcotest.test_case "v1_fast == v0 (kinds + spans)" `Quick test_rungs_agree ] );
+            [ Alcotest.test_case "v1 == v0, kinds and spans" `Quick test_rungs_agree ] );
         ]
     else
       [

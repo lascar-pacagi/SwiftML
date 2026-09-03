@@ -146,8 +146,8 @@ cram { next }
   key = line; sub(/\.\.$/, "", key)                     # alcotest's box truncates 2 chars shorter
   # A group reporting itself "skipped — … not started" is OPTIONAL work (a §6 exercise), not a
   # pass: show it as TODO so it stays visible, and keep it out of both counts.
-  if (line ~ /skipped — /) {
-    sub(/ — skipped — /, " — ", line); sub(/ not start.*$/, "", line)
+  if (line ~ / — skipped/) {
+    sub(/ — skipped.*$/, "", line)
     if (!seen[cur SUBSEP line]++) { put("  " Y "TODO" Z " " line D " (optional)" Z); nopt[cur]++ }
     next
   }
@@ -166,7 +166,7 @@ END {
   # action's output), not a build failure — turning it into one used to mark everything after
   # it SKIP, i.e. claim tests hadn't run when they had.
 
-  nr = split(cram_files, cf, " "); na = split(alcotest_suites, af, " ")
+  nr = split(cram_files, cf, " "); na = split(alcotest_suites, af, "|")   # suite names may contain spaces
   for (k = 1; k <= nr; k++) if (cf[k] != "") roster[++nrost] = "cram" SUBSEP cf[k]
   for (k = 1; k <= na; k++) if (af[k] != "") roster[++nrost] = "alcotest" SUBSEP af[k]
   for (i = 1; i <= n; i++) {                            # failures not on the roster

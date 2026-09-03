@@ -1,8 +1,15 @@
 ; Make the `swiftml` binary available to the cram tests in this directory.
+; The concept lab binary: the .t cram tests run ./lab.exe, which links THIS concept's library —
+; so they test the lexer in this directory, not the phase binary (which links all of Phase 1).
+(executable
+ (name lab)
+ (modules lab)
+ (libraries swiftml_lexer)
+ (flags
+  (:standard -warn-error -a)))
+
 (cram
- (applies_to lex)
- (deps
-  (package swiftml)))
+ (deps lab.exe oracle-corpus.txt))
 
 ; Alcotest unit tests — link the lexer stage library directly and assert on
 ; token kinds/spans in-process. Runs under `dune build @runtest` alongside the cram test.

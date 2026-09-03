@@ -647,8 +647,10 @@ what carries forward is given.
      keep walking, exactly as §2 describes; a checker that stops at the first bad name finds one
      bug per run.
    - `check_expr e τ` — the **bidirectional** half. An `Int_lit` checks against `Int` *or* `Double`.
-     For `Binary` arithmetic when τ is numeric, push τ into both operands. Everything else: `infer`
-     and compare, erroring with *cannot convert value of type 'X' to specified type 'Y'*.
+     For `Binary` arithmetic when τ is numeric, push τ into both operands — and for `Unary` `-e`
+     likewise, into the operand, since `-1` must be able to become a `Double` too. Everything
+     else: `infer` and compare, erroring with *cannot convert value of type 'X' to specified type
+     'Y'*.
    - `Ascribe (e, T)` — `e as T`, the coercion. Resolve `T` with `Types.of_name`, `check_expr` the
      operand against it, return it. Two lines, and the only place `infer` calls `check`.
    - `check_stmt` — `Let`: if annotated, resolve the name with `Types.of_name` (*cannot find type …*

@@ -69,7 +69,7 @@ let test_ex5 () =
 let group name started what test =
   ( name,
     [ (if (try base_ready () && started () with _ -> false) then Alcotest.test_case "checked" `Quick test
-       else Alcotest.test_case ("skipped — " ^ what ^ " not started") `Quick (fun () -> ())) ] )
+       else Alcotest.test_case "skipped — not started" `Quick (fun () -> ())) ] )
 
 let () =
   Alcotest.run "exercises"

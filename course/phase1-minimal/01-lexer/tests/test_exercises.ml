@@ -174,7 +174,7 @@ let group name started what test =
   ( name,
     [
       (if started () then Alcotest.test_case "checked" `Quick test
-       else Alcotest.test_case ("skipped — " ^ what ^ " not started") `Quick (skipped what));
+       else Alcotest.test_case "skipped — not started" `Quick (skipped what));
     ] )
 
 let () =
