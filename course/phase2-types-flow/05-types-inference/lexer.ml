@@ -42,35 +42,10 @@ let is_ident_cont c = is_ident_head c || is_digit c
 
 (* scan a "..." string literal (the opening quote is at the cursor); basic escapes *)
 let scan_string (lx : t) : string =
-  let start = here lx in
-  ignore (bump lx);
-  let buffer = Buffer.create 16 in
-  let rec loop () =
-    match peek_char lx with
-      | '\000' -> error lx start "unterminated string literal"   
-      | '"' -> ignore (bump lx)
-      | '\\' -> begin
-        ignore (bump lx);
-        match peek_char lx with
-        | '\\' -> ignore (bump lx); Buffer.add_char buffer '\\'; loop ()
-        | 't' -> ignore (bump lx); Buffer.add_char buffer '\t'; loop ()
-        | 'n' -> ignore (bump lx); Buffer.add_char buffer '\n'; loop ()
-        | '"' -> ignore (bump lx); Buffer.add_char buffer '\"'; loop ()
-        | '\000' -> loop ()
-        | _ -> let lo = here lx in ignore (bump lx); error lx lo "invalid escape sequence in literal"; loop ()
-      end
-      | c -> begin 
-        ignore (bump lx);
-        Buffer.add_char buffer c; 
-        loop ()
-      end
-  in
-  loop ();
-  Buffer.contents buffer
-  (* ignore lx; *)
+  ignore lx;
   (* TODO(05): the CONTENTS of a string literal — quotes consumed, the backslash escapes
      (newline, tab, quote, backslash) unescaped. §3. *)
-  (* failwith "TODO(05): scan a string literal" *)
+  failwith "TODO(05): scan a string literal"
 
 let rec next (lx : t) : Token.t =
   (* trivia (given, Phase 1) *)
@@ -106,12 +81,8 @@ let rec next (lx : t) : Token.t =
       let start = lx.pos in
       while (not (at_end lx)) && is_digit (peek_char lx) do ignore (bump lx) done;
       (* TODO(05): a fractional part makes this a Token.Float, otherwise the Token.Int below. §3. *)
-      if peek_char lx = '.' && is_digit (peek2 lx) then begin
-        ignore (bump lx);
-        while (not (at_end lx)) && is_digit (peek_char lx) do ignore (bump lx) done;
-        make lo lx (Token.Float (float_of_string (String.sub lx.src start (lx.pos - start))))
-      end else
-        make lo lx (Token.Int (int_of_string (String.sub lx.src start (lx.pos - start)))))
+      ignore start;
+      make lo lx (Token.Int (int_of_string (String.sub lx.src start (lx.pos - start)))))
     else if c = '"' then make lo lx (Token.String (scan_string lx))
     else if is_ident_head c then (
       let start = lx.pos in
@@ -124,15 +95,6 @@ let rec next (lx : t) : Token.t =
       | '*' -> ignore (bump lx); make lo lx Token.Star
       | '/' -> ignore (bump lx); make lo lx Token.Slash
       | '%' -> ignore (bump lx); make lo lx Token.Percent
-      | ':' -> ignore (bump lx); make lo lx Token.Colon
-      | '<' when peek2 lx <> '=' -> ignore (bump lx); make lo lx Token.Lt
-      | '<' when peek2 lx = '=' -> ignore (bump lx); ignore (bump lx); make lo lx Token.Le
-      | '>' when peek2 lx <> '=' -> ignore (bump lx); make lo lx Token.Gt
-      | '>' when peek2 lx = '=' -> ignore (bump lx); ignore (bump lx); make lo lx Token.Ge
-      | '=' when peek2 lx = '=' -> ignore (bump lx); ignore (bump lx); make lo lx Token.EqEq
-      | '=' when peek2 lx <> '=' -> ignore (bump lx); make lo lx Token.Eq
-      | '!' when peek2 lx = '=' -> ignore (bump lx); ignore (bump lx); make lo lx Token.Ne
-      | '!' when peek2 lx <> '=' -> ignore (bump lx); error lx lo "expected '=' after '!'"; next lx
       (* TODO(05): `== != <= >= < >` and `:` — maximal munch (§2); a lone '!' is an error. *)
       | '(' -> ignore (bump lx); make lo lx Token.LParen
       | ')' -> ignore (bump lx); make lo lx Token.RParen
