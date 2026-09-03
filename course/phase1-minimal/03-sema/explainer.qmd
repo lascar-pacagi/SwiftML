@@ -126,8 +126,10 @@ Open `sema.ml` in this directory. Implement `check (prog) (diags)`:
    - `Ast.Expr_stmt (e, _)` ⇒ `ignore (check_expr e)`.
 4. `check` returns `unit`; the driver checks `Diagnostics.has_errors` and bails before IRGen.
 
-**Tip:** match swiftc's wording where easy (`cannot find 'x' in scope`) so diagnostics are
-familiar — but the test only needs the substring `in scope`.
+**Wording and position both count.** The tests compare the whole `line:col: error: …` line,
+so use swiftc's messages exactly as §2 lists them, and report each one at the span of the thing
+it is about — the name for an unknown name, the call for a bad call, the assignment for a
+write to a constant.
 
 ## 4. Test it
 
@@ -135,14 +137,27 @@ familiar — but the test only needs the substring `in scope`.
 make lab C=phase1-minimal/03-sema
 ```
 
-Two layers, both driven through `--typecheck` so they test Sema and nothing downstream:
+Every file goes through `--typecheck` on the lab binary — lex → parse → sema, no codegen, like
+`swiftc -typecheck` — so it tests your `sema.ml` and nothing downstream. There is one hole, so the
+files split by RULE instead:
 
-- **`tests/sema.t`** (cram) — a valid program produces *no* diagnostics and exits 0 (it reassigns a
-  `var` and refers to earlier bindings; none of that may be falsely rejected), then four rejections
-  each grep their message and check the exit code is 1.
-- **`tests/test_sema.ml`** (alcotest) — runs the front end in-process and compares the **exact**
-  message strings, plus the arity rule `print(_:) expects exactly one argument`. This is the strict
-  one: a substring is not enough, the whole message has to match.
+- `sema-scope.t` — name resolution: a valid program is silent, `print(y)` and `x = 5` at the
+  right column, `let a = a` (the initializer is checked before the name is bound), an unknown
+  name deep inside `-(a * (a + y))`, and three errors from one file in source order.
+- `sema-assign.t` — writing to a `let`, the same lines with `var` accepted, the assigned
+  expression checked, a `let` read freely. Only `error:` lines are compared, so the §6 note
+  exercise may be done or not.
+- `sema-calls.t` — `bar(z)` reports the callee AND its argument, `print(1, 2)` and `print()`
+  are the arity error, a well-formed call is silent.
+- `oracle.t` — the headline: every program in `oracle-corpus.txt` goes to `swiftc -typecheck` and
+  to your `--typecheck`, and the two must agree on accept/reject (the corpus avoids print's
+  arity and redeclaration, where the two are meant to differ). A crash is reported as a crash.
+- `test_sema.ml` — the same rules in-process, plus the exact ORDER and COUNT of diagnostics
+  and their `line:col` against swiftc's. The `sema exercises` suite is optional and stays
+  `TODO (optional)` until §6 changes the checker's behaviour.
+
+Each case is a sentence stating what is claimed; a failure shows what the test wants and what
+your code printed, whole blocks side by side. `TODO` means the hole has not been started.
 
 ### Checking yourself against swiftc
 
@@ -150,9 +165,11 @@ The comparison you can run **today**, in this concept, is the front-end one — 
 stopping after their type checker, which is exactly the stage you just wrote:
 
 ```bash
-swiftc -typecheck bad.swift                    # the authority
-dune exec swiftml -- --typecheck bad.swift     # ours
+swiftc -typecheck bad.swift                                        # the authority
+_build/default/phase1-minimal/03-sema/tests/lab.exe --typecheck bad.swift   # ours
 ```
+
+(`dune exec swiftml -- --typecheck bad.swift` is the same front end through the phase binary.)
 
 Read the two messages side by side. That is how the wording in `tests/test_sema.ml` was chosen in
 the first place, and it is how you settle any question the tests do not answer — Exercise 1 below is

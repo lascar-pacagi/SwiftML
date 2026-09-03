@@ -1,0 +1,18 @@
+let a = 2\nvar c = a + 1\nc = c * a\nprint(c)
+var i = 0\ni = i + 1\ni = i * i\nprint(-i)
+let k = 5\nvar v = k\nv = v + k\nprint(v * k)
+print(1)
+let a = 1\nprint(-(a * (a + 1)) % 7)
+print((1))
+let a = 1\na + 1\nprint(a)
+let x = 1\nlet y = x + x\nprint(y)
+print(y)
+x = 5
+let a = a
+let k = 1\nk = 2
+bar(1)
+let a = 1\nprint(b + a)
+print(-y)
+var v = 1\nv = q
+let a = 1\nprint(a)\nprint(c)
+foo()

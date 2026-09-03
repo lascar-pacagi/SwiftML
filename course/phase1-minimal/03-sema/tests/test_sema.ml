@@ -218,7 +218,7 @@ let () =
       ( "scope",
         [
           Alcotest.test_case "undeclared names, everywhere" `Quick test_undeclared;
-          Alcotest.test_case "a name is bound only after its declaration" `Quick
+          Alcotest.test_case "bound only after declaration" `Quick
             test_declaration_order;
         ] );
       ( "immutability",
