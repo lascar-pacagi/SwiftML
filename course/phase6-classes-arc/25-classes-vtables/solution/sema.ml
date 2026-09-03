@@ -120,7 +120,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         if Types.is_numeric t then t
         else (
           err span
-            (Printf.sprintf "unary operator '-' cannot be applied to operand of type '%s'"
+            (Printf.sprintf "unary operator '-' cannot be applied to an operand of type '%s'"
                (Types.string_of_ty t));
           t)
     | Ast.Binary (op, l, r, span) -> infer_binary op l r span
