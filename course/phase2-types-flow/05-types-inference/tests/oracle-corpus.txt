@@ -1,0 +1,32 @@
+let x = 1
+let d: Double = 1 + 2
+let e = 1 + 2.0
+let s = "hi"
+let b = 1 < 2
+var n = 1\nn = 2
+let p: Bool = 1 == 1
+let c: Bool = 1.5 >= 2.5
+let t = "a" + "b"
+let u = 1 as Double
+let v = (1 + 1) as Double
+let w: Double = -1
+let y = 7 % 2
+print(1)
+print("hi")
+let z: String = "s"
+let q: Double = 1 / 2
+let cmp = "a" < "b"
+let x: Int = "s"
+let y = 1 + true
+let b = true < false
+let i = 1\nlet d: Double = i
+print(nope)
+let f: Foo = 1
+let k = 1\nk = 2
+let n = -true
+let q = 1 == "a"
+let r: Double = 1 % 2
+let i = 1\nlet s = i as Double
+let t = 1 as Foo
+var m: Double = 0\nm = "s"
+let u = 1 - "a"
