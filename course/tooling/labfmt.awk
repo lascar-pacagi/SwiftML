@@ -20,6 +20,8 @@ BEGIN {
   if (color) { B = "\033[1m"; R = "\033[31m"; G = "\033[32m"; C = "\033[36m"; D = "\033[2m"; Y = "\033[33m"; Z = "\033[0m" }
 }
 
+{ clean = $0; gsub(/\033\[[0-9;]*m/, "", clean) }   # ANSI-free copy, for the matchers below
+
 function sec(kind, name,   key) {
   key = kind SUBSEP name
   if (!(key in idx)) { idx[key] = ++n; skind[n] = kind; sname[n] = name }
@@ -75,6 +77,33 @@ function load_t(file,   line, blk, prose, started) {
 }
 
 # ---- a dune / OCaml error: keep the whole block, verbatim ------------------
+# Alcotest prints the useful part of a failure between the box and the stack trace: the ASSERT
+# label (which case), then either an [exception]/[failure] line or Expected/Received. Keep those,
+# drop the trace — a bare case name does not tell you what went wrong.
+!cram && clean ~ /^ *ASSERT / {
+  line = clean; sub(/^ *ASSERT */, "", line)
+  if (line ~ /expected exactly|got [0-9]+$/) {            # an Alcotest.failf message, not a label
+    if (curcase != shown_case) { put("       " D "└ " curcase Z); shown_case = curcase }
+    put("         " R "failed:" Z " " line); next
+  }
+  if (curcase != shown_case) { put("       " D "└ " curcase Z); shown_case = curcase }
+  put("         " D "ran:  " Z " " line); next
+}
+# alcotest prints a BARE `FAIL "<label>"` for the check that actually failed, after the ASSERT
+# lines for the checks that merely ran. That line is the answer to "what is wrong", so keep it.
+!cram && clean ~ /^FAIL "/ {
+  line = clean; sub(/^FAIL */, "", line)
+  if (curcase != shown_case) { put("       " D "└ " curcase Z); shown_case = curcase }
+  put("         " R "failed:" Z " " line); next
+}
+!cram && clean ~ /^\[(exception|failure)\]/ {
+  line = clean; sub(/^\[[a-z]*\] */, "", line)
+  put("         " R "error:" Z " " line); next
+}
+!cram && clean ~ /^ *(Expected|Received):/ {
+  line = clean; sub(/^ */, "", line)
+  put("         " line); next
+}
 pendfile != "" && /^Error/ { sec("build", pendfile); put(pend $0); build = 1; pend = ""; next }
 pendfile != "" && /^Warning/ { drop_pending(); next }   # a warning is not a failure
 pendfile != "" { pend = pend $0 "\n"; next }
@@ -122,6 +151,7 @@ cram { next }
     if (!seen[cur SUBSEP line]++) { put("  " Y "TODO" Z " " line D " (optional)" Z); nopt[cur]++ }
     next
   }
+  if (!ok) curcase = a[1]        # the box repeats this line just before the failure detail
   if (!seen[cur SUBSEP substr(key, 1, 28)]++) {
     if (ok) nok[cur]++; else nbad[cur]++
     put(ok ? "  " G "OK  " Z " " line : "  " R "FAIL" Z " " line)

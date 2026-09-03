@@ -51,15 +51,35 @@ let test_infer () =
   Alcotest.(check ty) "comparison is Bool" Types.TBool
     (Sema.infer cx (Ast.Binary (Ast.Lt, int_ 1, int_ 2, sp)))
 
-(* An unknown name is REPORTED, not raised — and inference keeps going so one bad name does not
-   hide the rest of the file. *)
-let test_infer_reports () =
+(* Every arm that can fail must REPORT, not just return a plausible type — and inference keeps
+   going, so one bad name does not hide the rest of the file. One case per failing arm: a silent
+   arm is the failure mode these catch (it returns a type and says nothing). *)
+let reports what src expected =
   let d = Diagnostics.create () in
   let cx = Sema.create d in
-  ignore (Sema.infer cx (var_ "nope"));
-  match Diagnostics.all d with
-  | [ x ] -> Alcotest.(check string) "wording" "cannot find 'nope' in scope" x.Diagnostics.message
-  | l -> Alcotest.failf "expected exactly one diagnostic, got %d" (List.length l)
+  Hashtbl.replace cx.Sema.env "i" (Types.TInt, false);
+  ignore (Sema.infer cx src);
+  match List.map (fun (x : Diagnostics.t) -> x.Diagnostics.message) (Diagnostics.all d) with
+  | [ m ] -> Alcotest.(check string) what expected m
+  | l -> Alcotest.failf "%s: expected exactly one diagnostic, got %d" what (List.length l)
+
+let test_unknown_name () = reports "Var" (var_ "nope") "cannot find 'nope' in scope"
+
+(* the unary arm must ask whether the operand is numeric, not just pass its type through *)
+let test_unary_reports () =
+  reports "Unary" (neg_ (Ast.Bool_lit (true, sp)))
+    "unary operator '-' cannot be applied to an operand of type 'Bool'"
+
+let test_binop_reports () =
+  reports "Binary" (add_ (int_ 1) (Ast.Bool_lit (true, sp)))
+    "binary operator '+' cannot be applied to operands of type 'Int' and 'Bool'"
+
+(* `print` must INFER its argument, or an error inside it is swallowed *)
+let test_print_infers_arg () =
+  reports "print's argument" (Ast.Call ("print", [ var_ "nope" ], sp)) "cannot find 'nope' in scope"
+
+let test_unknown_function () =
+  reports "Call" (Ast.Call ("foo", [], sp)) "cannot find 'foo' in scope"
 
 (* -- TODO(05d) ---------------------------------------------------------- *)
 let test_check_expr () =
@@ -104,7 +124,11 @@ let () =
       ("05a", [ Alcotest.test_case "is_int_literal: only literal trees" `Quick test_is_int_literal ]);
       ("05b", [ Alcotest.test_case "unify: one side may flex" `Quick test_unify ]);
       ("05c", [ Alcotest.test_case "infer: types synthesized" `Quick test_infer;
-                Alcotest.test_case "infer: unknown name reported" `Quick test_infer_reports ]);
+                Alcotest.test_case "infer: unknown name reports" `Quick test_unknown_name;
+                Alcotest.test_case "infer: `-true` reports" `Quick test_unary_reports;
+                Alcotest.test_case "infer: `1 + true` reports" `Quick test_binop_reports;
+                Alcotest.test_case "infer: print infers its arg" `Quick test_print_infers_arg;
+                Alcotest.test_case "infer: unknown function reports" `Quick test_unknown_function ]);
       ("05d", [ Alcotest.test_case "check_expr: pushes down" `Quick test_check_expr ]);
       ("05e", [ Alcotest.test_case "check_stmt: binds and rejects" `Quick test_check_stmt ]);
     ]
