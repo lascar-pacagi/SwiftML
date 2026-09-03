@@ -244,6 +244,26 @@ it. Ours is a record and four functions.
 make lab C=phase1-minimal/04-codegen
 ```
 
+What runs, in the order you will turn it green:
+
+- `test_irgen.ml` — the unit suite, one group per hole, each reachable on its own:
+  **arithmetic** calls `emit_expr` directly (`TODO(04a)`: opcodes, operand order, signed
+  `sdiv`/`srem`, a fresh register per result); **literals** its `print` case; **slots**
+  `slot_of` + `emit_stmt` (`04b`/`04c`: one `alloca` per name, `store`/`load` through the SAME
+  register, reassignment); **module** `emit_llvm` (`04d`: preamble, `@main`, `ret i32 0`).
+  Until a hole exists its group reads `TODO`, not `FAIL`. Once §6's constant folding is in,
+  the literal-only cases can no longer observe the lowering and report `skip` (the exercise
+  suite guards the folding, the oracle guards the answers).
+- `run-arith.t` and `run-vars.t` — end-to-end through the lab binary: `build` the program,
+  run it, compare stdout. Arithmetic with every operator, the sign rules of `/` and `%`, then
+  the slot model (a read after a write sees the write; a var written three times prints its
+  last value). These need all four holes.
+- `oracle.t` — the headline and the Phase-1 milestone: each program in `oracle-corpus.txt` is
+  compiled by `swiftc` AND by your compiler, both are run, and stdout + exit code must be
+  byte-identical. A program either side refuses to build is reported, never counted as
+  agreement. This is what keeps the numbers in the other files honest.
+- `irgen exercises` — optional, `TODO (optional)` until §6's work changes the output.
+
 When a case fails, look at what you actually emitted:
 
 ```bash
@@ -260,7 +280,7 @@ A bare expression statement lowers to `emit_expr` and nothing else, so that firs
 is the shortest way to see one construct on its own. Piping to clang adds LLVM's verifier,
 which rejects malformed IR and names the offending line.
 
-Then the oracle, on the two corpus programs:
+`oracle.t` runs the corpus every time; for one file of your own, the same comparison is:
 
 ```bash
 make oracle F=tests/programs/arith.swift

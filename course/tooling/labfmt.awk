@@ -56,6 +56,8 @@ function load_t(file,   line, blk, prose, started) {
       if (prose != "") { blk++; label[file, blk] = first_sentence(prose); prose = "" }
       if (blk > 0) cmdblk[file, substr(line, 3)] = blk   # keep "$ " so it matches the diff line
       nblk[file] = blk
+    } else if (line ~ /^  > / && blk > 0) {
+      cmdblk[file, substr(line, 3)] = blk                # a continuation line of that command
     } else if (line !~ /^[[:space:]]/ && line != "") {
       if (started) prose = prose "\n" line; else { prose = line; started = 1 }
     } else if (line == "") started = 0
@@ -128,12 +130,25 @@ function flush(   i, w, g, key) {
 
 cram && /^(diff --git|index |--- |\+\+\+ |@@ )/ { next }
 cram && /^[[:space:]]+\$ / { flush(); sub(/^[[:space:]]+/, ""); pendblk = cmdblk[tfile, $0]; next }
+# a hunk may open in the middle of a multi-line command (`  > …`): those lines name it too
+cram && /^[[:space:]]+> / && pendblk == "" { sub(/^[[:space:]]+/, ""); pendblk = cmdblk[tfile, $0]; next }
 cram && /^-/  { sub(/^-[[:space:]]*/,  ""); want[++nw] = $0; next }
 cram && /^\+/ { sub(/^\+[[:space:]]*/, ""); got[++ng] = $0; next }
 cram && substr($0, 1, 3) == "   " { sub(/^[[:space:]]+/, ""); want[++nw] = $0; got[++ng] = $0; next }
 cram { next }
 
 # ---- alcotest: it lists every case in a failing suite, [FAIL] and [OK] alike -
+/\[SKIP\]/ {                                            # a case that chose not to run (see the suite's note)
+  line = clean; sub(/^[^[]*\[SKIP\][[:space:]]*/, "", line); sub(/[[:space:]]+$/, "", line)
+  nf = split(line, a, /[[:space:]][[:space:]]+/)
+  if (nf >= 3) { desc = a[3]; for (k = 4; k <= nf; k++) desc = desc " " a[k]; line = a[1] " — " desc }
+  sub(/\.$/, "", line)
+  if (!seen[cur SUBSEP "skip" SUBSEP line]++) {
+    if (!skipnote[cur]++) put("  " D "(skip: the suite chose not to run it — the reason sits next to `Alcotest.skip` in its .ml)" Z)
+    put("  " D "skip " line Z)
+  }
+  next
+}
 /\[FAIL\]|\[OK\]/ {
   line = $0
   sub(/^> /, "", line); sub(/^[[:space:]]*/, "", line)

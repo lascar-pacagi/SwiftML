@@ -151,6 +151,23 @@ at all for a green test — silence is not readable as a pass. Cram cases resolv
 command roster comes from the `.t`, and dune's diff names the commands that differ, so every case
 it does not mention ran and matched.
 
+**Every concept ships `tests/lab.ml`, `tests/oracle.t` and `oracle-corpus.txt` (2026-09-03, applied
+00–05).** The cram tests call `./lab.exe`, built from THAT concept's library, with one flag per hole
+(`--emit-expr`/`--emit-stmt`/`--emit-ast` in 02; `--typecheck` in 03; `--emit-llvm`/`build` in 04) so
+a hole goes green before the next exists — never the phase binary, which links the whole chain.
+`oracle.t` runs every program in the corpus through `swiftc` AND `lab.exe` on every `make lab`:
+accept/reject agreement for front-end stages (`swiftc -typecheck`), byte-identical stdout + exit
+for codegen; a crash is reported as a crash and, when its first stderr line is a `TODO(`, the loop
+stops so the file reads `TODO`. The corpus stays inside what both compilers mean the same
+(no `print(1, 2)`, no redeclaration, no >2^62 literals) so only the concept's rule decides.
+Unit tests stay **exercise-neutral**: when a §6 exercise makes a stock expectation unobservable
+(04's constant folding erases literal-only IR), probe once and `Alcotest.skip ()` those cases — the
+report shows them as `skip`, never `FAIL`, and the exercise suite + oracle guard the behaviour.
+Prove RED/GREEN in a **scratch copy** of the phase (`cp -r phase1-minimal` + `dune-project` into the
+scratchpad, drop the pristine skeleton from `git show HEAD:` over the learner's file there) — never
+by swapping files in the learner's tree. Verify a commit by LISTING the staged files, never by the
+absence of unstaged ones (e04b0df committed learner files that way).
+
 **Goldens are produced, never written.** Run the case against `solution/` (or a scratch build of it)
 and paste what it prints; a hand-written expectation is how a test ends up asserting the wrong thing
 — 05's unterminated-literal golden said end-of-input while the explainer said opening quote, and the

@@ -1,6 +1,13 @@
+; The lab binary the cram tests call — built from THIS concept's library.
+(executable
+ (name lab)
+ (modules lab)
+ (libraries swiftml_codegen)
+ (flags
+  (:standard -warn-error -a)))
+
 (cram
- (deps
-  (package swiftml)))
+ (deps lab.exe oracle-corpus.txt))
 
 ; Alcotest unit tests for IRGen — assert emitted-IR shape (opcodes, slot model).
 (test

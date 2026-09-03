@@ -503,6 +503,14 @@ let test_many_statements () =
   Alcotest.(check int) "twelve loads" 12 (n_with "load i64" ls);
   Alcotest.(check int) "three calls" 3 (n_with "call i32 (ptr, ...) @printf" ls)
 
+(* §6's second exercise, constant folding, turns `40 + 2` into the immediate `42` — and
+   with it every literal-only expectation below becomes unobservable BY DESIGN. Once the
+   probe sees folding, those cases are SKIPPED (alcotest reports them as such, they are not
+   failures); the exercise suite then guards the folding, and `oracle.t` the answers. *)
+let folding = lazy (instrs "40 + 2" = [])
+let unless_folded (test : unit -> unit) () : unit =
+  if Lazy.force folding then Alcotest.skip () else test ()
+
 let () =
   Alcotest.run "irgen"
     [
@@ -514,20 +522,20 @@ let () =
         ] );
       ( "literals",
         [
-          Alcotest.test_case "immediates emit no instruction" `Quick test_immediates;
-          Alcotest.test_case "the printf call" `Quick test_print_call;
+          Alcotest.test_case "immediates emit no instruction" `Quick (unless_folded test_immediates);
+          Alcotest.test_case "the printf call" `Quick (unless_folded test_print_call);
         ] );
       ( "arithmetic",
         [
-          Alcotest.test_case "opcode mapping (emit_expr alone)" `Quick test_opcodes;
-          Alcotest.test_case "every operator in one expression" `Quick test_all_operators;
-          Alcotest.test_case "operand order and associativity" `Quick test_operand_order;
-          Alcotest.test_case "long and wide expressions" `Quick test_deep_expression;
-          Alcotest.test_case "literal edges" `Quick test_literal_edges;
-          Alcotest.test_case "what emit_expr returns" `Quick test_operands;
-          Alcotest.test_case "signed div/rem, not unsigned" `Quick test_signedness;
-          Alcotest.test_case "post-order + exact sequence" `Quick test_nesting;
-          Alcotest.test_case "a fresh register per result" `Quick test_fresh_names;
+          Alcotest.test_case "opcode mapping (emit_expr alone)" `Quick (unless_folded test_opcodes);
+          Alcotest.test_case "every operator in one expression" `Quick (unless_folded test_all_operators);
+          Alcotest.test_case "operand order and associativity" `Quick (unless_folded test_operand_order);
+          Alcotest.test_case "long and wide expressions" `Quick (unless_folded test_deep_expression);
+          Alcotest.test_case "literal edges" `Quick (unless_folded test_literal_edges);
+          Alcotest.test_case "what emit_expr returns" `Quick (unless_folded test_operands);
+          Alcotest.test_case "signed div/rem, not unsigned" `Quick (unless_folded test_signedness);
+          Alcotest.test_case "post-order + exact sequence" `Quick (unless_folded test_nesting);
+          Alcotest.test_case "a fresh register per result" `Quick (unless_folded test_fresh_names);
         ] );
       ( "slots",
         [
@@ -537,7 +545,7 @@ let () =
           Alcotest.test_case "alloca/store/load" `Quick test_slot_model;
           Alcotest.test_case "a var reuses its slot" `Quick test_slot_reuse;
           Alcotest.test_case "reassignment replaces the value" `Quick test_reassignment;
-          Alcotest.test_case "each statement kind" `Quick test_stmt_kinds;
+          Alcotest.test_case "each statement kind" `Quick (unless_folded test_stmt_kinds);
           Alcotest.test_case "a longer program's bookkeeping" `Quick test_many_statements;
         ] );
     ]
