@@ -101,22 +101,26 @@ For each concept, in order:
 3. **Fill in the skeleton.** Open the `.ml` file in the concept dir (the functions that
    `failwith "TODO (NN): …"`), and implement them following the explainer's **"Build it"** section
    — it gives the types, APIs, examples, and tips, *not* the answer.
-4. **Test your work** — red turns green as you implement:
+4. **Test your work** — red turns green one hole at a time:
    ```bash
-   make lab C=phase1-minimal/01-lexer
+   make lab C=phase1-minimal/01-lexer                  # every test of the concept
+   make lab C=phase1-minimal/01-lexer T=lexer-strings  # one file = one hole
    ```
-5. **Check parity** against the real compiler — *once the concept can produce a program to
-   run*. `make oracle` compiles a `.swift` with both compilers and compares what they print,
-   so it needs the whole pipeline down to codegen:
+   The report has one `.t` file per `TODO` hole and a sentence per case. A hole you have not
+   started reads `TODO … not started` (it lists what it will check and stops); one in progress
+   reads `FAIL` with, under each failing case, *the test wants* / *your code printed* as whole
+   blocks; a finished one `PASS`. `SKIP` means a compile error stopped the run before that test
+   — fix the build first. `DETAIL=1` expands a TODO's diffs, `RAW=1` shows dune's own output.
+5. **Check parity** against the real compiler. Every concept's `tests/oracle.t` does it for
+   you on every `make lab`: each program in `tests/oracle-corpus.txt` goes to `swiftc` and to
+   the concept's own `lab.exe`, and the two must agree — accept/reject for a front-end concept
+   (`swiftc -typecheck`), byte-identical stdout and exit code once there is a back end (04
+   onward, the programs are run). It is the headline test: the other goldens record what was
+   true when they were written; this one asks `swiftc` again. For one file of your own:
    ```bash
-   make oracle F=tests/programs/arith.swift        # green from 04-codegen onward
-   ```
-   In a front-end concept (01–03) there is no back end yet, and the oracle stops at IRGen's
-   `TODO` — expected, not a failure of your work. Compare the front ends instead, which is the
-   same oracle applied to the stage you are actually writing:
-   ```bash
-   swiftc -typecheck foo.swift                     # what the real compiler says
-   dune exec swiftml -- --typecheck foo.swift      # what yours says
+   make oracle F=tests/programs/arith.swift        # build + run + compare, 04-codegen onward
+   swiftc -typecheck foo.swift                     # front-end concepts: compare the verdicts
+   dune exec swiftml -- --typecheck foo.swift      #   and the messages, side by side
    ```
 6. **Stuck?** Read the explainer's **Appendix** (full commented solution) or the matching
    `../swift/lib/…` file, or `solution/`. Try first — the struggle is the learning.
@@ -215,7 +219,8 @@ make lint          # ocamlformat check (needs `opam install ocamlformat`)
 `make test` runs every concept's tests in every phase. On the shipped tree that is RED by
 design — skeleton TODOs fail their own tests — so day-to-day you run one concept's tests with
 `make lab C=<concept>`; its cram tests build `./lab.exe` from that concept's own library, so
-they go green when *your* code in that directory is correct
+they go green when *your* code in that directory is correct. `make check-solution C=<concept>`
+runs the same tests against the answer key (it swaps `solution/` in and restores your files).
 
 ---
 

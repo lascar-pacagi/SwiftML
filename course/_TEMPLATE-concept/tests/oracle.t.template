@@ -1,0 +1,41 @@
+THE HEADLINE TEST: `swiftc` and this concept must AGREE on every program in `oracle-corpus.txt`
+(one program per line, `\n` for newlines). Every golden in the other files records what was true
+when it was written; this asks swiftc again on every run. Keep the corpus inside what BOTH
+compilers mean the same — no variadic print, no redeclaration, no >2^62 literals, nothing the
+subset lacks — so only this concept's rule decides. It cannot judge your wording, only verdicts.
+
+FRONT-END concept (nothing runs yet): accept/reject must agree. On a disagreement our first
+diagnostic is shown, so a rejection that is really an unfinished stage reads as what it is; a
+crash (exit ≠ 0/1) stops the loop when it is an unstarted TODO(:
+
+  $ while IFS= read -r prog; do
+  >   [ -n "$prog" ] || continue
+  >   printf '%b\n' "$prog" > p.swift
+  >   if swiftc -typecheck p.swift >/dev/null 2>&1; then sw=accept; else sw=reject; fi
+  >   ./lab.exe --typecheck p.swift >/dev/null 2>err.txt; rc=$?
+  >   case $rc in 0) ml=accept;; 1) ml=reject;; *) ml="crash($rc)";; esac
+  >   [ "$sw" = "$ml" ] || { printf 'DISAGREE  swiftc=%s ours=%s  %s\n' "$sw" "$ml" "$prog"; [ $rc -eq 0 ] || { head -1 err.txt; grep -q 'TODO(' err.txt && break; }; }
+  > done < oracle-corpus.txt
+  $ echo done
+  done
+
+RUNTIME concept (delete the block above, keep this one; add `-O` variants when the phase has -O):
+both compilers build every program, both binaries run, stdout + exit code must be identical:
+
+  $ n=0; while IFS= read -r prog; do
+  >   [ -n "$prog" ] || continue; n=$((n+1))
+  >   printf '%b\n' "$prog" > p$n.swift
+  >   if ! swiftc -Onone p$n.swift -o sw$n >/dev/null 2>&1; then printf 'swiftc REFUSED: %s\n' "$prog"; continue; fi
+  >   if ! ./lab.exe build p$n.swift -o ml$n >/dev/null 2>err.txt; then
+  >     printf 'ours REFUSED: %s\n' "$prog"; head -1 err.txt
+  >     if grep -q 'TODO(' err.txt; then echo "(stopping: the hole above is not started)"; break; fi
+  >     continue
+  >   fi
+  >   ./sw$n > sw$n.out 2>&1; swrc=$?
+  >   ./ml$n > ml$n.out 2>&1; mlrc=$?
+  >   if [ $swrc -ne $mlrc ] || ! cmp -s sw$n.out ml$n.out; then
+  >     printf 'DIVERGE (swiftc exit=%s ours exit=%s): %s\n' "$swrc" "$mlrc" "$prog"; diff sw$n.out ml$n.out
+  >   fi
+  > done < oracle-corpus.txt
+  $ echo done
+  done
