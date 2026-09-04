@@ -76,6 +76,70 @@ know the concrete type, so it can only pass the payload *by pointer*. The thunk
 `@Circle.area` directly. Every conformance gets its own thunks; they're where "unknown type" meets
 "concrete code." (swiftc's witness thunks do the same job — `SILGenPoly.cpp`.)
 
+### The subset you are growing into
+
+**New lexemes.** One keyword, and one contextual word that is not a keyword at all:
+
+| spelling | token | notes |
+|---|---|---|
+| `protocol` | `Token.Kw_protocol` | a keyword, added in `token.ml`'s `keyword_or_ident` — **not** in `lexer.ml`, which is where the first attempt usually goes |
+| `any` | *(none — an identifier)* | Swift 5.6's explicit existential spelling. `parse_type_name` sees the identifier `any` and reads the *next* identifier as the type, so `any Shape` and `Shape` denote the same type, exactly as in swiftc |
+| `:` in a declaration | `Token.Colon` | already lexed; what is new is the *conformance clause* position, `struct C: P, Q` |
+
+**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05–14.
+Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (zero or more),
+`|` separates alternatives, and quoted text is a terminal.
+
+```
+program     ::= { item }
+item        ::= func_decl | struct_decl | enum_decl | proto_decl | statement
+
+proto_decl  ::= "protocol" ident "{" { req } "}"                     <-- new
+req         ::= "func" ident "(" [ param { "," param } ] ")"         <-- new
+                  [ "->" type ]                                       (a signature, NO body)
+
+struct_decl ::= "struct" ident [ ":" ident { "," ident } ]           <-- the clause is new
+                  "{" { field | method } "}"
+field       ::= ("var" | "let") ident ":" type
+method      ::= func_decl                                     <-- new (methods on structs)
+
+type        ::= [ "any" ] ident [ "?" ]                              <-- "any" is new
+                (ident = "Int" | "Double" | "Bool" | "String" | "Void"
+                       | a struct, enum or PROTOCOL name)      <-- protocol names are new
+
+postfix     ::= primary { "." ident [ "(" [ arg { "," arg } ] ")" ] | "!" }
+                (a "." followed by "(" is a METHOD CALL — new; without it, a field read)
+```
+
+Three things to notice. A requirement is a `func` header with **no body** — the parser reuses
+`parse_func` and stops at the newline, and the *order* of the requirements is the witness table's
+slot numbering, so it is load-bearing syntax. A conformance clause is a comma-separated list of
+*names*, resolved by sema (which is why "inheritance from non-protocol type" is a sema error, not
+a parse error). And a protocol name is now legal wherever a type is: that single grammar line is
+what makes `let s: Shape`, `func f(_ s: Shape)`, `-> Shape` and `Shape?` all mean "existential".
+
+### The diagnostics you emit
+
+`struct_conforms` is the predicate behind the first six rows; the rest are given, and
+`sema-conformance.t` / `sema-subset.t` keep them all on record. Wording follows `swiftc
+-typecheck` where the subset lets it (`swift/include/swift/AST/DiagnosticsSema.def`, line numbers
+from the pinned snapshot); the divergences are stated, not hidden.
+
+| program | our message | swiftc |
+|---|---|---|
+| `struct C: S { }` missing `area()` | `type 'C' does not conform to protocol 'S'` | **same** (`type_does_not_conform`, l.2899) — and swiftc adds a note at the requirement, which is exercise 4 |
+| `let s: S = D(r: 1)` for a non-conformer `D` | `value of type 'D' does not conform to specified type 'S'` | **same** (`cannot_convert_initializer_value_protocol`, l.326) |
+| `f(D(r: 1))` where `f(_: S)` | `argument type 'D' does not conform to expected type 'S'` | **same** (`cannot_convert_argument_value_protocol`, l.484) |
+| `func g() -> S { return D(r: 1) }` | `return expression of type 'D' does not conform to 'S'` | **same** (`cannot_convert_to_return_type_protocol`, l.338) |
+| `v = D(r: 3)` for `var v: S` | `cannot assign value of type 'D' to type 'any S'` | **same** (`cannot_convert_assign`, l.587) — note swiftc writes `any S` *here* and bare `S` in the three rows above; we copy that inconsistency rather than tidy it |
+| `struct C: D` for a struct `D` | `inheritance from non-protocol type 'D'` | **same** (`inheritance_from_non_protocol`, l.3823) |
+| `struct C: Nope` | `cannot find type 'Nope' in scope` | **same words** (`cannot_find_type_in_scope`, l.1201); swiftc points at `Nope`, we point at the conforming type's name |
+| `s.extra()` / `s.r` on an `any S` | `value of type 'any S' has no member 'extra'` | **same** (`could_not_find_value_member`, l.71) — the existential exposes the *requirements*, nothing else |
+| `a == b` for two `any S` | `binary operator '==' cannot be applied to two 'any S' operands` | **same** (`cannot_apply_binop_to_same_args`, l.221) |
+| `func bump() { x = x + 1 }` in a struct | `cannot assign to property: 'self' is immutable` | **same** (`assignment_lhs_is_immutable_property`, l.5379) — `mutating` is exercise 1 |
+| `c.k = 5` for a `let k: Int` | `cannot assign to property: 'k' is a 'let' constant` | **same words**; swiftc points at the member (`c.k`), we point at the statement — a column difference, not a wording one |
+| `print(s)` for `s: any S` | `cannot print a value of type 'any S' (only Int, Double, Bool and String)` | **accepted** — swiftc prints `C(r: 1)` through reflection; we have no runtime for it, and IRGen's `print` takes a scalar |
+
 ### Conformance checking, and the implicit wrap
 
 `struct Circle: Shape` is a *claim*; sema verifies it: **every** requirement must be implemented
@@ -107,34 +171,74 @@ behavioral parity testing is what catches the collision.
 
 ## 3. Build it, step by step
 
-Three holes, in dependency order:
+Four holes in two files. Fill them in this order — the tables come first because *every* module
+lowers through `lower`, so nothing at all compiles until `TODO(21c)` returns something.
 
-1. **`sema.ml` — `struct_conforms`** (`TODO(21-sema)`): does struct S conform to protocol P?
-   The protocol must exist, and every `(name, params, ret)` in `pl_reqs` needs a method of S with
-   the exact signature (`method_sig`, given). This one predicate drives both the conformance
-   error and the coercion in `check_expr`.
-2. **`silgen.ml` — the wrap** (`TODO(21a)`): in `gen_expr_as`, when `any P` is expected — an
-   existing existential passes through; a concrete `TStruct sn` wraps with
-   `Init_existential (v, sn, pn)`.
-3. **`silgen.ml` — dispatch** (`TODO(21b)`): in `Method_call` — concrete receiver ⇒ static
-   `Apply` of `Func_ref "S.m"` with the receiver as argument 0; existential receiver ⇒
-   `Apply_witness (recv, slot, args)` with the slot from `Types.req_index`.
-4. **`silgen.ml` — the tables** (`TODO(21c)`): in `lower` — one `(proto, struct, impls)` entry
-   per conformance clause, impls named `"S.req"` in requirement order.
+1. **`silgen.ml` — the witness tables** (`TODO(21c)`, in `lower`). Walk every struct's
+   conformance clause and produce one `(protocol, struct, impls)` entry per conformance. `impls`
+   names the implementing function of each requirement, **in requirement order** — that order is
+   the slot numbering §2 described, and the SIL verifier will tell you if a name does not exist.
+   Method functions are already lowered under the name `"S.m"`.
+2. **`sema.ml` — `struct_conforms`** (`TODO(21-sema)`). Given a struct name and a protocol name,
+   answer *does it conform?* The protocol has to exist; then every requirement in its `pl_reqs`
+   needs a method of that struct whose parameter types and return type match exactly.
+   `method_sig` (given) looks a method up. Return a `bool` and nothing else: the diagnostic and
+   the coercion rule are both written already, and they both call you.
+3. **`silgen.ml` — the existential wrap** (`TODO(21a)`, `wrap_existential`). Turn a lowered value
+   into an `any P`. Two cases: a value that is *already* an existential, and a concrete struct.
+   `Sil.Init_existential` is the instruction; `vty b v` tells you which case you are in. Sema has
+   already proved the conformance, so the third case is unreachable.
+4. **`silgen.ml` — dispatch** (`TODO(21b)`, the `Method_call` arm). Split on the receiver's
+   lowered type. A concrete struct is a *static* call: the receiver becomes argument 0 of the
+   named function. An existential is a *dynamic* one: `Sil.Apply_witness` carries the receiver,
+   the requirement's slot (`Types.req_index`) and the arguments — and every argument still has to
+   be lowered **at the requirement's parameter type**, so a concrete value passed to a
+   `(_ other: Shape)` requirement gets wrapped on the way in.
+
+Tips. `vty b v` is the type of a lowered value — dispatch on it, not on the AST. A method call
+whose receiver is a plain `Var` inside another method may be an implicit `self` call; that arm is
+given, and it is static. If `--emit-sil` prints a table whose entry names a function that is not
+in the module, the verifier says so before IRGen does.
 
 Reference: `solution/sema.ml`, `solution/silgen.ml`.
 
 ## 4. Test it
 
 ```bash
-make lab C=phase5-generics/21-protocols-witness
+make lab C=phase5-generics/21-protocols-witness      # everything
+make lab C=phase5-generics/21-protocols-witness T=silgen-wtables   # one hole
 ```
 
-cram: witness tables in `--emit-sil`; static + dynamic dispatch running (with `-O`) against
-swiftc's outputs; the four rejection diagnostics with swiftc's exact wording. alcotest:
-conformance accept/reject, table contents and slot order, wrap/dispatch instruction counts
-(a concrete call must NOT dispatch through the table), and `-O` keeping table-referenced
-functions alive.
+One cram file per hole, so the report reads as a checklist. In fill order:
+
+| file | goes green when | how it checks |
+|---|---|---|
+| `tests/silgen-wtables.t` | `TODO(21c)` builds the tables | `--emit-sil`: one `sil_witness_table S: P` per conformance clause, slots in requirement order, none for a struct with no clause |
+| `tests/sema-conformance.t` | `TODO(21-sema)` decides conformance | `--typecheck`: the conformance error and the four site-specific coercion errors of §2, with their positions |
+| `tests/silgen-wrap.t` | `TODO(21a)` wraps | `--emit-sil`: `init_existential` at each of the four coercion sites, *not* on an existential-to-existential move, and twice for a `P?` |
+| `tests/silgen-dispatch.t` | `TODO(21b)` dispatches | `--emit-sil` for the shapes (`apply` vs `witness_method`), then the programs **run**, at `-Onone` and `-O`, and print what swiftc prints |
+
+Two files do not belong to a hole. `tests/sema-subset.t` is GIVEN code and is green from the
+start: it records the boundary of the subset — the aggregates `print` and `==` refuse, and the
+`let` stored property — because the oracle below is only a fair test while the corpus stays
+inside what swiftc and we mean the same thing by. And `tests/oracle.t` is the headline: 33
+programs of `oracle-typecheck.txt` where `swiftc -typecheck` and `--typecheck` must reach the
+same verdict, then 20 programs of `oracle-corpus.txt` compiled **four ways** — `swiftc -Onone`,
+`swiftc -O`, `./lab.exe build`, `./lab.exe build -O` — all run, stdout and exit code identical.
+It asks swiftc on every run, so no number in the other files can drift from what Swift prints.
+
+`make lab` distinguishes three kinds of red. **TODO** means nothing in that file passes — the
+hole has not been started, and the file just lists what it will check. **FAIL** means *some*
+cases pass: you are mid-hole, and the diffs are worth reading (`DETAIL=1` shows them). **SKIP**
+means a compile error stopped dune before the file ran. On the untouched skeleton every hole's
+file reads TODO and `sema-subset.t` reads PASS; the alcotest suite reads FAIL, because its
+`subset` group is green from the start too.
+
+alcotest (`tests/test_protocols.ml`) groups its cases the same way: `conformance` needs only the
+sema hole, `tables 21c` only the table hole, `wrap 21a` needs 21c + 21a, `dispatch 21b` needs all
+three, `optimizer` re-runs the `-O` pipeline over the result (a table-referenced function must
+survive dead-function elimination, and two zero-field conformers must not be merged), and
+`subset` is the given front-end rules.
 
 ## 5. Benchmark it
 
@@ -178,16 +282,18 @@ let struct_conforms sname pname =
   | Some pl ->
       List.for_all
         (fun (rn, rps, rret) ->
-          match method_sig sname rn with Some (ps, r) -> ps = rps && r = rret | None -> false)
+          match method_sig sname rn with
+          | Some (ps, r) -> ps = rps && r = rret
+          | None -> false)
         pl.Types.pl_reqs
 
-(* silgen 21a: the wrap, in gen_expr_as *)
-| _, Types.TProto pn -> (
-    let v = gen_expr b e in
-    match vty b v with
-    | Types.TProto _ -> v
-    | Types.TStruct sn -> emit b (Sil.Init_existential (v, sn, pn)) expected
-    | _ -> assert false)
+(* silgen 21a: the wrap. gen_expr_as calls it for `any P`, and for the PAYLOAD of a
+   `P?` before tagging it `.some` — a raw struct in that slot was a real miscompile. *)
+let wrap_existential (b : builder) (v : Sil.value) (pn : string) : Sil.value =
+  match vty b v with
+  | Types.TProto _ -> v (* already an existential *)
+  | Types.TStruct sn -> emit b (Sil.Init_existential (v, sn, pn)) (Types.TProto pn)
+  | _ -> assert false (* sema guaranteed conformance *)
 
 (* silgen 21b: dispatch *)
 | Ast.Method_call (recv, m, args, _) -> (
@@ -214,7 +320,9 @@ let wtables =
           List.map
             (fun pname ->
               let pl = Hashtbl.find protos pname in
-              let impls = List.map (fun (rn, _, _) -> st.Ast.sname ^ "." ^ rn) pl.Types.pl_reqs in
+              let impls =
+                List.map (fun (rn, _, _) -> st.Ast.sname ^ "." ^ rn) pl.Types.pl_reqs
+              in
               (pname, st.Ast.sname, impls))
             st.Ast.sconforms
       | _ -> [])

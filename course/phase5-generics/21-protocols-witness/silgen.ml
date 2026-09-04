@@ -72,6 +72,15 @@ let self_struct (b : builder) : string option =
   | Some slot -> ( match Hashtbl.find b.val_ty slot with Types.TStruct sn -> Some sn | _ -> None)
   | None -> None
 
+(* concept 21: coerce a lowered VALUE to `any P` — the EXISTENTIAL WRAP. Called by gen_expr_as
+   both for a bare `any P` and for the payload of a `P?` (which is wrapped, then `.some`d). *)
+let wrap_existential (b : builder) (v : Sil.value) (pn : string) : Sil.value =
+  (* TODO(21a): pair a concrete struct value with the witness table for its conformance; an
+     already-existential value passes through. Sema has guaranteed the conformance by the time
+     we get here. §2. *)
+  ignore (b, v, pn);
+  failwith "TODO(21a-silgen): wrap a concrete value into an existential"
+
 (* --- lowering expressions: returns the SIL value holding the result --- *)
 let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
   match e with
@@ -125,16 +134,21 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       switch_to b merge;
       emit b (Sil.Load slot) Types.TBool
   | Ast.Binary (op, l, r, _) ->
-      let lv = gen_expr b l and rv = gen_expr b r in
+      let lv = gen_expr b l in
       (match vty b lv with
       | Types.TEnum _ when op = Ast.Eq || op = Ast.Ne ->
           (* enum equality is tag comparison (payload-free enums only — see sema) *)
+          let rv = gen_expr b r in
           let lt = emit b (Sil.Enum_tag lv) Types.TInt in
           let rt = emit b (Sil.Enum_tag rv) Types.TInt in
           emit b (Sil.Binop (op, lt, rt)) Types.TBool
       | _ ->
-          let operand = if vty b lv = Types.TDouble || vty b rv = Types.TDouble then Types.TDouble else vty b lv in
-          emit b (Sil.Binop (op, lv, rv)) (result_ty op operand))
+          (* sema's `unify` lets an Int-literal tree adopt the other side's Double (`d * 2`,
+             `2 * d`): that side must be generated AT Double, or IRGen emits `fmul double %d, 2`
+             and clang rejects it. Re-generating a literal tree is safe — it has no side effects. *)
+          let rv = if vty b lv = Types.TDouble then gen_expr_as b r Types.TDouble else gen_expr b r in
+          let lv = if vty b rv = Types.TDouble && vty b lv = Types.TInt then gen_expr_as b l Types.TDouble else lv in
+          emit b (Sil.Binop (op, lv, rv)) (result_ty op (vty b lv)))
   | Ast.Call (f, args, _) ->
       if Hashtbl.mem b.structs f then (
         (* a struct field may be optional, so wrap each argument to its field type *)
@@ -256,15 +270,14 @@ and gen_expr_as (b : builder) (e : Ast.expr) (expected : Types.ty) : Sil.value =
       let lv = gen_expr_as b l Types.TDouble and rv = gen_expr_as b r Types.TDouble in
       emit b (Sil.Binop (op, lv, rv)) Types.TDouble
   | Ast.Nil _, Types.TOptional _ -> emit b (Sil.Enum (0, [])) expected
-  | _, Types.TOptional _ ->
+  | _, Types.TOptional t ->
       let v = gen_expr b e in
-      if vty b v = expected then v else emit b (Sil.Enum (1, [ v ])) expected
-  | _, Types.TProto pn ->
-      (* TODO(21a): the EXISTENTIAL WRAP — pair a concrete value with the witness table for its
-         conformance; an already-existential value passes through. Sema has guaranteed the
-         conformance by the time we get here. §2. *)
-      ignore pn;
-      failwith "TODO(21a-silgen): wrap a concrete value into an existential"
+      if vty b v = expected then v
+      else
+        (* the payload needs its own coercion first: a conformer into `any P` for a `P?` *)
+        let v = match t with Types.TProto pn -> wrap_existential b v pn | _ -> v in
+        emit b (Sil.Enum (1, [ v ])) expected
+  | _, Types.TProto pn -> wrap_existential b (gen_expr b e) pn
   | _ -> gen_expr b e
 
 (* --- lowering statements; gen_block stops after a terminator (dead code) --- *)
@@ -299,14 +312,15 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
   | Ast.Set_member { obj; field; value; _ } ->
       (* `p.x = e`: take the field's ADDRESS in p's slot, then store — this is what makes a
          struct a value type, since p has its own slot distinct from any copy *)
-      let v = gen_expr b value in
       let slot = Hashtbl.find b.vars obj in
       let sn = match vty b slot with Types.TStruct sn -> sn | _ -> assert false in
       let sl = Hashtbl.find b.structs sn in
-      let faddr =
-        emit b (Sil.Struct_element_addr (slot, Option.get (Types.field_index sl field)))
-          (Option.get (Types.field_type sl field))
-      in
+      let fty = Option.get (Types.field_type sl field) in
+      (* wrap to the FIELD's type, exactly as `Assign` wraps to the slot's: `box.v = nil` on a
+         `var v: Int?` must store `.none`, and a conformer stored into an `any P` field must be
+         wrapped into the existential, not stored raw *)
+      let v = gen_expr_as b value fty in
+      let faddr = emit b (Sil.Struct_element_addr (slot, Option.get (Types.field_index sl field))) fty in
       ignore (emit b (Sil.Store (v, faddr)) Types.TVoid)
   | Ast.Expr_stmt (e, _) -> ignore (gen_expr b e)
   | Ast.Return (eo, _) -> (

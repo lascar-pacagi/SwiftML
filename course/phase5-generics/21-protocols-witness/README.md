@@ -40,6 +40,9 @@ table.
 
 ## Done when
 
-`make lab C=phase5-generics/21-protocols-witness` is green: witness tables appear in
-`--emit-sil`, heterogeneous dispatch runs (including under `-O`) matching swiftc, and the four
-rejection diagnostics match swiftc's wording.
+`make lab C=phase5-generics/21-protocols-witness` is green. One cram file per hole —
+`silgen-wtables.t`, `sema-conformance.t`, `silgen-wrap.t`, `silgen-dispatch.t` — plus the given
+`sema-subset.t` and the headline `oracle.t`, which asks swiftc on every run: 33 programs where
+`swiftc -typecheck` and `--typecheck` must agree on accept-or-reject, and 20 built four ways
+(`swiftc -Onone`, `swiftc -O`, `./lab.exe build`, `./lab.exe build -O`) whose stdout and exit
+code must be identical.
