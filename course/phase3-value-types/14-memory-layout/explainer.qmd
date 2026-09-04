@@ -49,10 +49,17 @@ padding bytes** push it to offset 8. Size = 16. The Bool's single byte cost the 
 wasted ones. (This is why C programmers reorder struct fields largest-first, and why Swift's
 ABI documents field order as layout-affecting.)
 
-The walk is four lines: an offset starting at 0, a max-alignment starting at 1; for each field,
-`offset = round_up(offset, field.align)` is its start, then `offset += field.size` and
-`align = max(align, field.align)`. The struct's size is the final offset; its alignment the
-final max. Field offsets are the same walk, remembering each start. That's `TODO(14a)`/`(14b)`.
+Work `Three { var a: Bool; var b: Bool; var c: Int }` by hand and the whole rule falls out — a
+running offset, padded up before each field, and a running maximum alignment:
+
+| field | align | offset must be a multiple of | starts at | ends at | running align |
+|---|---|---|---|---|---|
+| `a: Bool` | 1 | 1 | 0 | 1 | 1 |
+| `b: Bool` | 1 | 1 | 1 | 2 | 1 |
+| `c: Int` | 8 | 8 | **8** (six bytes skipped) | 16 | 8 |
+
+Size 16, alignment 8, stride 16; offsets 0, 1, 8. Those two columns — where each field *starts*,
+and where the last one *ends* — are exactly `TODO(14b)` and `TODO(14a)`.
 
 ### Stride vs size, and arrays
 
@@ -61,6 +68,28 @@ second element's `Int` would be misaligned. Stride (16) is the real spacing; siz
 meaningful content. `MemoryLayout<T>.size` and `.stride` expose both, and the gap is where
 "struct of mostly-Bools wastes memory" comes from. Nested structs compose by the same rule: a
 struct field contributes its *own* size and alignment to the parent's walk.
+
+### What the walk consumes: the shapes of a type
+
+This concept adds no syntax — nothing new to lex or parse, and `--emit-layout` is the only new
+driver mode. What it consumes is the **type**, so the recall is the set of forms `info_of`
+dispatches on and the rule each one obeys. Four of the five are given; the `<-- yours` line is
+`TODO(14a)`, and the offsets it walks past are `TODO(14b)`.
+
+| `Types.ty` | size | alignment | notes |
+|---|---|---|---|
+| `TInt`, `TDouble` | 8 | 8 | one machine word; `MemoryLayout<Int>.size` is 8 on arm64 |
+| `TBool` | 1 | 1 | a single byte — the reason padding exists at all |
+| `TString` | 8 | 8 | a pointer in our model (swiftc's `String` is 16: a two-word struct) |
+| `TVoid` | 0 | 1 | no content; its *stride* is still 1, so an array of them has distinct addresses |
+| `TStruct n` | *the padding walk* | max of the fields' | **`<-- yours`** — declaration order, pad before each field |
+| `TEnum n` | `8 × (1 + widest payload)` | 8 | a tag word plus payload words (§ below: swiftc packs it smaller) |
+| `TOptional t` | `8 + size(t)` | 8 | `{ i64 tag, T }` — the enum rule, with one payload case |
+
+And the two derived numbers, which are given: `stride i = max 1 (round_up i.size i.align)`, and
+`round_up n a = (n + a - 1) / a * a` for a power-of-two `a`. Every layout question in the rest
+of the course — an aggregate's `getelementptr` offsets, a class's header, a CoW buffer's header
+— is this table plus one more row.
 
 ### How swiftc does it — spare-bit packing (the honest divergence)
 
@@ -82,16 +111,22 @@ the packing is the optimization on top.
 
 ## 3. Build it, step by step
 
-In `layout.ml`:
+Everything is in `layout.ml`, and nothing else in the compiler changes. The dispatch in
+`info_of`, the scalar/enum/optional rules, `round_up` and `stride` are given; two functions are
+yours, and they are the same walk seen from two angles:
 
-1. **`TODO(14a)` — `struct_info`**: the padding walk. `off` from 0, `align` from 1; per field,
-   `off := round_up off field.align + field.size`, `align := max align field.align`; return
-   `{ size = off; align }`.
-2. **`TODO(14b)` — `field_offsets`**: the same walk, returning `(name, round_up off field.align)`
-   per field and advancing `off`.
+- **`struct_info`, `TODO(14a)`** — given the fields in DECLARATION order, produce the struct's
+  `{ size; align }`. Each field's own `info_of` gives its size and alignment; the rule is the
+  table in §2, and `round_up` is already written for you. Remember that a struct with no fields
+  must still come out with a sane alignment. `layout-padding.t` and the alcotest group of the
+  same name check it.
+- **`field_offsets`, `TODO(14b)`** — the same walk, returning `(name, offset)` per field instead
+  of only the total. If you find yourself writing the walk twice, that is fine for now; folding
+  one into the other is Exercise 2's territory.
 
-The dispatch, the scalar/enum/optional sizes, and `stride` are given. Reference:
-`solution/layout.ml`.
+Neither function needs the module for anything but `info_of` (a field may be another struct, and
+that is what `m` is threaded through for). Reference: `solution/layout.ml` — after you have
+tried it.
 
 ## 4. Test it
 
@@ -99,9 +134,33 @@ The dispatch, the scalar/enum/optional sizes, and `stride` are given. Reference:
 make lab C=phase3-value-types/14-memory-layout
 ```
 
-cram: the four-struct layout (`P`, `Mixed`, `Mixed2` with `size=9`, `Three`) and offsets — all
-matching swiftc's `MemoryLayout`; nested struct composition. alcotest: scalar sizes/strides, the
-order-dependent padding (9 vs 16), field offsets, and nesting.
+Every `.t` file calls `./lab.exe`, built from **this directory's** library, so the report is
+about your code here.
+
+- `layout-padding.t` — `--emit-layout`, the first hole: the scalar base cases, two `Int`s with
+  no padding, the same two fields in both orders (16 against 9), size against stride, a run of
+  `Bool`s, a nested struct bringing its own alignment, and the tagged-union sizes where we
+  knowingly differ from swiftc.
+- `layout-offsets.t` — `--emit-layout`, the second hole: offsets 0 and 8 with nothing skipped,
+  the gap that padding leaves, consecutive `Bool`s, a nested struct at its own alignment, and
+  padding in the middle of a mixed struct.
+- Both cram files call the same driver mode, which prints sizes and offsets together, so they
+  go green together. Per-hole reading lives in `test_layout.ml` (alcotest `layout`), whose
+  `layout-padding` group calls `Layout.struct_info` and whose `layout-offsets` group calls
+  `Layout.field_offsets` directly — fill `TODO(14a)` and the first group alone turns `OK`.
+- `oracle.t` — **the headline**: for each of the 16 programs of `oracle-corpus.txt`, our
+  `--emit-layout` output is turned by a small `awk` script into a Swift program that prints the
+  same lines through `MemoryLayout<T>.size` / `.stride` / `.alignment` / `.offset(of:)`; swiftc
+  compiles and runs it, and the two texts must be byte-identical. Because the probe is generated
+  from our output, a missing line or an extra one fails too. It also builds and runs a struct
+  with an optional field, and checks a `Double` multiply's IR — the two lowering fixes concept 13
+  made, which this concept's compiler (and therefore `swiftml3`) carries.
+
+A hole you have not started shows as `TODO` with the list of what it will check; a hole in
+progress shows `FAIL` with, under each failing case, what the test wants and what your code
+printed. On the untouched skeleton both cram layout files are `TODO`, `oracle.t` is `FAIL` (its
+carry-forward cases pass, its corpus does not), and the alcotest is `FAIL` with `layout-scalars`
+`OK`.
 
 ## 5. Benchmark it
 

@@ -1,0 +1,16 @@
+struct P {\n  var x: Int\n  var y: Int\n}
+struct Mixed {\n  var b: Bool\n  var i: Int\n}
+struct Mixed2 {\n  var i: Int\n  var b: Bool\n}
+struct Three {\n  var a: Bool\n  var b: Bool\n  var c: Int\n}
+struct Inner {\n  var a: Bool\n  var b: Int\n}\nstruct Outer {\n  var flag: Bool\n  var inner: Inner\n}
+struct Flags {\n  var a: Bool\n  var b: Bool\n  var c: Bool\n}
+struct Mix {\n  var d: Double\n  var ok: Bool\n}
+struct Sandwich {\n  var a: Bool\n  var d: Double\n  var b: Bool\n}
+struct One {\n  var x: Int\n}
+struct A {\n  var b: Bool\n}\nstruct B {\n  var a: A\n  var n: Int\n}\nstruct C {\n  var flag: Bool\n  var inner: B\n}
+struct Wide {\n  var i: Int\n  var b: Bool\n  var j: Int\n  var c: Bool\n}
+struct Head {\n  var inner: One\n  var tail: Bool\n}\nstruct One {\n  var x: Int\n}
+struct Doubles {\n  var a: Double\n  var b: Double\n  var c: Double\n}
+struct BoolFirst {\n  var flag: Bool\n  var x: Int\n  var y: Int\n}
+struct Pair {\n  var lo: Int\n  var hi: Int\n}\nstruct Range2 {\n  var a: Pair\n  var b: Pair\n}
+struct Packed {\n  var a: Bool\n  var b: Bool\n  var c: Bool\n  var d: Bool\n  var e: Int\n}

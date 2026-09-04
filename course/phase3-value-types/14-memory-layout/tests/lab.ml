@@ -1,9 +1,34 @@
-(* concept-14 lab CLI — --emit-layout against THIS concept's library *)
+(* The concept `lab` CLI — linked against THIS concept's library, so the cram tests in this
+   directory exercise YOUR code here (the phase binary links the phase's FINAL concept and would
+   not see your work in this directory). Same surface as `swiftml3`:
+     ./lab.exe build <file.swift> [-o <out>]
+     ./lab.exe --emit-tokens|--emit-ast|--typecheck|--emit-sil|--emit-layout|--emit-llvm <file.swift> *)
+
+let usage () =
+  prerr_endline "usage: lab build <file.swift> [-o <out>]";
+  prerr_endline
+    "       lab --emit-tokens|--emit-ast|--typecheck|--emit-sil|--emit-layout|--emit-llvm <file.swift>";
+  exit 2
+
+let emit_of_flag : string -> Driver.emit option = function
+  | "--emit-tokens" -> Some Driver.Tokens
+  | "--emit-ast" -> Some Driver.Ast
+  | "--typecheck" -> Some Driver.Check
+  | "--emit-sil" -> Some Driver.Sil
+  | "--emit-layout" -> Some Driver.Layout
+  | "--emit-llvm" -> Some Driver.Llvm
+  | _ -> None
+
 let () =
   match Array.to_list Sys.argv with
-  | _ :: "--emit-layout" :: [ file ] ->
-      let ic = open_in_bin file in
-      let src = Fun.protect ~finally:(fun () -> close_in ic) (fun () -> really_input_string ic (in_channel_length ic)) in
-      Driver.compile_file ~src_path:file ~emit:Driver.Layout () |> ignore;
-      ignore src
-  | _ -> prerr_endline "usage: lab --emit-layout <file.swift>"; exit 2
+  | _ :: "build" :: file :: rest ->
+      let out =
+        match rest with
+        | [] -> Filename.remove_extension (Filename.basename file)
+        | [ "-o"; o ] -> o
+        | _ -> usage ()
+      in
+      Driver.compile_file ~out ~src_path:file ~emit:Driver.Exe ()
+  | _ :: flag :: [ file ] when emit_of_flag flag <> None ->
+      Driver.compile_file ~src_path:file ~emit:(Option.get (emit_of_flag flag)) ()
+  | _ -> usage ()

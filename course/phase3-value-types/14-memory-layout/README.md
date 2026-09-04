@@ -25,5 +25,8 @@ and `MemoryLayout<T>.size`/`.stride`/`.alignment`/`.offset(of:)` (the behavioral
 > spare-bit packing is the explainer's "how swiftc does it" — a documented divergence, not a bug.
 
 ## Done when
-`make lab C=phase3-value-types/14-memory-layout` green: the four-struct layout (incl. `size=9`)
-and field offsets match swiftc's `MemoryLayout`, and nested structs compose.
+`make lab C=phase3-value-types/14-memory-layout` is green: `layout-padding.t` (sizes, strides,
+alignments) and `layout-offsets.t` (the field offsets) — both driven by `--emit-layout`, so they
+go green together, with the per-hole reading in the alcotest — and `oracle.t`, where our output
+for each of 16 struct programs is turned into a `MemoryLayout<T>` probe, compiled and run by
+`swiftc`, and compared byte for byte.
