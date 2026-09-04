@@ -81,7 +81,11 @@ type func_decl = {
 (* a struct declaration (concept 10) — stored properties in order. Concept 21 adds
    `sconforms` (the `: P, Q` conformance clause) and `smethods` (non-mutating methods —
    each is a func_decl whose body may use `self` and bare field/method names). *)
-type field = { fld_name : string; fld_ty : string (* written type name; sema resolves it *) }
+type field = {
+  fld_name : string;
+  fld_ty : string; (* written type name; sema resolves it *)
+  fld_var : bool; (* `var x: T` — a `let` field can't be assigned through any binding *)
+}
 type struct_decl = {
   sname : string;
   sconforms : string list; (* NEW (21): protocols this struct declares conformance to *)
@@ -204,7 +208,8 @@ let dump_func (f : func_decl) : string =
   let ret = match f.ret with Some r -> Printf.sprintf "-> %s " r | None -> "" in
   Printf.sprintf "(func %s (%s) %s%s)" f.fname ps ret (dump_block f.body)
 
-let dump_field (f : field) : string = Printf.sprintf "%s:%s" f.fld_name f.fld_ty
+let dump_field (f : field) : string =
+  Printf.sprintf "%s%s:%s" (if f.fld_var then "" else "let ") f.fld_name f.fld_ty
 let dump_struct (s : struct_decl) : string =
   let conf = if s.sconforms = [] then "" else ":" ^ String.concat "," s.sconforms ^ " " in
   let methods = if s.smethods = [] then "" else " " ^ String.concat " " (List.map dump_func s.smethods) in
