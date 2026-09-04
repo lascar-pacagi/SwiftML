@@ -217,8 +217,9 @@ then constant folding, CSE, and inlining take it the rest of the way toward `swi
 
 Phase 2 is complete. You turned a type checker into a **compiler**: bidirectional types (05), control
 flow (06), functions (07), the **SIL** middle (08), and now **IRGen** (09) lowering it to LLVM and
-running it. The pipeline is swiftc's: `Parse → Sema → SILGen → SIL → IRGen → LLVM → native`, and the
-output matches `swiftc` byte-for-byte.
+running it. The pipeline is swiftc's: `Parse → Sema → SILGen → SIL → IRGen → LLVM → native`, and on
+the `Int`/`Bool`/control-flow/functions corpus the output matches `swiftc` byte-for-byte (`Double`
+printing and `String` are the documented gaps of §2).
 
 Two directions open up. **Phase 3** grows the *language* — `struct`, `enum` (ADTs), pattern matching,
 `Optional` — the value types Swift is built from. **Phase 4** grows the *compiler* — the SIL

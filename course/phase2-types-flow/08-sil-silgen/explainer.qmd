@@ -155,7 +155,7 @@ bb0:                                           <-- new  block label, bb0 is the 
 | `%n = load %a $T` | read the value at address `%a` `<-- new` |
 | `store %v to %a` | write `%v` at address `%a` (no result) `<-- new` |
 | `%n = binop "+" %a, %b $T` | arithmetic and comparison `<-- new` |
-| `%n = unop "-" %a $T` | negation, `!` `<-- new` |
+| `%n = unop "-" %a $T` | negation — the only unary operator in the subset `<-- new` |
 | `%n = function_ref @f` | a reference to a SIL function `<-- new` |
 | `%n = apply %f(%a, %b)` | call it `<-- new` |
 | `%n = apply @print(%a)` | the one builtin `<-- new` |
