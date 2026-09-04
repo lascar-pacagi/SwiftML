@@ -86,6 +86,45 @@ That's why the `-O` pipeline runs **inline → SSA → specialize → devirt →
 scalars**: the second inline round is where the abstraction actually dies. Run `--sil-opt` on
 the cram's program and read the output — `main` contains *no* protocol machinery at all.
 
+### The SIL your passes read and write
+
+This concept adds no syntax — the grammar is exactly concept 23's. What it adds are two
+*consumers* of the IR, so what §2 must put on the table is the SIL itself. Both passes run on
+**post-mem2reg SSA**, which is what makes them possible at all: every value has one visible
+definition, so a def-chain walk is a proof. The forms that matter are the abstraction-carrying
+ones — the five concept 21–23 introduced, plus the three ordinary ones the folds rewrite them
+into.
+
+| printed form | `Sil.instr` | who introduced it | what your passes do with it |
+|---|---|---|---|
+| `%2 = init_existential %1 : $A, $any P` | `Init_existential` | 21 | **the proof**: `wrap_of` walks back to one of these to learn the concrete type. Never folded directly — it dies as dead code once nothing reads it |
+| `%6 = witness_method %5, #0 ; apply(%a) $Int` | `Apply_witness` | 21 | **fold (24a)**: with a proof, becomes `function_ref` + `apply` of the implementation named in slot `#0` of that conformance's table, with the pre-wrap payload as `self` |
+| `%8 = open_existential %5 : $A` | `Open_existential` | 22 | **fold (24a)**: with a proof, becomes an *alias* for the payload — the instruction disappears and every use is rewritten |
+| `%6 = same_witness %5, $A` | `Same_witness` | 23 | **fold (24a)**: with a proof, becomes `integer_literal $Bool, true/false`, which concept 17's `simplify_cfg` then folds the branch on — a provable `as?` deletes its whole failure arm |
+| `%11 = function_ref @dbl` + `%12 = apply %11(%10)` | `Func_ref`, `Apply` | 08 | **rewrite (24b)**: when `@dbl` is `generic` and every erased argument proves the same type, the `func_ref` retargets to the clone `@dbl$A` and the arguments become raw payloads |
+| `%13 = integer_literal $Bool, false` | `Bool_lit` | 15 | what a folded `same_witness` becomes |
+| `%19 = struct_extract %1, #0 $Int` | `Struct_extract` | 10 | what is *left* after the cascade — the whole point |
+| `sil_witness_table A: P { #0: @A.v }` | `modul.wtables` | 21 | the compile-time lookup table: `impl_of` reads slot `#0` here instead of the CPU reading it at run time |
+
+Two fields on `Sil.func` are new here and exist only for this concept: **`generic`** marks a
+function SILGen lowered from a `<T: P>` declaration (only those are specialization candidates —
+a plain `func h(_ e: any P)` has no type parameter to bind, so it is never cloned), and
+**`params`/`ret` are now mutable**, because cloning has to retype a signature in place.
+
+### The diagnostics you emit
+
+None. This concept is two optimizer passes: by the time they run, sema has already accepted the
+program, and an optimizer that reports anything to the user has found a bug in itself. What it
+*does* owe you is the invariant `oracle.t` enforces — **a pass that changes what a program
+prints is a bug, not an optimization** — and the boundary `sema-subset.t` records, since a
+corpus is only a fair oracle while the front end refuses what the back end cannot lower.
+
+The diagnostics the concept inherits are unchanged and their tables live where they were
+introduced: conformance and the four coercion sites in concept 21's §2, generic inference in
+concept 22's, the cast rules in concept 23's. `sema-subset.t` keeps all of them on record here,
+plus the two v0 refusals that keep the specializer's world small: `==` on two `T`s, and an
+unconstrained `<T>`, which the specializer therefore never meets.
+
 ### The measurement (M5)
 
 ![The M5 run (real numbers, log scale): three protocol/generic hot loops. `swiftml -O` matches `swiftc -O` (geomean 104%); the gap to `-Onone` is the erased abstraction. swiftc's huge `-Onone` bars are its unoptimized dispatch + ARC traffic — ours is leaner because our `-Onone` has no ARC to pay for.](figs/m5_bench.png)
@@ -104,29 +143,71 @@ always possible; *pricing it the same as the reference compiler* is the parity t
 
 ## 3. Build it, step by step
 
-1. **`opt.ml` — `TODO(24a)`, the devirt folds** in `devirt_module`'s `concat_map`: use the
-   given `wrap_of` (the proof) and `impl_of` (the table lookup). `Apply_witness` → two
-   instructions (`fresh` `Func_ref` + direct `Apply` with self prepended); `Open_existential` →
-   record an `alias` and drop; `Same_witness` → `Bool_lit`. Unproven → unchanged.
-2. **`opt.ml` — `TODO(24b)`, the call-site specializer**: prove every erased position (an
-   `init_existential` def, or an already-concrete `TStruct` — that's clone recursion), require
-   one consistent `sn` and `retypable`, create the clone once (`clone_specialized`, append,
-   `changed := true`), then rewrite: payload args, retargeted `func_ref` (via `def` + the
-   commit step below), retyped erased result.
+Two holes, both in `opt.ml`, both module-level passes that run before the per-function pipeline.
+They are independent — each can be filled and tested on its own — but `-O` runs the specializer
+first, because specializing is what *creates* the proofs the devirtualizer then uses.
+
+1. **`opt.ml` — the devirt folds** (`TODO(24a)`, the `concat_map` in `devirt_module`). You are
+   inside a rewrite of one block's instruction list, and you have two given helpers:
+   `wrap_of v` answers *what concrete type is behind this existential?* (walking the SSA
+   def-chain; `None` when it cannot tell), and `impl_of` looks a requirement's implementation up
+   in the module's witness tables. Three instruction forms can be folded when — and only when —
+   `wrap_of` returns a proof; the table in §2 says what each becomes. Two mechanical notes: a
+   dispatch expands into *two* instructions, so you need `fresh` for the new `Func_ref`'s value
+   number, and an `Open_existential` produces *none* — record the substitution in `alias` and
+   drop the instruction; the given code below the hole chases aliases through every operand.
+   Anything unproven must come back unchanged.
+2. **`opt.ml` — the call-site specializer** (`TODO(24b)`, inside `specialize_module`'s worklist).
+   You have an `Apply` whose callee `g` is a `generic` function. Prove the concrete type at
+   every *erased* parameter position; if they do not all prove the SAME type, or `retypable`
+   says no, leave the call alone — it stays on the erased original, and that is a correct
+   outcome, not a failure. Otherwise clone the callee for that type with `clone_specialized`
+   (once — check whether `g$sn` already exists), add it to `funcs`, set `changed`, and rewrite
+   the call: pass the raw payloads instead of the existentials, retarget the `func_ref`, and
+   retype the result if it was erased, so the caller's `open_existential` becomes foldable.
+
+The habit worth forming here is the *bail*. Both passes are built out of proofs, and a pass that
+guesses is a miscompile. `opt-devirt.t` and `opt-specialize.t` each contain a case that must NOT
+be optimized — an existential whose type is chosen at run time, a cast whose answer changes every
+iteration, a non-generic function that merely takes `any P` — and those cases are as much the
+specification as the ones that fold.
 
 Reference: `solution/opt.ml`.
 
 ## 4. Test it
 
 ```bash
-make lab C=phase5-generics/24-specialization
-make bench C=phase5-generics/24-specialization   # the M5 gate
+make lab C=phase5-generics/24-specialization                  # everything
+make lab C=phase5-generics/24-specialization T=opt-devirt     # one hole
+make bench C=phase5-generics/24-specialization       # the M5 gate (slow; not in lab)
 ```
 
-cram: `dbl$A` exists; zero `witness_method`/`init_existential` in provable code; two types ⇒
-two clones; recursion ⇒ a self-recursive clone; the unprovable program keeps dynamic dispatch
-and still runs right. alcotest: the same four properties unit-level, plus non-generic functions
-are never cloned.
+One cram file per hole. Both call `--sil-opt`, which runs the whole `-O` pipeline, so each file
+needs the other hole on its path too; what separates them is what they *observe*:
+
+| file | goes green when | how it checks |
+|---|---|---|
+| `tests/opt-devirt.t` | `TODO(24a)` folds | `--sil-opt`: a provable dispatch leaves `main` with no `witness_method` and no `init_existential` at all; a provable `as?` keeps only its `.some` arm and a provable `as? B` on an `A` keeps only `.none`; and — the cases that keep the pass honest — a run-time-chosen existential and a cast inside a loop KEEP their dynamic machinery and still print the right answer |
+| `tests/opt-specialize.t` | `TODO(24b)` clones | `--sil-opt`: `@dbl` goes from `$any P` to a `@dbl$A` taking `$A`; two types give two clones; a recursive generic gives a self-recursive one; a non-generic `any P` function is never cloned; a generic calling a generic specializes in two steps; and a boxed five-word conformer loses its `malloc` entirely. It also shows the cascade — `dbl$A` ending as one `struct_extract` and one `binop` |
+
+Two files do not belong to a hole. `tests/sema-subset.t` is GIVEN code and green from the start:
+every front-end refusal phase 5 accumulated, which is what keeps the oracle's corpus inside what
+swiftc and we mean the same thing by. And `tests/oracle.t` is the headline, and for an optimizer
+it is *the* test: 21 programs where `swiftc -typecheck` and `--typecheck` must reach the same
+verdict, then 18 built **four ways** — `swiftc -Onone`, `swiftc -O`, `./lab.exe build`,
+`./lab.exe build -O` — all run, stdout and exit code identical. Half that corpus is deliberately
+unprovable, so it fails loudly if a fold ever fires without its proof.
+
+`make lab` distinguishes three kinds of red. **TODO** means nothing in that file passes — the
+hole has not been started. **FAIL** means *some* cases pass: you are mid-hole, and the diffs are
+worth reading (`DETAIL=1`). **SKIP** means a compile error stopped dune first. On the untouched
+skeleton both hole files read TODO, `sema-subset.t` reads PASS, and `oracle.t` reads FAIL — its
+front-end half is green, because nothing you write here is in the front end.
+
+alcotest (`tests/test_spec.ml`) is the one place the two holes are truly separable: instead of
+`Opt.optimize` it calls `Opt.devirt_module` and `Opt.specialize_module` directly, over
+post-mem2reg SIL, so the `devirt 24a` group goes green on the first hole alone and `spec 24b` on
+the second. The `pipeline` group then runs the real `-O` and checks the cascade.
 
 ## 5. Benchmark it
 

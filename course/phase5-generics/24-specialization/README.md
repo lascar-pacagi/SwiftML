@@ -52,7 +52,12 @@ overflow-semantics caveat as M4). `make bench C=phase5-generics/24-specializatio
 
 ## Done when
 
-`make lab C=phase5-generics/24-specialization` is green: `--sil-opt` shows `dbl$A`/`g$B`/`rep$A`
-clones and zero `witness_method`/`init_existential` in provable code, unprovable dispatch
-survives, behavior matches swiftc under `-O`, and the bench gate holds. **That's Milestone M5 —
-and Phase 5 complete.**
+`make lab C=phase5-generics/24-specialization` is green. One cram file per hole —
+`opt-devirt.t` (the three folds, and the cases that must NOT fold) and `opt-specialize.t` (the
+clones, the cascade, and the calls that must stay erased) — plus the given `sema-subset.t` and
+the headline `oracle.t`, which asks swiftc on every run: 21 programs where `swiftc -typecheck`
+and `--typecheck` must agree on accept-or-reject, and 18 built four ways (`swiftc -Onone`,
+`swiftc -O`, `./lab.exe build`, `./lab.exe build -O`) whose stdout and exit code must be
+identical — half of them deliberately unprovable, so a fold that fires without its proof shows
+up as a wrong answer. Then `make bench C=…` for the M5 gate. **That's Milestone M5 — and Phase 5
+complete.**
