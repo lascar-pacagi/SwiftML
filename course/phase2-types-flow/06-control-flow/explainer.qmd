@@ -94,6 +94,51 @@ and every backend works on this graph, not the tree. That representation is **SI
 concept is where you feel why the next one needs to exist. (It's also why we don't run loops yet —
 there's no graph-shaped IR to lower them into until SIL.)
 
+### The grammar, with this concept's additions
+
+Five new tokens, all in the operator `match` of the lexer (maximal munch, like `==`/`<=`):
+
+| spelling | token | notes |
+|---|---|---|
+| `{` `}` | `LBrace` `RBrace` | a block; also where a statement may now end (before `}`) |
+| `&&`, and its twin spelled with two pipes | `AmpAmp`, `PipePipe` | a lone `&` or a lone pipe is an error |
+| `..<` | `DotDotLt` | the half-open range; a lone `.` is an error |
+| `if` `else` `while` `for` `in` `break` `continue` | `Kw_…` | keywords, already in `token.ml`'s table |
+
+The syntactic grammar — `<-- new` marks what this concept adds. Precedence is the `infix_bp`
+table, loosest first; the two logical rows are **given** in `parser.ml`, the statements are yours:
+
+```
+program    ::= { statement NEWLINE }
+statement  ::= ("let" | "var") ident [ ":" type ] "=" expr
+             | ident "=" expr
+             | expr
+             | "if" expr block [ "else" ( block | if-statement ) ]     <-- new
+             | "while" expr block                                     <-- new
+             | "for" ident "in" expr "..<" expr block                 <-- new
+             | "break" | "continue"                                   <-- new
+block      ::= "{" { NEWLINE } { statement NEWLINE } "}"              <-- new
+
+expr       ::= disjunction
+disjunction ::= conjunction { "||" conjunction }                (bp 3)   <-- new
+conjunction ::= comparison { "&&" comparison }                  (bp 4)   <-- new
+comparison ::= cast { ("==" | "!=" | "<" | "<=" | ">" | ">=") cast }  (bp 5)
+cast       ::= sum { "as" type }                                (bp 7)
+sum        ::= product { ("+" | "-") product }                  (bp 10)
+product    ::= unary { ("*" | "/" | "%") unary }                (bp 20)
+unary      ::= "-" unary | primary
+primary    ::= int | float | string | "true" | "false" | ident
+             | ident "(" [ expr { "," expr } ] ")" | "(" expr ")"
+```
+
+Three things to notice. A block's statements are separated by newlines exactly as the program's
+are, and blank lines inside a block are skipped the same way. `else if` is not a production of
+its own: the `else` branch is either a block or another `if`-statement, which is why the parser
+wraps a nested `if` as the sole statement of the else block. And the range `lo ..< hi` is not an
+expression — `..<` appears only in the `for` production, so `let r = 0 ..< 3` is a syntax error
+(a first-class `Range` is §6's second exercise). The condition of an `if`/`while` is a plain
+`expr`; the parser already stops at `{`, so no parentheses are needed or allowed.
+
 ### The diagnostics you emit
 
 Same three sources as concept 05: swiftc's `.def` files where the construct exists, `swiftc
@@ -104,8 +149,9 @@ Same three sources as concept 05: swiftc's `.def` files where the construct exis
 | input | message | source |
 |---|---|---|
 | `a & b` | `expected '&' after '&'` | ours — `&` alone is Swift's bitwise-and, meaningless here |
-| `a \| b` | `expected '\|' after '\|'` | ours, the same shape |
 | `0 .. 3`, `.5` | `unexpected character '.'` | ours — a `.` that does not start `..<` |
+
+and a lone pipe is the same shape as a lone ampersand: `expected '|' after '|'`.
 
 **Parser** — nothing new to compose: the given `expect`/`parse_ident` helpers report `expected
 <what>`, and you choose the phrase: `'{'` after a condition, `'in'` and `'..<'` in a `for`, `a loop
@@ -116,8 +162,7 @@ variable` for its name. Each lands on the token that was found instead.
 | program | message | swiftc |
 |---|---|---|
 | `if 1 { }`, `while "no" { }` | `cannot convert value of type 'Int' to specified type 'Bool'` | *integer literal value '1' cannot be used as a boolean; did you mean 'true'?* — a special case of the same rule |
-| `let b = 1 && true` | `binary operator '&&' cannot be applied to operands of type 'Int' and 'Bool'` | overload-resolution wording (see 05); ours is the uniform form |
-| `let b = 1 \|\| 2` | `binary operator '\|\|' cannot be applied to two 'Int' operands` | same shape |
+| `let b = 1 && true` | `binary operator '&&' cannot be applied to operands of type 'Int' and 'Bool'` | overload-resolution wording (see 05); ours is the uniform form — and two operands of the same wrong type get 05's other wording, *cannot be applied to two 'Int' operands* |
 | `for i in 0 ..< 3 { i = 0 }` | `cannot assign to value: 'i' is a 'let' constant` | **same** — falls out of binding `i` as a `let` |
 | `for i in 0.0 ..< 3 { }` | `cannot convert value of type 'Double' to specified type 'Int'` | a `Range<Double>` complaint about `Stride`/`SignedInteger` — we have no `Range` type, so the bound rule stands in |
 | `continue` outside a loop | `'continue' is only allowed inside a loop` | **same** (`diag::continue_outside_loop`) |
