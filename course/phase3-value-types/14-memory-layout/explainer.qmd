@@ -14,7 +14,8 @@ does each field sit?* This concept answers it. Given a type, compute its **size*
 through `MemoryLayout<T>`, and for structs of scalars, *identical to the byte*. It's a short,
 sharp lesson in the one rule that governs all of it: **natural alignment**.
 
-(This is the Phase-3 layout chapter, built now as a backfill — it branches off `13-optionals`.)
+This is Phase 3's layout chapter, written after the rest of the phase: it branches off
+`13-optionals` rather than feeding concept 15, so nothing downstream depends on it.
 
 - **You implement:** the struct padding walk and the field offsets.
 - **Outcome:** `--emit-layout` matching swiftc's `MemoryLayout` on structs of scalars.

@@ -238,11 +238,11 @@ tag-and-payload engine, and the force-unwrap trap matches swiftc to the exit cod
 essentially complete** — and a small ADT interpreter (concept 12's `Op`/`eval`, now with optional
 results) matches swiftc byte-for-byte, which is **Milestone M3**.
 
-One concept remains to round out the phase — **14-memory-layout**: how aggregates are actually sized
-and aligned, the **value-witness** copy/destroy hooks (the seam where Phase 5's **ARC** will hang),
-and `@frozen`-style layout guarantees. After that, the big pivot: **Phase 4**, the SIL **optimizer**,
-where **mem2reg** turns the load/store-heavy SIL you've emitted all along into **SSA** — the lesson
-you've been waiting for.
+One concept remains to round out the phase — **14-memory-layout**: how big the aggregates you have
+been building actually are, where each field sits, and why field *order* changes a struct's size.
+It computes the numbers `swiftc` reports through `MemoryLayout<T>` and checks them against it.
+After that, the big pivot: **Phase 4**, the SIL **optimizer**, where **mem2reg** turns the
+load/store-heavy SIL you've emitted all along into **SSA** — the lesson you've been waiting for.
 
 ## 8. Appendix — full solution
 

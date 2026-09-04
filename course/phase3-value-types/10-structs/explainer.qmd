@@ -172,7 +172,8 @@ machinery is the natural place to generalize), and `print` of a `Double` goes th
 
 ## 3. Build it, step by step
 
-Front-end is done; fill the lowering.
+The front end is given — parser and sema already accept and check structs. You write the two
+stages under them.
 
 - **`silgen.ml`** — two holes. In `gen_expr`, the `Member (e0, fld, _)` case is a **read**: lower
   `e0` to a struct *value*, ask its type (`vty`) which struct it is, and turn the field *name* into an
