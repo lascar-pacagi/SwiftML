@@ -467,8 +467,8 @@ let parse_func (p : t) : Ast.func_decl =
 (* `struct Name [: P, Q] { (var|let) name: Type … func … }` — stored properties + methods
    (concept 10; conformances and methods are concept 21). *)
 let parse_struct (p : t) : Ast.struct_decl =
-  let kw = advance p (* struct *) in
-  let sname, _ = parse_ident p "a struct name" in
+  ignore (advance p (* struct *));
+  let sname, sspan = parse_ident p "a struct name" in
   let sconforms =
     if peek_kind p <> Token.Colon then []
     else (
@@ -486,12 +486,12 @@ let parse_struct (p : t) : Ast.struct_decl =
     | Token.RBrace -> ignore (advance p); (List.rev flds, List.rev meths)
     | Token.Eof -> ignore (expect p Token.RBrace "'}'"); (List.rev flds, List.rev meths)
     | Token.Kw_let | Token.Kw_var ->
-        ignore (advance p (* let/var *));
+        let fld_var = (advance p (* let/var *)).Token.kind = Token.Kw_var in
         let fld_name, _ = parse_ident p "a property name" in
         ignore (expect p Token.Colon "':'");
         let fld_ty = parse_type_name p "a property type" in
         (match peek_kind p with Token.Newline -> ignore (advance p) | _ -> ());
-        loop ({ Ast.fld_name; fld_ty } :: flds) meths
+        loop ({ Ast.fld_name; fld_ty; fld_var } :: flds) meths
     | Token.Kw_func ->
         let m = parse_func p in
         (match peek_kind p with Token.Newline -> ignore (advance p) | _ -> ());
@@ -503,13 +503,13 @@ let parse_struct (p : t) : Ast.struct_decl =
         loop flds meths
   in
   let sfields, smethods = loop [] [] in
-  { Ast.sname; sconforms; sfields; smethods; sspan = kw.Token.span }
+  { Ast.sname; sconforms; sfields; smethods; sspan (* the name token: where swiftc reports a declaration's errors *) }
 
 (* `class Name [: Super] { (var name: T)* init(params){…} (override? func …)* }` — concept 25.
    v0: var stored properties only, at most ONE initializer, single inheritance. *)
 let parse_class (p : t) : Ast.class_decl =
-  let kw = advance p (* class *) in
-  let cname, _ = parse_ident p "a class name" in
+  ignore (advance p (* class *));
+  let cname, cspan = parse_ident p "a class name" in
   let csuper =
     if peek_kind p = Token.Colon then (ignore (advance p); Some (fst (parse_ident p "a superclass name")))
     else None
@@ -521,12 +521,12 @@ let parse_class (p : t) : Ast.class_decl =
     match peek_kind p with
     | Token.RBrace -> ignore (advance p)
     | Token.Eof -> ignore (expect p Token.RBrace "'}'")
-    | Token.Kw_var ->
-        ignore (advance p);
+    | Token.Kw_let | Token.Kw_var ->
+        let fld_var = (advance p (* let/var *)).Token.kind = Token.Kw_var in
         let fld_name, _ = parse_ident p "a property name" in
         ignore (expect p Token.Colon "':'");
         let fld_ty = parse_type_name p "a property type" in
-        fields := { Ast.fld_name; fld_ty } :: !fields;
+        fields := { Ast.fld_name; fld_ty; fld_var } :: !fields;
         (match peek_kind p with Token.Newline -> ignore (advance p) | _ -> ());
         loop ()
     | Token.Kw_init ->
@@ -558,13 +558,13 @@ let parse_class (p : t) : Ast.class_decl =
         loop ()
   in
   loop ();
-  { Ast.cname; csuper; cfields = List.rev !fields; cinit = !init; cmethods = List.rev !methods; cspan = kw.Token.span }
+  { Ast.cname; csuper; cfields = List.rev !fields; cinit = !init; cmethods = List.rev !methods; cspan }
 
 (* `protocol Name { func name(params) [-> T] … }` — method requirements: signatures with NO
    body (concept 21). The requirement order is the witness-table slot order. *)
 let parse_proto (p : t) : Ast.proto_decl =
-  let kw = advance p (* protocol *) in
-  let pname, _ = parse_ident p "a protocol name" in
+  ignore (advance p (* protocol *));
+  let pname, pspan = parse_ident p "a protocol name" in
   ignore (expect p Token.LBrace "'{'");
   let rec loop acc =
     while peek_kind p = Token.Newline do ignore (advance p) done;
@@ -588,13 +588,13 @@ let parse_proto (p : t) : Ast.proto_decl =
         loop acc
   in
   let reqs = loop [] in
-  { Ast.pname; reqs; pspan = kw.Token.span }
+  { Ast.pname; reqs; pspan }
 
 (* `enum Name [: Raw] { case a; case b(T, U) … }` — cases in order, optional payloads. We
    ignore explicit `= raw` (implicit raws = index); see the explainer. (concept 11) *)
 let parse_enum (p : t) : Ast.enum_decl =
-  let kw = advance p (* enum *) in
-  let ename, _ = parse_ident p "an enum name" in
+  ignore (advance p (* enum *));
+  let ename, espan = parse_ident p "an enum name" in
   let eraw = if peek_kind p = Token.Colon then (ignore (advance p); Some (fst (parse_ident p "a raw type"))) else None in
   ignore (expect p Token.LBrace "'{'");
   let parse_payload () =
@@ -633,7 +633,7 @@ let parse_enum (p : t) : Ast.enum_decl =
         loop acc
   in
   let ecases = loop [] in
-  { Ast.ename; ecases; eraw; espan = kw.Token.span }
+  { Ast.ename; ecases; eraw; espan }
 
 (* A program is a sequence of top-level items: function declarations and statements. *)
 let parse_program (p : t) : Ast.program =
