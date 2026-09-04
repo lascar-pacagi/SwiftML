@@ -97,6 +97,64 @@ without a retain; sema rejects it until copy machinery exists (the value-witness
 concept 23). And the traffic is **naive**: `let c = a; print(c.id)` retains and releases even
 though `a` outlives `c` — correct, measurable, and exactly the waste concept 28 eliminates.
 
+### The subset you are growing into
+
+**New lexemes.** One keyword, added in `token.ml`'s `keyword_or_ident` — **not** in `lexer.ml`,
+which is where the first attempt usually goes:
+
+| spelling | token | notes |
+|---|---|---|
+| `deinit` | `Token.Kw_deinit` | a class member with no parameters, no return type and no name of its own. At most one per class |
+
+**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05-25.
+Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (zero or more),
+`|` separates alternatives, and quoted text is a terminal.
+
+```
+class_decl  ::= "class" ident [ ":" ident ] "{" { member } "}"
+member      ::= field
+              | "init" "(" [ param { "," param } ] ")" block
+              | "deinit" block                                       <-- new
+              | [ "override" ] func_decl
+```
+
+That is the whole syntactic change, and it is worth sitting with: **`deinit` is one production
+and the rest of this concept is ~400 lines of SILGen and a six-line runtime function.** The
+language surface of automatic reference counting is almost nothing — what ARC costs is the
+*insertion*, and the insertion is invisible from the source. There are no new expressions, no
+new statements, no annotations at a call site; the same `let a = T(1)` you have been writing
+since concept 25 now emits ownership traffic around it.
+
+The IR is where this concept actually grows, so here is what your two SILGen holes emit:
+
+| printed form | `Sil.instr` | when it is emitted |
+|---|---|---|
+| `retain %5` | `Retain` **new** | `take_ownership` on a BORROWED value — one stored somewhere durable that the statement did not itself create |
+| `release %5` | `Release` **new** | a scope exiting, a statement's unconsumed temporaries, an overwritten slot or field, and the field-destroy chain |
+| `%7 = function_ref @A.destroy` + `apply` | `Func_ref`, `Apply` (08) | the chain to the superclass, in both destructors |
+| `%7 = ref_element_addr %3, #1` | `Ref_element_addr` (25) | addressing a class-typed field so it can be loaded and released |
+
+Both are **side-effecting**: `Sil.value_key` returns `None` for them, so GVN never merges two
+retains and DIE never drops one, and every pass treats them as immovable, like a call. That is
+what makes `-O` safe here, and it is also what concept 28 will carefully relax.
+
+### The diagnostics you emit
+
+None from the holes. All three are lowering, and by the time they run sema has accepted the
+program — a code generator that reports something to the user has found a bug in itself. What
+this concept *does* add to sema is three refusals that keep the corpus inside what we can lower
+correctly, and they are given code; `sema-arc.t` keeps them on record.
+
+| program | our message | swiftc |
+|---|---|---|
+| `struct S { var k: K }` for a class `K` | `class references inside structs are not supported in this subset` | **accepted** — swiftc copies a struct through its value witness table, which retains each reference. A bitwise copy would make a second owner the count never heard about, so we refuse until that machinery exists (concept 23's exercise 4) |
+| `enum E { case some(K) }` | `class references inside enum payloads are not supported in this subset` | **accepted**, same reason |
+| `let k: K? = K(1)` | `optional class references are not supported in this subset` | **accepted**, same reason. This one used to slip past the check when the type was written on a `let`, and it did not merely lose a `deinit`: the slot held a reference the ARC insertion never saw, so the object was freed and its destructor then read a dead field. A one-line gap, a miscompile — `sema-arc.t` pins it |
+| a second `deinit` in one class | `invalid redeclaration of 'deinit'` | **same** text (`DiagnosticsSema.def`'s `invalid_redecl` family); a parse-time check here |
+
+The class rules of concept 25 are unchanged and their table lives in that explainer's §2. The
+corpus leans on all of them, so `sema-arc.t` re-runs the four that matter most.
+
 > Oracle: `HeapObject.cpp` (the runtime), `SILGenDecl.cpp`/`Cleanup.h` (the cleanup stack),
 > `swift/docs/ARCOptimization.md` (what comes next).
 
@@ -117,14 +175,53 @@ Reference: `solution/silgen.ml`, `solution/irgen.ml`.
 ## 4. Test it
 
 ```bash
-make lab C=phase6-classes-arc/26-arc-runtime
+make lab C=phase6-classes-arc/26-arc-runtime                       # everything
+make lab C=phase6-classes-arc/26-arc-runtime T=silgen-ownership    # one hole
 ```
 
-cram: scope/reverse-order/shared-object lifetimes; reassignment ordering; the two-chain
-deallocation (both orderings verified against swiftc); ownership transfer through returns;
-loop and `break` releases; `-O` identical; the value-type guard diagnostic. alcotest: borrow
-retains vs fresh consumption (counted per function), destructor synthesis, both chains'
-structure, and `-O` preserving every retain/release.
+One cram file per hole. The first two read SIL, which is where ARC traffic is *decided*; the
+third reads LLVM and then runs programs, which is where it is *observed*:
+
+| file | goes green when | how it checks |
+|---|---|---|
+| `tests/silgen-ownership.t` | `TODO(26a)` transfers | `--emit-sil`, counting: a fresh `T(1)` stored into a `let` takes NO retain and one scope-end release; a second binding to the same object takes one retain and now two releases; reassignment stores the new value and only THEN releases the old; a parameter is guaranteed, so the callee has no ARC traffic at all; a return retains before the scope releases, and the caller consumes without retaining; a statement temporary dies between the two `print`s; and a class-typed field takes ownership on a write outside `init` but not inside it |
+| `tests/silgen-destroy.t` | `TODO(26b)` chains | `--emit-sil` on both destructors side by side: `B.deinit` runs its body and then calls `A.deinit` (derived to base, releasing nothing), while `B.destroy` calls `A.destroy` FIRST and only then releases its own `l` (base to derived). A base with only an `Int` field has an empty `destroy`; three levels deep each one chains to its immediate superclass and no further; and IRGen puts both in slots 0 and 1 of every table |
+| `tests/irgen-release.t` | `TODO(26c)` runs them | `--emit-llvm` for the function itself — decrement, zero test, slot 0, slot 1, one `free` — then programs RUN and their `deinit`s print: scope exit in reverse order with a shared object dying once, reassignment, the two-chain order (2000, 1003, 7 — **not** the plausible 2000, 7, 1003), returns and loops and statement temporaries at `-Onone` **and** `-O`, `break`/`continue`, and a replaced field dying at the assignment |
+
+`tests/sema-arc.t` belongs to no hole and is green from the first run: the three v0 guards, the
+`deinit` redeclaration, and the concept-25 rules the corpus leans on.
+
+`tests/oracle.t` is the headline, and for this concept it is unusually sharp, because **a
+`deinit` prints**: the corpus does not check what a program computes, it checks the exact moment
+every object dies. Three loops:
+
+- 16 programs of `oracle-typecheck.txt` where `swiftc -typecheck` and `--typecheck` must reach
+  the same verdict. Only rules swiftc *has* are in this list — our three v0 guards refuse
+  programs swiftc accepts, so they live in `sema-arc.t` with the divergence stated;
+- 6 programs of `oracle-di.txt`, compiled ALL THE WAY by swiftc, because definite
+  initialization is a SIL-level check `-typecheck` never reports (concept 25's §2);
+- 18 programs of `oracle-corpus.txt` — the twelve lifetime scenarios and then some — built four
+  ways. `swiftc -Onone` is the reference and our two builds must match it exactly. `swiftc -O`
+  is compiled and compared too, but reported separately, because it is *allowed* to differ and
+  on two of these it does: swiftc's ARC optimizer shortens lifetimes, and the order between two
+  *unrelated* objects is not part of the language contract once it runs. The order within one
+  deallocation, and the moment relative to the surrounding statements, is — and that is what
+  every other line pins. Our own `-O` reordering anything would be a bug, and shows up as a
+  plain DIVERGE.
+
+`make lab` distinguishes three kinds of red. **TODO** means nothing in that file passes — the
+hole has not been started. **FAIL** means *some* cases pass: you are mid-hole, and the diffs are
+worth reading (`DETAIL=1`). **SKIP** means a compile error stopped dune first. On the untouched
+skeleton `silgen-ownership.t` and `irgen-release.t` read TODO, `sema-arc.t` reads PASS, and
+`silgen-destroy.t` and `oracle.t` read FAIL.
+
+alcotest (`tests/test_arc.ml`) separates the holes by counting instructions per function rather
+than reading text: `ownership 26a` checks the retain/release count of `f`, `use`, `mk` and `g`
+one at a time, `destroy 26b` checks that `B.destroy`'s super call precedes its own release,
+`runtime 26c` greps the emitted runtime line by line. Then `optimizer` pins that `-O` changes
+neither count and leaves `T.destroy` alive, and `given rules` pins the two guards. One trap
+worth knowing if you add a case: a block accumulates instructions with `::`, so `b.instrs` is
+the REVERSE of what `--emit-sil` prints — an order-sensitive check has to reverse it first.
 
 ## 5. Benchmark it
 

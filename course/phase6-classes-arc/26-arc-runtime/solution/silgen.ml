@@ -135,6 +135,56 @@ let self_struct (b : builder) : string option =
   | Some slot -> ( match Hashtbl.find b.val_ty slot with Types.TStruct sn -> Some sn | _ -> None)
   | None -> None
 
+(* concept 21: coerce a lowered VALUE to `any P` — the EXISTENTIAL WRAP. Called by gen_expr_as
+   both for a bare `any P` and for the payload of a `P?` (which is wrapped, then `.some`d). *)
+let wrap_existential (b : builder) (v : Sil.value) (pn : string) : Sil.value =
+  match vty b v with
+  | Types.TProto _ -> v (* already an existential *)
+  | Types.TStruct sn -> emit b (Sil.Init_existential (v, sn, pn)) (Types.TProto pn)
+  | _ -> assert false (* sema guaranteed conformance *)
+
+(* the same walk over the raw tables, for `lower` (which has no builder yet) *)
+let rec init_owner_of classes funcs (cn : string) : string option =
+  if Hashtbl.mem funcs (cn ^ ".init") then Some cn
+  else
+    match Option.bind (Hashtbl.find_opt classes cn) (fun (cl : Types.class_layout) -> cl.Types.cl_super) with
+    | Some s -> init_owner_of classes funcs s
+    | None -> None
+
+(* the class whose declared `init` a constructor runs: its own, else the nearest superclass's
+   (Swift inherits initializers when a subclass adds no stored properties) — concept 25 *)
+let rec init_owner (b : builder) (cn : string) : string option =
+  if Hashtbl.mem b.funcs (cn ^ ".init") then Some cn
+  else match (Hashtbl.find b.classes cn).Types.cl_super with
+    | Some s -> init_owner b s
+    | None -> None
+
+(* Swift's IMPLICIT `super.init()`: an initializer that never calls it gets the call appended
+   when the superclass's initializer takes no arguments (sema rejected the other case). swiftc
+   inserts it at the end of the initializer's phase 1. — concept 25 *)
+let with_implicit_super classes funcs (c : Ast.class_decl) (init : Ast.func_decl) : Ast.func_decl =
+  let rec calls_super (st : Ast.stmt) =
+    match st with
+    | Ast.Expr_stmt (Ast.Method_call (Ast.Var ("super", _), "init", _, _), _) -> true
+    | Ast.If { then_blk; else_blk; _ } | Ast.If_let { then_blk; else_blk; _ } ->
+        any then_blk || opt else_blk
+    | Ast.While { body; _ } | Ast.For { body; _ } -> any body
+    | Ast.Switch { cases; default; _ } -> List.exists (fun (_, blk) -> any blk) cases || opt default
+    | _ -> false
+  and any ss = List.exists calls_super ss
+  and opt = function Some ss -> any ss | None -> false in
+  let zero_arg_super =
+    match Option.bind c.Ast.csuper (init_owner_of classes funcs) with
+    | Some o -> fst (Hashtbl.find funcs (o ^ ".init")) = []
+    | None -> false
+  in
+  if c.Ast.csuper = None || any init.Ast.body || not zero_arg_super then init
+  else
+    let sp = init.Ast.fspan in
+    { init with
+      Ast.body =
+        init.Ast.body @ [ Ast.Expr_stmt (Ast.Method_call (Ast.Var ("super", sp), "init", [], sp), sp) ] }
+
 (* --- lowering expressions: returns the SIL value holding the result --- *)
 let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
   match e with
@@ -197,28 +247,27 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       switch_to b merge;
       emit b (Sil.Load slot) Types.TBool
   | Ast.Binary (op, l, r, _) ->
-      let lv = gen_expr b l and rv = gen_expr b r in
+      let lv = gen_expr b l in
       (match vty b lv with
       | Types.TEnum _ when op = Ast.Eq || op = Ast.Ne ->
           (* enum equality is tag comparison (payload-free enums only — see sema) *)
+          let rv = gen_expr b r in
           let lt = emit b (Sil.Enum_tag lv) Types.TInt in
           let rt = emit b (Sil.Enum_tag rv) Types.TInt in
           emit b (Sil.Binop (op, lt, rt)) Types.TBool
       | _ ->
-          let operand = if vty b lv = Types.TDouble || vty b rv = Types.TDouble then Types.TDouble else vty b lv in
-          emit b (Sil.Binop (op, lv, rv)) (result_ty op operand))
+          (* sema's `unify` lets an Int-literal tree adopt the other side's Double (`d * 2`,
+             `2 * d`): that side must be generated AT Double, or IRGen emits `fmul double %d, 2`
+             and clang rejects it. Re-generating a literal tree is safe — it has no side effects. *)
+          let rv = if vty b lv = Types.TDouble then gen_expr_as b r Types.TDouble else gen_expr b r in
+          let lv = if vty b rv = Types.TDouble && vty b lv = Types.TInt then gen_expr_as b l Types.TDouble else lv in
+          emit b (Sil.Binop (op, lv, rv)) (result_ty op (vty b lv)))
   | Ast.Call (f, args, _) ->
       if Hashtbl.mem b.classes f then (
         (* a class CONSTRUCTOR (concept 25): heap-allocate (the header gets the class's vtable
            pointer and an initial refcount), then run the declared initializer on the reference *)
         let refv = emit b (Sil.Alloc_ref f) (Types.TClass f) in
-        let rec init_owner cn =
-          if Hashtbl.mem b.funcs (cn ^ ".init") then Some cn
-          else match (Hashtbl.find b.classes cn).Types.cl_super with
-            | Some s -> init_owner s
-            | None -> None
-        in
-        (match init_owner f with
+        (match init_owner b f with
         | Some owner ->
             let ptys, _ = Hashtbl.find b.funcs (owner ^ ".init") in
             let argvs = List.map2 (fun (_, e) pt -> gen_expr_as b e pt) args ptys in
@@ -321,7 +370,8 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
   (* `super.init(args)` — a DIRECT (static) call to the superclass initializer (concept 25) *)
   | Ast.Method_call (Ast.Var ("super", _), "init", args, _) ->
       let cn = Option.get (self_class b) in
-      let sup = Option.get (Hashtbl.find b.classes cn).Types.cl_super in
+      (* the superclass may INHERIT its init: call the owner's, with self upcast to it *)
+      let sup = Option.get (init_owner b (Option.get (Hashtbl.find b.classes cn).Types.cl_super)) in
       let selfv = emit b (Sil.Load (Hashtbl.find b.vars "self")) (Types.TClass cn) in
       let ptys, _ = Hashtbl.find b.funcs (sup ^ ".init") in
       let argvs = List.map2 (fun (_, e) pt -> gen_expr_as b e pt) args ptys in
@@ -474,15 +524,14 @@ and gen_expr_as (b : builder) (e : Ast.expr) (expected : Types.ty) : Sil.value =
       let lv = gen_expr_as b l Types.TDouble and rv = gen_expr_as b r Types.TDouble in
       emit b (Sil.Binop (op, lv, rv)) Types.TDouble
   | Ast.Nil _, Types.TOptional _ -> emit b (Sil.Enum (0, [])) expected
-  | _, Types.TOptional _ ->
+  | _, Types.TOptional t ->
       let v = gen_expr b e in
-      if vty b v = expected then v else emit b (Sil.Enum (1, [ v ])) expected
-  | _, Types.TProto pn -> (
-      let v = gen_expr b e in
-      match vty b v with
-      | Types.TProto _ -> v (* already an existential *)
-      | Types.TStruct sn -> emit b (Sil.Init_existential (v, sn, pn)) expected
-      | _ -> assert false (* sema guaranteed conformance *))
+      if vty b v = expected then v
+      else
+        (* the payload needs its own coercion first: a conformer into `any P` for a `P?` *)
+        let v = match t with Types.TProto pn -> wrap_existential b v pn | _ -> v in
+        emit b (Sil.Enum (1, [ v ])) expected
+  | _, Types.TProto pn -> wrap_existential b (gen_expr b e) pn
   (* a subclass reference upcasts to its superclass — same pointer, retyped (concept 25) *)
   | _, Types.TClass cn -> (
       let v = gen_expr b e in
@@ -587,12 +636,13 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       | Types.TStruct sn ->
           (* `p.x = e`: take the field's ADDRESS in p's slot, then store — this is what makes a
              struct a value type, since p has its own slot distinct from any copy *)
-          let v = gen_expr b value in
           let sl = Hashtbl.find b.structs sn in
-          let faddr =
-            emit b (Sil.Struct_element_addr (slot, Option.get (Types.field_index sl field)))
-              (Option.get (Types.field_type sl field))
-          in
+          let fty = Option.get (Types.field_type sl field) in
+          (* wrap to the FIELD's type, exactly as `Assign` wraps to the slot's: `box.v = nil` on a
+             `var v: Int?` must store `.none`, and a conformer stored into an `any P` field must
+             be wrapped into the existential, not stored raw *)
+          let v = gen_expr_as b value fty in
+          let faddr = emit b (Sil.Struct_element_addr (slot, Option.get (Types.field_index sl field))) fty in
           ignore (emit b (Sil.Store (v, faddr)) Types.TVoid)
       | _ -> assert false)
   | Ast.Expr_stmt (e, _) -> ignore (gen_expr b e)
@@ -1009,7 +1059,9 @@ let lower (prog : Ast.program) : Sil.modul =
                 { Ast.fname = "destroy"; generics = []; params = []; ret = None; body = []; fspan = c.Ast.cspan }
             in
             (dtor :: destroyer
-            :: (match c.Ast.cinit with Some init -> [ lower_m ~init:true init ] | None -> []))
+            :: (match c.Ast.cinit with
+               | Some init -> [ lower_m ~init:true (with_implicit_super classes funcs c init) ]
+               | None -> []))
 
             @ List.map (fun (_, m) -> lower_m m) c.Ast.cmethods
         | Ast.IStruct st ->
