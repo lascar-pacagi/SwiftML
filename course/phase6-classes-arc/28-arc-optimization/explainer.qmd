@@ -228,10 +228,13 @@ direct call — make it one and inline. Structure (27) made the checks statable;
 made the soundness gate executable; the benchmark makes the payoff a number: **126% of
 `swiftc -O`, 12/12 deinit orderings intact. Milestone M6 — Phase 6 complete.**
 
-Next, per `PLAN.md`: **Phase 7 — closures, errors & a minimal standard library** (29-closures:
-capture, thin vs thick functions, the closure ABI — where the function *type* finally becomes
-first-class; 30-error-handling; 31/32: `Array`/`String`/`Dictionary` built on our own heap,
-generics, and ARC). The language starts feeling like Swift.
+Next, per `PLAN.md`: **Phase 7 — closures, errors and a minimal standard library**. 29-closures
+makes the function *type* first-class: capture, thin vs thick functions, the closure ABI.
+30-error-handling adds `throws`/`try`/`do`-`catch`/`defer` as a second return path. Then 31 and 32
+build `Array<Int>` and `String` on our own heap — refcounted buffers with **copy-on-write**, the
+value semantics of concept 10 paid for at runtime — and `map`/`filter`/`reduce` over them, which
+is where closures and containers finally meet. (`Dictionary` and `Set` stay v1: they need hashing
+and a second container.) The language starts feeling like Swift.
 
 ## 8. Appendix — full solution
 

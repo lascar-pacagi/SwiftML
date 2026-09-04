@@ -272,7 +272,8 @@ then claw back (28). The Phase-6 arc is literally this benchmark's story.
 A class value is a pointer; the object's first word names its type; the vtable inherits slot
 numbering, overrides replace in place, new methods append; dispatch is three loads and a call,
 chosen by the *object*, not the variable. Initializers guarantee no one sees a half-built
-object — and every object we made tonight is still alive, because nothing ever frees them.
+object — and every object this concept allocates is still alive at exit, because nothing ever
+frees one.
 
 That's the cliffhanger. **26-arc-runtime** builds the reference-counting runtime: `retain` on
 copy, `release` on scope exit, `deinit` runs at refcount zero — with swiftc's exact deinit
