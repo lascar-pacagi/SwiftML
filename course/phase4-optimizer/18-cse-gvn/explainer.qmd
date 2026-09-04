@@ -35,6 +35,33 @@ value the second time (memory changed); an `apply` or `print` might have side ef
 CSE'd. Getting that line right is the whole correctness story for *which* instructions; dominance is
 the story for *where*.
 
+### The SIL forms, one by one
+
+This concept adds no Swift syntax; what it adds is a *classification* of the IR, and that
+classification IS the first hole. There is no new instruction here — block arguments arrived in
+concept 16 and are ordinary now — so the table below is the whole of `value_key`'s contract.
+
+| form | key? | why |
+|---|---|---|
+| `%6 = binop "*" %3, %4 $Int` | the operator and both canonical operands | a deterministic function of its operands |
+| `%7 = unop "-" %6 $Int` | the operator and the operand | same |
+| `%3 = integer_literal $Int, 7` · `float_literal` · `integer_literal $Bool` · `string_literal` | the literal | two 7s are one value |
+| `%10 = function_ref @f` | the name | one function, one value |
+| `%13 = struct (%3, %4) $P` | the operands **and the result type** | `struct () $Zero` and `struct () $One` have identical operands and are different values — see below |
+| `%14 = enum #1(%3) $E` | the tag, the payload **and the result type** | same argument |
+| `%15 = struct_extract %13, #0` | the operand and the field index | a pure read out of a VALUE |
+| `%16 = enum_tag %14` · `%17 = enum_payload %14, #0` | the operand (and index) | same |
+| `%9 = load %8 $Int` | **None** | memory can change between two loads; redundant-load elimination is a separate, harder pass (exercise 2) |
+| `store %3 to %8` | **None** | a side effect, and it has no result to reuse |
+| `%11 = apply %10(%3) $Int` · `%12 = apply @print(%3)` | **None** | a call may print, trap or recurse |
+| `%8 = alloc_stack $Int  // x` | **None** | each one must be a FRESH slot; merging two would alias two variables |
+| `%1 = struct_element_addr %0, #0` | **None** | an address into a mutable slot, not a value |
+| `bb2(%12 : $Int):` | not an instruction | a block argument is a definition the walk simply carries; it is never a key |
+
+`None` is the safe answer, so the interesting failure is the other direction: a key that says
+"same" about two different values. The table's two "and the result type" rows are exactly that
+mistake, and this course shipped it once — the section below tells the story.
+
 ### Why you can't reuse a value just anywhere — dominance
 
 Suppose `t = a*b` is computed in one branch of an `if`. Can the *other* branch reuse it? No — control
@@ -115,10 +142,34 @@ Reference: `solution/opt.ml`.
 make lab C=phase4-optimizer/18-cse-gvn
 ```
 
-cram checks `x*x + x*x` drops to one multiply and that `-O` (including a subexpression across a branch)
-matches `swiftc`. alcotest checks the value keys (equal/unequal/`None` for loads), CSE removing a
-redundant multiply, CSE across a dominated join staying valid, and that two `f(5)` calls are **not**
-merged.
+The two holes are one feature — a key with no walk changes nothing, and a walk with no keys has
+nothing to compare — so the cram is split by RULE rather than by hole: what GVN must merge, and
+what it must refuse to.
+
+- `opt-gvn-cse.t` — the elimination: `x * x + x * x` down to one multiply (and one add, since the
+  sum of two equal values is itself a repeat); `n * 2` in a condition reused by BOTH arms, which
+  is the "G" in GVN and what the dominator walk buys over a per-block table; a repeat inside a
+  loop; two `struct_extract`s on the same value; and a program where the folder handles the
+  constant half while GVN handles the symbolic half.
+- `opt-gvn-safety.t` — the refusals, each paired with something that must still merge, so a
+  `value_key` that keys nothing cannot pass by refusing everything: calls kept while the multiply
+  beside them goes; two sibling arms that must NOT share (the `pop` on the way out of a subtree is
+  the whole correctness argument); two same-shaped struct types and two same-shaped enum types
+  kept apart while a genuine duplicate merges — the shipped bug; and a loop-carried block argument,
+  which is a definition rather than an expression and is never keyed.
+- `sema-subset.t` — GIVEN code, `PASS` from the start: the front-end refusals that keep the corpus
+  inside what both compilers mean the same.
+- `test_gvn.ml` (alcotest `gvn`) — `Opt.value_key` called directly for every row of the table
+  above, including `canon` being applied to the operands; then the walk on each shape, with
+  `Sil.verify` beside the counts.
+- `oracle.t` — 22 programs built four ways (`swiftc -Onone`, `swiftc -O`, `lab build`,
+  `lab build -O`), all run, stdout and exit code identical. Two are this concept's: repeated
+  subexpressions beside calls that must not be merged, and the same-shaped struct and enum types.
+
+An untouched hole reads `TODO`; a partly filled one reads `FAIL` with what each case wanted and
+what your code printed. `oracle.t` is `PASS` on the skeleton — an unfilled GVN simply merges
+nothing — and it must stay `PASS` when you are done: merging two things that are not the same
+value is exactly the kind of bug that shape checks miss and a run catches.
 
 ## 5. Benchmark it
 
