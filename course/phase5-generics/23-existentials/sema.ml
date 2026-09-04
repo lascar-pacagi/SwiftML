@@ -119,7 +119,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         | Some _ ->
             err span (Printf.sprintf "enum case '%s.%s' requires arguments" tn case);
             Types.TEnum tn
-        | None -> err span (Printf.sprintf "type '%s' has no case '%s'" tn case); Types.TEnum tn)
+        | None -> err span (Printf.sprintf "type '%s' has no member '%s'" tn case); Types.TEnum tn)
     | Ast.Member (e0, fld, span) -> (
         match infer e0 with
         | Types.TStruct sn -> (
@@ -153,7 +153,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
                    (List.length tys) (List.length exprs))
             else List.iter2 (fun e t -> check_expr e t) exprs tys;
             Types.TEnum tn
-        | None -> err span (Printf.sprintf "type '%s' has no case '%s'" tn case); Types.TEnum tn)
+        | None -> err span (Printf.sprintf "type '%s' has no member '%s'" tn case); Types.TEnum tn)
     (* `recv.m(args)` — a METHOD call (concept 21). On a concrete struct it resolves statically
        against the struct's methods; on an existential (`any P`) it must be one of P's
        requirements and will dispatch through the witness table. Args are positional. *)
@@ -485,7 +485,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             match Option.bind (Hashtbl.find_opt structs sn) (fun sl -> Types.field_type sl field) with
             | Some ft ->
                 if not is_var then
-                  err span (Printf.sprintf "cannot assign to property '%s': '%s' is a 'let' constant" field obj);
+                  err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" obj);
                 check_expr value ft
             | None ->
                 err span (Printf.sprintf "value of type '%s' has no member '%s'" sn field);
@@ -558,7 +558,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
                             bindings tys;
                         List.iter check_stmt body)
                 | None ->
-                    err span (Printf.sprintf "type '%s' has no case '%s'" en cname);
+                    err span (Printf.sprintf "type '%s' has no member '%s'" en cname);
                     check_block body)
             | Ast.PInt _ ->
                 err span (Printf.sprintf "expression pattern of type 'Int' cannot match values of type '%s'" en);
