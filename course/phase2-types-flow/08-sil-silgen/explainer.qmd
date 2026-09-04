@@ -8,13 +8,14 @@ format:
 ## 1. What you'll build, and why
 
 This is the pivot of the whole project. Until now `swiftml` has been a *front end*: source → tokens →
-tree → "is this tree well-typed?" Now we add the **middle** — **SIL**, our SSA-style intermediate
-representation — and **SILGen**, the pass that lowers the type-checked AST into it. From here the
-pipeline is the real swiftc one:
+tree → "is this tree well-typed?" Now we add the **middle** — **SIL**, our Swift Intermediate
+Language — and **SILGen**, the pass that lowers the type-checked AST into it. SIL here is *raw* and
+**memory-based**, not SSA: every variable is a stack slot, exactly as swiftc's SILGen emits it before
+optimization (Phase 4 promotes those slots to SSA). From here the pipeline is the real swiftc one:
 
 ```
 Parse → Sema → SILGen → SIL → (Phase-4 passes) → IRGen → LLVM → native
-                  └── you build SILGen here; SIL is the IR everything downstream works on ──┘
+                  └── you build SILGen here; SIL is what everything downstream works on ──┘
 ```
 
 The reason SIL has to exist is the thing concepts 06–07 kept pointing at: **the AST is a tree, but a
@@ -97,8 +98,11 @@ The two halves:
   then a while-shaped loop testing `v < hi`, with `v = v + 1` in a separate **latch** block. The
   increment lives in its own block because `continue` must branch *there* (not to the header), or it
   would skip `v = v + 1` and loop forever. (Evaluate `hi` *once*, before the loop.)
-- **`break`/`continue`** branch to the current loop's *exit* / *header*. SILGen keeps a stack of
-  `(header, exit)` for the enclosing loops; you push on entering a loop body and pop on leaving.
+- **`break`/`continue`** branch out of, or round, the innermost enclosing loop. SILGen keeps a stack
+  of `(continue-target, break-target)` — `b.loops` — pushed on entering a loop body and popped on
+  leaving; both statements read its head. The break-target is always the loop's *exit*; the
+  continue-target is the *header* for a `while` and the *latch* for a `for`, which is exactly the
+  distinction the previous bullet is about.
 
 One subtlety the given `gen_block` handles for you: once a statement sets a terminator (a `return`, a
 `break`), the rest of that block is **unreachable**, so it stops lowering there — you never append
@@ -112,21 +116,122 @@ for the work to come: it's **Swift-aware** (it will carry ARC retain/release, va
 exclusivity — concepts LLVM has no idea about), and it's **structured for analysis** (basic blocks +
 the CFG) so that **every optimization and diagnostic in Phase 4** — mem2reg, constant folding, DCE,
 CSE, inlining — is a graph transformation on SIL, not a hack on a tree or a fight with LLVM. swiftc
-runs *mandatory* SIL passes (definite-initialization, which is concept 09) before it ever reaches
-LLVM. Build the right IR once, and everything downstream gets easier.
+also runs *mandatory* SIL passes before it ever reaches LLVM, and two of them are diagnostics rather
+than optimizations: definite initialization, and the "missing return" check you already met in
+concept 07 — which is why the oracle in §4 has to ask swiftc for SIL, not just a type-check. Build
+the right IR once, and everything downstream gets easier.
 
 > Oracle: `swift/lib/SILGen/SILGenStmt.cpp` is the direct analogue of your `gen_stmt` — `visitIfStmt`,
 > `visitWhileStmt`, etc., each create blocks and emit `cond_br`/`br`. `swift/docs/SIL.rst` documents
 > the IR; our version drops the verbose `$*T` address types, `@convention`, and name mangling.
 
+### The SIL you emit
+
+This concept adds no Swift syntax — the grammar is concept 07's, unchanged. What it adds is an
+**IR**, so this is the vocabulary to keep in front of you: every form `--emit-sil` can print, and
+which of them your holes are responsible for. All of it is `<-- new` (SIL starts here); `<-- yours`
+marks what the `TODO(08)` cases in `gen_stmt` must produce, everything else being emitted by the
+given `gen_expr`, `lower_func` and `lower`.
+
+A SIL **function** is a header and a list of blocks; a **block** is a label, straight-line
+instructions, and exactly one terminator:
+
+```
+sil @name(%0 : $T, %1 : $T) -> $T {            <-- new  (given: lower_func)
+bb0:                                           <-- new  block label, bb0 is the entry
+  <instruction>                                         zero or more, in order
+  <terminator>                                          exactly one, at the end
+}
+```
+
+**Instructions** — each names its result `%n`, numbered per function:
+
+| form | meaning |
+|---|---|
+| `%n = integer_literal $Int, 7` | an `Int` (also `$Bool`, printed `true`/`false`) `<-- new` |
+| `%n = float_literal $Double, 1.5` | a `Double` `<-- new` |
+| `%n = string_literal $String, "hi"` | a `String` `<-- new` |
+| `%n = alloc_stack $T  // x` | a stack slot for `x`; the result is its **address** `<-- new` |
+| `%n = load %a $T` | read the value at address `%a` `<-- new` |
+| `store %v to %a` | write `%v` at address `%a` (no result) `<-- new` |
+| `%n = binop "+" %a, %b $T` | arithmetic and comparison `<-- new` |
+| `%n = unop "-" %a $T` | negation, `!` `<-- new` |
+| `%n = function_ref @f` | a reference to a SIL function `<-- new` |
+| `%n = apply %f(%a, %b)` | call it `<-- new` |
+| `%n = apply @print(%a)` | the one builtin `<-- new` |
+
+**Terminators** — the edges of the CFG, and where your work shows up:
+
+| form | meaning |
+|---|---|
+| `br bbN` | jump to `bbN` `<-- yours` (the branch into a loop, the back-edge, both arms of a diamond, `break`, `continue`) |
+| `cond_br %c, bbT, bbF` | branch on a `$Bool` `<-- yours` (`if`, the loop header) |
+| `return` / `return %v` | leave the function `<-- new` (given: `Return`) |
+| `unreachable` | a block control never enters — a **valid** terminator, and what a block keeps when both arms of an `if` returned `<-- new` |
+
+Real swiftc SIL is the same shape with a great deal more ceremony. Run
+`swiftc -emit-sil add.swift` on the two-line `add` from §2 and you get
+
+```
+sil hidden @$s3addAAyS2i_SitF : $@convention(thin) (Int, Int) -> Int {
+bb0(%0 : $Int, %1 : $Int):
+  %4 = struct_extract %0, #Int._value
+  %5 = struct_extract %1, #Int._value
+  %6 = integer_literal $Builtin.Int1, -1
+  %7 = builtin "sadd_with_overflow_Int64"(%4, %5, %6) : $(Builtin.Int64, Builtin.Int1)
+  %8 = tuple_extract %7, 0
+  %9 = tuple_extract %7, 1
+  cond_fail %9, "arithmetic overflow"
+  %11 = struct $Int (%8)
+  return %11
+}
+```
+
+— names are mangled, every call prints its full `$@convention(thin)` type, `Int` is a *struct* whose
+payload has to be extracted, and `+` is not one instruction but a builtin plus the `cond_fail` that
+implements Swift's overflow trap (§ "Parity gotchas" in `CLAUDE.md`; we wrap instead, which is why
+our `binop "+"` is a single line). Ask for the *raw* SIL with `-emit-silgen` and a `var` turns into an
+`alloc_box`, each access is bracketed by `begin_access`/`end_access` for exclusivity, and `load`
+carries an ownership qualifier (`load [trivial]`). Underneath all of it the block structure reads
+exactly like yours: `bb0`, straight-line instructions, one terminator.
+
+### The diagnostics you emit
+
+**None — and that is the point of this concept.** SILGen runs on a program sema has already
+accepted, so a lowering hole has no user-facing error to report: if `gen_stmt` cannot cope, that is
+a compiler bug, not a source bug. What `--emit-sil` prints is either SIL or a diagnostic that the
+*front end* (05–07) produced, because the driver runs lex → parse → sema and bails on errors before
+SILGen is called. So the wording table for this concept is concept 07's, unchanged, and the oracle
+in §4 tests only that the same programs are accepted and refused.
+
+Two messages are new all the same, and neither is a Swift diagnostic. The given **verifier** walks
+the blocks after you build them and reports a lowering that does not hold together — a branch to a
+block you never created, a function with no blocks — as `SIL verification error: …` on stderr, exit
+1. swiftc has the same idea in `lib/SIL/Verifier/SILVerifier.cpp`, where it is an *assertion*: a
+failing verification aborts the compiler with a stack trace, because it can only mean swiftc itself
+is wrong. Ours prints and exits so a cram case can read it; treat a hit as a bug in your `gen_stmt`,
+never as something a Swift program should be able to cause.
+
 ## 3. Build it, step by step
 
-Open `silgen.ml`. The builder (`emit`/`new_block`/`switch_to`/`terminate`), `gen_expr`, the simple
-statements (`Let`/`Assign`/`Expr_stmt`/`Return`), and `lower_func`/`lower` are given. Fill the
-`TODO(08)` holes in `gen_stmt` — the five control-flow cases described above. Use `new_block` to make
-blocks, `terminate` to set branches, `gen_block` to lower a block's statements in the current block,
-and `switch_to` to move the cursor. For loops, push `(header.bid, exit.bid)` onto `b.loops` around the
-body so `break`/`continue` find their targets. Reference: `solution/silgen.ml`.
+One skeleton, `silgen.ml`, and one function in it. The builder
+(`emit`/`new_block`/`switch_to`/`terminate`), `gen_expr`, the simple statements
+(`Let`/`Assign`/`Expr_stmt`/`Return`), and `lower_func`/`lower` are given; the five `TODO(08)` holes
+are the control-flow cases of `gen_stmt`, described one by one above. Use `new_block` to make blocks,
+`terminate` to set the current block's branch, `gen_block` to lower a list of statements into the
+current block, and `switch_to` to move the cursor.
+
+Fill them in this order — each one is the next one's scaffolding, and §4 says which file goes green:
+
+1. **`if`** — the diamond. It is the smallest case and the only one that needs no `b.loops`.
+2. **`while`** — the same three moves plus the back-edge, and the first push/pop of
+   `(header.bid, exit.bid)` onto `b.loops`.
+3. **`for`** — `while` again over a slot for the counter, with the increment in its own block.
+   Push `(latch.bid, exit.bid)`, not the header: the latch is what `continue` must reach.
+4. **`break`** and **`continue`** — one line each, reading the top of `b.loops`. They cannot be
+   tested before a loop exists, because nothing else pushes that stack.
+
+Reference: `solution/silgen.ml`.
 
 ## 4. Test it
 
@@ -134,11 +239,44 @@ body so `break`/`continue` find their targets. Reference: `solution/silgen.ml`.
 make lab C=phase2-types-flow/08-sil-silgen
 ```
 
-cram (`tests/sil.t`) is **FileCheck-style**: it matches the `--emit-sil` output for a function
-(memory-based body) and greps the loop `cond_br`, the **back-edge** (`br bb1` appears twice), and the
-`if` diamond's single `cond_br` — exactly how swiftc's own SIL tests work. alcotest checks the lowered
-module's structure (a `@main`, `alloc_stack`/`load`/`store`, a back-edge in a `while`). And the SIL
-**verifier** runs on every `--emit-sil` — branch targets must exist.
+Six cram files, one per hole (`make lab C=… T=silgen-if` runs one), a unit suite grouped the same
+way, and the oracle — in the order you fill the holes:
+
+- `silgen-memory.t` — **green before you start**, and worth reading first: it is the given
+  lowering, and so the vocabulary the holes have to produce. `let`/`var` as `alloc_stack` +
+  `store` + `load`, a parameter stored into its own slot, a call as `function_ref` + `apply`, and
+  the `&&` diamond `gen_expr` already builds.
+- `silgen-if.t` — `--emit-sil` on an `if`/`else` (then, merge, else; both arms `br` to the merge;
+  the next statement lands there), an `if` with no `else` (the false edge *is* the merge), an `if`
+  whose arms both `return` (the merge keeps `unreachable`), an `else if` chain, and the verifier.
+- `silgen-while.t` — the entry `br` into the header, the header's `cond_br`, the back-edge, the
+  two edges that name the header, `while false` (still three blocks — folding is Phase 4), and a
+  nest.
+- `silgen-for.t` — the whole desugaring, the named slot for the counter, `hi` evaluated **once**
+  in the entry block (`0 ..< k + 1` puts the addition there, not in the header), and the latch as
+  a block of its own.
+- `silgen-break.t` — which block `break` names: the loop's exit in a `while`, the exit and not
+  the latch in a `for`, and in a nest the *inner* loop's exit. Needs a loop hole first.
+- `silgen-continue.t` — the same for `continue`: the header in a `while`, and the **latch** in a
+  `for`, which is the case that matters — branching to the header instead skips `i = i + 1` and
+  the program loops forever. Needs a loop hole first.
+- `test_silgen.ml` (alcotest `silgen`) — the same rules against the `Sil.modul` in memory, one
+  group per hole, so a case can ask what the printed SIL does not say: which block a `br` names,
+  how many edges reach the header, whether the latch is the block that stores the counter back.
+- `oracle.t` — **the headline**: 34 programs from `oracle-corpus.txt` (20 accepted, 14 refused)
+  go to swiftc and to your `--emit-sil`, and the verdicts must agree. swiftc runs as
+  `-emit-sil -o /dev/null`, the same stage we stop at, because "missing return" is a SIL-level
+  diagnostic and `-typecheck` would accept three of the reject cases (§2).
+
+A hole you have not started shows as `TODO` with the list of what it will check; a hole in progress
+shows `FAIL` with, under each failing case, what the test wants and what your code printed. To look
+at one program on its own:
+
+```bash
+printf 'for i in 0 ..< 3 {\n  if i == 1 { continue }\n  print(i)\n}\n' > m.swift
+_build/default/phase2-types-flow/08-sil-silgen/tests/lab.exe --emit-sil m.swift
+swiftc -emit-sil m.swift                     # the same shape, buried in ceremony
+```
 
 ## 5. Benchmark it
 
@@ -151,8 +289,8 @@ thing Phase 4 makes faster.
 1. **The `guard cond else { … }` statement.** `guard` is an early-exit: if the condition is *false*
    run the else block, which must leave the scope (`return`/`break`/`continue`). Lower it as an
    inverted `if` whose false edge runs the else block and whose true edge simply continues — there is
-   no merge, because the else block never falls through. (The value-diamond for `&&`/`||` and the
-   ternary `a ? b : c` are already shipped in `gen_expr` — study them first; swiftc is your oracle.)
+   no merge, because the else block never falls through. (The value-diamond for `&&`/`||` is already
+   shipped in `gen_expr` — study it first; swiftc is your oracle.)
 2. **A textual SIL parser.** Write a reader for your `--emit-sil` syntax so SIL can round-trip
    (emit → parse → emit). This is what makes a `--sil-opt` workflow possible in Phase 4 (run a pass on
    a `.sil` file).
@@ -166,11 +304,11 @@ You introduced **SIL** and wrote **SILGen**: the AST tree became a control-flow 
 with variables in `alloc_stack` slots (raw, memory-based SIL) and `if`/`while`/`for` as `cond_br`/`br`
 between blocks. This is the representation the rest of the compiler is built on.
 
-Next, **09-sil-to-llvm** writes **IRGen** (SIL → LLVM IR), adds the mandatory **definite-initialization**
-diagnostic (on the SIL CFG — the flow analysis you previewed with "missing return"), and finally
-**runs** Phase-2 programs: `if`/`while`/`for`/functions execute, and `swiftml2`'s output matches
-`swiftc` byte-for-byte again. Then **Phase 4** turns this raw SIL into fast code — starting with
-**mem2reg**, where those loads and stores become SSA and you learn SSA for real.
+Next, **09-sil-to-llvm** writes **IRGen** (SIL → LLVM IR) and finally **runs** Phase-2 programs:
+`if`/`while`/`for`/functions execute, and the output matches `swiftc` byte-for-byte again — which is
+a much harder oracle than this concept's, and it caught a real bug in the `for` lowering you just
+wrote. Then **Phase 4** turns this raw SIL into fast code — starting with **mem2reg**, where those
+loads and stores become SSA and you learn SSA for real.
 
 ## 8. Appendix — full solution
 
@@ -219,7 +357,8 @@ Mirrors `solution/silgen.ml` (the control-flow lowering). The shape to notice: e
     let c = emit b (Sil.Binop (Ast.Lt, cur_v, hiv)) Types.TBool in
     terminate b (Sil.Cond_br (c, body_b.Sil.bid, exit_b.Sil.bid));
     switch_to b body_b;
-    b.loops <- (latch.Sil.bid, exit_b.Sil.bid) :: b.loops;   (* continue -> latch, break -> exit *)
+    (* continue -> latch, break -> exit *)
+    b.loops <- (latch.Sil.bid, exit_b.Sil.bid) :: b.loops;
     gen_block b body;
     terminate b (Sil.Br latch.Sil.bid);
     b.loops <- List.tl b.loops;
@@ -230,8 +369,10 @@ Mirrors `solution/silgen.ml` (the control-flow lowering). The shape to notice: e
     ignore (emit b (Sil.Store (inc, addr)) Types.TVoid);
     terminate b (Sil.Br header.Sil.bid);
     switch_to b exit_b
-| Ast.Break _ -> (match b.loops with (_, ex) :: _ -> terminate b (Sil.Br ex) | [] -> ())
-| Ast.Continue _ -> (match b.loops with (cont, _) :: _ -> terminate b (Sil.Br cont) | [] -> ())
+| Ast.Break _ ->
+    (match b.loops with (_, ex) :: _ -> terminate b (Sil.Br ex) | [] -> ())
+| Ast.Continue _ ->
+    (match b.loops with (cont, _) :: _ -> terminate b (Sil.Br cont) | [] -> ())
 ```
 
 ## 9. Exercise solutions
@@ -242,8 +383,8 @@ Mirrors `solution/silgen.ml` (the control-flow lowering). The shape to notice: e
 evaluate `cond`; `cond_br` to a *continue* block (the rest of the enclosing block) and an *else*
 block; lower `stmts` into the else block — they end in `return`/`break`/`continue`, so the else
 block terminates itself and there is **no merge**. Contrast this with the value-diamond used for
-`&&`/`||`/ternary (already in `gen_expr`), which *does* merge because both arms produce a value;
-`guard`'s else arm produces nothing and leaves the scope. swiftc is the oracle for the control flow.
+`&&`/`||` (already in `gen_expr`), which *does* merge because both arms produce a value; `guard`'s
+else arm produces nothing and leaves the scope. swiftc is the oracle for the control flow.
 
 ### 2 — a textual SIL reader
 

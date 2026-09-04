@@ -1,0 +1,34 @@
+let c = true\nif c {\n  print(1)\n} else {\n  print(2)\n}
+let n = 2\nif n > 0 {\n  print(1)\n}\nprint(9)
+let n = 2\nif n == 1 {\n  print(1)\n} else if n == 2 {\n  print(2)\n} else {\n  print(0)\n}
+var n = 0\nwhile n < 3 {\n  n = n + 1\n}\nprint(n)
+while false {\n  print(1)\n}\nprint(0)
+for i in 0 ..< 3 {\n  print(i)\n}
+var s = 0\nfor i in 0 ..< 4 {\n  s = s + i\n}\nprint(s)
+var s = 0\nfor i in 0 ..< 3 {\n  var j = 0\n  while j < i {\n    s = s + j\n    j = j + 1\n  }\n}\nprint(s)
+var n = 0\nwhile n < 10 {\n  n = n + 1\n  if n > 3 {\n    break\n  }\n}\nprint(n)
+var s = 0\nfor i in 0 ..< 5 {\n  if i == 2 {\n    continue\n  }\n  s = s + i\n}\nprint(s)
+var s = 0\nfor i in 0 ..< 3 {\n  for j in 0 ..< 3 {\n    if j == 1 {\n      continue\n    }\n    if j == 2 {\n      break\n    }\n    s = s + 1\n  }\n}\nprint(s)
+while true {\n  if true {\n    break\n  }\n  continue\n}\nprint(0)
+func max2(_ a: Int, _ b: Int) -> Int {\n  if a > b {\n    return a\n  }\n  return b\n}\nprint(max2(3, 7))
+func fib(_ n: Int) -> Int {\n  if n < 2 {\n    return n\n  }\n  return fib(n - 1) + fib(n - 2)\n}\nprint(fib(10))
+func sum(_ n: Int) -> Int {\n  var s = 0\n  for i in 0 ..< n {\n    s = s + i\n  }\n  return s\n}\nprint(sum(5))
+func isEven(_ n: Int) -> Bool {\n  if n == 0 {\n    return true\n  }\n  return isOdd(n - 1)\n}\nfunc isOdd(_ n: Int) -> Bool {\n  if n == 0 {\n    return false\n  }\n  return isEven(n - 1)\n}\nprint(isEven(4))
+func early(_ n: Int) {\n  if n == 0 {\n    return\n  }\n  print(n)\n}\nearly(0)\nearly(3)
+let n = 3\nlet b = n > 1 && n < 5 || false\nprint(b)
+func sign(_ n: Int) -> Int {\n  if n > 0 {\n    return 1\n  } else if n < 0 {\n    return -1\n  } else {\n    return 0\n  }\n}\nprint(sign(-2))
+var s = 0.0\nfor i in 0 ..< 3 {\n  s = s + 1.5\n}\nprint(s)
+if 1 {\n  print(1)\n}
+while "no" {\n  print(1)\n}
+for i in 0 ..< 3 {\n  i = 0\n}
+for i in 0 ..< 3 {\n  print(i)\n}\nprint(i)
+break
+continue
+while true {\n  print(1)\n}\nbreak
+func f(_ n: Int) -> Int {\n  if n > 0 {\n    return 1\n  }\n}
+func f(_ n: Int) -> Int {\n  while n > 0 {\n    return 1\n  }\n}
+func f() -> Int {\n  for i in 0 ..< 3 {\n    return i\n  }\n}
+return 1
+func f(_ x: Int) -> Int {\n  return x\n}\nprint(f(1, 2))
+func f() -> Bool {\n  if true {\n    return 1\n  }\n  return false\n}
+if true {\n  let z = 1\n}\nprint(z)

@@ -30,6 +30,8 @@ SIL, tested FileCheck-style against the SIL shape.
 
 ## Done when
 
-`make lab C=phase2-types-flow/08-sil-silgen` is green: the cram FileCheck test matches the SIL shape
-(`cond_br`, the loop back-edge, the `if` diamond), the alcotest structural checks pass, and the
-verifier accepts the SILGen output.
+`make lab C=phase2-types-flow/08-sil-silgen` is green: one cram file per hole (`silgen-if.t`,
+`silgen-while.t`, `silgen-for.t`, `silgen-break.t`, `silgen-continue.t`, plus the given
+`silgen-memory.t`) matches the `--emit-sil` shape, the alcotest groups — one per hole — pass on the
+lowered module, the verifier accepts every lowering, and `oracle.t` agrees with
+`swiftc -emit-sil` on all 34 corpus programs.
