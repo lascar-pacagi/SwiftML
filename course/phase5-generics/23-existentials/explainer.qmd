@@ -80,6 +80,67 @@ subtyping, none of which exist here yet.) On top of the test:
   statically always-false. We emit `false` (and sema warns with swiftc's words:
   `cast from 'any P' to unrelated type 'C' always fails`).
 
+### The subset you are growing into
+
+**New lexemes.** None. `as` has been a keyword since concept 13 (the static `e as T`
+ascription), and `?` and `!` since concept 13 as well; what is new is the *sequence*
+`as` `?` and `as` `!`, and the lookahead that keeps the three readings apart:
+
+| input | reading | how the parser decides |
+|---|---|---|
+| `e as T` | static ascription, `Ast.Ascribe` | infix `as` whose NEXT token is neither `?` nor `!` |
+| `e as? T` | conditional cast, `Ast.Cast (…, conditional = true)` | postfix: `as` followed by `Question` |
+| `e as! T` | forced cast, `Ast.Cast (…, conditional = false)` | postfix: `as` followed by `Bang` |
+
+The casts live in `parse_postfix`, not in the infix loop, because their result is itself a
+postfix operand: `(p as? A)` can be followed by more postfix. A lone `as` followed by anything
+else is `expected '?' or '!' after 'as' (only as?/as! in this subset)`.
+
+**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05–22.
+Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (zero or more),
+`|` separates alternatives, and quoted text is a terminal.
+
+```
+expr        ::= ternary
+ternary     ::= coalesce [ "?" expr ":" ternary ]                      (bp 2)
+coalesce    ::= or { "??" or }                                         (bp 6)
+or          ::= and { "||" and }                                       (bp 3)
+and         ::= comparison { "&&" comparison }                         (bp 4)
+comparison  ::= cast { ("==" | "!=" | "<" | "<=" | ">" | ">=") cast }  (bp 5)
+cast        ::= sum { "as" type }                                      (bp 7)
+sum         ::= product { ("+" | "-") product }                        (bp 10)
+product     ::= unary { ("*" | "/" | "%") unary }                      (bp 20)
+unary       ::= "-" unary | postfix
+postfix     ::= primary { "." ident [ "(" [ arg { "," arg } ] ")" ]
+                        | "!"
+                        | ("as?" | "as!") ident }               <-- new (a STRUCT name only)
+```
+
+Two things to notice. The target of a dynamic cast is an `ident`, not a full `type` — v0 casts
+to a concrete struct, so `as? P` (protocol-to-protocol) and `as? Int?` are out; a non-struct
+target is `cannot cast to non-struct type 'X' in this subset`. And the cast binds tighter than
+every infix operator, because it is postfix: `p as? A` is a complete operand, which is why
+`if let a = p as? A` reads the way it does.
+
+### The diagnostics you emit
+
+All of these are GIVEN — this concept's holes are in SILGen and IRGen — but the lowering may
+assume every rule has already fired, and `sema-subset.t` keeps them on record. Wording follows
+`swiftc -typecheck` where the subset lets it (`swift/include/swift/AST/DiagnosticsSema.def`,
+line numbers from the pinned snapshot).
+
+| program | our message | swiftc |
+|---|---|---|
+| `p as? C` where `C` does not conform to `P` | **warning:** `cast from 'any P' to unrelated type 'C' always fails` | **same** (`downcast_to_unrelated`, l.1510) — a warning in both, so the program still builds and the cast is always `nil` |
+| `a as? A` where `a` is already an `A` | `cannot cast a value of type 'A' (only existentials support as?/as! in this subset)` | **accepted** with its own warning (`conditional cast always succeeds`) — swiftc's casts cover classes, bridging and subtyping; ours only ask "what is in this box?" |
+| `p as? Nope` | `cannot find type 'Nope' in scope` | **same** (`cannot_find_type_in_scope`, l.1201) |
+| `p as? Int` | `cannot cast to non-struct type 'Int' in this subset` | **accepted** (and warned as always-failing) — our own words, for a v0 limit swiftc does not have |
+| `let a: A = p as? A` | `cannot convert value of type 'A?' to specified type 'A'` | **same shape** — `as?` is `T?` and `as!` is `T` in both |
+| `p as` with no `?`/`!` and no type | `expected '?' or '!' after 'as' (only as?/as! in this subset)` | a parse error in both, worded differently |
+
+Everything else this concept can report — the conformance errors, the aggregate refusals, the
+`let` property — is inherited unchanged from concept 21; §2 of that explainer has the table.
+
 ### One more driver lesson
 
 That warning exposed a gap: our `--typecheck` only printed diagnostics when there were
@@ -92,27 +153,61 @@ fails only on errors, like swiftc.
 
 ## 3. Build it, step by step
 
-1. **`irgen.ml` — `TODO(23b)`** (`init_existential`): a fitting type stores straight into the
-   site's buffer alloca; a big one mallocs `8 * words` bytes, stores the value into the box,
-   and stores the box *pointer* into the buffer.
-2. **`irgen.ml` — `TODO(23c)`** (`open_existential`): the mirror read — one load if inline;
-   load the pointer then the value if boxed.
-3. **`silgen.ml` — `TODO(23a)`**: the two cast lowerings around the given `same` test — the
-   `as?` diamond (slot + two stores + merge load, like Coalesce) and the `as!` split (fail
-   block ends in `Abort`, like Force_unwrap's trap).
+Three holes in two files. The IRGen pair comes first: until the container can be written and
+read, *no* existential program lowers at all, cast or no cast.
+
+1. **`irgen.ml` — the write** (`TODO(23b)`, in `Init_existential`). You are given the site's
+   buffer alloca (`%exN`, `[3 x i64]`), the payload value, and two helpers: `words t` is a
+   type's size in 64-bit words and `is_boxed sname` is `words > 3`. Put the payload where the
+   container expects it. For a type that fits, that is a store into the buffer. For one that
+   does not, allocate a box with `@malloc` (its size in *bytes*), store the payload into the
+   box, and store the box POINTER into the buffer — word 0, which is where the read will look.
+   The three lines after the hole already load the buffer back and pair it with the table, so
+   what you owe them is a correctly filled `%exN`.
+2. **`irgen.ml` — the read** (`TODO(23c)`, in `Open_existential`). The mirror image, from the
+   same `buf`: one load for a type that fits, two for a boxed one. Get this wrong in the
+   direction that reads the box pointer as if it were the value and you will print an address.
+3. **`silgen.ml` — the two casts** (`TODO(23a)`, the `Ast.Cast` arm). The `same` value is
+   already computed above the hole — a `Same_witness` when the target conforms, a constant
+   `false` when it cannot. `as?` builds an `Optional<T>` across a diamond, and it is *exactly*
+   concept 13's coalesce shape: a slot, a `cond_br`, `.some` of the opened value on one side,
+   `.none` on the other, a merge that loads the slot. `as!` is the same test without a `.none`
+   side: the failing block terminates in `Sil.Abort`, the way `Force_unwrap`'s failing block
+   terminates in `Trap`.
+
+The discipline that matters in step 3: `Open_existential` may appear **only** on the branch the
+test proved. Opening a container that holds something else reads a box pointer that is not one.
 
 Reference: `solution/irgen.ml`, `solution/silgen.ml`.
 
 ## 4. Test it
 
 ```bash
-make lab C=phase5-generics/23-existentials
+make lab C=phase5-generics/23-existentials                   # everything
+make lab C=phase5-generics/23-existentials T=irgen-box       # one hole
 ```
 
-cram: a 5-word conformer through functions/reassignment/casts at `-Onone` and `-O`; `as?`
-discriminating by value (7 / -1 / -2); the unrelated-cast warning verbatim; `as!` failing with
-exit 134; `same_witness` visible in SIL. alcotest: cast result types, the warning without an
-error, SIL shapes (one test, one open in the proven branch), the `Abort` block, `-O` validity.
+One cram file per hole, in fill order:
+
+| file | goes green when | how it checks |
+|---|---|---|
+| `tests/irgen-box.t` | `TODO(23b)` + `TODO(23c)` | `--emit-llvm`: the same `%any.P = type { [3 x i64], ptr }` for a two-word and a five-word conformer, no `malloc` for the one that fits, `@malloc(i64 40)` for the one that does not, and a boxed payload read back through a generic's open |
+| `tests/silgen-casts.t` | `TODO(23a)` lowers the casts | `--emit-sil`: the `as?` diamond (one `same_witness`, an `open_existential` on the proven branch only, the two `enum` tags), `as!` ending in `abort`, and a non-conforming target lowering to `integer_literal $Bool, false` with no `same_witness` at all |
+| `tests/run-existentials.t` | all three | the programs **run**, at `-Onone` and `-O`: a boxed conformer through functions, a `var`, a cast and a generic; `as?` discriminating by dynamic type; a cast in a loop whose answer changes; and a failing `as!` exiting 134, beside swiftc's own binary doing the same |
+
+Two files do not belong to a hole. `tests/sema-subset.t` is GIVEN code and green from the start:
+the aggregate refusals inherited from concept 21 plus this concept's cast rules, including the
+always-fails WARNING (a warning, so exit 0 — and `--typecheck` has to print warnings for that
+case to exist at all; see the driver story in §2). And `tests/oracle.t` is the headline: 16
+programs where `swiftc -typecheck` and `--typecheck` must reach the same verdict, then 15 built
+**four ways** — `swiftc -Onone`, `swiftc -O`, `./lab.exe build`, `./lab.exe build -O` — all run,
+stdout and exit code identical.
+
+`make lab` distinguishes three kinds of red. **TODO** means nothing in that file passes — the
+hole has not been started. **FAIL** means *some* cases pass: you are mid-hole, and the diffs are
+worth reading (`DETAIL=1`). **SKIP** means a compile error stopped dune first. On the untouched
+skeleton all three hole files read TODO, `sema-subset.t` reads PASS, and `oracle.t` reads FAIL —
+its front-end half is green, because sema is given here and only the lowering is yours.
 
 ## 5. Benchmark it
 

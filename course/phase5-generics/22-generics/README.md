@@ -40,6 +40,9 @@ wholesale.
 
 ## Done when
 
-`make lab C=phase5-generics/22-generics` is green: one `@pick` in SIL with `open_existential` at
-the call, generic programs run (incl. `-O`) matching swiftc, and the three inference diagnostics
-match swiftc's wording.
+`make lab C=phase5-generics/22-generics` is green. One cram file per hole —
+`sema-inference.t` and `silgen-generic-call.t` — plus the given `sema-subset.t` and the headline
+`oracle.t`, which asks swiftc on every run: 22 programs where `swiftc -typecheck` and
+`--typecheck` must agree on accept-or-reject, and 18 built four ways (`swiftc -Onone`,
+`swiftc -O`, `./lab.exe build`, `./lab.exe build -O`) whose stdout and exit code must be
+identical.

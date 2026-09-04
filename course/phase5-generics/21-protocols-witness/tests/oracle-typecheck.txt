@@ -1,0 +1,33 @@
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nlet p: P = A(x: 1)\nprint(p.v())
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nstruct B: P {\n  func v() -> Int { return 7 }\n}\nfunc both(_ a: P, _ b: P) -> Int { return a.v() + b.v() }\nprint(both(A(x: 1), B()))
+protocol P {\n  func a() -> Int\n  func b() -> Bool\n}\nstruct C: P {\n  func extra() -> Int { return 0 }\n  func b() -> Bool { return true }\n  func a() -> Int { return 1 }\n}\nlet c: P = C()\nprint(c.a())\nprint(c.b())
+protocol P { func p() -> Int }\nprotocol Q { func q() -> Int }\nstruct Both: P, Q {\n  func q() -> Int { return 2 }\n  func p() -> Int { return 1 }\n}\nlet x: P = Both()\nlet y: Q = Both()\nprint(x.p() + y.q())
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nfunc make(_ k: Int) -> P { return A(x: k) }\nprint(make(3).v())
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nstruct B: P {\n  func v() -> Int { return 7 }\n}\nvar z: P = A(x: 1)\nprint(z.v())\nz = B()\nprint(z.v())
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nfunc show(_ p: P) { print(p.v()) }\nfunc twice(_ p: P) { show(p) }\ntwice(A(x: 2))
+protocol P { func hello() }\nstruct A: P {\n  func hello() { print(1) }\n}\nlet p: P = A()\np.hello()
+protocol P { func scale(_ k: Int) -> Int }\nstruct A: P {\n  var x: Int\n  func scale(_ k: Int) -> Int { return x * k }\n}\nlet p: P = A(x: 2)\nprint(p.scale(21))
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nlet a: P = A(x: 1)\nlet b: P = a\nprint(b.v())
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func w() -> Int { return x * 2 }\n  func v() -> Int { return w() + 1 }\n}\nlet p: P = A(x: 4)\nprint(p.v())
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nfunc find(_ k: Int) -> P? {\n  if k > 0 { return A(x: k) }\n  return nil\n}\nif let p = find(2) { print(p.v()) } else { print(-1) }
+protocol P { func v() -> Int }\nstruct A: P { var x: Int }
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Bool { return true }\n}
+protocol P { func v(_ k: Int) -> Int }\nstruct A: P {\n  var x: Int\n  func v(_ k: Bool) -> Int { return x }\n}
+protocol P {\n  func a() -> Int\n  func b() -> Int\n}\nstruct A: P {\n  func a() -> Int { return 1 }\n}
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nstruct D { var x: Int }\nlet p: P = D(x: 1)
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nstruct D { var x: Int }\nfunc show(_ p: P) { print(p.v()) }\nshow(D(x: 1))
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nstruct D { var x: Int }\nfunc make() -> P { return D(x: 1) }\nprint(make().v())
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nstruct D { var x: Int }\nvar p: P = A(x: 1)\np = D(x: 2)
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nlet p: P = 3
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n  func extra() -> Int { return 1 }\n}\nlet p: P = A(x: 1)\nprint(p.extra())
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nlet p: P = A(x: 1)\nprint(p.x)
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nlet a: P = A(x: 1)\nlet b: P = A(x: 1)\nprint(a == b)
+struct D { var x: Int }\nstruct A: D { var x: Int }
+struct A: Nope { var x: Int }
+protocol P { func bump() }\nstruct A: P {\n  var x: Int\n  func bump() { x = x + 1 }\n}
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nlet p: P = A(x: 1)\nprint(p.v(1))
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nlet a: A = A(x: 1)\nlet b: P = a\nlet c: A = b
+protocol P { func v() -> Int }\nstruct A: P {\n  let k: Int\n  var n: Int\n  func v() -> Int { return k * n }\n}\nvar a = A(k: 1, n: 2)\na.n = 5\nprint(a.v())
+protocol P { func v() -> Int }\nstruct A: P {\n  let k: Int\n  func v() -> Int { return k }\n}\nvar a = A(k: 1)\na.k = 5
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nstruct D { var x: Int }\nstruct H { var p: P }\nvar h = H(p: A(x: 1))\nh.p = D(x: 2)
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nstruct H {\n  var p: P\n  var n: Int\n}\nvar h = H(p: A(x: 3), n: 1)\nh.p = A(x: 7)\nprint(h.p.v() + h.n)

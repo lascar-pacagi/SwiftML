@@ -17,6 +17,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
   let funcs : (string, Types.ty list * Types.ty) Hashtbl.t = Hashtbl.create 16 in
   let structs : (string, Types.struct_layout) Hashtbl.t = Hashtbl.create 16 in
   let enums : (string, Types.enum_layout) Hashtbl.t = Hashtbl.create 16 in
+  let let_fields : (string * string, unit) Hashtbl.t = Hashtbl.create 16 in (* (struct, `let` field) *)
   (* concept 21: protocol layouts, per-struct method signatures, and which struct we are
      INSIDE (so method bodies can use `self`, bare field names, and bare method calls) *)
   let protos : (string, Types.proto_layout) Hashtbl.t = Hashtbl.create 16 in
@@ -36,6 +37,16 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
     | None -> None
   in
   let err span msg = Diagnostics.error diags span msg in
+  (* swiftc words ONE failure — "this value does not conform to `any P`" — differently at each
+     coercion site, so `check_expr` has to know which site it is under. See §2. *)
+  let site : [ `Let | `Arg | `Return | `Assign ] ref = ref `Let in
+  let at_site s f =
+    let saved = !site in
+    site := s;
+    let r = f () in
+    site := saved;
+    r
+  in
   let lookup x = List.assoc_opt x !env in
   let bind name v = env := (name, v) :: !env in
   let in_scope (f : unit -> unit) = let saved = !env in f (); env := saved in
@@ -162,7 +173,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         let check_args what ptys =
           let np = List.length ptys and na = List.length exprs in
           if np <> na then err span (Printf.sprintf "%s expects %d argument(s) but %d given" what np na)
-          else List.iter2 (fun a t -> check_expr a t) exprs ptys
+          else at_site `Arg (fun () -> List.iter2 (fun a t -> check_expr a t) exprs ptys)
         in
         match infer e0 with
         | Types.TStruct sn -> (
@@ -250,7 +261,10 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         | Some (Types.TProto pn) ->
             err span (Printf.sprintf "binary operator '==' cannot be applied to two 'any %s' operands" pn);
             Types.TBool
-        | Some _ -> Types.TBool
+        (* structs and optionals would need an Equatable conformance too, and the back end has
+           no aggregate compare — `opt == nil` is the one optional comparison, handled above *)
+        | Some (Types.TInt | Types.TDouble | Types.TBool | Types.TString | Types.TEnum _) -> Types.TBool
+        | Some _ -> ignore (bad ()); Types.TBool
         | None -> ignore (bad ()); Types.TBool)
     | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge -> (
         match unify l tl r tr with
@@ -268,7 +282,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             let np = List.length ptypes and na = List.length exprs in
             if np <> na then
               err span (Printf.sprintf "function '%s' expects %d argument(s) but %d given" f np na)
-            else List.iter2 (fun a t -> check_expr a t) exprs ptypes;
+            else at_site `Arg (fun () -> List.iter2 (fun a t -> check_expr a t) exprs ptypes);
             ret
         | None when !current_self <> None && method_sig (Option.get !current_self) f <> None ->
             (* bare `m(args)` inside a method = `self.m(args)` (implicit self) — 21 *)
@@ -276,12 +290,22 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             let np = List.length ptys and na = List.length exprs in
             if np <> na then
               err span (Printf.sprintf "method '%s' expects %d argument(s) but %d given" f np na)
-            else List.iter2 (fun a t -> check_expr a t) exprs ptys;
+            else at_site `Arg (fun () -> List.iter2 (fun a t -> check_expr a t) exprs ptys);
             ret
         | None ->
             if f = "print" then (
               (match exprs with
-              | [ a ] -> ignore (infer a)
+              | [ a ] -> (
+                  (* IRGen prints the scalar types only; swiftc would print `Point(x: 1, y: 2)`
+                     for a struct, `red` for an enum case, `Optional(5)` for an optional and
+                     `C(r: 1)` for a conformer inside an `any P` — a divergence, stated in §2 *)
+                  match infer a with
+                  | Types.TInt | Types.TDouble | Types.TBool | Types.TString -> ()
+                  | t ->
+                      err (Ast.expr_span a)
+                        (Printf.sprintf
+                           "cannot print a value of type '%s' (only Int, Double, Bool and String)"
+                           (Types.string_of_ty t)))
               | _ ->
                   err span "print(_:) expects exactly one argument";
                   List.iter (fun a -> ignore (infer a)) exprs);
@@ -306,7 +330,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
                 (Printf.sprintf "incorrect argument label in call (have '%s:', expected '%s:')" l fname)
           | None -> err (Ast.expr_span value) (Printf.sprintf "missing argument label '%s:' in call" fname)
           | _ -> ());
-          check_expr value ftype)
+          at_site `Arg (fun () -> check_expr value ftype))
         args fields;
     Types.TStruct sn
   (* checking mode: an optional expected type accepts `nil`, an already-optional value, or — by
@@ -325,13 +349,14 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         match infer e with
         | Types.TProto pn' when pn' = pn -> () (* already `any P` *)
         | Types.TStruct sn when struct_conforms sn pn -> () (* wrap: SILGen will init_existential *)
-        | Types.TStruct sn ->
-            err (Ast.expr_span e)
-              (Printf.sprintf "argument type '%s' does not conform to expected type '%s'" sn pn)
         | t ->
+            let tn = Types.string_of_ty t in
             err (Ast.expr_span e)
-              (Printf.sprintf "cannot convert value of type '%s' to specified type 'any %s'"
-                 (Types.string_of_ty t) pn))
+              (match !site with
+              | `Arg -> Printf.sprintf "argument type '%s' does not conform to expected type '%s'" tn pn
+              | `Return -> Printf.sprintf "return expression of type '%s' does not conform to '%s'" tn pn
+              | `Assign -> Printf.sprintf "cannot assign value of type '%s' to type 'any %s'" tn pn
+              | `Let -> Printf.sprintf "value of type '%s' does not conform to specified type '%s'" tn pn))
     | _ -> check_expr_base e expected
   and check_expr_base (e : Ast.expr) (expected : Types.ty) : unit =
     match e with
@@ -388,7 +413,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         | Some (t, is_var) ->
             if not is_var then
               err span (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" name);
-            check_expr value t)
+            at_site `Assign (fun () -> check_expr value t))
     | Ast.Set_member { obj; field; value; span } -> (
         match lookup obj with
         | Some (Types.TStruct _, _) when obj = "self" ->
@@ -398,9 +423,13 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         | Some (Types.TStruct sn, is_var) -> (
             match Option.bind (Hashtbl.find_opt structs sn) (fun sl -> Types.field_type sl field) with
             | Some ft ->
+                (* swiftc's `diag::assignment_lhs_is_immutable_property`: the binding first, then
+                   the field — a `let` field is immutable through every binding *)
                 if not is_var then
-                  err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" obj);
-                check_expr value ft
+                  err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" obj)
+                else if Hashtbl.mem let_fields (sn, field) then
+                  err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" field);
+                at_site `Assign (fun () -> check_expr value ft)
             | None ->
                 err span (Printf.sprintf "value of type '%s' has no member '%s'" sn field);
                 ignore (infer value))
@@ -442,7 +471,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             | Some e ->
                 if rt = Types.TVoid then
                   err span "unexpected non-void return value in void function"
-                else check_expr e rt
+                else at_site `Return (fun () -> check_expr e rt)
             | None ->
                 if rt <> Types.TVoid then err span "non-void function should return a value"))
   (* type-check a `switch`: each pattern is checked against the subject; an enum-case pattern
@@ -561,6 +590,10 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
           let fields =
             List.map (fun (fl : Ast.field) -> (fl.Ast.fld_name, resolve_ty s.Ast.sspan fl.Ast.fld_ty)) s.Ast.sfields
           in
+          List.iter
+            (fun (fl : Ast.field) ->
+              if not fl.Ast.fld_var then Hashtbl.replace let_fields (s.Ast.sname, fl.Ast.fld_name) ())
+            s.Ast.sfields;
           Hashtbl.replace structs s.Ast.sname { Types.sl_name = s.Ast.sname; sl_fields = fields }
       | Ast.IEnum e ->
           let cases =

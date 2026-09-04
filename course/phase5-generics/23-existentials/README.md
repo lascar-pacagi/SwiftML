@@ -38,6 +38,10 @@ yields `T?`) and `e as! T` (forced, aborts on mismatch like swiftc, exit 134) �
 
 ## Done when
 
-`make lab C=phase5-generics/23-existentials` is green: a 5-word conformer round-trips through
-functions, reassignment, casts and `-O`; `as?` discriminates by value; the unrelated-cast warning
-matches swiftc's wording; `as!` failure exits 134.
+`make lab C=phase5-generics/23-existentials` is green. One cram file per hole — `irgen-box.t`
+(the container write and read), `silgen-casts.t` (the two cast lowerings), `run-existentials.t`
+(all three, end to end, including the exit-134 abort) — plus the given `sema-subset.t` and the
+headline `oracle.t`, which asks swiftc on every run: 16 programs where `swiftc -typecheck` and
+`--typecheck` must agree on accept-or-reject, and 15 built four ways (`swiftc -Onone`,
+`swiftc -O`, `./lab.exe build`, `./lab.exe build -O`) whose stdout and exit code must be
+identical.

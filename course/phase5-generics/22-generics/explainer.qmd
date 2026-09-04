@@ -79,6 +79,58 @@ is walled off. Concept 24 is the payoff: **specialization** clones `pick` per co
 turning every `T` into `A`, every witness dispatch into a direct call, and feeding the whole
 Phase-4 cascade. You're building the baseline it beats.
 
+### The subset you are growing into
+
+**New lexemes.** One keyword; the angle brackets are the comparison operators, reused:
+
+| spelling | token | notes |
+|---|---|---|
+| `where` | `Token.Kw_where` | a keyword, in `token.ml`'s `keyword_or_ident` |
+| `<` `>` in a signature | `Token.Lt` / `Token.Gt` | not new tokens — the parser reads a generic parameter list only in the one position it can occur, right after a `func` name, so there is no ambiguity with `a < b` to resolve |
+
+**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05–21.
+Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (zero or more),
+`|` separates alternatives, and quoted text is a terminal.
+
+```
+func_decl   ::= "func" ident [ generics ]                        <-- generics is new
+                  "(" [ param { "," param } ] ")" [ "->" type ]
+                  [ where_clause ] block                         <-- where_clause is new
+
+generics    ::= "<" gparam { "," gparam } ">"                    <-- new
+gparam      ::= ident ":" ident                                  <-- new  (T : P; v0 needs
+                                                          the constraint, see below)
+where_clause ::= "where" gparam { "," gparam }                   <-- new  (the same pairs,
+                                                          spelled after the signature)
+
+type        ::= [ "any" ] ident [ "?" ]
+                (ident = a builtin, a struct, an enum, a protocol,
+                       | a TYPE PARAMETER of the enclosing func)  <-- new
+```
+
+Two things to notice. `<T: P>` and `where T: P` produce the *same* list — the parser merges the
+where-clause into `generics`, so nothing downstream has to know which spelling was used. And a
+type parameter is only a type *inside its own function*: `resolve_opt` looks it up in
+`current_generics`, which is pushed while checking that function's signature and body and popped
+after, so `T` at top level is still `cannot find type 'T' in scope`.
+
+### The diagnostics you emit
+
+`infer_generic_call` is the first four rows; the rest are given, and `sema-inference.t` /
+`sema-subset.t` keep them all on record. Wording follows `swiftc -typecheck` where the subset
+lets it (`swift/include/swift/AST/DiagnosticsSema.def`, line numbers from the pinned snapshot).
+
+| program | our message | swiftc |
+|---|---|---|
+| `pair(A(), B())` for `<T: P>(_: T, _: T)` | `conflicting arguments to generic parameter 'T' ('A' vs. 'B')` | **same** (`conflicting_arguments_for_generic_parameter`, l.415) |
+| `one(D())` for `<T: P>` and a non-conformer `D` | `global function 'one' requires that 'D' conform to 'P'` | **same** (`type_does_not_conform_decl_owner`, l.2997 — `%kind0` prints as `global function 'one'`) |
+| `one(3)` for `<T: P>` | `global function 'one' requires that 'Int' conform to 'P'` | **same** |
+| `one(A(), A())` for a one-parameter `<T: P>` | `function 'one' expects 1 argument(s) but 2 given` | `extra argument in call` (`extra_argument_positional`, l.1696) — same verdict, and we keep the count-based sentence the rest of the compiler already uses |
+| `a.w()` on a `T: P` where `w` is A's, not P's | `value of type 'T' has no member 'w'` | **same** (`could_not_find_value_member`, l.71) — the *constraint* is the whole interface |
+| `a == b` on two `T` | `binary operator '==' cannot be applied to two 'T' operands` | **same** (`cannot_apply_binop_to_same_args`, l.221) |
+| `func f<T>(_ a: T) -> T` | `type parameter 'T' needs a protocol constraint in this subset (write '<T: SomeProtocol>')` | **accepted** — swiftc has runtime type metadata for the unconstrained case; we have none yet, so we refuse the declaration. Our own words, deliberately: there is no swiftc sentence to copy |
+| `one(e)` for `e: any P` and `<T: P>` | `global function 'one' requires that 'any P' conform to 'P'` | **accepted** — Swift 5.7 *opens* the existential implicitly (SE-0352) and binds `T` to the dynamic type. We cannot recover that type, so we refuse; the workaround is to keep the value concrete |
+
 ### Why v0 requires a constraint
 
 `func ident<T>(_ x: T) -> T` is legal Swift — but with no constraint there's no witness table
@@ -93,30 +145,64 @@ clear message. The exercise sketches the metadata route.
 
 ## 3. Build it, step by step
 
-1. **`sema.ml` — `infer_generic_call`** (`TODO(22-sema)`): arity check; walk `ptypes`/args —
-   `TVar (n, _)` positions infer and bind (conflict ⇒ swiftc's wording), others `check_expr`;
-   then each `(n, c)` binding must conform (`struct_conforms`, or an equal-constraint `TVar` for
-   generic-from-generic); finally substitute into the return.
-2. **`silgen.ml` — the call lowering** (`TODO(22-silgen)`): `T`-position args lower with
-   `gen_expr`, record the binding, wrap concrete structs with `Init_existential`; `Apply` the
-   single erased copy (result type = declared return, erased); `Open_existential` the result if
-   the binding was concrete.
+Two holes, one per side of the call boundary. The sema one first: nothing lowers until the call
+typechecks.
 
-Everything else — parsing `<T: P>`/`where`, `TVar` scoping, the erased lowering of the generic
-function itself, IRGen's `open_existential` — is given.
+1. **`sema.ml` — `infer_generic_call`** (`TODO(22-sema)`). You are handed the callee's name, its
+   `(type parameter, constraint)` list, its parameter types (which may mention `TVar`), its
+   declared return, and the argument expressions. Produce the call's type, and report the four
+   §2 diagnostics on the way. The shape is: check the arity; then walk parameters and arguments
+   together, *inferring* at a `TVar` position and *checking* everywhere else; then hold each
+   inferred binding up against its constraint (`struct_conforms`, from concept 21 — this is its
+   third customer); then substitute into the declared return, so a `-> T` call has a concrete
+   type at the caller. A binding that is itself a `TVar` with the same constraint is a generic
+   calling a generic — it already satisfies the constraint, and there is nothing to substitute.
+2. **`silgen.ml` — the call lowering** (`TODO(22-silgen)`, the `gfuncs` arm of `Ast.Call`). The
+   callee is compiled ONCE with every `T` erased to `any P`, so this side does the boundary
+   work. Lower each argument; the ones in a `TVar` position have to arrive as existentials, and
+   `vty b v` tells you whether one already is. Apply the single erased copy — remember its
+   result type is the *erased* return, so a `-> T` callee returns `$any P` here. Then, when the
+   declared return is a `TVar` and the type you inferred for it is a concrete struct, open the
+   result back to that struct: `Sil.Open_existential` is the statically-checked unwrap, and it
+   is what makes `id(A(x: 8)).x` legal in the caller.
+
+Tips. Inference happens twice, once in each hole — sema's binding does not travel to SILGen, so
+the lowering re-derives it from the argument types it just lowered. Keep the two consistent or
+the open will name a type the payload does not hold. Everything else is given: parsing
+`<T: P>` and `where`, the `TVar` scoping, the erased lowering of the generic function itself,
+and IRGen's `open_existential`.
 
 Reference: `solution/sema.ml`, `solution/silgen.ml`.
 
 ## 4. Test it
 
 ```bash
-make lab C=phase5-generics/22-generics
+make lab C=phase5-generics/22-generics                       # everything
+make lab C=phase5-generics/22-generics T=sema-inference      # one hole
 ```
 
-cram: one `@pick` in SIL; `open_existential` at the call; generic programs (incl. a generic
-calling a generic, and a `where` clause) run with `-O` matching swiftc; the three diagnostics
-match swiftc's wording. alcotest: inference accept/conflict/constraint, the v0 unconstrained
-rejection, wrap/open counts in SIL, and `-O` validity.
+One cram file per hole, in fill order:
+
+| file | goes green when | how it checks |
+|---|---|---|
+| `tests/sema-inference.t` | `TODO(22-sema)` infers | `--typecheck`: a substituted `-> T` result used concretely, and the conflict / constraint / arity refusals of §2 with their positions |
+| `tests/silgen-generic-call.t` | `TODO(22-silgen)` lowers the call | `--emit-sil` for the shapes (ONE `@first` with an `$any P` signature; `init_existential` in, `open_existential` out; neither for a generic calling a generic), then the programs **run**, at `-Onone` and `-O` |
+
+Two files do not belong to a hole. `tests/sema-subset.t` is GIVEN code and green from the start:
+the aggregate refusals carried in from phase 3, plus this concept's three body rules — a member
+that is not in the constraint, `==` on two `T`s, and the unconstrained `<T>` v0 refuses. None of
+them involves a *call*, which is why they work before `infer_generic_call` exists. And
+`tests/oracle.t` is the headline: 22 programs of `oracle-typecheck.txt` where `swiftc -typecheck`
+and `--typecheck` must reach the same verdict, then 18 of `oracle-corpus.txt` compiled **four
+ways** — `swiftc -Onone`, `swiftc -O`, `./lab.exe build`, `./lab.exe build -O` — all run, stdout
+and exit code identical.
+
+`make lab` distinguishes three kinds of red. **TODO** means nothing in that file passes — the
+hole has not been started, and the file just lists what it will check. **FAIL** means *some*
+cases pass: you are mid-hole, and the diffs are worth reading (`DETAIL=1` shows them). **SKIP**
+means a compile error stopped dune before the file ran. On the untouched skeleton both holes'
+files read TODO, `sema-subset.t` reads PASS, and the alcotest suite reads FAIL — its `body`
+group is green from the start, its `inference` and `lowering` groups are not.
 
 ## 5. Benchmark it
 
@@ -180,11 +266,14 @@ and infer_generic_call f generics ptypes ret (args : Ast.arg list) span : Types.
         match List.assoc_opt n !bind with
         | Some (Types.TStruct sn) ->
             if not (struct_conforms sn c) then
-              err span (Printf.sprintf "global function '%s' requires that '%s' conform to '%s'" f sn c)
+              err span
+                (Printf.sprintf "global function '%s' requires that '%s' conform to '%s'"
+                   f sn c)
         | Some (Types.TVar (_, c')) when c' = c -> ()
         | Some t ->
-            err span (Printf.sprintf "global function '%s' requires that '%s' conform to '%s'"
-                        f (Types.string_of_ty t) c)
+            err span
+              (Printf.sprintf "global function '%s' requires that '%s' conform to '%s'"
+                 f (Types.string_of_ty t) c)
         | None -> ())
       generics;
     match ret with
@@ -216,7 +305,8 @@ else if Hashtbl.mem b.gfuncs f then (
   match ret with
   | Types.TVar (n, _) -> (
       match List.assoc_opt n !binding with
-      | Some (Types.TStruct sn) -> emit b (Sil.Open_existential (callv, sn)) (Types.TStruct sn)
+      | Some (Types.TStruct sn) ->
+          emit b (Sil.Open_existential (callv, sn)) (Types.TStruct sn)
       | _ -> callv)
   | _ -> callv)
 ```

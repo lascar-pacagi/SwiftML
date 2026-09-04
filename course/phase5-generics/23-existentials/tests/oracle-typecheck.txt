@@ -1,0 +1,16 @@
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nlet p: P = A(x: 1)\nif let a = p as? A { print(a.x) }
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nlet p: P = A(x: 1)\nlet a: A = p as! A\nprint(a.x)
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nstruct C { var z: Int }\nlet p: P = A(x: 1)\nif let c = p as? C { print(c.z) } else { print(-1) }
+protocol P { func v() -> Int }\nstruct Big: P {\n  var a: Int\n  var b: Int\n  var c: Int\n  var d: Int\n  var e: Int\n  func v() -> Int { return a + b + c + d + e }\n}\nlet p: P = Big(a: 1, b: 2, c: 3, d: 4, e: 5)\nif let b = p as? Big { print(b.e) }
+protocol P { func v() -> Int }\nstruct A: P { func v() -> Int { return 1 } }\nstruct B: P { func v() -> Int { return 2 } }\nfunc classify(_ p: P) -> Int {\n  if let _ = p as? A { return 1 }\n  if let _ = p as? B { return 2 }\n  return 0\n}\nprint(classify(A()))
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nfunc id<T: P>(_ t: T) -> T { return t }\nlet p: P = id(A(x: 1))\nif let a = p as? A { print(a.x) }
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nvar p: P = A(x: 1)\np = A(x: 2)\nif let a = p as? A { print(a.x) }
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nlet p: P = A(x: 1)\nlet bad: A = p as? A
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nlet p: P = A(x: 1)\nif let a = p as? Nope { print(1) }
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nlet p: P = A(x: 1)\nlet a = p as! A\nprint(a.nope)
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nlet p: P = A(x: 1)\nprint(p.x)
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nstruct D { var x: Int }\nlet p: P = D(x: 1)
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nlet a: P = A(x: 1)\nlet b: P = A(x: 1)\nprint(a == b)
+protocol P { func v() -> Int }\nstruct Big: P {\n  let k: Int\n  var a: Int\n  func v() -> Int { return k + a }\n}\nvar g = Big(k: 1, a: 2)\ng.k = 5
+protocol P { func v() -> Int }\nstruct A: P { var x: Int }
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nfunc f(_ p: P) -> Int { return p.v() }\nprint(f(A(x: 1)))\nlet q: P = A(x: 2)\nprint(f(q))
