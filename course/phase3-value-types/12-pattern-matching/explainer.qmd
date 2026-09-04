@@ -66,6 +66,65 @@ Without that rule, every `switch`-bodied function would falsely report "missing 
 seeing, because it's the kind of cross-feature interaction that only shows up when you actually run a
 realistic program.
 
+### The subset you are growing into
+
+**New lexemes.** Two keywords, both in `token.ml`'s `keyword_or_ident` table; `case` is
+concept 11's, reused in a second place:
+
+| spelling | token | notes |
+|---|---|---|
+| `switch` | `Token.Kw_switch` | a keyword — a statement, like `if` and `while` |
+| `default` | `Token.Kw_default` | a keyword — the catch-all arm |
+| `case` | `Token.Kw_case` | concept 11's keyword, now also opening a `switch` arm |
+
+**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05–11.
+Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (zero or more),
+`|` separates alternatives, and quoted text is a terminal.
+
+```
+statement   ::= switch_stmt                                        <-- new
+              | ("let" | "var") ident [ ":" type ] "=" expr
+              | ident "=" expr
+              | ident "." ident "=" expr
+              | "if" expr block [ "else" ( block | if-statement ) ]
+              | "while" expr block
+              | "for" ident "in" expr "..<" expr block
+              | "break" | "continue" | "return" [ expr ]
+              | expr
+
+switch_stmt ::= "switch" expr "{" { arm } "}"                      <-- new
+arm         ::= "case" pattern ":" { statement NEWLINE }           <-- new
+              | "default" ":" { statement NEWLINE }                <-- new
+pattern     ::= "." ident [ "(" binding { "," binding } ")" ]      <-- new (an enum case)
+              | [ "-" ] int                                        <-- new (an Int literal)
+binding     ::= "let" ident | "_"                                  <-- new
+```
+
+Three things to notice. An arm's body is **not** a block: there are no braces, and the body runs
+to the next `case`, `default` or `}` — which is why `parse_case_body` stops on those three tokens
+instead of on a `}`. A pattern starts with a **leading dot** and no type name (`.circle`, not
+`Shape.circle`): the subject's type is what says which enum it is, so the parser can commit on the
+`.` alone and sema resolves the case. And a `binding` is `let x` or `_`, never a bare expression —
+Swift's `case let x` and `case x where …` forms, and tuple and nested patterns, are the exercises.
+
+### The diagnostics you emit (and the ones you are given)
+
+One of these is yours: `switch must be exhaustive`, the `TODO(12-sema)` hole. The rest are given
+and pinned by `sema-switch.t`, so you can rely on them — nothing ill-typed reaches your dispatch
+chain. Wording follows `swiftc -typecheck` where the subset lets it
+(`swift/include/swift/AST/DiagnosticsSema.def`, line numbers from the pinned snapshot).
+
+| program | our message | swiftc |
+|---|---|---|
+| an enum switch missing a case, no `default` | **`switch must be exhaustive`** — *your hole* | **same** (`non_exhaustive_switch`, l.7771) — swiftc adds a fix-it listing the missing cases; we stop at the sentence |
+| an `Int` switch with no `default` | `switch must be exhaustive` (given) | **same** — an `Int` has too many values to cover |
+| `case .nope:` | `type 'Shape' has no member 'nope'` | **same** (`could_not_find_type_member`, l.86) |
+| `case 1:` on an enum subject | `expression pattern of type 'Int' cannot match values of type 'E'` | **same** (`cannot_match_expr_pattern_with_value`, l.5602) |
+| `case .a:` on an `Int` subject | `enum case '.a' cannot match values of type 'Int'` | `type 'Int' has no member 'a'` — swiftc resolves the pattern *first* and never gets to the match |
+| `switch b` on a `Bool` | `cannot 'switch' over a value of type 'Bool'` | **accepted** — swiftc matches `true`/`false` patterns over any `Equatable`; our patterns are enum cases and `Int` literals only, so we say so rather than mis-lower it |
+| `case .rect(let w)` for `case rect(Int, Int)` | `pattern '.rect' binds 1 value(s) but case 'rect' has 2 associated value(s)` | **accepted** — swiftc binds the whole `(Int, Int)` *tuple* to `w`. We have no tuple type, so we refuse rather than bind something we cannot represent |
+| `print(r)` outside the arm that bound `r` | `cannot find 'r' in scope` | **same** (`cannot_find_in_scope`) — a binding is scoped to its arm |
+
 ### How a real compiler dispatches (and what we simplified)
 
 Our dispatch is a **linear** chain: *n* cases cost up to *n* tag comparisons. A production compiler
@@ -76,18 +135,27 @@ linear chain is the honest, readable starting point, and turning it into a `swit
 
 ## 3. Build it, step by step
 
-- **`silgen.ml`** — `TODO(12)`, the `Switch` case in `gen_stmt`: `gen_expr` the subject once; the
-  discriminant is `Sil.Enum_tag subj` (enum) or `subj` (Int). `new_block` a `merge`. For each
-  `(pattern, body)`: the key is the case's `Types.case_index` (enum) or the literal (`PInt`); emit it
-  (`Sil.Int_lit`), compare (`Sil.Binop Ast.Eq`), `terminate` a `Cond_br` to a fresh case-block / a
-  fresh next-block. In the case-block, bind each `Ast.Bind x` (`Sil.Enum_payload (subj, i)` →
-  `alloc_stack` + `store`), `gen_block` the body, `terminate` `Br merge`; then `switch_to` the
-  next-block. After the chain: the `default` body (→ `Br merge`) or `Sil.Unreachable`. Finally
-  `switch_to merge`.
-- **`sema.ml`** — `TODO(12-sema)`, in `check_switch`: with no `default`, compare the matched cases
-  (`covered`) against `el.Types.el_cases`; if any is missing, `err span "switch must be exhaustive"`.
+The parser is given (patterns, arms, `default`), and so is the pattern *typing* — by the time your
+code runs, every pattern names a real case with the right number of bindings. Two holes:
 
-Reference: `solution/`.
+- **`sema.ml`, `TODO(12-sema)` in `check_switch`** — EXHAUSTIVENESS. The enum branch already
+  collects the case names the patterns matched into `covered`, and `el.Types.el_cases` is what the
+  enum declares. When there is no `default` and something is left over, report it with swiftc's
+  sentence, `switch must be exhaustive`, at the switch's own span. (The `Int` branch already does
+  its half: an `Int` switch always needs a `default`.) `sema-exhaustive.t` is five programs swiftc
+  refuses and the skeleton accepts.
+- **`silgen.ml`, `TODO(12)`, the `Switch` arm of `gen_stmt`** — the DISPATCH CHAIN. Evaluate the
+  subject **once**; the discriminant is its tag for an enum (`Sil.Enum_tag`) and the value itself
+  for an `Int`. Then, per case: compare the discriminant with that pattern's key (the case's
+  `Types.case_index`, or the literal), and `Cond_br` to a fresh block for the arm or to a fresh
+  block that carries on testing. Inside an arm, a binding is an ordinary local — read the payload
+  with `Sil.Enum_payload (subj, i)`, give it an `alloc_stack`, `store` it, and register it in
+  `b.vars` — then generate the body and branch to the ONE merge block every arm shares. When the
+  chain runs out: the `default` body if there is one, and otherwise `Sil.Unreachable`, because
+  sema has just proved no case is left. End by switching to the merge block, so whatever follows
+  the switch is generated there. `silgen-switch.t` prints the CFG you built.
+
+Reference: `solution/` — after you have tried it.
 
 ## 4. Test it
 
@@ -95,10 +163,36 @@ Reference: `solution/`.
 make lab C=phase3-value-types/12-pattern-matching
 ```
 
-The cram test **builds and runs** switch programs — a `Shape.area` that destructures, and an `Op`
-interpreter — and FileChecks the dispatch SIL (`enum_tag`, `enum_payload`). The alcotest pins
-exhaustiveness (missing case, `Int` with no default), the pattern rules (unknown case, wrong binding
-arity), and the lowered shape.
+Every `.t` file calls `./lab.exe`, built from **this directory's** library, so the report is about
+your code here. In the order you fill the holes:
+
+- `sema-switch.t` — `--typecheck`: the given pattern rules (binding arity, an unknown case, an
+  `Int` pattern against an enum and the reverse, a `Bool` subject, a binding's arm-local scope and
+  its type). Green from the start; it is the contract your lowering may rely on.
+- `sema-exhaustive.t` — `--typecheck`, the sema hole: five enum switches that leave a case
+  uncovered — one of two, two of three, the same case listed twice, an empty switch, and one
+  inside a function. Every one of them is accepted by the skeleton, so the file is `TODO` until
+  the check exists.
+- `silgen-switch.t` — `--emit-sil`, the silgen hole: the whole dispatch chain of a three-case
+  switch, the single `enum_tag`, `enum_payload … #0`/`#1` per arm, `_` extracting nothing, a
+  switch used as a statement (the arms `br` to the merge), an `Int` switch with a `default`, and
+  a `default` replacing the trailing `unreachable`.
+- `run-switch.t` — `build` and run: destructuring, an `Op` interpreter, a switch as a statement,
+  an `Int` switch with `default`, a switch in a loop, and a `default` arm. It needs the silgen
+  hole only — the sema hole adds a rejection, not a behaviour.
+- `test_switch.ml` (alcotest `switch`) — the same three groups in-process: `sema-switch` (given —
+  its three cases pass on the skeleton), `sema-exhaustive`, `silgen-switch`.
+- `oracle.t` — **the headline**, in two halves. The runtime half compiles the 16 programs of
+  `oracle-corpus.txt` with `swiftc -Onone` and with `./lab.exe build`, runs both binaries, and
+  demands identical stdout and exit code. The front-end half asks `swiftc -typecheck` and
+  `./lab.exe --typecheck` for a verdict on the 15 programs of `typecheck-corpus.txt` — five
+  well-formed, ten refused, five of those for exhaustiveness — and they must agree. That half is
+  the only oracle the sema hole has, so it stays red until the check is written.
+
+A hole you have not started shows as `TODO` with the list of what it will check; a hole in
+progress shows `FAIL` with, under each failing case, what the test wants and what your code
+printed. On the untouched skeleton `sema-switch.t` is `PASS` and everything else is `TODO`, with
+the alcotest `FAIL` and its three `sema-switch` cases `OK`.
 
 ## 5. Benchmark it
 

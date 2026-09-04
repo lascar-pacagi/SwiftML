@@ -33,10 +33,15 @@ algebra), `swift/lib/SILGen/SILGenPattern.cpp` (the decision tree), the SIL `swi
 
 > **Scope (v0).** Single pattern per `case`; no `where` clauses, tuple patterns, or `if let`/`guard`
 > (those are concept 13's path and exercises here). The dispatch is a **linear** tag chain (a real
-> compiler builds a balanced decision tree / jump table — see the explainer).
+> compiler builds a balanced decision tree / jump table — see the explainer). Two rules are
+> stricter than swiftc and stay out of the oracle: a `Bool` subject, and `case .rect(let w)`
+> binding a two-value payload as one (swiftc binds the whole tuple) — the explainer's diagnostics
+> table lists the honest set.
 
 ## Done when
 
-`make lab C=phase3-value-types/12-pattern-matching` is green: the cram test **builds and runs** switch
-programs — destructuring and a mini ADT interpreter — and the alcotest pins exhaustiveness, the
-pattern rules, and the dispatch SIL (`enum_tag`/`enum_payload`/`cond_br`). Output matches `swiftc`.
+`make lab C=phase3-value-types/12-pattern-matching` is green: one cram file per hole
+(`sema-exhaustive.t`, `silgen-switch.t`) beside the given `sema-switch.t` and the end-to-end
+`run-switch.t`, the alcotest's three groups, and `oracle.t` — 16 programs compiled by `swiftc` and
+by `./lab.exe build`, run, and compared byte for byte, and 15 more where `swiftc -typecheck` and
+`--typecheck` must reach the same verdict.

@@ -1,0 +1,15 @@
+enum Shape {\n  case circle(Int)\n  case rect(Int, Int)\n  case dot\n}\nfunc area(_ s: Shape) -> Int {\n  switch s {\n  case .circle(let r): return r * r\n  case .rect(let w, let h): return w * h\n  case .dot: return 0\n  }\n}\nprint(area(Shape.dot))
+enum E { case a, b }\nlet e = E.a\nswitch e {\ncase .a: print(1)\ndefault: print(0)\n}
+let n = 2\nswitch n {\ncase 1: print(10)\ncase 2: print(20)\ndefault: print(0)\n}
+enum E { case a(Int), b }\nvar t = 0\nlet e = E.a(5)\nswitch e {\ncase .a(_): t = 1\ncase .b: t = 2\n}\nprint(t)
+enum E { case a, b, c }\nfunc f(_ e: E) -> Int {\n  switch e {\n  case .a: return 1\n  case .b: return 2\n  case .c: return 3\n  }\n}\nprint(f(E.c))
+enum E { case a, b }\nlet e = E.a\nswitch e {\ncase .a: print(1)\n}
+enum Shape {\n  case circle(Int)\n  case rect(Int, Int)\n  case dot\n}\nlet s = Shape.dot\nswitch s {\ncase .circle(let r): print(r)\ncase .rect(let w, let h): print(w + h)\n}
+enum E { case a, b }\nlet e = E.a\nswitch e {\ncase .a: print(1)\ncase .a: print(2)\n}
+enum E { case a, b, c }\nfunc f(_ e: E) -> Int {\n  switch e {\n  case .a: return 1\n  case .b: return 2\n  }\n}\nprint(f(E.a))
+let n = 3\nswitch n {\ncase 1: print(1)\n}
+enum E { case a, b }\nlet e = E.a\nswitch e {\ncase .a: print(1)\ncase .nope: print(2)\ndefault: print(3)\n}
+enum E { case a, b }\nlet e = E.a\nswitch e {\ncase 1: print(1)\ndefault: print(0)\n}
+let n = 3\nswitch n {\ncase .a: print(1)\ndefault: print(0)\n}
+enum Shape {\n  case circle(Int)\n  case dot\n}\nlet s = Shape.dot\nswitch s {\ncase .circle(let r): print(r)\ncase .dot: print(r)\n}
+enum Shape {\n  case circle(Int)\n  case dot\n}\nlet s = Shape.dot\nswitch s {\ncase .circle(let r): let b: Bool = r\ncase .dot: print(0)\n}

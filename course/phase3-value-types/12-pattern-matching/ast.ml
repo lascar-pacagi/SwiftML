@@ -66,7 +66,11 @@ type func_decl = {
 }
 
 (* NEW (concept 10): a struct declaration — stored properties in order *)
-type field = { fld_name : string; fld_ty : string (* written type name; sema resolves it *) }
+type field = {
+  fld_name : string;
+  fld_ty : string; (* written type name; sema resolves it *)
+  fld_var : bool; (* `var x: T` — a `let` field can't be assigned through any binding *)
+}
 type struct_decl = { sname : string; sfields : field list; sspan : Token.span }
 
 (* NEW (concept 11): an enum declaration — cases in order; each case has payload type names
@@ -163,7 +167,8 @@ let dump_func (f : func_decl) : string =
   let ret = match f.ret with Some r -> Printf.sprintf "-> %s " r | None -> "" in
   Printf.sprintf "(func %s (%s) %s%s)" f.fname ps ret (dump_block f.body)
 
-let dump_field (f : field) : string = Printf.sprintf "%s:%s" f.fld_name f.fld_ty
+let dump_field (f : field) : string =
+  Printf.sprintf "%s%s:%s" (if f.fld_var then "" else "let ") f.fld_name f.fld_ty
 let dump_struct (s : struct_decl) : string =
   Printf.sprintf "(struct %s (%s))" s.sname (String.concat " " (List.map dump_field s.sfields))
 
