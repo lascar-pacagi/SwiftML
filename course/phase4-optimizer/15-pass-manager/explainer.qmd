@@ -33,6 +33,37 @@ function, run pass 1, then pass 2, …. That's the entire architecture — small
 transformations behind a uniform interface. `--sil-opt` prints the result so you can *see* what the
 passes did; `-O` runs the same pipeline right before IRGen so the native code benefits.
 
+### The SIL your passes read and write
+
+This concept adds no syntax — the grammar is exactly concept 13's. What it adds is a *consumer*
+of the IR, so what §2 must put on the table is the **SIL** itself: your passes never see Swift
+again, only this. A function is a list of basic blocks; a block is `(value, instr)` pairs in
+program order ending in a terminator. Two facts decide what a pass is allowed to do with each
+form — whether it is **pure** (its result is its only effect, so deleting it when nobody reads
+the result is free) and whether its operands can be **substituted** (replaced by an equal value).
+
+| printed form | `Sil.instr` | pure? | what the two passes do with it |
+|---|---|---|---|
+| `%3 = integer_literal $Int, 7` | `Int_lit` | yes | the folder's *source* of constants, and the value it writes back |
+| `%4 = float_literal $Double, 2.5` | `Float_lit` | yes | left alone (v0 folds integers only) |
+| `%5 = integer_literal $Bool, true` | `Bool_lit` | yes | left alone until concept 17 |
+| `%6 = binop "+" %3, %4 $Int` | `Binop` | yes | the folder's *target*: both operands known ⇒ becomes a literal |
+| `%7 = unop "-" %6 $Int` | `Unop` | yes | dead-code candidate only |
+| `%8 = alloc_stack $Int  // x` | `Alloc_stack` | yes | dead-code candidate; **opaque to the folder** — this is the wall concept 16 breaks |
+| `%9 = load %8 $Int` | `Load` | yes | dead-code candidate; a load is *not* a constant, whatever was stored |
+| `store %3 to %8` | `Store` | **no** | never removed: the store is the visible effect |
+| `%10 = function_ref @f` | `Func_ref` | yes | dead-code candidate |
+| `%11 = apply %10(%3) $Int` | `Apply` | **no** | never removed: a call can print, trap or recurse |
+| `%12 = apply @print(%3)` | `Print` | **no** | never removed: it *is* the observable behaviour |
+| `%13 = struct (%3, %4) $P` · `struct_extract` · `struct_element_addr` | `Struct*` | yes | dead-code candidates |
+| `%14 = enum #1(%3) $E` · `enum_tag` · `enum_payload` | `Enum*` | yes | dead-code candidates |
+| `br bb2` · `cond_br %5, bb1, bb2` · `return %3` · `trap "…"` | `term` | — | untouched in this concept; concept 17 folds `cond_br` |
+
+The "pure?" column *is* `dead_instr_elim`'s rule, and it is given to you for exactly that reason:
+the interesting half of a DCE is the list of things it must not touch. Concept 16 adds block
+**arguments** to the terminators and concept 17 starts rewriting them; until then a pass edits
+`block.instrs` and nothing else.
+
 ### Two starter passes, and why order matters
 
 - **Constant folding** walks the instructions, tracking which SIL values are known integer constants,
@@ -55,7 +86,23 @@ An optimization that changes what the program *prints* is a bug, not an optimiza
 preserve observable behavior, which is why `-O` output must match `-Onone` (and `swiftc`) exactly —
 the optimizer is held to the same parity bar as the compiler. (It's also why DCE keeps anything
 side-effecting — a `store`, an `apply`, a `print` — no matter whether its *result* is used.) The SIL
-**verifier** still runs after optimization, catching a pass that produced a malformed CFG.
+**verifier** runs twice — on the SIL SILGen produced, and again on what the pipeline returned, so
+a pass that branched to a block it deleted or left a block without a terminator is caught in the
+driver rather than in IRGen or, worse, at run time.
+
+Parity is only a fair test if the corpus stays inside what both compilers mean the same, and the
+front end is what enforces that. Three refusals draw that line, and `sema-subset.t` records them:
+
+| program | our message | swiftc |
+|---|---|---|
+| `print(p)` for a struct, `print(e)` for an enum, `print(o)` for an optional | `cannot print a value of type 'P' (only Int, Double, Bool and String)` | **accepts** — prints `P(x: 1)`, `a`, `Optional(5)`. Our `print` lowers one scalar to `printf`, so we refuse rather than emit ill-typed IR |
+| `a == b` on two structs | `binary operator '==' cannot be applied to two 'P' operands` | same wording (`diag::cannot_apply_binop_to_same_args`) |
+| `a == b` on two optionals | `binary operator '==' cannot be applied to two 'Int?' operands` | **accepts** — `Int?` is `Equatable`. We support only `o == nil`, which reads the tag |
+| `c.k = 5` on a `let` property | `cannot assign to property: 'k' is a 'let' constant` | same wording (`diag::assignment_lhs_is_immutable_property`) |
+
+Two of those are divergences, not agreements — swiftc accepts what we refuse. That is the honest
+position: refusing early is how a subset stays testable, and the alternative (letting the program
+through to IRGen) is a miscompile, which is worse than a diagnostic.
 
 ### Why these passes are weak *right now* — and the setup for mem2reg
 
@@ -94,7 +141,8 @@ Reference: `solution/opt.ml`.
 make lab C=phase4-optimizer/15-pass-manager
 ```
 
-Two cram files, one per hole, plus a unit suite and the oracle — in the order you fill the holes:
+Two cram files, one per hole, plus the subset file, a unit suite and the oracle — in the order
+you fill the holes:
 
 - `opt-pipeline.t` — `--sil-opt` with the pipeline's *given* pass only: `let a = 1; a + 1;
   print(a)` has a dead binop (it reads `a` from a slot, so folding could never touch it) that
@@ -106,14 +154,20 @@ Two cram files, one per hole, plus a unit suite and the oracle — in the order 
   as binops beside a `10 / 2` that folds; a comparison left alone; a binop of two loads left
   alone beside a literal one that folds; and two `-O` runs (`7`, `10`; a loop that still prints
   `20`). Every count is printed raw, then optimized, so the diff says what changed.
+- `sema-subset.t` — GIVEN code, so it is `PASS` before you write a line: the four refusals that
+  keep an aggregate out of IRGen (printing a struct, enum or optional; `==` on a struct or an
+  optional; assigning a `let` property; assigning any property of a `let` binding), each beside
+  the program it accepts. It is in the roster because the oracle below is only a fair test while
+  the corpus stays inside the subset, and this file is where that boundary is written down.
 - `test_opt.ml` (alcotest `opt`) — the same in-process: the manager runs the given pass, is the
   identity on an empty pipeline, visits every function with the passes in order, and feeds each
   pass's result to the next (a spy pass records what it saw); `constant_fold` called directly on
   `main` for each rule above; then `Opt.optimize` end to end. Counts are taken *before* optimizing
   — passes mutate blocks in place, so a "before" measured afterwards is already the "after".
-- `oracle.t` — **the headline**: every program in `oracle-corpus.txt` (15: loops with side
+- `oracle.t` — **the headline**: every program in `oracle-corpus.txt` (18: loops with side
   effects, recursion, nested `break`/`continue`, structs, enums + `switch`, optionals, a
-  force-unwrap of `nil`, and a few foldable ones) is built four ways — `swiftc -Onone`,
+  force-unwrap of `nil`, an optional stored property, a `let` property, a `Double` field, and a
+  few foldable ones) is built four ways — `swiftc -Onone`,
   `swiftc -O`, `lab build`, `lab build -O` — and all four binaries must print the same stdout
   and exit with the same code. This is the optimizer's invariant made mechanical: a pass that
   changes an answer fails here, whatever the shape checks say.

@@ -13,3 +13,6 @@ let a = 3 < 5\nprint(a)\nprint(3 == 4)\nprint(a && 5 > 2)\nprint(a || 1 > 2)
 if 10 > 3 { print(1) } else { print(2) }\nif 1 == 2 { print(3) } else { print(4) }
 var o: Int? = nil\nprint(o!)
 func sq(_ x: Int) -> Int { return x * x }\nvar acc = 0\nvar i = 0\nwhile i < 6 {\n  acc = acc + sq(i)\n  i = i + 1\n}\nprint(acc)
+struct Box {\n  var v: Int?\n}\nvar b = Box(v: 1)\nprint(b.v ?? 0)\nb.v = nil\nprint(b.v ?? 7)\nb.v = 9\nprint(b.v ?? 0)
+struct C {\n  let k: Int\n  var n: Int\n}\nvar c = C(k: 5, n: 0)\nc.n = c.n + c.k\nc.n = c.n * 2\nprint(c.k)\nprint(c.n)
+struct M {\n  var d: Double\n}\nlet m = M(d: 2.5)\nprint(m.d * 2 > 4.0)\nprint(2 * m.d < 4.0)\nprint(m.d - 1 == 1.5)

@@ -6,6 +6,9 @@ changes what a program prints is a bug, not an optimization, and this is where i
 The corpus is fold-resistant on purpose: loops with side effects, recursion, nested loops with
 `break`/`continue`, structs, enums and `switch`, optionals, comparisons, a force-unwrap of nil
 (exit 133 must survive `-O`), and a few programs the folder CAN fold, whose answer must not change.
+Three of the eighteen are there to pin the front-end fixes this concept carries: an optional
+stored property written with `nil` and then with a value, a `let` property read beside a `var`
+one, and a `Double` field multiplied by an integer literal.
 Only stdout and the exit code are compared: swiftc's trap message names the file and line at
 `-Onone` and is dropped at `-O`, so stderr is not a parity target.
 
