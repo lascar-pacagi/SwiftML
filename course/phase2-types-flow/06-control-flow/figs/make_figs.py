@@ -32,9 +32,9 @@ def block(ax, x, y, w, h, lines, color):
             family="monospace", color=TEXT, zorder=4)
 
 
-def arrow(ax, p0, p1, color=EDGE, rad=0.0, label=None, lx=0, ly=0):
+def arrow(ax, p0, p1, color=EDGE, rad=0.0, label=None, lx=0, ly=0, z=2):
     ax.add_patch(FancyArrowPatch(p0, p1, arrowstyle="-|>", mutation_scale=14, linewidth=1.5,
-                 color=color, zorder=2, connectionstyle=f"arc3,rad={rad}"))
+                 color=color, zorder=z, connectionstyle=f"arc3,rad={rad}"))
     if label:
         ax.text((p0[0] + p1[0]) / 2 + lx, (p0[1] + p1[1]) / 2 + ly, label, ha="center",
                 va="center", fontsize=9.5, color=color, fontweight="bold", zorder=5)
@@ -58,9 +58,10 @@ def make_cfg():
 
     arrow(ax, (entry[0], entry[1] - 0.4), (header[0], header[1] + 0.45))
     arrow(ax, (header[0], header[1] - 0.45), (body[0], body[1] + 0.45), TRUE, label="true", lx=-0.5)
-    # back edge: body -> header
-    arrow(ax, (body[0] + 1.7, body[1]), (header[0] + 1.7, header[1] - 0.3), EDGE, rad=-0.5,
-          label="back edge", lx=1.35, ly=-0.2)
+    # back edge: body -> header, leaving the body's right edge and ARRIVING at the header's
+    # right edge (the head must land outside the box, or the box hides it)
+    arrow(ax, (body[0] + 1.72, body[1] + 0.1), (header[0] + 1.72, header[1] - 0.25), EDGE,
+          rad=0.6, label="back edge", lx=1.3, ly=-0.1, z=5)
     # false -> exit
     arrow(ax, (header[0] + 1.7, header[1]), (after[0] - 1.6, after[1]), FALSE, label="false", ly=0.28)
 
