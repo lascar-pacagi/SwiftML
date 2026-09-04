@@ -57,15 +57,31 @@ body** so that shuffling call arguments never disturbs slot offsets:
 ```
 [sp, #0  .. #15]     outgoing call scratch (printf's variadic argument)
 [sp, #16 .. ]        locals: SIL value %v lives at [sp, #16 + 8*v]
-[sp, #FRAME-16 ..]   saved x29 (frame pointer) / x30 (link register)
-FRAME = round16(32 + 8 * nvals)
+[sp, #LOCALS ..]     saved x29 (frame pointer) / x30 (link register) — the frame record
+LOCALS = round16(16 + 8 * nvals)        (the whole frame is LOCALS + 16 bytes)
 ```
 
-The **prologue** is `sub sp, sp, #FRAME` then `stp x29, x30, [sp, #FRAME-16]` (save the caller's
-frame pointer and our return address). The **epilogue** reverses it: `ldp x29, x30, …; add sp, sp,
-#FRAME; ret`. Because all state lives in the frame, a `bl` (call) — which clobbers x0–x18 — is
-harmless: nothing important is in a register across a call. That's the stack machine's other gift:
-calls are trivially correct.
+The **prologue** pushes the frame record *first*, then carves the locals:
+
+```
+sub  sp, sp, #16            ; room for the record
+stp  x29, x30, [sp, #0]     ; save the caller's frame pointer and our return address
+mov  x29, sp                ; x29 now points at the record (the AAPCS64 frame chain)
+sub  sp, sp, #LOCALS        ; the slots
+```
+
+and the **epilogue** reverses it: `add sp, sp, #LOCALS; ldp x29, x30, [sp, #0]; add sp, sp, #16;
+ret`. Why two `sub`s instead of one `sub sp, sp, #FRAME` followed by `stp x29, x30, [sp,
+#FRAME-16]`? Because `stp`/`ldp` take a **7-bit signed immediate scaled by 8** — offsets from
+−512 to +504 — and a function with about sixty SIL values (twenty statements) has a frame past
+that: the assembler refuses the file. Pushing the record at offset 0 sidesteps the limit for any
+frame size; `sub`/`add` take a 12-bit immediate, so a locals area above 4095 bytes is adjusted in
+several steps (`adjust_sp`, given). Both are given code — you will meet them in concept 35, where
+`x29` becomes the handle for reading stack-passed arguments.
+
+Because all state lives in the frame, a `bl` (call) — which clobbers x0–x18 — is harmless:
+nothing important is in a register across a call. That's the stack machine's other gift: calls
+are trivially correct.
 
 ### Calls and the AAPCS64 convention
 
@@ -97,6 +113,21 @@ A few ARM64-isms the templates encode:
 - a **constant** larger than 16 bits can't be one `mov`; it's built with `movz` + up to three
   `movk` (one 16-bit chunk at a time). `materialize` (given) handles this.
 
+### What the backend refuses, and how
+
+This concept adds **no diagnostics**: by the time SIL reaches isel the program has type-checked,
+and every scalar SIL op has a template. What it does have is a *scope boundary*. v0 lowers
+Int/Bool scalars, arithmetic, comparisons, branches, calls and `print`; a struct, enum, class,
+array or closure instruction has no template yet. The rule for those is: emit a **visible
+`; UNSUPPORTED instr for %v: …` comment** in the assembly, in the place the code would go — never
+silently skip the instruction and never guess. The program still assembles, its scalar parts still
+run, and `--emit-asm` shows exactly which ops are missing. A backend that miscompiles quietly is
+worse than one that says what it cannot do; the comment is what the tests pin.
+
+The only runtime failure in the subset is a `trap` terminator (a force-unwrap of `nil`, from
+concept 13), which lowers to `brk #1` — SIGTRAP, exit 133, the same signal swiftc's traps raise.
+The optional machinery around it is outside v0, so this is shape-tested, not run.
+
 ### Why lower the `-Onone` SIL?
 
 We lower the **raw, memory-based** SIL (the `-Onone` path), not the optimized SSA form. Raw SIL has
@@ -125,16 +156,21 @@ You implement two functions in `isel.ml`. Given: the frame layout, `materialize 
 constant), `load r v` / `store r v` (slot access), `lea_cstring` (string address), `epilogue ()`,
 `cond_of` (comparison → condition code), and the whole `arm64.ml` IR + printer.
 
-1. **`TODO(33a)` — `sel_instr v i`**: one ARM64 sequence per SIL op (the table is spelled out in
-   the skeleton's comment): literals → `materialize` + `store`; `load`/`store` → `ldr`/`str`
-   through slots; `binop` → load-load-compute-store (with the `mod` = `sdiv`+`msub` and comparison
-   = `cmp`+`cset` cases); `apply` → args into `x0…`, `bl _name`, store `x0`; `print` → the
-   `printf` call with the variadic on the stack. Unsupported ops emit a visible `; UNSUPPORTED`
-   comment.
-2. **`TODO(33b)` — `sel_term t`**: `return` → load `x0` + `epilogue`; `br` → `b`; `cond_br` →
-   `cmp`+`b.ne`+`b`; `trap` → `brk`.
+1. **`TODO(33a)` — `sel_instr v i`**: one ARM64 sequence per SIL op (§2 gives each sequence):
+   literals → `materialize` + `store`; `load`/`store` → `ldr`/`str` through slots; `binop` →
+   load-load-compute-store (with the `mod` = `sdiv`+`msub` and comparison = `cmp`+`cset` cases);
+   `apply` → args into `x0…`, `bl _name`, store `x0`; `print` → the `printf` call with the
+   variadic on the stack. Unsupported ops emit a visible `; UNSUPPORTED` comment. Two details
+   the tests notice: a `func_ref` produces no code (its target is already in `funcrefs`, so the
+   `apply` can be a direct `bl`), and an `alloc_stack` is only a comment — the slot is the
+   variable.
+2. **`TODO(33b)` — `sel_term t`**: `return` → load `x0` + `epilogue` (`@main`'s bare `return`
+   puts 0 in `x0` first — the exit code); `br` → `b`; `cond_br` → `cmp #0` + `b.ne` + `b`;
+   `trap`/`abort` → `brk #1`; `unreachable` → nothing.
 
-Reference: `solution/isel.ml`. Run with `make lab C=phase8-arm64-backend/33-arm64-isel`.
+Do 33a first, then 33b's `Return` arms: nothing prints until a function can end, so both cram
+files stay `TODO` until then (§4). The answer key is `solution/isel.ml`; `make check-solution
+C=phase8-arm64-backend/33-arm64-isel` runs the tests against it.
 
 ## 4. Test it
 
@@ -142,11 +178,34 @@ Reference: `solution/isel.ml`. Run with `make lab C=phase8-arm64-backend/33-arm6
 make lab C=phase8-arm64-backend/33-arm64-isel
 ```
 
-cram: a native ARM64 executable (fib, loops, division, comparisons, print) **runs and matches
-`swiftc`**; the asm has the right shape (prologue, `bl _printf`, `cmp`/`cset`, `sdiv`/`msub`, the
-cstring section); and **Backend B agrees with Backend A** (the LLVM path) byte-for-byte. alcotest:
-the prologue, arithmetic (`add`/`mul`), `mod` = `sdiv`+`msub`, comparison = `cmp`+`cset`, the direct
-`bl`, `print` → `_printf`, branches, and that the asm renders without a leftover virtual register.
+Two cram files, one per hole, plus the unit suite and the three-way oracle — in the order you fill
+the holes. One wrinkle is specific to this concept: `sel_instr` and `sel_term` are closures inside
+`lower_func`, and a function cannot be printed without its `ret`, so nothing goes green until the
+`return` arm of `sel_term` exists. Fill 33a, then 33b's `Return` arms, and both files light up
+together; the remaining `sel_term` arms are what the branch cases check.
+
+- `isel-instrs.t` — `--emit-asm`, one case per template: the literal (one `mov`) and the 2^62
+  constant (`movz` + `movk`), `alloc_stack`/`store`/`load` through slots, each binop on x9/x10,
+  `%` as `sdiv` + `msub`, the six condition codes of `cset`, `print(Bool)` via `csel`, a call's
+  x0/x1 + `bl` + `str x0` and the callee's parameter spills, eight arguments filling x0–x7, and a
+  struct lowering to `; UNSUPPORTED` comments.
+- `isel-term.t` — the terminators, and the first programs that RUN natively: an empty `main`
+  (frame, `mov x0, #0`, exit 0), `return` loading x0, `if`'s `cmp #0`/`b.ne`/`b`, the `while`
+  back-edge, `for` with `break`/`continue`, `trap` as `brk #1`, recursive `fib`, a 40-statement
+  `main` whose 1 KB frame still assembles, and Backend B agreeing with Backend A on `fib`.
+- `test_isel.ml` (alcotest `isel`) — the same shapes in-process, grouped `frame` / `sel_instr
+  (33a)` / `sel_term (33b)`, including the prologue pin (record at offset 0, no `stp`/`ldp` off 0).
+- `oracle.t` — **the headline**: every program in `oracle-corpus.txt` (21 scalar programs: fib,
+  collatz, primes, gcd, mutual recursion, nested loops, `break`/`continue`, short-circuit
+  `&&`/`||` with side effects, eight-argument calls, 2^62 constants, `fact(20)`) is compiled by
+  `swiftc -Onone`, by `./lab.exe build` (Backend A) and by `./lab.exe build --native` (Backend B);
+  all three run and stdout + exit code must match. A refusal is reported as a refusal; when the
+  native build dies on a `TODO(`, the loop stops so the file reads `TODO`, not as twenty
+  divergences.
+
+A hole you have not started shows as `TODO` with the list of what it will check; a hole in
+progress shows `FAIL` with, under each failing case, what the test wants and what your code
+printed. `DETAIL=1` forces the diffs for a `TODO` file too.
 
 ## 5. Benchmark it
 

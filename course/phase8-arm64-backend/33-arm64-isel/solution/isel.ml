@@ -11,8 +11,13 @@
    Frame (sp-relative, sp fixed for the whole body so call-arg shuffling is easy):
      [sp, #0  .. #15]        outgoing variadic-call scratch (printf's variadic arg)
      [sp, #16 .. ]          locals: value %v lives at [sp, #16 + 8*v]
-     [sp, #FRAME-16 ..]     saved x29/x30
-   FRAME = round16(32 + 8*nvals).
+     [sp, #LOCALS ..]       saved x29/x30 — the frame record, pushed FIRST
+   LOCALS = round16(16 + 8*nvals); the whole frame is LOCALS + 16 bytes.
+   The prologue pushes the frame record before carving the locals (`sub sp, #16; stp x29, x30,
+   [sp]; mov x29, sp; sub sp, #LOCALS`), so the stp/ldp offset is always 0. A single
+   `sub sp, #FRAME; stp …, [sp, #FRAME-16]` overflows stp's +-504 byte range once a function
+   has ~60 values (about twenty statements) — `as` refuses the file. `sub`/`add` take a 12-bit
+   immediate, so a LOCALS above 4095 is adjusted in several steps.
 
    Scope (v0): Int/Bool scalars, arithmetic, comparisons, if/while/for, function calls, print.
    Structs/enums/classes/ARC/arrays/closures grow coverage in later concepts. *)
@@ -33,7 +38,7 @@ let lower_func (m : Sil.modul) (f : Sil.func) : Arm64.func * (string * string) l
       List.iter (fun (v, _) -> note v) b.Sil.instrs)
     f.Sil.blocks;
   let nvals = !maxv + 1 in
-  let frame = round16 (32 + (8 * nvals)) in
+  let locals = round16 (16 + (8 * nvals)) in
   let slot v = 16 + (8 * v) in
   let vty v = try Hashtbl.find f.Sil.val_ty v with Not_found -> Types.TInt in
   let blabel bid = Printf.sprintf "L%s_%d" f.Sil.fname bid in
@@ -55,6 +60,15 @@ let lower_func (m : Sil.modul) (f : Sil.func) : Arm64.func * (string * string) l
   let out = ref [] in (* instructions, reverse order *)
   let emit i = out := i :: !out in
   let emits is = List.iter emit is in
+  (* move sp by n bytes (a multiple of 16): sub/add take a 12-bit immediate, so a huge locals area
+     is adjusted in several steps *)
+  let rec adjust_sp ~grow n =
+    let step = min n 4080 in
+    emit
+      (if grow then Arm64.Sub (Arm64.SP, Arm64.SP, Arm64.Imm step)
+       else Arm64.Add (Arm64.SP, Arm64.SP, Arm64.Imm step));
+    if n > step then adjust_sp ~grow (n - step)
+  in
 
   (* materialize a non-negative 64-bit constant into [dst] *)
   let materialize dst n =
@@ -78,8 +92,9 @@ let lower_func (m : Sil.modul) (f : Sil.func) : Arm64.func * (string * string) l
     emit (Arm64.AddSym (dst, dst, label))
   in
   let epilogue () =
-    emit (Arm64.Ldp (x 29, x 30, Arm64.SP, frame - 16));
-    emit (Arm64.Add (Arm64.SP, Arm64.SP, Arm64.Imm frame));
+    adjust_sp ~grow:false locals;
+    emit (Arm64.Ldp (x 29, x 30, Arm64.SP, 0));
+    emit (Arm64.Add (Arm64.SP, Arm64.SP, Arm64.Imm 16));
     emit Arm64.Ret
   in
 
@@ -166,8 +181,10 @@ let lower_func (m : Sil.modul) (f : Sil.func) : Arm64.func * (string * string) l
   in
 
   (* ===== driver: prologue, params, blocks in bid order ===== *)
-  emit (Arm64.Sub (Arm64.SP, Arm64.SP, Arm64.Imm frame));
-  emit (Arm64.Stp (x 29, x 30, Arm64.SP, frame - 16));
+  emit (Arm64.Sub (Arm64.SP, Arm64.SP, Arm64.Imm 16));
+  emit (Arm64.Stp (x 29, x 30, Arm64.SP, 0));
+  emit (Arm64.Mov (x 29, Arm64.R Arm64.SP));
+  adjust_sp ~grow:true locals;
   (* spill incoming parameters (x0..) to their slots *)
   List.iteri (fun k (v, _) -> store (x k) v) f.Sil.params;
   let blocks = List.sort (fun (a : Sil.block) b -> compare a.Sil.bid b.Sil.bid) f.Sil.blocks in
