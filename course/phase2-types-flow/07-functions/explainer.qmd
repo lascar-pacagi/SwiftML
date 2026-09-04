@@ -16,9 +16,9 @@ that calls itself) and **forward references** (calling a function written later 
 - **You implement:** the arrow `->` (lexer), function declarations + `return` (parser), and the
   function rules in `sema.ml` — the **two-pass** check, call typing, return typing, and the
   "missing return" analysis.
-- **Outcome:** `swiftml2 --typecheck` agrees with `swiftc -typecheck` on functions: recursion and
-  forward refs accepted; wrong argument types/counts, missing returns, return-type mismatches, and
-  stray top-level `return`s all rejected.
+- **Outcome:** your `--typecheck` agrees with `swiftc` on functions: recursion and forward refs
+  accepted; wrong argument types/counts, missing returns, return-type mismatches, and stray
+  top-level `return`s all rejected — `oracle.t` asks swiftc about 30 such programs on every run.
 - **Out of scope:** *running* functions (that's the SIL backend, 08–09); closures and functions as
   values (Phase 7); and full **argument labels** — see the note below.
 
@@ -64,7 +64,10 @@ A function body is checked in a **fresh scope** containing just its parameters �
 **immutable** value (a `let`, so `a = 5` inside the body is "cannot assign to a 'let' constant"),
 with the function's return type recorded so `return`s can be checked. (Our functions are
 *self-contained*: they see their parameters and the function table, but not top-level variables —
-real Swift globals/closures are a later concept. We use a fresh `env` for each body to enforce that.)
+real Swift globals/closures are a later concept. We use a fresh `env` for each body to enforce that
+— so `let x = 1` at top level followed by `print(x)` in a body is "cannot find 'x' in scope" here,
+where swiftc would accept it. That is the one place in this concept where we reject what swiftc
+accepts; the oracle corpus stays off it.)
 
 ### `return`, `Void`, and checking against the declared type
 
@@ -72,16 +75,28 @@ real Swift globals/closures are a later concept. We use a fresh `env` for each b
 checking-mode judgment from concept 05, so an integer literal returned from a `-> Double` function
 coerces. A function with no `-> T` returns **`Void`** (`()`); returning a value from it
 (`return 1`) is an error, and a bare `return` from a non-`Void` function ("should return a value")
-is too. And a `return` with no enclosing function — at the top level — is "'return' invalid outside
-of a func." The return type is the contextual type that flows *into* every `return`.
+is too. And a `return` with no enclosing function — at the top level — is "return invalid outside
+of a func". The return type is the contextual type that flows *into* every `return`.
 
 ### "Missing return": your first real flow analysis
 
-A non-`Void` function must return a value **on every path**. `func f() -> Int { print(1) }` is
-rejected — "missing return in function expected to return 'Int'." Deciding this is a tiny
-**flow-sensitive analysis**: a block *definitely returns* if its last statement does; a `return`
-definitely returns; an `if`/`else` definitely returns iff **both** branches do (no `else` ⇒ no). A
-`while`/`for` doesn't count — the loop might run zero times.
+A non-`Void` function must return a value **on every path**. `func f() -> Int { print(1)
+print(2) }` is rejected — "missing return in global function expected to return 'Int'". Deciding
+this is a tiny **flow-sensitive analysis**: a `return` definitely returns; an `if`/`else`
+definitely returns iff **both** branches do (no `else` ⇒ no); a `while`/`for` never counts — the
+loop might run zero times; and a block definitely returns if **any** of its statements does,
+because whatever follows that statement is unreachable (`return 1` then `print(2)` still returns;
+swiftc accepts it with a "will never be executed" warning).
+
+Where swiftc does this is worth knowing, because it decides how you test it. The check is not in
+the type checker at all: it runs on SIL, in the mandatory diagnostic passes
+(`lib/SILOptimizer/Mandatory/DataflowDiagnostics.cpp`, `diag::missing_return_decl`), where
+"every path" is literal — a walk of the function's basic blocks. So `swiftc -typecheck`
+**accepts** a `-> Int` function that never returns, and the oracle in §4 runs swiftc as
+`-emit-sil` to get a verdict that includes this rule. Two consequences of it living on the CFG:
+swiftc knows `while true { return 1 }` and `if true { return 1 }` always return (the constant
+condition folds before the check) and accepts them; our AST-level rule does not, and rejects
+both. The corpus keeps its conditions non-constant so the two agree.
 
 This is the same shape as the dead-code idea from concept 06, and a direct ancestor of the
 **definite-initialization** check you'll build on the SIL control-flow graph in concept 09 (Swift's
@@ -107,6 +122,100 @@ arguments in registers/stack, a return slot, a return address — and **each fun
 control-flow graph** with its own entry and exits. You've now built every front-end piece those two
 concepts need.
 
+### The subset you are growing into
+
+**New lexemes.** Three things the concept-06 lexer never saw. The keyword table lives in
+`token.ml` (`keyword_or_ident`) and already has the two words; the arrow is the one hole:
+
+| spelling | token | notes |
+|---|---|---|
+| `->` | `Token.Arrow` | maximal munch in the `'-'` arm: peek for `>`; `- >` with a space is still `Minus` `Gt` |
+| `func` | `Kw_func` | a *keyword*, like `let` — starts a top-level item |
+| `return` | `Kw_return` | a keyword; `return` alone or `return expr` |
+
+`(` `)` `,` `:` all exist already (calls, `print(a, b)`, the annotation), so a parameter list is
+made of old tokens in a new order. No new operator, so the precedence table is concept 06's.
+
+**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05–06:
+
+```
+program    ::= { item NEWLINE }                                    <-- items, not statements
+item       ::= func_decl                                           <-- new
+             | statement
+func_decl  ::= "func" ident "(" [ param { "," param } ] ")"        <-- new
+               [ "->" type ] block
+param      ::= [ ident | "_" ] ident ":" type                      <-- new (label dropped)
+
+statement  ::= ("let" | "var") ident [ ":" type ] "=" expr
+             | ident "=" expr
+             | "if" expr block [ "else" ( block | if-statement ) ]
+             | "while" expr block
+             | "for" ident "in" expr "..<" expr block
+             | "break" | "continue"
+             | "return" [ expr ]                                   <-- new
+             | expr
+block      ::= "{" { statement NEWLINE } "}"
+type       ::= "Int" | "Double" | "Bool" | "String" | "Void"       <-- Void is new (rarely written)
+
+expr       ::= or
+or         ::= and { "||" and }                                      (bp 3)
+and        ::= comparison { "&&" comparison }                        (bp 4)
+comparison ::= cast { ("==" | "!=" | "<" | "<=" | ">" | ">=") cast } (bp 5)
+cast       ::= sum { "as" type }                                     (bp 7)
+sum        ::= product { ("+" | "-") product }                       (bp 10)
+product    ::= unary { ("*" | "/" | "%") unary }                     (bp 20)
+unary      ::= "-" unary | primary
+primary    ::= int | float | string | "true" | "false" | ident
+             | ident "(" [ expr { "," expr } ] ")"                 <-- now reaches YOUR functions
+             | "(" expr ")"
+```
+
+Three things to notice. A program is no longer a list of statements but of *items*, and a
+function declaration is not a statement: `func` is only legal at top level, so `parse_program`
+dispatches on `Kw_func` and everything else still goes to `parse_stmt` (nested functions are real
+Swift; not in this subset). `return` is a statement with an *optional* operand, and "optional"
+is decided by the next token — a newline, a `}`, or end of input means bare. And the call
+production is unchanged: `f(1, 2)` parsed already in Phase 1 (for `print`); what is new is that
+sema now finds `f` in a table you build.
+
+A parameter is `[label] name : type`. Swift's `_` is an identifier-shaped token here (the lexer
+treats it as an identifier), so `_ a: Int` and `from start: Int` are the same shape — two
+identifiers before the colon — and `a: Int` is one. The parser keeps the *inner* name and drops
+the label; the "argument labels" note above says what that costs.
+
+### The diagnostics you emit
+
+Same three sources as concepts 05 and 06: swiftc's `.def` files where the construct exists
+(`swift/include/swift/AST/DiagnosticsSema.def` unless said otherwise), `swiftc` on the snippet to
+confirm, our own wording where the subset has nothing to copy. Every line below is pinned by a
+cram case, character for character.
+
+**Lexer** — nothing new to report: `->` is a two-character token, and a `-` that is not followed
+by `>` is still `Minus`.
+
+**Parser** — the given `expect` / `parse_ident` helpers say `expected <what>`, at the token found
+instead; you choose the phrase: `'('`, `a parameter name`, `':'`, `a parameter type`, `')'`,
+`a function name`, `a return type`, and `parse_block`'s `'{'`. The tests pin the *first* error of
+a malformed declaration only — `expect` does not skip the offending token, so what follows is
+recovery noise, and a different recovery is not wrong.
+
+**Sema** — the tests compare these character for character:
+
+| program | our message | swiftc |
+|---|---|---|
+| `func f() -> Int { print(1)` `print(2) }` | `missing return in global function expected to return 'Int'` | **same** — `DiagnosticsSIL.def:320` `missing_return_decl`, `%kindonly1` = *global function* here (a method would say *instance method*) |
+| `return 1` at top level | `return invalid outside of a func` | **same** — `:5301` `return_invalid_outside_func` (no quotes around `return`) |
+| `func f() { return 1 }` | `unexpected non-void return value in void function` | **same** — `:804` `cannot_return_value_from_void_func`; swiftc points at the `1`, we point at `return` |
+| `func f() -> Int { return }` | `non-void function should return a value` | **same** — `:5304` `return_expr_missing` |
+| `func f() -> Int { return "s" }` | `cannot convert value of type 'String' to specified type 'Int'` | *cannot convert return expression of type 'String' to return type 'Int'* — `:334` `cannot_convert_to_return_type`; ours is `check_expr`'s one wording |
+| `f("s")` on `f(_ x: Int)` | `cannot convert value of type 'String' to specified type 'Int'` | *… to expected argument type 'Int'* — `:382` `cannot_convert_argument_value`; same reason |
+| `f(1, 2)` on a one-parameter `f` | `function 'f' expects 1 argument(s) but 2 given` | *extra argument in call* / *missing argument for parameter #2 in call* / *argument passed to call that takes no arguments* — three wordings (`:1686–1701`) for one rule; ours is the uniform form |
+| `func f() { }` twice | `invalid redeclaration of 'f'` | *invalid redeclaration of 'f()'* — `:1110` `invalid_redecl` prints the full signature |
+| `a = 5` on a parameter | `cannot assign to value: 'a' is a 'let' constant` | **same** — falls out of binding parameters as `let` |
+| `func f(_ a: Nope) { }` | `cannot find type 'Nope' in scope` | **same** — `:1200`; swiftc points at `Nope`, we point at the `func` (a parameter carries no span) |
+| `let v: Int = f()` on a `Void` `f` | `cannot convert value of type '()' to specified type 'Int'` | **same** — `Void` prints as `()` |
+| `print(x)` in a body, `x` top-level | `cannot find 'x' in scope` | *accepted* — the self-contained-body simplification above |
+
 ## 3. Build it, step by step
 
 Three skeletons; concepts 1–06 are filled in.
@@ -118,11 +227,16 @@ Three skeletons; concepts 1–06 are filled in.
    `return`: a bare `return` if the next token ends the statement, else `return <expr>`.
 3. **`sema.ml`** — four holes: **call typing** in `infer_call` (look the name up in `funcs`; check
    arity and each arg against its parameter type with `check_expr`; return the function's return
-   type); **`return`** (valid only in a function — check `!current_ret`; check the value against the
-   return type / Void rules); **`check_func`** (fresh `env`, parameters bound immutable, set
-   `current_ret`, check the body, then the "missing return" rule using `block_returns`); and the
-   **two passes** (fill `funcs` with signatures, then check each item). The scope helpers,
-   `loop_depth`, `current_ret`, `block_returns`, and `resolve_*` are given.
+   type); **`return`** (valid only in a function — `current_ret` says whether you are in one, and
+   what it returns; the value, or its absence, against the Void rules of §2); **`check_func`**
+   (fresh `env`, parameters bound immutable, set `current_ret`, check the body, restore both, then
+   the "missing return" rule using `block_returns`); and the **two passes** (fill `funcs` with
+   signatures — a name seen twice is a redeclaration — then check each item in order). The scope
+   helpers, `loop_depth`, `current_ret`, `block_returns`, and `resolve_*` are given.
+
+   Fill the **two passes first**: they are the entry point of `check`, and until they exist no
+   sema test can run — every sema file reads `TODO`. Then `check_func`, then `return`, then the
+   call; §4 lists which file each one turns green.
 
 Reference: `solution/`.
 
@@ -132,10 +246,49 @@ Reference: `solution/`.
 make lab C=phase2-types-flow/07-functions
 ```
 
-cram dumps a function AST and runs `--typecheck`; alcotest pins the function diagnostics and AST
-shape. The **type-check oracle** is the proof: `swiftml2 --typecheck` must agree with `swiftc
--typecheck` across recursion, forward references, missing returns, argument-count/type errors,
-return-type mismatches, top-level `return`, and a `Void` function returning a value.
+Nine cram files, one per hole (`make lab C=… T=sema-return` runs one), two unit suites and the
+oracle — in the order you fill the holes:
+
+- `lexer-arrow.t` — `--emit-tokens`: `->` with and without spaces, `-` alone, `- >`, `a->-b`.
+  Green with the lexer peek alone (the two "still minus" cases pass before you start — the given
+  `-` arm already does that).
+- `parser-return.t` — `--emit-ast`: `return e`, and a bare `return` before a newline, a `}`, and
+  end of input. Green with the `Kw_return` arm; sema never runs, so top-level returns are fine.
+- `parser-params.t` — parameter lists through `func f(…) { }`: empty, one, three, the `_`
+  label dropped, a named label dropped, and the first error of five malformed lists. Needs
+  `parse_params` and `parse_func` (the list is only reachable through a declaration).
+- `parser-func.t` — declarations with and without `-> T`, multi-line bodies, an empty body,
+  items interleaved with statements, and the first error of a nameless / typeless / bodyless
+  declaration.
+- `test_parser.ml` (alcotest `parser-funcs`) — the same, as AST structure, one group per hole.
+- `sema-passes.t` — `--typecheck`: the two-pass driver. Its first four cases need only the
+  driver (a statement-only program, a bad top-level `let`, a redeclaration, items checked in
+  order); the rest are the forward reference, `fib`, `isEven`/`isOdd` and need every hole.
+- `sema-func.t` — `check_func`: parameters in scope and immutable, the fresh scope (no top-level
+  names, no leak), unknown types, and the missing-return rule case by case — `if` without
+  `else`, a loop, both branches returning, an `else if` chain, a statement after `return`.
+- `sema-return.t` — the three `return` diagnostics, the value against the return type, the
+  literal-to-`Double` coercion, two bad returns in one body.
+- `sema-call.t` — arity (too many, too few, an argument to `f()`, and that a wrong count does
+  not also check the arguments), argument types, the result as `Int`/`Bool`/`()`, nested calls.
+- `test_sema.ml` (alcotest `sema-funcs`) — the same rules in-process, one group per hole.
+- `oracle.t` — **the headline**: every program in `oracle-corpus.txt` (30: twelve accepted,
+  eighteen rejected, one per rule) goes to swiftc and to your `--typecheck`, and the verdicts must
+  agree. swiftc runs as `-emit-sil -o /dev/null`, not `-typecheck`, because its missing-return
+  check lives on SIL (§2) — `-typecheck` would accept four of the reject cases. On a
+  disagreement the first line we printed is shown, so a rejection that is really an unfinished
+  stage reads as what it is.
+
+A hole you have not started shows as `TODO` with the list of what it will check; a hole in
+progress shows `FAIL` with, under each failing case, what the test wants and what your code
+printed. Until the two-pass driver exists every sema file is `TODO`: nothing in `check` runs
+before it. To see one construct on its own:
+
+```bash
+printf 'func f(_ n: Int) -> Int {\n  if n > 0 { return 1 }\n}\n' > m.swift
+_build/default/phase2-types-flow/07-functions/tests/lab.exe --typecheck m.swift
+swiftc -emit-sil -o /dev/null m.swift        # what the oracle asks
+```
 
 ## 5. Benchmark it
 
@@ -158,7 +311,8 @@ Not perf-relevant (type-check only, linear). Perf arrives in Phase 4 on SIL.
 You added functions: a signature/body split, the **two-pass** check that makes recursion and forward
 references work, immutable-parameter scopes, return-type checking, and the "missing return"
 flow analysis. With this, the **Phase-2 front-end is complete** — every program in the subset
-lexes, parses, and type-checks exactly like `swiftc`.
+lexes, parses, and type-checks like `swiftc` — the same verdict on the whole corpus, and swiftc's
+own wording wherever the subset has the construct.
 
 Next is the pivot the whole phase has been building toward: **08-sil-silgen** introduces **SIL**, our
 SSA intermediate representation. SILGen lowers these checked ASTs — with their control-flow graphs
@@ -191,18 +345,18 @@ and infer_call f args span : Types.ty =
 
 (* return: only in a function; value checked against the return type *)
 | Ast.Return (eo, span) -> (match !current_ret with
-    | None -> err span "'return' invalid outside of a func"
+    | None -> err span "return invalid outside of a func"
     | Some rt -> (match eo with
         | Some e -> if rt = Types.TVoid then err span "unexpected non-void return value in void function"
                     else check_expr e rt
         | None -> if rt <> Types.TVoid then err span "non-void function should return a value"))
 
-(* does a block definitely return on every path? *)
+(* does a block definitely return on every path? (given) *)
 let rec stmt_returns = function
   | Ast.Return _ -> true
   | Ast.If { then_blk; else_blk = Some e; _ } -> block_returns then_blk && block_returns e
   | _ -> false
-and block_returns stmts = match List.rev stmts with last :: _ -> stmt_returns last | [] -> false
+and block_returns stmts = List.exists stmt_returns stmts (* the rest is unreachable *)
 
 let check_func (f : Ast.func_decl) : unit =
   let ret = match f.Ast.ret with None -> Types.TVoid | Some n -> resolve_ty f.Ast.fspan n in
@@ -216,7 +370,7 @@ let check_func (f : Ast.func_decl) : unit =
   env := saved_env; current_ret := saved_ret;
   if ret <> Types.TVoid && not (block_returns f.Ast.body) then
     err f.Ast.fspan
-      (Printf.sprintf "missing return in function expected to return '%s'"
+      (Printf.sprintf "missing return in global function expected to return '%s'"
          (Types.string_of_ty ret))
 
 (* PASS 1: signatures. PASS 2: bodies + top-level statements. *)
