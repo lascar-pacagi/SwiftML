@@ -61,13 +61,15 @@ like?" from "is each thing internally correct?"
 ### Checking a body: a fresh scope, immutable parameters
 
 A function body is checked in a **fresh scope** containing just its parameters — each bound as an
-**immutable** value (a `let`, so `a = 5` inside the body is "cannot assign to a 'let' constant"),
-with the function's return type recorded so `return`s can be checked. (Our functions are
-*self-contained*: they see their parameters and the function table, but not top-level variables —
-real Swift globals/closures are a later concept. We use a fresh `env` for each body to enforce that
-— so `let x = 1` at top level followed by `print(x)` in a body is "cannot find 'x' in scope" here,
-where swiftc would accept it. That is the one place in this concept where we reject what swiftc
-accepts; the oracle corpus stays off it.)
+**immutable** value (a `let`, so `a = 5` inside the body is "cannot assign to value: 'a' is a
+'let' constant"), with the function's return type recorded so every `return` can be checked
+against it.
+
+Our functions are *self-contained*: a body sees its parameters and the function table, not the
+top-level variables. Real Swift lets a function read a global (and a closure capture a local —
+Phase 7); we start each body from an empty `env` instead. So `let x = 1` at top level followed by
+`print(x)` inside a body is "cannot find 'x' in scope" here, where swiftc accepts it. That is the
+one place in this concept where we reject what swiftc accepts, and the oracle corpus stays off it.
 
 ### `return`, `Void`, and checking against the declared type
 
@@ -98,11 +100,11 @@ swiftc knows `while true { return 1 }` and `if true { return 1 }` always return 
 condition folds before the check) and accepts them; our AST-level rule does not, and rejects
 both. The corpus keeps its conditions non-constant so the two agree.
 
-This is the same shape as the dead-code idea from concept 06, and a direct ancestor of the
-**definite-initialization** check you'll build on the SIL control-flow graph in concept 09 (Swift's
-"variable used before being initialized"). Today it's a recursion over the AST; on a real CFG it
-becomes a dataflow pass over basic blocks — which is *why* control flow (06) and functions (07) both
-land right before SIL (08).
+This is the same shape as the dead-code idea from concept 06, and a direct ancestor of Swift's
+**definite-initialization** check ("variable used before being initialized"), which also runs on
+the SIL control-flow graph — concept 09 shows where it would go. Today the rule is a recursion
+over the AST; on a real CFG it becomes a dataflow pass over basic blocks — which is *why* control
+flow (06) and functions (07) both land right before SIL (08).
 
 ### A note on argument labels (a Swift feature we simplify)
 
@@ -218,7 +220,7 @@ recovery noise, and a different recovery is not wrong.
 
 ## 3. Build it, step by step
 
-Three skeletons; concepts 1–06 are filled in.
+Three skeletons; concepts 01–06 are filled in.
 
 1. **`lexer.ml`** — in the `'-'` case, peek: if the next char is `>`, emit `Token.Arrow`; else `Minus`.
 2. **`parser.ml`** — `parse_params`: consume `(`, then zero-or-more `name: Type` separated by `,`
@@ -303,8 +305,11 @@ Not perf-relevant (type-check only, linear). Perf arrives in Phase 4 on SIL.
    the same block ("code after 'return' will never be executed"). You already have `stmt_returns` —
    walk each block and flag the tail.
 3. **Mutual recursion + redeclaration.** Confirm `isEven`/`isOdd` calling each other already works
-   (why? — the two passes). Then check that two functions with the same name are rejected
-   ("invalid redeclaration"), matching `swiftc`.
+   (why? — the two passes), and that pass 1 already rejects two functions with the same name. Then
+   match swiftc's form of the message — `invalid redeclaration of 'f()'` for a parameterless
+   function, plain `'g'` once it has parameters (run `swiftc` on both to see) — and add a note at
+   the first declaration (`note: 'f()' previously declared here`), the two-location shape from
+   05's exercise 4.
 
 ## 7. Recap & what's next
 
@@ -314,10 +319,12 @@ flow analysis. With this, the **Phase-2 front-end is complete** — every progra
 lexes, parses, and type-checks like `swiftc` — the same verdict on the whole corpus, and swiftc's
 own wording wherever the subset has the construct.
 
-Next is the pivot the whole phase has been building toward: **08-sil-silgen** introduces **SIL**, our
-SSA intermediate representation. SILGen lowers these checked ASTs — with their control-flow graphs
-(06) and per-function CFGs (07) — into **basic blocks**, the form every optimization and backend
-needs. The tree becomes a graph, and `swiftml` finally runs Phase-2 programs.
+Next is the pivot the whole phase has been building toward: **08-sil-silgen** introduces **SIL**,
+the intermediate representation between the AST and LLVM. SILGen lowers these checked ASTs — with
+their control flow (06) and their functions (07) — into **basic blocks** joined by branches, the
+form every optimization and backend needs. The tree becomes a graph; concept 09 lowers it to LLVM
+and `swiftml` finally runs Phase-2 programs. (Our SIL keeps variables in memory for now — SSA
+form is concept 16's lesson.)
 
 ## 8. Appendix — full solution
 
@@ -408,4 +415,7 @@ of the basic-block reachability you'll get for free once code lives on a SIL CFG
 `func isEven(_ n: Int) -> Bool { if n == 0 { return true }\n return isOdd(n-1) }` and `isOdd` calling
 `isEven` **already type-check** — because Pass 1 records *both* signatures before Pass 2 checks
 either body. That's the payoff of two passes, for free. Redeclaration is already handled: Pass 1
-reports "invalid redeclaration of 'f'" when a name is added twice (mirroring `swiftc`).
+reports "invalid redeclaration of 'f'" when a name is added twice. For swiftc's spelling, print
+`'f()'` when the function has no parameters and `'f'` otherwise, and remember each function's
+declaration span in the `funcs` table so the second declaration can add
+`Diagnostics.note` at the first.
