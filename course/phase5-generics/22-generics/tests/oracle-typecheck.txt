@@ -1,0 +1,22 @@
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nfunc id<T: P>(_ t: T) -> T { return t }\nprint(id(A(x: 1)).x)
+protocol P { func v() -> Int }\nstruct A: P { func v() -> Int { return 1 } }\nstruct B: P { func v() -> Int { return 2 } }\nfunc pair<T: P>(_ a: T, _ b: T) -> Int { return a.v() + b.v() }\nprint(pair(A(), A()))\nprint(pair(B(), B()))
+protocol P { func v() -> Int }\nstruct A: P { func v() -> Int { return 1 } }\nfunc one<T: P>(_ t: T) -> Int { return t.v() }\nfunc both<T>(_ a: T, _ b: T) -> Int where T: P { return one(a) + one(b) }\nprint(both(A(), A()))
+protocol P { func v() -> Int }\nstruct A: P { func v() -> Int { return 5 } }\nfunc inner<T: P>(_ t: T) -> Int { return t.v() }\nfunc outer<T: P>(_ t: T) -> Int { return inner(t) + 1 }\nprint(outer(A()))
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nfunc scale<T: P>(_ t: T, _ k: Int) -> Int { return t.v() * k }\nprint(scale(A(x: 2), 3))
+protocol Shape {\n  func area() -> Int\n  func sides() -> Int\n}\nstruct Sq: Shape {\n  var s: Int\n  func area() -> Int { return s * s }\n  func sides() -> Int { return 4 }\n}\nfunc describe<T: Shape>(_ t: T) -> Int { return t.area() + t.sides() }\nprint(describe(Sq(s: 4)))
+protocol P { func v() -> Int }\nstruct A: P { func v() -> Int { return 1 } }\nfunc one<T: P>(_ t: T) -> Int { return t.v() }\nfunc plain(_ p: P) -> Int { return p.v() }\nprint(one(A()) + plain(A()))
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nfunc pick<T: P>(_ c: Bool, _ a: T, _ b: T) -> T {\n  if c { return a }\n  return b\n}\nprint(pick(true, A(x: 1), A(x: 2)).x)
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nfunc rec<T: P>(_ t: T, _ n: Int) -> Int {\n  if n <= 0 { return 0 }\n  return t.v() + rec(t, n - 1)\n}\nprint(rec(A(x: 7), 5))
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nfunc id<T: P>(_ t: T) -> T { return t }\nlet a: A = id(A(x: 1))\nprint(a.x)
+protocol P { func v() -> Int }\nstruct A: P { func v() -> Int { return 1 } }\nstruct B: P { func v() -> Int { return 2 } }\nfunc pair<T: P>(_ a: T, _ b: T) -> Int { return a.v() + b.v() }\nprint(pair(A(), B()))
+protocol P { func v() -> Int }\nstruct D { var x: Int }\nfunc one<T: P>(_ t: T) -> Int { return t.v() }\nprint(one(D(x: 1)))
+protocol P { func v() -> Int }\nfunc one<T: P>(_ t: T) -> Int { return t.v() }\nprint(one(3))
+protocol P { func v() -> Int }\nstruct A: P {\n  func v() -> Int { return 1 }\n  func w() -> Int { return 9 }\n}\nfunc one<T: P>(_ t: T) -> Int { return t.w() }
+protocol P { func v() -> Int }\nfunc eq<T: P>(_ a: T, _ b: T) -> Bool { return a == b }
+protocol P { func v() -> Int }\nstruct A: P { func v() -> Int { return 1 } }\nfunc one<T: P>(_ t: T) -> Int { return t.v() }\nprint(one(A(), A()))
+protocol P { func v() -> Int }\nstruct A: P { func v() -> Int { return 1 } }\nfunc scale<T: P>(_ t: T, _ k: Int) -> Int { return t.v() * k }\nprint(scale(A(), true))
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nfunc id<T: P>(_ t: T) -> T { return t }\nlet b: Bool = id(A(x: 1))
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nfunc id<T: P>(_ t: T) -> T { return t }\nprint(id(A(x: 1)).nope)
+protocol P { func v() -> Int }\nstruct A: P { func v() -> Int { return 1 } }\nfunc one<T: Nope>(_ t: T) -> Int { return 1 }
+protocol P { func v() -> Int }\nstruct A: P {\n  let k: Int\n  func v() -> Int { return k }\n}\nfunc id<T: P>(_ t: T) -> T { return t }\nvar a = A(k: 1)\na.k = 5
+protocol P { func v() -> Int }\nstruct A: P {\n  var x: Int\n  func v() -> Int { return x }\n}\nfunc id<T: P>(_ t: T) -> T { return t }\nprint(id(A(x: 1)).v() + id(A(x: 2)).x)
