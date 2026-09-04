@@ -372,7 +372,9 @@ concept 13 gives it a meaning (force-unwrap). Everything else carries over uncha
 integers, `+ - * / %`, `( )`, `=`, newline, `let`, `var`.
 
 **The grammar** — `<-- new` marks what this concept adds; precedence is what the parser's
-`infix_bp` table encodes, loosest first:
+`infix_bp` table encodes, loosest first. Notation is EBNF from here on: `[ x ]` is *optional*
+(zero or one), `{ x }` is *repetition* (zero or more) — the `?` and `*` of concept 02's grammar
+in a form that reads better once productions get longer:
 
 ```
 program    ::= { statement NEWLINE }
