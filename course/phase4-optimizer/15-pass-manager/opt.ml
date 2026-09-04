@@ -48,15 +48,18 @@ let eval_binop (op : Ast.binop) (x : int) (y : int) : int option =
   | Ast.Add -> Some (x + y)
   | Ast.Sub -> Some (x - y)
   | Ast.Mul -> Some (x * y)
-  | Ast.Div -> if y = 0 then None else Some (x / y) (* leave div/mod-by-0 for the runtime trap *)
+  | Ast.Div -> if y = 0 then None else Some (x / y) (* never fold ÷0 / %0 — see the note below *)
   | Ast.Mod -> if y = 0 then None else Some (x mod y)
   | _ -> None (* comparisons fold to Bool — left to concept 17 *)
+(* ÷0 and %0 have no value to fold to: Swift traps there ("Fatal error: Division by zero",
+   exit 133). Our IRGen emits a bare `sdiv`/`srem`, so at runtime the result is undefined rather
+   than a trap (PROOFREAD.md §6, open) — the pass must still not invent an answer. *)
 
 let constant_fold (f : Sil.func) : Sil.func =
   (* TODO(15): a SIL pass — fold literal arithmetic. Walk the function in EXECUTION order,
      remembering which values are known Int constants, and replace a binop of two of them with the
      constant it computes, recording that too so chains like (1+2)+3 collapse. [eval_binop] is
-     given, and it refuses ÷0 and %0 — those must still trap at runtime. §3. *)
+     given, and it refuses ÷0 and %0 — there is no value to replace those with. §3. *)
   ignore eval_binop;
   f
 

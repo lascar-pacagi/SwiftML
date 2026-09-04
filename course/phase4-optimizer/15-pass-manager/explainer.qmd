@@ -37,8 +37,11 @@ passes did; `-O` runs the same pipeline right before IRGen so the native code be
 
 - **Constant folding** walks the instructions, tracking which SIL values are known integer constants,
   and replaces a `binop` of two constants with the literal result — so `1`, `2`, `3`, `*`, `+` collapse
-  the `1 + 2 * 3` into `integer_literal 7`. (We don't fold `÷0`/`%0` — those must keep trapping at
-  runtime, matching swiftc.)
+  the `1 + 2 * 3` into `integer_literal 7`. `÷0` and `%0` are never folded: there is no value to
+  replace them with — Swift traps there. (Honesty note: swiftc prints `Fatal error: Division by
+  zero` and exits 133; our IRGen still emits a bare `sdiv`/`srem`, so *our* binary's behaviour on
+  `x / 0` is undefined rather than a trap. That is an open gap in the code generator, PROOFREAD.md
+  §6, not something a fold can fix — the oracle corpus keeps `÷0` out for that reason.)
 - **Dead-instruction elimination** then removes any *pure* instruction whose result nobody uses. After
   folding, the original literals and binops are dead, so DCE deletes them.
 
@@ -91,10 +94,34 @@ Reference: `solution/opt.ml`.
 make lab C=phase4-optimizer/15-pass-manager
 ```
 
-cram checks `--emit-sil` (binops present) vs `--sil-opt` (binops gone, `integer_literal 7` present)
-and that `-O` programs run correctly. alcotest checks folding (chains fold to one literal), DCE
-(instruction count drops), and the pass manager (`run_pipeline` actually applies a pass; the empty
-pipeline is the identity).
+Two cram files, one per hole, plus a unit suite and the oracle — in the order you fill the holes:
+
+- `opt-pipeline.t` — `--sil-opt` with the pipeline's *given* pass only: `let a = 1; a + 1;
+  print(a)` has a dead binop (it reads `a` from a slot, so folding could never touch it) that
+  `dead_instr_elim` removes — once `run_pipeline` actually runs it. Also: the `store` and `print`
+  survive, a dead binop inside a *second* function goes too, both functions are still there, and
+  `-O` builds a binary that prints the same thing. Green with `run_pipeline` alone.
+- `opt-fold.t` — `--sil-opt` on literal arithmetic: `1 + 2 * 3` → `integer_literal 7` with no
+  binop left; a chain to `10`; truncating `/` and `%` on negatives; `10 / 0` and `10 % 0` left
+  as binops beside a `10 / 2` that folds; a comparison left alone; a binop of two loads left
+  alone beside a literal one that folds; and two `-O` runs (`7`, `10`; a loop that still prints
+  `20`). Every count is printed raw, then optimized, so the diff says what changed.
+- `test_opt.ml` (alcotest `opt`) — the same in-process: the manager runs the given pass, is the
+  identity on an empty pipeline, visits every function with the passes in order, and feeds each
+  pass's result to the next (a spy pass records what it saw); `constant_fold` called directly on
+  `main` for each rule above; then `Opt.optimize` end to end. Counts are taken *before* optimizing
+  — passes mutate blocks in place, so a "before" measured afterwards is already the "after".
+- `oracle.t` — **the headline**: every program in `oracle-corpus.txt` (15: loops with side
+  effects, recursion, nested `break`/`continue`, structs, enums + `switch`, optionals, a
+  force-unwrap of `nil`, and a few foldable ones) is built four ways — `swiftc -Onone`,
+  `swiftc -O`, `lab build`, `lab build -O` — and all four binaries must print the same stdout
+  and exit with the same code. This is the optimizer's invariant made mechanical: a pass that
+  changes an answer fails here, whatever the shape checks say.
+
+A hole you have not started shows as `TODO` with the list of what it will check; a hole in
+progress shows `FAIL` with, under each failing case, what the test wants and what your code
+printed. The oracle passes on the untouched skeleton — an identity pipeline preserves behaviour
+trivially — and keeps passing as long as your passes do.
 
 ## 5. Benchmark it
 

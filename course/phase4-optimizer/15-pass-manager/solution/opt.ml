@@ -52,9 +52,12 @@ let eval_binop (op : Ast.binop) (x : int) (y : int) : int option =
   | Ast.Add -> Some (x + y)
   | Ast.Sub -> Some (x - y)
   | Ast.Mul -> Some (x * y)
-  | Ast.Div -> if y = 0 then None else Some (x / y) (* leave div/mod-by-0 for the runtime trap *)
+  | Ast.Div -> if y = 0 then None else Some (x / y) (* never fold ÷0 / %0 — see the note below *)
   | Ast.Mod -> if y = 0 then None else Some (x mod y)
   | _ -> None (* comparisons fold to Bool — left to concept 17 *)
+(* ÷0 and %0 have no value to fold to: Swift traps there ("Fatal error: Division by zero",
+   exit 133). Our IRGen emits a bare `sdiv`/`srem`, so at runtime the result is undefined rather
+   than a trap (PROOFREAD.md §6, open) — the pass must still not invent an answer. *)
 
 let constant_fold (f : Sil.func) : Sil.func =
   let lit : (Sil.value, int) Hashtbl.t = Hashtbl.create 64 in (* values known to be Int constants *)
