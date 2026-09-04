@@ -2,7 +2,7 @@ THE HEADLINE TEST: this file asks swiftc on every run, so the numbers a human wr
 other files can never drift from what Swift actually prints. `make oracle F=…` does the same
 for one file.
 
-First the front end. On the 16 programs of `oracle-typecheck.txt` — nine well-formed, seven the
+First the front end. On the 16 programs of `typecheck-corpus.txt` — nine well-formed, seven the
 class rules must refuse — `swiftc -typecheck` and `./lab.exe --typecheck` must reach the same
 VERDICT (it cannot judge wording, only accept-or-reject). Running programs can only exercise
 what we accept; this half pins what we refuse. Only rules swiftc HAS are here: our three v0
@@ -18,7 +18,7 @@ hole reads as what it is.
   >   ./lab.exe --typecheck t.swift >/dev/null 2>err.txt; rc=$?
   >   case $rc in 0) ml=accept;; 1) ml=reject;; *) ml="crash($rc)";; esac
   >   [ "$sw" = "$ml" ] || { printf 'DISAGREE  swiftc=%s ours=%s  %s\n' "$sw" "$ml" "$prog"; [ $rc -eq 0 ] || { head -1 err.txt; grep -q 'TODO(' err.txt && break; }; }
-  > done < oracle-typecheck.txt
+  > done < typecheck-corpus.txt
   $ echo done
   done
 

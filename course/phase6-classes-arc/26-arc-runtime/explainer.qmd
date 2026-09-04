@@ -195,7 +195,7 @@ third reads LLVM and then runs programs, which is where it is *observed*:
 `deinit` prints**: the corpus does not check what a program computes, it checks the exact moment
 every object dies. Three loops:
 
-- 16 programs of `oracle-typecheck.txt` where `swiftc -typecheck` and `--typecheck` must reach
+- 16 programs of `typecheck-corpus.txt` where `swiftc -typecheck` and `--typecheck` must reach
   the same verdict. Only rules swiftc *has* are in this list — our three v0 guards refuse
   programs swiftc accepts, so they live in `sema-arc.t` with the divergence stated;
 - 6 programs of `oracle-di.txt`, compiled ALL THE WAY by swiftc, because definite

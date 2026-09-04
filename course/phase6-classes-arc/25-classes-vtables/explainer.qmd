@@ -226,7 +226,7 @@ with everything else.
 And `tests/oracle.t` is the headline — it asks swiftc on every run, in three loops, because this
 concept needs three different reference commands:
 
-- 22 programs of `oracle-typecheck.txt` (ten accepted, twelve refused) where `swiftc -typecheck`
+- 22 programs of `typecheck-corpus.txt` (ten accepted, twelve refused) where `swiftc -typecheck`
   and `--typecheck` must reach the same VERDICT;
 - 6 programs of `oracle-di.txt` compiled ALL THE WAY by swiftc, because definite initialization
   is a SIL-level check that `-typecheck` never reports (§2). Three must be refused, three
