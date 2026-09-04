@@ -47,6 +47,36 @@ block also deletes its branches, so any φ in a surviving block simply loses tha
 basic-block arguments, the incoming lived *on the branch*, so removing the branch removes the operand —
 no φ-list surgery needed). This is where block arguments pay off again over classic φ-nodes.
 
+### The SIL the two passes touch
+
+This concept adds no Swift syntax; what §2 owes you is the shape of the IR each hole rewrites.
+Concept 16's **block arguments** (`<-- new` there, ordinary here) are what make the second hole
+short, so they are worth re-reading in this light.
+
+| form | `fold_binop` sees it as | `simplify_cfg` sees it as |
+|---|---|---|
+| `%3 = integer_literal $Int, 7` | a known `CInt`, and the instruction it writes back | a value that may make a condition constant |
+| `%5 = integer_literal $Bool, true` | a known `CBool`, and the Bool it writes back | **the whole input**: only a literal Bool condition can be folded |
+| `%6 = binop "+" %3, %4 $Int` | the target: two known operands ⇒ replaced by a literal | — |
+| `%8 = binop "<" %3, %4 $Bool` | the target for the six comparisons ⇒ a `Bool_lit` | — |
+| `cond_br %5, bb1(%a), bb2(%b)` | — | the target: on a known Bool it becomes `br bb1(%a)` — **the taken side's argument list comes with it** |
+| `br bb2(%a)` | — | untouched, but it disappears when its block does |
+| `bb2(%12 : $Int):` | — | untouched. A deleted predecessor's argument vanishes with its branch: nothing to fix up by hand |
+| `%11 = apply %10(…)` · `%12 = apply @print(…)` · `store` | never constant | never deleted — a block containing one is still deleted if it is unreachable, which is correct: unreachable code has no effects |
+
+Two forms deserve their own line. `Ast.And`/`Ast.Or` are in `fold_binop`'s contract but **SILGen
+never emits them**: `&&` and `||` lower to a branch diamond so the right operand is skipped when
+the left decides the answer. `true && false` is therefore simplified rather than folded — the
+branch goes, and the merge's argument is the literal the taken arm produced. The `And`/`Or` arms
+still have to be right, because a later pass can build such a binop; the unit suite calls them
+directly, since no source program will.
+
+And `Div`/`Mod` by zero must fold to nothing. There is no value to name, so the pass must not
+invent one. Swift itself traps there — `Fatal error: Division by zero`, exit 133 — but be clear
+about what OUR compiler does: IRGen emits a bare `sdiv`/`srem`, so at run time the behaviour is
+undefined rather than a trap. That is an open gap in the code generator (PROOFREAD.md §6), not
+something folding can fix; it is also why the oracle corpus keeps division by zero out.
+
 ### Passes enable passes — so iterate
 
 `simplify_cfg` can expose new constants: after a branch folds and a block merges, a value that was a
@@ -87,10 +117,35 @@ Reference: `solution/opt.ml`.
 make lab C=phase4-optimizer/17-constfold-dce
 ```
 
-cram checks that `3 < 5` folds to a `Bool` literal, that `if 10 > 3 { … } else { … }` loses its
-`cond_br` and dead block, and that `-O` programs still match `swiftc`. alcotest checks `fold_binop`
-directly (comparisons, bools, the `÷0` guard), the folding pass, branch+dead-block elimination, and
-that the passes keep the SIL valid.
+One cram file per hole, in the order they are easiest to fill:
+
+- `opt-fold.t` — `fold_binop`: a comparison folding to a `Bool` (concept 15 left those alone), all
+  six comparisons at once, the payoff over concept 15 (`x * x - (2 + 3)` with `let x = 6` folds to
+  the literal `31`, because mem2reg made `x` a value), truncating `/` and `%` on negatives, `10 / 0`
+  and `10 % 0` NOT folded beside a `10 / 2` that is, a parameter that stops the fold, and a loop
+  whose carried value stays live while a constant inside its body folds. Nothing in this file
+  passes by identity: every "not folded" claim sits beside a "folded" one.
+- `opt-simplify.t` — `simplify_cfg`, whose first case (`if true`) needs no folding at all, so it
+  goes green on this hole alone: the `cond_br` disappears, the block count drops from four to
+  three, and the `else` arm's `print` is gone with it. Then the false side taken, the taken edge's
+  block ARGUMENTS carried across, `&&` shown as a simplification rather than a fold, a loop test
+  that must survive while an `if true` beside it goes, and nested constant `if`s that need the
+  pipeline's second round.
+- `sema-subset.t` — GIVEN code, `PASS` from the start: the front-end refusals that keep the corpus
+  inside what both compilers mean the same.
+- `test_constfold.ml` (alcotest `constfold`) — `fold_binop` called directly for every rule,
+  including the two it must REFUSE (÷0, and a mixed Int/Bool pair) each beside a pair it must
+  accept; `constant_fold` alone and after `mem2reg`; `simplify_cfg` on a literal, on the false
+  side, keeping the taken edge's arguments (checked through `Sil.verify`, which is what catches a
+  wrong-length list), and keeping a real branch; then the verifier on three shapes.
+- `oracle.t` — 20 programs built four ways (`swiftc -Onone`, `swiftc -O`, `lab build`,
+  `lab build -O`), all run, stdout and exit code identical. This is the pass's real specification:
+  a fold that changes an answer fails here whatever the shape checks say.
+
+An untouched hole reads `TODO` with the list of what its file will check; one in progress reads
+`FAIL` with what each failing case wanted and what your code printed. `oracle.t` is `PASS` on the
+untouched skeleton — an unfilled `fold_binop` returns `None` and an unfilled `simplify_cfg` returns
+its function, so `-O` is simply weaker, not wrong — and it must stay `PASS` when you are done.
 
 ## 5. Benchmark it
 

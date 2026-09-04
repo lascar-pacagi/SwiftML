@@ -52,7 +52,7 @@ let fold_binop (op : Ast.binop) (a : cst) (b : cst) : cst option =
   | CInt x, CInt y -> (
       match op with
       | Ast.Add -> Some (CInt (x + y)) | Ast.Sub -> Some (CInt (x - y)) | Ast.Mul -> Some (CInt (x * y))
-      | Ast.Div -> if y = 0 then None else Some (CInt (x / y)) (* leave ÷0/%0 for the runtime trap *)
+      | Ast.Div -> if y = 0 then None else Some (CInt (x / y))
       | Ast.Mod -> if y = 0 then None else Some (CInt (x mod y))
       | Ast.Eq -> Some (CBool (x = y)) | Ast.Ne -> Some (CBool (x <> y))
       | Ast.Lt -> Some (CBool (x < y)) | Ast.Le -> Some (CBool (x <= y))
@@ -65,6 +65,12 @@ let fold_binop (op : Ast.binop) (a : cst) (b : cst) : cst option =
       | _ -> None)
   | _ -> None
 
+(* Div and Mod by 0 have no value to fold to, so `fold_binop` must return None for them: a pass
+   may not invent an answer for something the language says has none. Swift itself traps there
+   ("Fatal error: Division by zero", exit 133); our IRGen still emits a bare `sdiv`/`srem`, so at
+   runtime OUR binary's behaviour is undefined rather than a trap — an open gap in the code
+   generator (PROOFREAD.md §6), not something this pass can fix, and the reason the oracle corpus
+   keeps division by zero out. *)
 let fold_unop (op : Ast.unop) (a : cst) : cst option =
   match (op, a) with Ast.Neg, CInt x -> Some (CInt (-x)) | _ -> None
 

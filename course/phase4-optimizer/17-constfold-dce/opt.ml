@@ -52,11 +52,17 @@ let cst_to_instr = function CInt n -> Sil.Int_lit n | CBool b -> Sil.Bool_lit b
 
 let fold_binop (op : Ast.binop) (a : cst) (b : cst) : cst option =
   (* TODO(17): evaluate a binop on two known constants — Int arithmetic to an Int, the six
-       comparisons to a Bool, And/Or on Bools to a Bool. Div and Mod by ZERO must NOT fold: the
-       runtime trap has to survive the optimizer. §3. *)
+       comparisons to a Bool, And/Or on Bools to a Bool. Div and Mod by ZERO must return None —
+       there is no value to fold them to; see the note below. §3. *)
   ignore (op, a, b);
   None
 
+(* Div and Mod by 0 have no value to fold to, so `fold_binop` must return None for them: a pass
+   may not invent an answer for something the language says has none. Swift itself traps there
+   ("Fatal error: Division by zero", exit 133); our IRGen still emits a bare `sdiv`/`srem`, so at
+   runtime OUR binary's behaviour is undefined rather than a trap — an open gap in the code
+   generator (PROOFREAD.md §6), not something this pass can fix, and the reason the oracle corpus
+   keeps division by zero out. *)
 let fold_unop (op : Ast.unop) (a : cst) : cst option =
   match (op, a) with Ast.Neg, CInt x -> Some (CInt (-x)) | _ -> None
 
