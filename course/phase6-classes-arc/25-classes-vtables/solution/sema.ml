@@ -6,6 +6,9 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
   let current_ret : Types.ty option ref = ref None in
   let funcs : (string, Types.ty list * Types.ty) Hashtbl.t = Hashtbl.create 16 in
   let structs : (string, Types.struct_layout) Hashtbl.t = Hashtbl.create 16 in
+  (* (type name, field) for every `let` stored property — of a struct OR of a class: a `let`
+     property is writable exactly once, inside its own `init`, and never through a binding *)
+  let let_fields : (string * string, unit) Hashtbl.t = Hashtbl.create 16 in
   let enums : (string, Types.enum_layout) Hashtbl.t = Hashtbl.create 16 in
   (* concept 21: protocol layouts, per-struct method signatures, and which struct we are
      INSIDE (so method bodies can use `self`, bare field names, and bare method calls) *)
@@ -55,6 +58,16 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
     | None, None -> None
   in
   let err span msg = Diagnostics.error diags span msg in
+  (* swiftc words ONE failure — "this value does not conform to `any P`" — differently at each
+     coercion site, so `check_expr` has to know which site it is under. See §2. *)
+  let site : [ `Let | `Arg | `Return | `Assign ] ref = ref `Let in
+  let at_site s f =
+    let saved = !site in
+    site := s;
+    let r = f () in
+    site := saved;
+    r
+  in
   let lookup x = List.assoc_opt x !env in
   let bind name v = env := (name, v) :: !env in
   let in_scope (f : unit -> unit) = let saved = !env in f (); env := saved in
@@ -191,8 +204,11 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         | Some cn, true -> (
             match Option.bind (Hashtbl.find_opt classes cn) (fun cl -> cl.Types.cl_super) with
             | Some sup -> (
+                (* swiftc's DI runs on SIL and counts the calls: `diag::selfinit_multiple_times` *)
+                if !super_called then err span "'super.init' called multiple times in initializer";
                 super_called := true;
-                match Hashtbl.find_opt funcs (sup ^ ".init") with
+                (* the superclass may itself INHERIT its initializer: resolve to the owner *)
+                match Option.bind (init_owner sup) (fun o -> Hashtbl.find_opt funcs (o ^ ".init")) with
                 | Some (ptys, _) ->
                     let np = List.length ptys and na = List.length exprs in
                     if np <> na then
@@ -201,10 +217,16 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
                     Types.TVoid
                 | None -> List.iter (fun a -> ignore (infer a)) exprs; Types.TVoid)
             | None ->
-                err span (Printf.sprintf "'super' members cannot be referenced: '%s' has no superclass" cn);
+                err span
+                  (Printf.sprintf "'super' cannot be used in class '%s' because it has no superclass" cn);
                 Types.TVoid)
-        | _ ->
-            err span "'super.init' can only be called inside an initializer";
+        | Some _, false ->
+            err span "'super.init' cannot be called outside of an initializer";
+            List.iter (fun a -> ignore (infer a)) exprs;
+            Types.TVoid
+        | None, _ ->
+            err span
+              "'super' cannot be used outside of a class computed property, method, initializer,                deinitializer, or subscript";
             List.iter (fun a -> ignore (infer a)) exprs;
             Types.TVoid)
     (* `recv.m(args)` — a METHOD call (concept 21). On a concrete struct it resolves statically
@@ -215,7 +237,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         let check_args what ptys =
           let np = List.length ptys and na = List.length exprs in
           if np <> na then err span (Printf.sprintf "%s expects %d argument(s) but %d given" what np na)
-          else List.iter2 (fun a t -> check_expr a t) exprs ptys
+          else at_site `Arg (fun () -> List.iter2 (fun a t -> check_expr a t) exprs ptys)
         in
         match infer e0 with
         | Types.TStruct sn -> (
@@ -349,7 +371,11 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         | Some (Types.TVar (tn, _)) ->
             err span (Printf.sprintf "binary operator '==' cannot be applied to two '%s' operands" tn);
             Types.TBool
-        | Some _ -> Types.TBool
+        (* a struct, an optional or a CLASS reference would each need an Equatable conformance,
+           and the back end has no aggregate compare — `opt == nil` is the one optional
+           comparison, and it is handled above. Class identity is `===`, an exercise. *)
+        | Some (Types.TInt | Types.TDouble | Types.TBool | Types.TString | Types.TEnum _) -> Types.TBool
+        | Some _ -> ignore (bad ()); Types.TBool
         | None -> ignore (bad ()); Types.TBool)
     | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge -> (
         match unify l tl r tr with
@@ -385,7 +411,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             let np = List.length ptypes and na = List.length exprs in
             if np <> na then
               err span (Printf.sprintf "function '%s' expects %d argument(s) but %d given" f np na)
-            else List.iter2 (fun a t -> check_expr a t) exprs ptypes;
+            else at_site `Arg (fun () -> List.iter2 (fun a t -> check_expr a t) exprs ptypes);
             ret
         | None when !current_class <> None
                     && Option.bind (Hashtbl.find_opt classes (Option.get !current_class))
@@ -397,7 +423,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             let np = List.length ptys and na = List.length exprs in
             if np <> na then
               err span (Printf.sprintf "method '%s' expects %d argument(s) but %d given" f np na)
-            else List.iter2 (fun a t -> check_expr a t) exprs ptys;
+            else at_site `Arg (fun () -> List.iter2 (fun a t -> check_expr a t) exprs ptys);
             ret
         | None when !current_self <> None && method_sig (Option.get !current_self) f <> None ->
             (* bare `m(args)` inside a method = `self.m(args)` (implicit self) — 21 *)
@@ -405,12 +431,22 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             let np = List.length ptys and na = List.length exprs in
             if np <> na then
               err span (Printf.sprintf "method '%s' expects %d argument(s) but %d given" f np na)
-            else List.iter2 (fun a t -> check_expr a t) exprs ptys;
+            else at_site `Arg (fun () -> List.iter2 (fun a t -> check_expr a t) exprs ptys);
             ret
         | None ->
             if f = "print" then (
               (match exprs with
-              | [ a ] -> ignore (infer a)
+              | [ a ] -> (
+                  (* IRGen prints the scalar types only; swiftc would print `Point(x: 1, y: 2)`
+                     for a struct, `red` for an enum case, `Optional(5)` for an optional, `C(r: 1)`
+                     for a conformer inside an `any P` and `C` for a class — a divergence, §2 *)
+                  match infer a with
+                  | Types.TInt | Types.TDouble | Types.TBool | Types.TString -> ()
+                  | t ->
+                      err (Ast.expr_span a)
+                        (Printf.sprintf
+                           "cannot print a value of type '%s' (only Int, Double, Bool and String)"
+                           (Types.string_of_ty t)))
               | _ ->
                   err span "print(_:) expects exactly one argument";
                   List.iter (fun a -> ignore (infer a)) exprs);
@@ -480,7 +516,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
                 (Printf.sprintf "incorrect argument label in call (have '%s:', expected '%s:')" l fname)
           | None -> err (Ast.expr_span value) (Printf.sprintf "missing argument label '%s:' in call" fname)
           | _ -> ());
-          check_expr value ftype)
+          at_site `Arg (fun () -> check_expr value ftype))
         args fields;
     Types.TStruct sn
   (* checking mode: an optional expected type accepts `nil`, an already-optional value, or — by
@@ -499,13 +535,14 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         match infer e with
         | Types.TProto pn' when pn' = pn -> () (* already `any P` *)
         | Types.TStruct sn when struct_conforms sn pn -> () (* wrap: SILGen will init_existential *)
-        | Types.TStruct sn ->
-            err (Ast.expr_span e)
-              (Printf.sprintf "argument type '%s' does not conform to expected type '%s'" sn pn)
         | t ->
+            let tn = Types.string_of_ty t in
             err (Ast.expr_span e)
-              (Printf.sprintf "cannot convert value of type '%s' to specified type 'any %s'"
-                 (Types.string_of_ty t) pn))
+              (match !site with
+              | `Arg -> Printf.sprintf "argument type '%s' does not conform to expected type '%s'" tn pn
+              | `Return -> Printf.sprintf "return expression of type '%s' does not conform to '%s'" tn pn
+              | `Assign -> Printf.sprintf "cannot assign value of type '%s' to type 'any %s'" tn pn
+              | `Let -> Printf.sprintf "value of type '%s' does not conform to specified type '%s'" tn pn))
     (* a subclass value coerces to any of its superclasses — the upcast (concept 25) *)
     | _, Types.TClass cn -> (
         match infer e with
@@ -566,7 +603,9 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             (* classes are REFERENCE types: methods may write stored properties (concept 25);
                inside an init this is also how definite-initialization is satisfied *)
             if !in_init then Hashtbl.replace assigned_fields name ();
-            check_expr value (Option.get (field_of_self name))
+            if (not !in_init) && Hashtbl.mem let_fields (Option.get !current_class, name) then
+              err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" name);
+            at_site `Assign (fun () -> check_expr value (Option.get (field_of_self name)))
         | None when field_of_self name <> None ->
             (* a non-`mutating` STRUCT method cannot write a stored property (matches swiftc) — 21 *)
             err span "cannot assign to property: 'self' is immutable";
@@ -575,7 +614,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         | Some (t, is_var) ->
             if not is_var then
               err span (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" name);
-            check_expr value t)
+            at_site `Assign (fun () -> check_expr value t))
     | Ast.Set_member { obj; field; value; span } -> (
         match lookup obj with
         | Some (Types.TClass cn, _) -> (
@@ -583,7 +622,11 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
                (the binding is constant, the OBJECT is not) — concept 25 *)
             if obj = "self" && !in_init then Hashtbl.replace assigned_fields field ();
             match Option.bind (Hashtbl.find_opt classes cn) (fun cl -> Types.cfield_type cl field) with
-            | Some ft -> check_expr value ft
+            | Some ft ->
+                (* a `let` property takes its value once, in the initializer that owns it *)
+                if Hashtbl.mem let_fields (cn, field) && not (obj = "self" && !in_init) then
+                  err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" field);
+                at_site `Assign (fun () -> check_expr value ft)
             | None ->
                 err span (Printf.sprintf "value of type '%s' has no member '%s'" cn field);
                 ignore (infer value))
@@ -594,9 +637,13 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         | Some (Types.TStruct sn, is_var) -> (
             match Option.bind (Hashtbl.find_opt structs sn) (fun sl -> Types.field_type sl field) with
             | Some ft ->
+                (* swiftc's `diag::assignment_lhs_is_immutable_property`: the binding first, then
+                   the field — a `let` field is immutable through every binding *)
                 if not is_var then
-                  err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" obj);
-                check_expr value ft
+                  err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" obj)
+                else if Hashtbl.mem let_fields (sn, field) then
+                  err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" field);
+                at_site `Assign (fun () -> check_expr value ft)
             | None ->
                 err span (Printf.sprintf "value of type '%s' has no member '%s'" sn field);
                 ignore (infer value))
@@ -638,7 +685,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             | Some e ->
                 if rt = Types.TVoid then
                   err span "unexpected non-void return value in void function"
-                else check_expr e rt
+                else at_site `Return (fun () -> check_expr e rt)
             | None ->
                 if rt <> Types.TVoid then err span "non-void function should return a value"))
   (* type-check a `switch`: each pattern is checked against the subject; an enum-case pattern
@@ -738,7 +785,11 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
            let cl = Hashtbl.find classes cname in
            let inherited =
              match cl.Types.cl_super with
-             | Some sup -> List.length (Hashtbl.find classes sup).Types.cl_fields
+             (* an unknown superclass was already reported at the declaration *)
+             | Some sup -> (
+                 match Hashtbl.find_opt classes sup with
+                 | Some sl -> List.length sl.Types.cl_fields
+                 | None -> 0)
              | None -> 0
            in
            let own = List.filteri (fun i _ -> i >= inherited) cl.Types.cl_fields in
@@ -747,7 +798,15 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
                if not (Hashtbl.mem assigned_fields fn) then
                  err f.Ast.fspan "return from initializer without initializing all stored properties")
              own;
-           if cl.Types.cl_super <> None && not !super_called then
+           (* Swift INSERTS `super.init()` at the end of a body that never calls it, provided the
+              superclass's initializer takes no arguments; otherwise DI fails —
+              `diag::superselfinit_not_called_before_return`. SILGen appends the same call. *)
+           let implicit_ok =
+             match Option.bind cl.Types.cl_super init_owner with
+             | None -> true
+             | Some o -> fst (Hashtbl.find funcs (o ^ ".init")) = []
+           in
+           if cl.Types.cl_super <> None && (not !super_called) && not implicit_ok then
              err f.Ast.fspan "'super.init' isn't called on all paths before returning from initializer"
        | None -> ());
     current_class := saved_class;
@@ -822,6 +881,10 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
       let own_fields =
         List.map (fun (fl : Ast.field) -> (fl.Ast.fld_name, resolve_ty c.Ast.cspan fl.Ast.fld_ty)) c.Ast.cfields
       in
+      List.iter
+        (fun (fl : Ast.field) ->
+          if not fl.Ast.fld_var then Hashtbl.replace let_fields (c.Ast.cname, fl.Ast.fld_name) ())
+        c.Ast.cfields;
       let methods = ref (match super_layout with Some sl -> sl.Types.cl_methods | None -> []) in
       let impls = ref (match super_layout with Some sl -> sl.Types.cl_impls | None -> []) in
       List.iter
@@ -864,6 +927,10 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
           let fields =
             List.map (fun (fl : Ast.field) -> (fl.Ast.fld_name, resolve_ty s.Ast.sspan fl.Ast.fld_ty)) s.Ast.sfields
           in
+          List.iter
+            (fun (fl : Ast.field) ->
+              if not fl.Ast.fld_var then Hashtbl.replace let_fields (s.Ast.sname, fl.Ast.fld_name) ())
+            s.Ast.sfields;
           Hashtbl.replace structs s.Ast.sname { Types.sl_name = s.Ast.sname; sl_fields = fields }
       | Ast.IEnum e ->
           let cases =

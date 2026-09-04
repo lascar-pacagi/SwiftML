@@ -86,6 +86,58 @@ verifiable rewrites instead of a leap of faith. swiftc's history runs the same d
 ownership model was retrofitted into SIL precisely because ARC optimization kept being
 subtly wrong without it.
 
+### The IR your verifier reads
+
+This concept adds no syntax at all — the grammar is exactly concept 26's, and a learner who
+diffs the two parsers will find nothing. What it adds is a *reader* of the IR, so what §2 must
+put on the table is the IR itself: the three instructions that replace concept 26's two, and
+the operand rules that decide what each one does to ownership.
+
+| printed form | `Sil.instr` | ownership |
+|---|---|---|
+| `%7 = copy_value %6` | `Copy_value` **new** | **produces OWNED.** A borrow becomes a second owner. Lowers to `rt.retain` plus an identity GEP, so it costs exactly what concept 26's `retain` cost |
+| `%14 = load [take] %8 $T` | `Load_take` **new** | **produces OWNED, for free.** The slot's `+1` MOVES out; the slot is left empty. No runtime traffic at all — this is the instruction that makes a scope exit cheap |
+| `destroy_value %14` | `Destroy_value` **new** | **CONSUMES.** Lowers to `rt.release` |
+| `store %7 to %8` | `Store` (08) | **CONSUMES** its class-typed value: the slot becomes the owner |
+| `return %6` | `Return` (08) | **CONSUMES** a class-typed result: the caller becomes the owner |
+| `%0 : $T` (a parameter) | — | **GUARANTEED.** Borrowed for the length of the call, never consumed, no traffic |
+| `%6 = load %4 $T` | `Load` (08) | **GUARANTEED.** A plain load borrows; it does not take |
+| `%9 = apply %8(…)` on a class result | `Apply` (08) | **produces OWNED** — a call hands back `+1` |
+| `%5 = ref_element_addr %3, #0`, `%2 = upcast %1 : $A` | (25) | neither: an address, and a retyped borrow |
+
+Concept 26's `Retain` and `Release` are *gone* from the instruction type — this is a recast,
+not an addition. Everything the two of them expressed is now said by a pair whose two halves
+the verifier can match up, which is the whole point.
+
+Two rows deserve a second look. **`load [take]` is the elegant one**: concept 26 ended a scope
+by loading the slot (a borrow) and releasing it — releasing something it did not own, which
+happened to work only because the slot was about to die. Here the take moves the `+1` out and
+the destroy consumes *that*, and the arithmetic is honest at every step. And **`store`
+consumes**, which is the row that caught a real bug: spilling a guaranteed parameter into a
+slot at function entry stores a borrow, and a store consumes, so every class parameter in the
+compiler was violating R2 the first time the verifier ran (see below).
+
+### The diagnostics you emit
+
+These are unlike every other table in this course: they are addressed to *you*, not to the
+person writing Swift. A user program cannot produce one — SILGen is the only thing that writes
+this IR — so an ownership error is always a compiler bug, and the driver prints it on the
+`ownership error:` channel and exits 1 rather than emitting code it cannot vouch for. That is
+why `sil-verifier.t`'s success condition is silence, and why the messages themselves are pinned
+by hand-built SIL in the alcotest.
+
+| rule | violation | message |
+|---|---|---|
+| R1 | an owned value nothing consumes | `@f: owned value %0 is leaked (never consumed)` |
+| R1 | an owned value consumed twice | `@f: owned value %0 consumed 2 times` |
+| R2 | a guaranteed value consumed | `@f: guaranteed value %0 consumed without a copy_value` |
+| R3 | an operand used after its consume | `@f bb0: owned value %0 used after being consumed` |
+
+Each names the function, and R3 the block too, because that is the point of checking here
+rather than at runtime: a refcount bug observed in a program is a crash a long way from its
+cause, while these name the value. swiftc's `SILOwnershipVerifier.cpp` reports the same four
+shapes with far more precision — see the oracle note below.
+
 > Oracle: `swift/docs/SIL/Ownership.md` (the design document — readable and excellent),
 > `SILOwnershipVerifier.cpp` (the real thing: path-sensitive, borrow-scoped, ~3k lines where
 > ours is ~60 — the *rules* are the same), `OperandOwnership.cpp` (which operands consume —
@@ -109,14 +161,37 @@ no-spill parameter rule — is given; diff it against 26's to see exactly what c
 ## 4. Test it
 
 ```bash
-make lab C=phase6-classes-arc/27-ownership
+make lab C=phase6-classes-arc/27-ownership                     # everything
+make lab C=phase6-classes-arc/27-ownership T=sil-verifier      # the hole
 ```
 
-cram: the structured ops in `--emit-sil` (one `copy_value` for the borrow, two takes, two
-destroys for the two locals); `T.init` taking no slot for `self`; the 26 lifetime behavior
-unchanged at `-Onone` and `-O`. alcotest: generated SIL verifies clean; hand-built SIL (the
-only way to express violations) trips all four errors with exact messages; the
-copy-then-destroy version of the borrow case verifies.
+This concept has ONE hole and it sits in the middle of the pipeline: the driver verifies before
+IRGen, so until `verify_ownership` exists *nothing* lowers, and every cram file reads TODO. What
+separates them is what each one is for:
+
+| file | what it is for | how it checks |
+|---|---|---|
+| `tests/sil-verifier.t` | `TODO(27)` — the hole | Its success condition is SILENCE, so each case compiles a program and asserts the run said nothing on the `ownership error:` channel: straight-line code with a copy and a borrowed argument; control flow, where "exactly once" is easiest to get wrong (a value born in a loop, an early `return`, a `break`, a `continue`); ownership crossing function boundaries (a `+1` returned, a field overwritten, both destructor chains); and inheritance with `self` reaching an override. Then the same programs all the way to a binary at `-Onone` and `-O` |
+| `tests/silgen-ossa.t` | the GIVEN recast | `--emit-sil`: one `copy_value` for the borrow, two `load [take]`/`destroy_value` pairs for the two slots, and zero `retain`/`release`; `use` and `T.get` with no `alloc_stack` and no entry store, while `T.init`'s `Int` parameter still gets its slot; the concept-26 deinit orders unchanged; and a field written through `self` |
+| `tests/sema-ownership.t` | the GIVEN boundary | the v0 guards and the class rules the corpus leans on. The only file here that is green from the first run, because `--typecheck` stops long before any SIL exists |
+| `tests/oracle.t` | the headline | concept 26's corpus, unchanged — because the whole claim of this concept is that the recast changes NOTHING observable — plus three programs for what it did change. Three loops: 16 typecheck verdicts against `swiftc -typecheck`, 6 definite-initialization verdicts against a FULL `swiftc` compile, and 21 programs built four ways with `swiftc -Onone` as the reference |
+
+alcotest (`tests/test_ownership.ml`) is where the three rules actually separate, and it is worth
+understanding *why* it has to exist. A cram test can only run the compiler on Swift source, and
+no Swift source produces an ownership violation — SILGen is the only writer of this IR. So the
+alcotest builds bad SIL **by hand**, one function at a time, and checks the exact message: an
+`alloc_ref` nobody consumes (R1 leak), one destroyed twice (R1 double), a `store` counted as the
+second consume (R1 again — the row people forget), a destroyed parameter and a spilled parameter
+(R2, the second being the bug the verifier found in its own SILGen), and a `ref_element_addr`
+after a `destroy_value` (R3) beside the same two instructions in the legal order, which must say
+nothing. A `generated SIL` group then runs the verifier over four real programs, and
+`the ops it checks` pins that every `destroy_value` consumes a `load [take]` result and that
+class parameters keep no slot.
+
+`make lab` distinguishes three kinds of red. **TODO** means nothing in that file passes.
+**FAIL** means *some* cases pass — read the diffs (`DETAIL=1`). **SKIP** means a compile error
+stopped dune first. On the untouched skeleton everything but `sema-ownership.t` reads TODO,
+which is unusual for this course and is a property of where the hole sits, not a mistake.
 
 ## 5. Benchmark it
 

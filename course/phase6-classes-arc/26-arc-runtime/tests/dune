@@ -8,7 +8,7 @@
   (:standard -warn-error -a)))
 
 (cram
- (deps lab.exe))
+ (deps lab.exe oracle-corpus.txt oracle-typecheck.txt oracle-di.txt))
 
 (tests
  (names test_arc)

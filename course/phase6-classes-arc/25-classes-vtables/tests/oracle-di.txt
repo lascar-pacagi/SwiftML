@@ -1,0 +1,6 @@
+class A { var x: Int\n  var z: Int\n  init() { x = 1 } }\nprint(A().x)
+class A { var x: Int\n  init(_ v: Int) { x = v } }\nclass B: A { var y: Int\n  init() { y = 2 } }\nprint(B().y)
+class A { var x: Int\n  init(_ v: Int) { x = v } }\nclass B: A { var y: Int\n  init() { y = 1\n    super.init(1)\n    super.init(2) } }\nprint(B().y)
+class A { var x: Int\n  init() { x = 5 } }\nclass B: A { var y: Int\n  init(_ w: Int) { y = w } }\nprint(B(2).y + B(2).x)
+class A { var x: Int\n  init(_ v: Int) { x = v } }\nclass B: A { var y: Int\n  init(_ v: Int, _ w: Int) { y = w\n    super.init(v) } }\nprint(B(3, 4).x + B(3, 4).y)
+class A { var x: Int\n  var z: Int\n  init() { x = 1\n    z = 2 } }\nprint(A().x + A().z)

@@ -1,0 +1,22 @@
+class C { var x: Int\n  init() { x = 1 } }\nlet c = C()\nprint(c.x)
+class A { var x: Int\n  init(_ v: Int) { x = v }\n  func f() -> Int { return x } }\nclass B: A { override func f() -> Int { return x * 2 } }\nlet a: A = B(3)\nprint(a.f())
+class A { var x: Int\n  init() { x = 1 } }\nclass B: A { var y: Int\n  init(_ w: Int) { y = w } }\nprint(B(2).y)
+class A { var x: Int\n  init() { x = 1 }\n  func f() -> Int { return 1 } }\nclass B: A { }\nclass C: B { override func f() -> Int { return 3 } }\nlet c: A = C()\nprint(c.f())
+class C { let k: Int\n  var n: Int\n  init() { k = 1\n    n = 2 } }\nlet c = C()\nc.n = 5\nprint(c.k)
+class C { var n: Int\n  init() { n = 0 }\n  func bump() { n = n + 1 } }\nlet c = C()\nlet d = c\nd.bump()\nprint(c.n)
+class C { var v: Int?\n  init() { v = nil }\n  func get() -> Int { return v ?? -1 } }\nprint(C().get())
+struct P { var x: Int }\nclass H { var p: P\n  init(_ q: P) { p = q }\n  func get() -> Int { return p.x } }\nprint(H(P(x: 4)).get())
+class C { var x: Int\n  init(_ v: Int) { x = v } }\nfunc f(_ c: C) -> Int { return c.x }\nprint(f(C(7)))
+class A { var x: Int\n  init() { x = 1 } }\nclass B: A { }\nlet a: A = B()\nprint(a.x)
+class C { var x: Int }
+class A { var x: Int\n  init() { x = 1 }\n  func f() -> Int { return 1 } }\nclass B: A { func f() -> Int { return 2 } }
+class A { var x: Int\n  init() { x = 1 } }\nclass B: A { override func f() -> Int { return 2 } }
+class A { var x: Int\n  init() { x = 1 }\n  func f() -> Int { return 1 } }\nclass B: A { override func f() -> Bool { return true } }
+class C { let k: Int\n  init() { k = 1 } }\nlet c = C()\nc.k = 5
+class A { var x: Int\n  init() { x = 1 } }\nclass B: A { }\nlet b: B = A()
+class A { var x: Int\n  init() { x = 1 } }\nclass B: A { func fetch() -> Int { return 2 } }\nlet a: A = B()\nprint(a.fetch())
+class B: Nope { var y: Int\n  init() { y = 1 } }
+class C { var x: Int\n  init() { x = 1 } }\nprint(C() == C())
+class A { var x: Int\n  init() { x = 1 } }\nclass B: A { func g() { super.init() } }
+class A { var x: Int\n  init() { x = 1\n    super.init() } }
+class C { var x: Int\n  init() { x = 1 }\n  func f() -> Int { return y } }

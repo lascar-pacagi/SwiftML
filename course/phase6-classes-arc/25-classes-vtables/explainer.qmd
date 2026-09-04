@@ -102,13 +102,85 @@ exercise.) And **fields prefix-extend**: `Dog`'s object layout begins with `Anim
 so an upcast doesn't move or convert anything — the same pointer simply gets a weaker static
 type.
 
-### What sema enforces
+### The subset you are growing into
 
-The vtable build is also where override *checking* lives, with swiftc's words:
-`overriding declaration requires an 'override' keyword` (you redefined a superclass method
-without saying so) and `method does not override any method from its superclass` (you said so
-but nothing matches — wrong name or wrong signature). Both are layout-time checks: the table
-can't be built ambiguously.
+**New lexemes.** Four keywords, all added in `token.ml`'s `keyword_or_ident` — **not** in
+`lexer.ml`, which is where the first attempt usually goes:
+
+| spelling | token | notes |
+|---|---|---|
+| `class` | `Token.Kw_class` | the declaration; a *reference* type |
+| `init` | `Token.Kw_init` | the initializer. Not a `func`: no `->`, and its name is fixed |
+| `override` | `Token.Kw_override` | a modifier before `func` inside a class body |
+| `super` | `Token.Kw_super` | parsed only in the one position `super.init(…)`, in `parse_primary` |
+
+**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05-24.
+Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (zero or more),
+`|` separates alternatives, and quoted text is a terminal.
+
+```
+program     ::= { item }
+item        ::= func_decl | struct_decl | enum_decl | proto_decl
+              | class_decl                                           <-- new
+              | statement
+
+class_decl  ::= "class" ident [ ":" ident ] "{" { member } "}"       <-- new
+                  (the one ident after ":" is the SUPERCLASS)
+member      ::= field                                                <-- new
+              | "init" "(" [ param { "," param } ] ")" block         <-- new (at most one)
+              | [ "override" ] func_decl                             <-- new
+field       ::= ("var" | "let") ident ":" type
+
+type        ::= [ "any" ] ident [ "?" ]
+                (ident = "Int" | "Double" | "Bool" | "String" | "Void"
+                       | a struct, enum, protocol or CLASS name)     <-- class names are new
+
+primary     ::= … | "super" "." "init" "(" [ arg { "," arg } ] ")"   <-- new
+postfix     ::= primary { "." ident [ "(" [ arg { "," arg } ] ")" ] | "!"
+                        | ("as?" | "as!") ident }
+                (a "." followed by "(" on a CLASS receiver is now a vtable dispatch)
+```
+
+Four things to notice. A class body is a *different* production from a struct body — it admits
+`init` and `override`, which a struct body does not, and it admits no conformance clause (class
+conformance to a protocol is an exercise). `super.init` is parsed in `parse_primary`, not as a
+member access, because `super` is not an expression on its own in this subset — there is
+nothing you can do with it but call the superclass's initializer. `override` is a modifier, so
+the parser records a `bool` beside each method and sema decides whether it was right. And the
+last line is the one that changes the *meaning* of syntax you already had: `recv.m(args)` was a
+static call in concept 21; on a class receiver it is now a dynamic dispatch, decided entirely by
+the receiver's type.
+
+### The diagnostics you emit
+
+Two of these come out of the hole you fill — the vtable build is also where override *checking*
+lives, because the table cannot be built ambiguously. The rest are given, and `sema-classes.t`
+keeps them all on record. Wording follows `swiftc` where the subset lets it; line numbers are
+from the pinned snapshot's `swift/include/swift/AST/`, and the divergences are stated, not
+hidden.
+
+| program | our message | swiftc |
+|---|---|---|
+| `class B: A { func f() … }` redefining `A.f` | **TODO(25a)** `overriding declaration requires an 'override' keyword` | **same** (`missing_override`, `DiagnosticsSema.def` l.3654). We report at the `func` keyword, swiftc at the method's name |
+| `override func f()` matching nothing — wrong name *or* wrong signature | **TODO(25a)** `method does not override any method from its superclass` | **same** (`method_does_not_override`, l.3694) |
+| `class C { var x: Int }` | `class 'C' has no initializers` | **same** (`class_without_init`, l.2391), and at the same place: the class's NAME |
+| an `init` that leaves a stored property unset | `return from initializer without initializing all stored properties` | **same** (`return_from_init_without_initing_stored_properties`, `DiagnosticsSIL.def` l.268) — but swiftc runs DI on **SIL**, so `swiftc -typecheck` stays silent and only a full compile reports it. Ours fires in sema: same programs rejected, earlier. That is why `oracle.t` has a separate DI loop that compiles with swiftc all the way |
+| an `init` that never reaches `super.init`, where the superclass's takes arguments | `'super.init' isn't called on all paths before returning from initializer` | **same** (`superselfinit_not_called_before_return`, l.254), same SIL-level caveat |
+| `super.init` twice in one initializer | `'super.init' called multiple times in initializer` | **same** (`selfinit_multiple_times`, l.251), same caveat |
+| `super.init` in a class with no superclass | `'super' cannot be used in class 'A' because it has no superclass` | **same** (`super_no_superclass`, l.4716) |
+| `super.init` in a method | `'super.init' cannot be called outside of an initializer` | **same** (`super_initializer_not_in_initializer`, l.1460) |
+| `super.init` at top level | `'super' cannot be used outside of a class computed property, method, initializer, deinitializer, or subscript` | **same** (`super_invalid_context`, l.4719) |
+| writing a `let` stored property after its initializer | `cannot assign to property: 'k' is a 'let' constant` | **same** (`assignment_lhs_is_immutable_property`, l.5379) |
+| `class B: Nope` | `cannot find type 'Nope' in scope` | **same** text; we report at `B`, swiftc at `Nope` |
+| `let b: B = A()` (a downcast) | `cannot convert value of type 'A' to specified type 'B'` | **same shape**. The upcast is implicit in both; `as?`/`as!` between classes is exercise 3 |
+| `print(C())` | `cannot print a value of type 'C' (only Int, Double, Bool and String)` | **swiftc accepts** and prints `main.C`. An honest divergence: our `print` lowers a scalar |
+| `C() == C()` | `binary operator '==' cannot be applied to two 'C' operands` | **same** — a class is not `Equatable` by default. Identity is `===`, exercise 3 |
+
+Two v0 limits have no diagnostic at all, and it is worth knowing which way each leans. A class
+may declare **at most one** `init`, so initializer *overloading* is a parse error rather than a
+type error; and we do not model initializer **overriding**, so `class B: A` whose `init` has the
+same signature as `A`'s is accepted here and refused by swiftc (`missing_override` again — an
+initializer is a vtable entry in Swift too). Keep matching signatures out of a corpus.
 
 > Oracle: `SILVTable.cpp` (swiftc's vtables are exactly this, printed by `-emit-sil` in the
 > same `sil_vtable` syntax we mirror), `GenClass.cpp` (object layout), `TypeCheckDeclOverride.cpp`
@@ -131,15 +203,49 @@ Reference: `solution/sema.ml`, `solution/silgen.ml`, `solution/irgen.ml`.
 ## 4. Test it
 
 ```bash
-make lab C=phase6-classes-arc/25-classes-vtables
+make lab C=phase6-classes-arc/25-classes-vtables                   # everything
+make lab C=phase6-classes-arc/25-classes-vtables T=sema-vtable     # one hole
 ```
 
-cram: reference semantics (two bindings, one object); the `Dog` vtable printed with the
-override in place; dispatch through an `Animal`-typed variable *and* through `describe`'s
-internal `sound()` call (the 7/407 program) at `-Onone` and `-O`; `super.init` chains and
-initializer inheritance; four diagnostics verbatim. alcotest: the layout triple
-(inherit/replace/append), both override errors, SIL shapes (`alloc_ref`/`upcast`/
-`class_method`), and `-O` keeping vtable impls alive.
+One cram file per hole, in the order the pipeline forces on you — nothing lowers until the
+layout exists, and nothing runs until the emission does:
+
+| file | goes green when | how it checks |
+|---|---|---|
+| `tests/sema-vtable.t` | `TODO(25a)` builds the table | `--emit-sil` (which stops before the other holes if the program calls no method): `Dog`'s `sil_vtable` with the override in slot #0, the inherited `describe` in #1 and the new `fetch` appended as #2; a three-level chain keeping ONE numbering; a superclass-free class numbering from #0. Then `--typecheck`: the missing-`override` error, the overrides-nothing error, and the same error for a name that matches with the wrong signature — plus the case that must NOT error, an override of a method a class merely inherited |
+| `tests/silgen-dispatch.t` | `TODO(25b)` lowers the call | `--emit-sil`: `class_method %r, #0` and `#1` through an `Animal`-typed variable, `#2` through a `Dog`; the self-call inside `Animal.describe` being a dispatch and not a `function_ref`; a void method; an argument wrapped to the callee's `Int?`. And the two boundaries: a STRUCT method stays a direct `apply`, and `super.init` stays a direct `apply` on an upcast self |
+| `tests/irgen-dispatch.t` | `TODO(25c)` emits it | `--emit-llvm`: the three loads (word 0, `getelementptr ptr` at the slot, load) and the indirect call, the `@vtbl.*` constants, a bare `call void` for a void method. Then programs RUN: reference semantics (12/50), the 7/407 dispatch probe at `-Onone` **and** `-O`, `super.init` chains, and initializer inheritance |
+
+Two files do not belong to a hole. `tests/sema-classes.t` is GIVEN code — the class-shape rules
+(no initializers, definite initialization, the three `super` errors, `let` properties, the
+upcast, an unknown superclass) and the subset boundary the corpus has to stay inside. It reads
+FAIL rather than PASS on the untouched skeleton for an honest reason: a class that declares a
+method cannot be laid out at all until `TODO(25a)`, so its three method-carrying cases go red
+with everything else.
+
+And `tests/oracle.t` is the headline — it asks swiftc on every run, in three loops, because this
+concept needs three different reference commands:
+
+- 22 programs of `oracle-typecheck.txt` (ten accepted, twelve refused) where `swiftc -typecheck`
+  and `--typecheck` must reach the same VERDICT;
+- 6 programs of `oracle-di.txt` compiled ALL THE WAY by swiftc, because definite initialization
+  is a SIL-level check that `-typecheck` never reports (§2). Three must be refused, three
+  accepted — including the implicit `super.init()`;
+- 18 programs of `oracle-corpus.txt` built FOUR ways — `swiftc -Onone`, `swiftc -O`,
+  `./lab.exe build`, `./lab.exe build -O` — all run, stdout and exit code identical to
+  `swiftc -Onone`'s.
+
+`make lab` distinguishes three kinds of red. **TODO** means nothing in that file passes — the
+hole has not been started. **FAIL** means *some* cases pass: you are mid-hole, and the diffs are
+worth reading (`DETAIL=1`). **SKIP** means a compile error stopped dune first. On the untouched
+skeleton `sema-vtable.t` and `irgen-dispatch.t` read TODO; `silgen-dispatch.t`, `sema-classes.t`
+and `oracle.t` read FAIL, each because a case that needs no class method already passes.
+
+alcotest (`tests/test_classes.ml`) is where the holes separate cleanly: `vtable 25a` calls
+`Sema.check` alone, `dispatch 25b` adds `Silgen.lower` and reads the `Apply_class` slots
+directly, `emission 25c` adds `Irgen.emit_llvm` and greps the text. Then an `optimizer` group
+checks `-O` leaves the vtable's implementations alive and the module verifiable, and a
+`given rules` group pins the two front-end refusals the corpus depends on.
 
 ## 5. Benchmark it
 
