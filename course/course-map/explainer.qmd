@@ -183,7 +183,7 @@ NN-concept/
 ├── explainer.qmd   # THE LESSON — a full from-zero tutorial (9 sections)
 ├── <stage>.ml      # THE SOURCE YOU EDIT — ships as a skeleton with TODO holes
 ├── solution/       # the frozen, verified answer key
-├── tests/          # cram (FileCheck-style) + alcotest unit tests = the spec
+├── tests/          # one cram .t per TODO hole + alcotest units + oracle.t = the spec
 ├── figs/           # real diagrams (matplotlib/graphviz), generated, never stubbed
 └── bench/          # for perf-relevant concepts
 ```
@@ -193,6 +193,13 @@ on the previous one — so the compiler is assembled stage by stage. Skeletons *
 work forward** and leave a `TODO(NN)` hole only for the *new* idea; you write the new logic, never
 re-type the old. Tests are **RED on the shipped skeleton, GREEN once `solution/` is in place** — a
 discipline that proves the tests actually test something.
+
+Inside `tests/` the layout is deliberate: **one cram file per hole**, named for it, so `make lab`
+reports a finished hole by name and an untouched one as `TODO` rather than a wall of diffs; every
+case is a sentence claiming what its input should do; and every concept carries an **`oracle.t`**
+that re-asks `swiftc` about a corpus on each run — accept/reject for a front-end concept,
+build-and-run with byte-identical output once there is a back end. The other goldens record what
+was true when they were written; the oracle asks again.
 
 ### Launching the compiler
 
