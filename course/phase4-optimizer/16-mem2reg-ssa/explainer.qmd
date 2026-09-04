@@ -47,6 +47,32 @@ or passed to a function), we can't replace it with a single SSA value, so we lea
 "promotable" = an `alloc_stack` whose value appears only as a load/store address — a one-line check
 over all the operands.
 
+### The SIL this pass rewrites
+
+This concept adds no Swift syntax — the grammar is concept 15's. What it changes is the **IR**, and
+in two directions at once: it *deletes* the memory forms and it *adds* arguments to blocks and to
+terminators. Those additions are in `sil.ml` already, and they are what your renaming has to fill.
+
+| form | `sil.ml` | mem2reg's job |
+|---|---|---|
+| `%1 = alloc_stack $Int  // x` | `Alloc_stack` | promotable if `%1` appears ONLY as a load/store address — then deleted |
+| `%9 = load %1 $Int` | `Load` | becomes the slot's reaching value; every use of `%9` is rewritten; deleted |
+| `store %0 to %1` | `Store` | redefines the slot's reaching value; deleted |
+| `%1 = struct_element_addr %0, #0` | `Struct_element_addr` | takes a slot's ADDRESS other than to load or store it ⇒ that slot is **not** promotable, and everything about it stays |
+| `bb2(%12 : $Int):` | `block.args : (value * ty) list` | **`<-- new`** — the φ. Placed for you at the iterated dominance frontier ∩ live; entering the block, the argument *defines* its slot |
+| `br bb2(%6)` | `Br of int * value list` | **`<-- new`** — the argument list is empty in every block SILGen emits; you fill it with the values reaching the end of this block |
+| `cond_br %5, bb1, bb2(%0)` | `Cond_br of value * (int * value list) * (int * value list)` | **`<-- new`** — each edge carries its own list, so an arm with no block of its own still hands a value over |
+| `return %3` · `trap "…"` | `Return` · `Trap` | untouched |
+
+Everything else — `integer_literal`, `binop`, `apply`, `struct`, `enum` — mem2reg only *reads*, to
+find out which values a load result has to be substituted into. And IRGen already knows how to lower
+a block argument: it becomes an LLVM `phi`, with one incoming per predecessor's argument list.
+
+One consequence worth stating before you start: after this pass the driver's SIL **verifier** runs a
+second time, on what the pipeline returned. A branch whose argument list is the wrong length for its
+target, or a branch to a block that no longer exists, is the classic half-finished-renaming bug, and
+that is where it will be reported.
+
 ### Step 1 — dominators: who *must* have run before you
 
 A block **D dominates** block B if **every** path from the entry to B goes through D. The
@@ -130,10 +156,45 @@ Reference: `solution/opt.ml`.
 make lab C=phase4-optimizer/16-mem2reg-ssa
 ```
 
-cram checks that `--emit-sil` is memory-heavy, `--sil-opt` has **no** load/store and a header with
-**block arguments**, and that `-O` programs (loop, `fib`, struct-in-loop) match `swiftc`. alcotest
-checks promotion (same-block `let` → value, no φ), loop φs (block args at the header), `if`/`else` φ
-at the merge, and that a non-promotable struct is left **valid**.
+There is one hole, so the cram files are split by the four RULES of the renaming walk — you can
+fill them one at a time and watch the files go green in order:
+
+- `opt-rename-straight.t` — the store and load rules, with no join anywhere: two `let`s whose sum
+  now folds to `3` (concept 15 could not do that), a `var` reassigned twice, a parameter that stops
+  being spilled, a whole-struct slot that IS promotable, and a field-addressed struct slot that is
+  NOT and must survive untouched. Green as soon as the two straight-line rules work.
+- `opt-rename-join.t` — the branch rule at a forward join: an `if`/`else` writing one `var` (one
+  argument at the merge, one value on each `br`), an `if` with no `else` (the value rides the
+  `cond_br`'s false edge), nested joins, and a variable dead after the merge that must get NO
+  argument.
+- `opt-rename-loop.t` — the branch rule at a **back edge**, where the value you must pass is one
+  the walk has not computed when it first enters the header: a counting loop (two header arguments,
+  entry edge and latch both filled), the pruned-SSA case (a `let` inside the body gets no argument),
+  `break`/`continue`, a nested loop, and `fib`. Every case ends in a `-O` run.
+- `sema-subset.t` — GIVEN code, `PASS` from the start: the four front-end refusals that keep an
+  aggregate out of IRGen, so that the corpus below stays inside what both compilers mean the same.
+- `test_mem2reg.ml` (alcotest `mem2reg`) — the same rules in process, where the cram cannot reach:
+  counts of memory instructions and of block arguments before *and* after (taken before optimizing,
+  since a pass mutates in place), the pruned-SSA argument count exactly, and `Sil.verify` on the
+  result — a renaming that leaves a branch's argument list the wrong length shows up here as a
+  verifier error, not as a wrong number.
+- `oracle.t` — **the headline**: 20 programs, each built four ways (`swiftc -Onone`, `swiftc -O`,
+  `lab build`, `lab build -O`), all four run, stdout and exit code identical. The corpus is
+  control-flow-heavy because that is what renaming gets wrong; the force-unwrap program checks that
+  exit 133 survives `-O`.
+
+A file you have not started reads `TODO` with the list of what it will check; one in progress reads
+`FAIL` with, under each failing case, what the test wanted and what your code printed. Two readings
+are worth knowing in advance for this concept:
+
+- `opt-rename-straight.t` starts at **`FAIL`, not `TODO`**, with exactly one case green — the
+  field-addressed struct. That slot is not promotable, so `mem2reg` returns before it ever reaches
+  your hole; the case passes on GIVEN code, and it is in the file to prove that the promotable-slot
+  check you were handed is the one deciding it.
+- `oracle.t` starts at **`TODO`**. Unlike concept 15, whose unfilled `run_pipeline` was the identity,
+  an unfilled renaming raises, so `lab build -O` cannot produce a binary; the loop prints the
+  `TODO(` it saw and stops rather than counting a failed build as agreement. It goes green with the
+  hole, and staying green is the bar for every pass you add after this one.
 
 ## 5. Benchmark it
 

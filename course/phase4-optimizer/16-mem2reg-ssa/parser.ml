@@ -408,12 +408,12 @@ let parse_struct (p : t) : Ast.struct_decl =
     | Token.RBrace -> ignore (advance p); List.rev acc
     | Token.Eof -> ignore (expect p Token.RBrace "'}'"); List.rev acc
     | Token.Kw_let | Token.Kw_var ->
-        ignore (advance p (* let/var *));
+        let fld_var = (advance p).Token.kind = Token.Kw_var in
         let fld_name, _ = parse_ident p "a property name" in
         ignore (expect p Token.Colon "':'");
         let fld_ty = parse_type_name p "a property type" in
         (match peek_kind p with Token.Newline -> ignore (advance p) | _ -> ());
-        loop ({ Ast.fld_name; fld_ty } :: acc)
+        loop ({ Ast.fld_name; fld_ty; fld_var } :: acc)
     | _ ->
         let t = peek p in
         Diagnostics.error p.diags t.Token.span "expected a stored property: 'var name: Type'";
