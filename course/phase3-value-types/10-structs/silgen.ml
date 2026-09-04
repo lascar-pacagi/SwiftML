@@ -79,9 +79,13 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       switch_to b merge;
       emit b (Sil.Load slot) Types.TBool
   | Ast.Binary (op, l, r, _) ->
-      let lv = gen_expr b l and rv = gen_expr b r in
-      let operand = if vty b lv = Types.TDouble || vty b rv = Types.TDouble then Types.TDouble else vty b lv in
-      emit b (Sil.Binop (op, lv, rv)) (result_ty op operand)
+      (* sema's `unify` lets an Int-literal tree adopt the other side's Double (`d * 2`, `2 * d`):
+         that side must be generated AT Double, or IRGen emits `fmul double %d, 2` and clang
+         rejects it. Re-generating a literal tree is safe — it has no side effects. *)
+      let lv = gen_expr b l in
+      let rv = if vty b lv = Types.TDouble then gen_expr_as b r Types.TDouble else gen_expr b r in
+      let lv = if vty b rv = Types.TDouble && vty b lv = Types.TInt then gen_expr_as b l Types.TDouble else lv in
+      emit b (Sil.Binop (op, lv, rv)) (result_ty op (vty b lv))
   | Ast.Call (f, args, _) ->
       let argvs = List.map (fun (_, e) -> gen_expr b e) args in
       if Hashtbl.mem b.structs f then emit b (Sil.Struct argvs) (Types.TStruct f) (* memberwise init *)

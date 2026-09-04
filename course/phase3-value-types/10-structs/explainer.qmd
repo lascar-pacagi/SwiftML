@@ -15,8 +15,9 @@ assigning a struct **copies** it, so changing the copy never affects the origina
 single biggest design difference from most languages, and you're about to make it real.
 
 - **You implement:** the value-type *lowering* — member **read** (`p.x`) and **write** (`p.x = e`)
-  in SILGen, and the struct instructions in IRGen. The front-end (parser, sema) is given.
-- **Outcome:** struct programs **run and match swiftc**, value semantics included.
+  in SILGen, and the struct instructions in IRGen. The front end (parser, sema) is given.
+- **Outcome:** struct programs **run and match swiftc**, value semantics included — the oracle
+  test compiles a 16-program corpus with both compilers and compares every byte of output.
 
 ## 2. Concepts in depth
 
@@ -79,21 +80,114 @@ swiftc emits these same instructions; the value/address split (`struct_extract` 
 `struct_element_addr`) is straight from real SIL — read `swift/lib/SILGen/SILGenConstructor.cpp` for
 the synthesized initializer and `swift/docs/SIL.rst` for the instructions.
 
+### The subset you are growing into
+
+**New lexemes.** Two punctuation marks and a keyword; the keyword table lives in `token.ml`
+(`keyword_or_ident`), the punctuation in `lexer.ml`:
+
+| spelling | token | notes |
+|---|---|---|
+| `struct` | `Token.Kw_struct` | a keyword, like `func` — it starts a top-level *item* |
+| `.` | `Token.Dot` | shares the `'.'` arm with `..<`: peek for `.` `<` first, else it is a `Dot` |
+| `;` | `Token.Newline` | Swift's statement separator; lexing it *as* a newline is what lets `struct P { var x: Int; var y: Int }` fit on one line |
+
+No new operator, so the precedence table is concept 07's — member access is **postfix**, applied
+after a primary is parsed and before any infix operator is considered, so it binds tighter than
+everything.
+
+**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05–09.
+Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (zero or more),
+`|` separates alternatives, and quoted text is a terminal.
+
+```
+program     ::= { item NEWLINE }
+item        ::= struct_decl                                        <-- new
+              | func_decl
+              | statement
+struct_decl ::= "struct" ident "{" { field NEWLINE } "}"           <-- new
+field       ::= ("var" | "let") ident ":" type                     <-- new
+
+statement   ::= ("let" | "var") ident [ ":" type ] "=" expr
+              | ident "=" expr
+              | ident "." ident "=" expr                           <-- new (member write)
+              | "if" expr block [ "else" ( block | if-statement ) ]
+              | "while" expr block
+              | "for" ident "in" expr "..<" expr block
+              | "break" | "continue" | "return" [ expr ]
+              | expr
+block       ::= "{" { statement NEWLINE } "}"
+type        ::= "Int" | "Double" | "Bool" | "String" | "Void"
+              | ident                                              <-- new (a struct name)
+
+expr        ::= or
+or          ::= and { "||" and }                                     (bp 3)
+and         ::= comparison { "&&" comparison }                       (bp 4)
+comparison  ::= cast { ("==" | "!=" | "<" | "<=" | ">" | ">=") cast } (bp 5)
+cast        ::= sum { "as" type }                                    (bp 7)
+sum         ::= product { ("+" | "-") product }                      (bp 10)
+product     ::= unary { ("*" | "/" | "%") unary }                    (bp 20)
+unary       ::= "-" unary | postfix
+postfix     ::= primary { "." ident }                              <-- new (member read)
+primary     ::= int | float | string | "true" | "false" | ident
+              | ident "(" [ arg { "," arg } ] ")"
+              | "(" expr ")"
+arg         ::= [ ident ":" ] expr                                 <-- new (argument labels)
+```
+
+Three things to notice. A `struct` declaration is an **item**, not a statement — like `func`, it is
+legal only at top level, so `parse_program` dispatches on `Kw_struct` and everything else still
+goes to `parse_stmt`. The member *write* is a **statement production**, not an assignment to an
+arbitrary expression: the parser commits to it on a four-token lookahead (`ident` `.` `ident` `=`),
+which is why `l.b.x = 1` — two levels deep — is not in this subset. And a call argument may now
+carry a **label**; the parser records it for every call, sema *checks* it only for a memberwise
+initializer (a `func` still takes its arguments positionally, concept 07's simplification).
+
+### The diagnostics sema owes you (given)
+
+You write no diagnostics in this concept — sema is given — but the lowering may assume every rule
+below has already fired, and `sema-structs.t` keeps them on record. Wording follows `swiftc
+-typecheck` where the subset lets it (`swift/include/swift/AST/DiagnosticsSema.def`, line numbers
+from the pinned snapshot); the differences are stated, not hidden.
+
+| program | our message | swiftc |
+|---|---|---|
+| `Point(1, 2)` | `missing argument label 'x:' in call` (one per argument) | `missing argument labels 'x:y:' in call` — one message, plural (`missing_argument_labels`, l.1642) |
+| `Point(z: 1, y: 2)` | `incorrect argument label in call (have 'z:', expected 'x:')` | `(have 'z:y:', expected 'x:y:')` — the whole label list (`wrong_argument_labels`, l.1646) |
+| `Point(y: 2, x: 1)` | two `incorrect argument label` errors | `argument 'x' must precede argument 'y'` (`argument_out_of_order_named_named`, l.1651) |
+| `Point(x: 1)` | `'Point' initializer expects 2 argument(s) but 1 given` | `missing argument for parameter 'y' in call` (`missing_argument_named`, l.1683) |
+| `Point(x: "s", y: 2)` | `cannot convert value of type 'String' to specified type 'Int'` | `… to expected argument type 'Int'` (`cannot_convert_argument_value`, l.382) — we reuse 05's `check_expr` wording |
+| `p.z`, `n.x` on an `Int` | `value of type 'Point' has no member 'z'` | **same** (`could_not_find_value_member`, l.70) |
+| `let p …; p.x = 5` | `cannot assign to property: 'p' is a 'let' constant` | **same** (`assignment_lhs_is_immutable_property`, l.5379); swiftc points at the member, we at the statement |
+| `struct S { let x: Int }; var s …; s.x = 2` | `cannot assign to property: 'x' is a 'let' constant` | **same** — a `let` field is immutable through every binding |
+| `p == q` on structs | `binary operator '==' cannot be applied to two 'Point' operands` | **same** (`cannot_apply_binop_to_same_args`, l.220) — no `Equatable` until Exercise 3 |
+| `let n: Int = p` | `cannot convert value of type 'Point' to specified type 'Int'` | **same** |
+| `Nope(x: 1)` | `cannot find 'Nope' in scope` | **same** |
+| `struct A {…}` twice | `invalid redeclaration of 'A'` | **same** (`invalid_redecl`, l.1110) |
+| `print(p)` on a struct | `cannot print a value of type 'Point' (only Int, Double, Bool and String)` | **accepted** — swiftc prints `Point(x: 1, y: 2)` through reflection; ours has no runtime to do it, so sema refuses instead of letting IRGen crash |
+
+Two more honest gaps of the v0 subset, both parser-level: a **nested write** `l.b.x = 1` is
+not parsed (`Set_member` is one level, `p.x = e`; swiftc accepts it — Exercise 1's `mutating`
+machinery is the natural place to generalize), and `print` of a `Double` goes through C's `%g`
+(`3` where swiftc prints `3.0`), which is why the oracle corpus keeps to `Int`/`Bool` fields.
+
 ## 3. Build it, step by step
 
 Front-end is done; fill the lowering.
 
-- **`silgen.ml`** — `TODO(10)`: in `gen_expr`, the `Member (e0, fld, _)` case: `gen_expr` the
-  sub-expression to a struct value, get its `Types.TStruct sn`, look up the layout
-  (`Hashtbl.find b.structs sn`), and emit `Sil.Struct_extract (value, Types.field_index sl fld)` of
-  type `Types.field_type sl fld`. In `gen_stmt`, the `Set_member { obj; field; value }` case: get
-  `obj`'s slot (`Hashtbl.find b.vars obj`), emit `Sil.Struct_element_addr (slot, index)`, then
-  `Sil.Store (value, addr)`.
-- **`irgen.ml`** — `TODO(10)`: lower `Struct` (a chain of `insertvalue`), `Struct_extract`
-  (`extractvalue`), and `Struct_element_addr` (`getelementptr … i32 0, i32 i`). The struct type is
-  `llty (vty …)`.
+- **`silgen.ml`** — two holes. In `gen_expr`, the `Member (e0, fld, _)` case is a **read**: lower
+  `e0` to a struct *value*, ask its type (`vty`) which struct it is, and turn the field *name* into an
+  *index* and a *type* through the layout in `b.structs` (`Types.field_index`, `Types.field_type`);
+  the result is one `Sil.Struct_extract`. In `gen_stmt`, the `Set_member { obj; field; value }` case
+  is a **write**: the variable's own slot is in `b.vars`, and its type names the struct; take the
+  field's address with `Sil.Struct_element_addr` and `Sil.Store` the value through it. Generate the
+  value first — that is the order swiftc uses, and the tests print the SIL.
+- **`irgen.ml`** — one hole, three instructions: `Struct` is a chain of `insertvalue` starting
+  from `undef` (each step names the previous register, the last one is the value); `Struct_extract`
+  is `extractvalue`; `Struct_element_addr` is `getelementptr <struct ty>, ptr <slot>, i32 0, i32 i`.
+  `llty (vty v)` gives the LLVM type of any value; `fresh ()` a register; `opnd` maps a SIL value to
+  its LLVM operand.
 
-Reference: `solution/`.
+Reference: `solution/` — after you have tried it.
 
 ## 4. Test it
 
@@ -101,10 +195,40 @@ Reference: `solution/`.
 make lab C=phase3-value-types/10-structs
 ```
 
-The cram test **builds and runs** struct programs and checks output — including the value-semantics
-program (`q.x = 99` → `p.x` still `1`), proving copies are independent — and FileChecks the aggregate
-IR. The alcotest pins the sema rules (init labels/arity, member typing, `let`-field assignment) and
-the emitted `insertvalue`/`extractvalue`/`getelementptr`.
+Every `.t` file calls `./lab.exe`, built from **this directory's** library, so the report is about
+your code here. In the order you fill the holes:
+
+- `sema-structs.t` — `--typecheck`: the given rules from the table above, green from the start.
+  It is the contract the lowering may rely on (no `p.x` on a non-struct reaches SILGen).
+- `silgen-member-read.t` — `--emit-sil`: `p.x` is a `load` then `struct_extract … #0`; `p.y` is
+  `#1` with its type; a field of a fresh `Point(…)` or of a call result extracts with no load; a
+  nested `l.b.x` is two extracts; a read inside a function goes through the parameter's slot. No
+  case writes a field, so this file goes green with the read hole alone.
+- `silgen-member-write.t` — `--emit-sil`: `p.x = 9` is `struct_element_addr %slot, #0` and a
+  `store`; the value is generated before the address; two writes share one slot; after `var q = p`
+  the write addresses **q's** slot (value semantics, visible in the SIL); a write in a loop. No case
+  reads a field.
+- `irgen-structs.t` — `--emit-llvm` then `build`: the named type, the `insertvalue` chain (this
+  first case needs no silgen hole), nested and mixed-type aggregates, `extractvalue`,
+  `getelementptr`; then programs **run**: 3/4, the value-semantics `1`/`99`, by-value argument,
+  struct result, field writes in a loop, and the `Double`-field case that pins a miscompile.
+- `test_structs.ml` (alcotest `structs`) — the same four groups in-process: `sema-structs`
+  (given — its four cases pass on the skeleton), `silgen-member-read`, `silgen-member-write`,
+  `irgen-structs`.
+- `oracle.t` — **the headline**, in two halves. The runtime half compiles the 16 programs of
+  `oracle-corpus.txt` (value semantics, copies of nested structs, structs into and out of
+  functions, field writes in loops, Bool fields) with `swiftc -Onone` and with `./lab.exe build`,
+  runs both binaries, and demands identical stdout and exit code; when ours refuses with a
+  `TODO(` the loop stops, so it stays red until the last hole is filled. The front-end half asks
+  `swiftc -typecheck` and `./lab.exe --typecheck` for a verdict on the 20 programs of
+  `typecheck-corpus.txt` — six well-formed, fourteen the struct rules must refuse — and they must
+  agree; that half needs no lowering, so it is green from the start.
+
+A hole you have not started shows as `TODO` with the list of what it will check; a hole in
+progress shows `FAIL` with, under each failing case, what the test wants and what your code
+printed. On the untouched skeleton the two silgen files and `irgen-structs.t` are `TODO`,
+`sema-structs.t` is `PASS`, `oracle.t` is `FAIL` with its front-end half already `OK`, and the
+alcotest is `FAIL` with its four sema cases `OK`.
 
 ## 5. Benchmark it
 
@@ -121,7 +245,7 @@ SIL optimizer (Phase 4) elides many copies outright. Our naive per-field copy is
 2. **Computed properties.** `var area: Int { return w * h }` — a property with a getter, lowered to a
    call, not a stored field. Distinguish stored vs. computed in the layout.
 3. **`Equatable`.** Synthesize `==` for a struct (compare fields pairwise) — a first taste of Swift's
-   protocol-conformance synthesis (full protocols are Phase 6).
+   protocol-conformance synthesis (full protocols are Phase 5, concept 21).
 
 ## 7. Recap & what's next
 
@@ -200,5 +324,5 @@ access.
 When a struct is used with `==`, synthesize a function that returns the `&&` of `a.fᵢ == b.fᵢ` over all
 fields. Register it so `infer_binary`'s `Eq` case accepts two `TStruct sn` operands. This is the
 gentlest case of Swift's *derived conformances*; the general mechanism (protocols + witness tables) is
-Phase 6.
+Phase 5 (concept 21).
 ```

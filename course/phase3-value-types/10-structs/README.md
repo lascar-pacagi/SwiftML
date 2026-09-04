@@ -33,12 +33,17 @@ typing, memberwise-init checking, member assignment).
 - **Value semantics** for free: a struct lives in its own `alloc_stack` slot, and `var q = p` copies
   the aggregate (`load` + `store`), so `q` and `p` are independent.
 
-> **Scope (v0).** Stored properties + memberwise init + access + value semantics. **Methods** (with
-> `self`), `mutating`, and computed properties are v1 (Exercise 1). Runtime fields are `Int`/`Bool`
-> (the Phase-2 corpus).
+> **Scope (v0).** Stored properties (`var` and `let` — a `let` field rejects assignment through any
+> binding) + memberwise init + access + value semantics. **Methods** (with `self`), `mutating`, and
+> computed properties are v1 (Exercise 1). Member writes are one level deep (`p.x = e`, not
+> `l.b.x = e`); `print` takes a scalar, not a whole struct (swiftc prints `Point(x: 1, y: 2)`) —
+> see the explainer's diagnostics table for the honest list. The runtime corpus keeps to `Int`/`Bool`
+> fields (`Double` prints through `%g`).
 
 ## Done when
 
-`make lab C=phase3-value-types/10-structs` is green: the cram test **builds and runs** struct
-programs — proving value semantics (`q.x = 99` leaves `p.x` unchanged) — and the alcotest pins the
-sema rules and the aggregate IR. Output matches `swiftc`.
+`make lab C=phase3-value-types/10-structs` is green: one cram file per hole
+(`silgen-member-read.t`, `silgen-member-write.t`, `irgen-structs.t`, each `TODO` until you start
+it), the alcotest's four groups, and `oracle.t` — every program in `oracle-corpus.txt` compiled by
+`swiftc` and by `./lab.exe build`, run, and compared byte for byte (value semantics: `q.x = 99`
+leaves `p.x` unchanged; structs into and out of functions; nested structs; writes in loops).

@@ -1,6 +1,11 @@
-(* FROZEN SOLUTION — concept 07 sema: concepts 05–06 + functions.
+(* Sema — concept 10 (given): concepts 05–07 + structs.
 
-   New vs 06:
+   New vs 07: a struct registry (PASS 0), member typing, the memberwise initializer's
+   label/arity/type checks, member assignment (`p.x = e` needs a `var` binding AND a `var`
+   field), and two guards for what the back end can lower: `==` is only defined on the scalar
+   types, and `print` only takes them (swiftc prints any value — an honest divergence, §2).
+
+   Inherited from 07:
      - a function-signature table built in a FIRST PASS (so calls, recursion, and forward
        references all resolve), then bodies checked in a second pass
      - call checking: arity + each argument against its parameter type; result = return type
@@ -15,6 +20,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
   let current_ret : Types.ty option ref = ref None in
   let funcs : (string, Types.ty list * Types.ty) Hashtbl.t = Hashtbl.create 16 in
   let structs : (string, Types.struct_layout) Hashtbl.t = Hashtbl.create 16 in
+  let let_fields : (string * string, unit) Hashtbl.t = Hashtbl.create 16 in (* (struct, `let` field) *)
   let err span msg = Diagnostics.error diags span msg in
   let lookup x = List.assoc_opt x !env in
   let bind name v = env := (name, v) :: !env in
@@ -118,7 +124,11 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         match unify l tl r tr with Some ((Types.TInt | Types.TDouble) as t) -> t | _ -> bad ())
     | Ast.Mod -> ( match unify l tl r tr with Some Types.TInt -> Types.TInt | _ -> bad ())
     | Ast.Eq | Ast.Ne -> (
-        match unify l tl r tr with Some _ -> Types.TBool | None -> ignore (bad ()); Types.TBool)
+        (* `==` on a struct needs an Equatable conformance (Exercise 3); swiftc rejects it with
+           the two-operands wording, and so do we — the back end has no aggregate compare *)
+        match unify l tl r tr with
+        | Some (Types.TInt | Types.TDouble | Types.TBool | Types.TString) -> Types.TBool
+        | _ -> ignore (bad ()); Types.TBool)
     | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge -> (
         match unify l tl r tr with
         | Some (Types.TInt | Types.TDouble | Types.TString) -> Types.TBool
@@ -140,7 +150,14 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         | None ->
             if f = "print" then (
               (match exprs with
-              | [ a ] -> ignore (infer a)
+              | [ a ] -> (
+                  (* IRGen prints the scalar types only; swiftc would print `Point(x: 1, y: 2)` *)
+                  match infer a with
+                  | Types.TInt | Types.TDouble | Types.TBool | Types.TString -> ()
+                  | t ->
+                      err (Ast.expr_span a)
+                        (Printf.sprintf "cannot print a value of type '%s' (only Int, Double, Bool and String)"
+                           (Types.string_of_ty t)))
               | _ ->
                   err span "print(_:) expects exactly one argument";
                   List.iter (fun a -> ignore (infer a)) exprs);
@@ -221,8 +238,11 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         | Some (Types.TStruct sn, is_var) -> (
             match Option.bind (Hashtbl.find_opt structs sn) (fun sl -> Types.field_type sl field) with
             | Some ft ->
-                if not is_var then
-                  err span (Printf.sprintf "cannot assign to property '%s': '%s' is a 'let' constant" field obj);
+                (* swiftc's `diag::assignment_lhs_is_immutable_property`: the binding first, then
+                   the field — a `let` field is immutable through every binding *)
+                if not is_var then err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" obj)
+                else if Hashtbl.mem let_fields (sn, field) then
+                  err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" field);
                 check_expr value ft
             | None ->
                 err span (Printf.sprintf "value of type '%s' has no member '%s'" sn field);
@@ -292,6 +312,9 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
           let fields =
             List.map (fun (fl : Ast.field) -> (fl.Ast.fld_name, resolve_ty s.Ast.sspan fl.Ast.fld_ty)) s.Ast.sfields
           in
+          List.iter
+            (fun (fl : Ast.field) -> if not fl.Ast.fld_var then Hashtbl.replace let_fields (s.Ast.sname, fl.Ast.fld_name) ())
+            s.Ast.sfields;
           Hashtbl.replace structs s.Ast.sname { Types.sl_name = s.Ast.sname; sl_fields = fields }
       | _ -> ())
     prog.Ast.items;

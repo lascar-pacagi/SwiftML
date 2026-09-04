@@ -1,0 +1,20 @@
+struct Point {\n  var x: Int\n  var y: Int\n}\nlet p = Point(x: 1, y: 2)\nprint(p.x + p.y)
+struct S {\n  let x: Int\n  var y: Int\n}\nvar s = S(x: 1, y: 2)\ns.y = 3\nprint(s.x + s.y)
+struct Point {\n  var x: Int\n  var y: Int\n}\nstruct Line {\n  var a: Point\n  var b: Point\n}\nlet l = Line(a: Point(x: 1, y: 2), b: Point(x: 3, y: 4))\nprint(l.b.x)
+struct Point {\n  var x: Int\n  var y: Int\n}\nfunc sum(_ p: Point) -> Int { return p.x + p.y }\nfunc mk() -> Point { return Point(x: 1, y: 2) }\nprint(sum(mk()))
+struct Cell {\n  var n: Int\n  var alive: Bool\n}\nvar c = Cell(n: 1, alive: false)\nc.alive = true\nif c.alive { print(c.n) }
+struct Point {\n  var x: Int\n  var y: Int\n}\nvar p = Point(x: 0, y: 0)\nvar q = p\nq.x = 9\nprint(p.x + q.x)
+struct Point {\n  var x: Int\n  var y: Int\n}\nlet p = Point(1, 2)
+struct Point {\n  var x: Int\n  var y: Int\n}\nlet p = Point(z: 1, y: 2)
+struct Point {\n  var x: Int\n  var y: Int\n}\nlet p = Point(y: 2, x: 1)
+struct Point {\n  var x: Int\n  var y: Int\n}\nlet p = Point(x: 1)
+struct Point {\n  var x: Int\n  var y: Int\n}\nlet p = Point(x: "s", y: 2)
+struct Point {\n  var x: Int\n  var y: Int\n}\nlet p = Point(x: 1, y: 2)\nprint(p.z)
+let n = 3\nprint(n.x)
+struct Point {\n  var x: Int\n  var y: Int\n}\nlet p = Point(x: 1, y: 2)\np.x = 5
+struct S {\n  let x: Int\n  var y: Int\n}\nvar s = S(x: 1, y: 2)\ns.x = 2
+struct Point {\n  var x: Int\n  var y: Int\n}\nlet p = Point(x: 1, y: 2)\nlet q = p\nprint(p == q)
+struct Point {\n  var x: Int\n  var y: Int\n}\nlet p = Point(x: 1, y: 2)\nlet n: Int = p
+struct Point {\n  var x: Int\n  var y: Int\n}\nlet p = Nope(x: 1)
+struct A {\n  var v: Int\n}\nstruct A {\n  var w: Int\n}
+struct A {\n  var v: Nope\n}
