@@ -103,16 +103,21 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       switch_to b merge;
       emit b (Sil.Load slot) Types.TBool
   | Ast.Binary (op, l, r, _) ->
-      let lv = gen_expr b l and rv = gen_expr b r in
+      let lv = gen_expr b l in
       (match vty b lv with
       | Types.TEnum _ when op = Ast.Eq || op = Ast.Ne ->
           (* enum equality is tag comparison (payload-free enums only — see sema) *)
+          let rv = gen_expr b r in
           let lt = emit b (Sil.Enum_tag lv) Types.TInt in
           let rt = emit b (Sil.Enum_tag rv) Types.TInt in
           emit b (Sil.Binop (op, lt, rt)) Types.TBool
       | _ ->
-          let operand = if vty b lv = Types.TDouble || vty b rv = Types.TDouble then Types.TDouble else vty b lv in
-          emit b (Sil.Binop (op, lv, rv)) (result_ty op operand))
+          (* sema's `unify` lets an Int-literal tree adopt the other side's Double (`d * 2`,
+             `2 * d`): that side must be generated AT Double, or IRGen emits `fmul double %d, 2`
+             and clang rejects it. Re-generating a literal tree is safe — it has no side effects. *)
+          let rv = if vty b lv = Types.TDouble then gen_expr_as b r Types.TDouble else gen_expr b r in
+          let lv = if vty b rv = Types.TDouble && vty b lv = Types.TInt then gen_expr_as b l Types.TDouble else lv in
+          emit b (Sil.Binop (op, lv, rv)) (result_ty op (vty b lv)))
   | Ast.Call (f, args, _) ->
       if Hashtbl.mem b.structs f then (
         (* a struct field may be optional, so wrap each argument to its field type *)
@@ -179,11 +184,23 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
 
 (* lower `e` where an optional is expected — concept 13 *)
 and gen_expr_as (b : builder) (e : Ast.expr) (expected : Types.ty) : Sil.value =
-  (* TODO(13): the IMPLICIT WRAP — where a `T?` is expected, `nil` becomes `.none`, an already
-     optional value passes through, and anything else is wrapped as `.some`. This is the one
-     place the enum-as-sugar story becomes code; §2 has the table. *)
-  ignore expected;
-  gen_expr b e
+  match (e, expected) with
+  (* GIVEN (concept 05): an integer literal that CHECKS at Double is born a Double. Without this
+     the slot has type Double but receives an i64 bit-pattern, and `let d: Double = 1` reads back
+     as 4.94e-324. The recursion mirrors sema's `is_int_literal`: the whole literal tree flexes. *)
+  | Ast.Int_lit (n, _), Types.TDouble -> emit b (Sil.Float_lit (float_of_int n)) Types.TDouble
+  | Ast.Unary (op, e0, _), Types.TDouble ->
+      let v = gen_expr_as b e0 Types.TDouble in
+      emit b (Sil.Unop (op, v)) Types.TDouble
+  | Ast.Binary (((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div) as op), l, r, _), Types.TDouble ->
+      let lv = gen_expr_as b l Types.TDouble and rv = gen_expr_as b r Types.TDouble in
+      emit b (Sil.Binop (op, lv, rv)) Types.TDouble
+  | _, Types.TOptional _ ->
+      (* TODO(13): the IMPLICIT WRAP — where a `T?` is expected, `nil` becomes `.none`, an already
+         optional value passes through unchanged, and anything else is wrapped as `.some`. This is
+         the one place the enum-as-sugar story becomes code; §2 has the table. *)
+      failwith "TODO(13-silgen): wrap a value into an optional (.none / .some)"
+  | _ -> gen_expr b e
 
 (* --- lowering statements; gen_block stops after a terminator (dead code) --- *)
 let rec gen_block (b : builder) (stmts : Ast.stmt list) : unit =
@@ -214,15 +231,15 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       ignore (emit b (Sil.Store (v, slot)) Types.TVoid)
   | Ast.Set_member { obj; field; value; _ } ->
       (* `p.x = e`: take the field's ADDRESS in p's slot, then store — this is what makes a
-         struct a value type, since p has its own slot distinct from any copy *)
-      let v = gen_expr b value in
+         struct a value type, since p has its own slot distinct from any copy. The value is
+         generated AT THE FIELD'S type, so `box.v = nil` on a `var v: Int?` stores `.none`
+         rather than whatever `nil` would be on its own (which is nothing at all). *)
       let slot = Hashtbl.find b.vars obj in
       let sn = match vty b slot with Types.TStruct sn -> sn | _ -> assert false in
       let sl = Hashtbl.find b.structs sn in
-      let faddr =
-        emit b (Sil.Struct_element_addr (slot, Option.get (Types.field_index sl field)))
-          (Option.get (Types.field_type sl field))
-      in
+      let fty = Option.get (Types.field_type sl field) in
+      let v = gen_expr_as b value fty in
+      let faddr = emit b (Sil.Struct_element_addr (slot, Option.get (Types.field_index sl field))) fty in
       ignore (emit b (Sil.Store (v, faddr)) Types.TVoid)
   | Ast.Expr_stmt (e, _) -> ignore (gen_expr b e)
   | Ast.Return (eo, _) -> (

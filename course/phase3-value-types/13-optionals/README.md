@@ -31,10 +31,16 @@ layout, why `Optional<ptr>` is pointer-sized); the Swift runtime's force-unwrap 
   same "Fatal error: Unexpectedly found nil…" message as swiftc.
 
 > **Scope (v0).** `Int?`/`Bool?`/struct?/etc. (monomorphized — we have no generics until Phase 6).
-> Optional chaining (`a?.b`), implicitly-unwrapped `T!`, and `guard let` are exercises.
+> Optional chaining (`a?.b`), implicitly-unwrapped `T!`, and `guard let` are exercises. Two rules
+> are stricter than swiftc and stay out of the oracle: `print` of an optional (swiftc prints
+> `Optional(5)`) and `a == b` between two optionals (swiftc synthesizes it from `Equatable`) — the
+> explainer's diagnostics table lists the honest set.
 
 ## Done when
 
-`make lab C=phase3-value-types/13-optionals` is green: the cram test **builds and runs** optional
-programs — `if let`/`??`/`!`/`== nil` — **and the force-unwrap trap matches swiftc's exit code (133)**;
-the alcotest pins the sema rules and the `{ tag, payload }`/trap IR. Output matches `swiftc`.
+`make lab C=phase3-value-types/13-optionals` is green: one cram file per hole (`silgen-wrap.t`,
+`silgen-force-unwrap.t`, `silgen-coalesce.t`, `silgen-iflet.t`, each `TODO` until you start it)
+beside the given `sema-optionals.t` and the end-to-end `run-optionals.t`, the alcotest's five
+groups, and `oracle.t` — 15 programs compiled by `swiftc` and by `./lab.exe build`, run, and
+compared byte for byte; the force-unwrap trap's **exit 133** and message checked against swiftc's
+own; and 16 more where `swiftc -typecheck` and `--typecheck` must reach the same verdict.

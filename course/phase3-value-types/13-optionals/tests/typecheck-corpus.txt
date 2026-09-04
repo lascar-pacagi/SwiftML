@@ -1,0 +1,16 @@
+let a: Int? = 5\nlet b: Int? = nil\nif let v = a { print(v) }\nprint(b ?? 99)\nprint(a!)\nprint(a == nil)
+func f(_ n: Int) -> Int? {\n  if n < 0 { return nil }\n  return n * 2\n}\nprint(f(3) ?? 0)
+struct Box {\n  var v: Int?\n  var n: Int\n}\nvar b = Box(v: 3, n: 1)\nb.v = nil\nprint(b.v ?? -1)
+func g(_ o: Int?) -> Int {\n  if let v = o { return v + 1 }\n  return 0\n}\nprint(g(41))\nprint(g(nil))
+var x: Int? = 5\nx = 7\nx = nil\nprint(x ?? 0)
+let a: Int? = 4\nlet b = a ?? 0\nlet c: Int? = b\nprint(c!)
+let n = 5\nprint(n!)
+let a: Int? = 5\nlet b: Bool = a ?? false
+let a: Int? = 5\nlet n: Int = a
+let a: Int? = 5\nprint(a + 1)
+let n: Int = nil
+let a: Int? = 5\nif let v = 3 { print(v) }
+var x: Int? = 5\nx = true
+func f() -> Int? {\n  return true\n}\nprint(f() ?? 0)
+let a: Int? = 5\nlet b: Int? = 6\nprint(a + b)
+let a: Int? = "s"

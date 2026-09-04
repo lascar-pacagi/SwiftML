@@ -60,6 +60,78 @@ whose terminator is `Sil.Trap msg`. IRGen lowers `Trap` to a `write(2, …)` of 
 This is the parity gotcha the CLAUDE notes warn about — trap message and exit code — and getting it
 right is a real test of "behaves like swiftc," not just "computes the same numbers."
 
+### The subset you are growing into
+
+**New lexemes.** One keyword and two punctuation marks, and both marks share their first
+character with an operator that already exists — maximal munch decides:
+
+| spelling | token | notes |
+|---|---|---|
+| `nil` | `Token.Kw_nil` | a keyword, in `token.ml`'s `keyword_or_ident` |
+| `?` | `Token.Question` | one character; `??` is *two* `Question`s, which the parser matches by peeking, so there is no `QuestionQuestion` token |
+| `!` | `Token.Bang` | the `'!'` arm peeks for `=` first: `!=` is `Ne`, a lone `!` is `Bang`. Concept 05 lexed a bare `!` as an error; now it has a meaning |
+
+**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05–12.
+Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (zero or more),
+`|` separates alternatives, and quoted text is a terminal.
+
+```
+statement   ::= "if" "let" ident "=" expr block                    <-- new
+                  [ "else" ( block | if-statement ) ]
+              | "if" expr block [ "else" ( block | if-statement ) ]
+              | switch_stmt
+              | ("let" | "var") ident [ ":" type ] "=" expr
+              | ident "=" expr | ident "." ident "=" expr
+              | "while" expr block
+              | "for" ident "in" expr "..<" expr block
+              | "break" | "continue" | "return" [ expr ]
+              | expr
+type        ::= ident [ "?" ]                                      <-- the "?" is new
+                (ident = "Int" | "Double" | "Bool" | "String" | "Void" | a struct or enum name)
+
+expr        ::= ternary
+ternary     ::= coalesce [ "?" expr ":" ternary ]                    (bp 2)
+coalesce    ::= or { "??" or }                                       (bp 6)   <-- new
+or          ::= and { "||" and }                                     (bp 3)
+and         ::= comparison { "&&" comparison }                       (bp 4)
+comparison  ::= cast { ("==" | "!=" | "<" | "<=" | ">" | ">=") cast } (bp 5)
+cast        ::= sum { "as" type }                                    (bp 7)
+sum         ::= product { ("+" | "-") product }                      (bp 10)
+product     ::= unary { ("*" | "/" | "%") unary }                    (bp 20)
+unary       ::= "-" unary | postfix
+postfix     ::= primary { "." ident [ "(" [ arg { "," arg } ] ")" ] | "!" }   <-- the "!" is new
+primary     ::= int | float | string | "true" | "false" | "nil"    <-- "nil" is new
+              | ident | ident "(" [ arg { "," arg } ] ")" | "(" expr ")"
+```
+
+Three things to notice. `T?` is written in the *type* position and nowhere else — the parser
+appends the `?` to the type NAME (`"Int?"`), so the whole written-type pipeline stays a string and
+sema resolves it. A single `?` in infix position is the **ternary** and a doubled one is `??`, told
+apart by one token of lookahead; `??` binds at 6, looser than arithmetic and comparison but tighter
+than `&&`, and it is **right**-associative, so `a ?? b ?? c` is `a ?? (b ?? c)`. And `if let` is a
+statement form of its own, not an `if` with a funny condition: `parse_if` peeks for `let` right
+after the keyword and builds `Ast.If_let`, which is why the binding can be scoped to the then-block.
+
+### The diagnostics sema owes you (given)
+
+You write no diagnostics in this concept — sema is given — but the lowering may assume every rule
+below has already fired, and `sema-optionals.t` keeps them on record. Wording follows `swiftc
+-typecheck` where the subset lets it (`swift/include/swift/AST/DiagnosticsSema.def`, line numbers
+from the pinned snapshot); the differences are stated, not hidden.
+
+| program | our message | swiftc |
+|---|---|---|
+| `let n: Int = nil` | `'nil' cannot be used with a non-optional type 'Int'` | `'nil' cannot initialize specified type 'Int'` (`cannot_convert_initializer_value_nil`, l.331) — same verdict, one sentence apart |
+| `let n = 5; n!` | `cannot force-unwrap a non-optional value of type 'Int'` | `cannot force unwrap value of non-optional type 'Int'` (`invalid_force_unwrap`, l.1401) — ours says the same thing in a different order |
+| `if let v = 3` | `initializer for conditional binding must have Optional type, not 'Int'` | **same** (`condition_optional_element_pattern_not_valid_type`, l.5634) |
+| `let n: Int = a` for `a: Int?` | `cannot convert value of type 'Int?' to specified type 'Int'` | `value of optional type 'Int?' must be unwrapped to a value of type 'Int'` (`optional_not_unwrapped`, l.1542), plus fix-its offering `!` and `??` — the same refusal, and a much friendlier one |
+| `a + 1` for `a: Int?` | `binary operator '+' cannot be applied to operands of type 'Int?' and 'Int'` | `optional_not_unwrapped` again — swiftc blames the optional operand, we blame the operator |
+| `a ?? false` for `a: Int?` | `cannot convert value of type 'Bool' to specified type 'Int'` | `cannot convert value of type 'Int?' to expected argument type 'Bool?'` — `??` is a real generic operator in Swift, so its message is a call's, and it blames the other operand |
+| `let a: Int? = "s"` | `cannot convert value of type 'String' to specified type 'Int'` | **same** — both name what the optional wraps |
+| `a == b` for two `Int?` | `binary operator '==' cannot be applied to two 'Int?' operands` | **accepted** — swiftc gets `==` on `Optional` from a conditional `Equatable` conformance we do not synthesize; the back end has no aggregate compare, so we refuse |
+| `print(a)` for `a: Int?` | `cannot print a value of type 'Int?' (only Int, Double, Bool and String)` | **accepted** — swiftc prints `Optional(5)` through reflection; ours has no runtime to do it |
+| `x!` on a `nil` | *(no diagnostic)* | *(no diagnostic)* — force-unwrap is a **runtime** check in both: the same sentence on stderr, the same exit 133, and only swiftc's carries a `file:line:` prefix |
+
 ### Why optionals beat `null`
 
 The point of all this machinery: a `T?` is a *different type* from `T`. You can't accidentally use a
@@ -72,20 +144,30 @@ unoptimized `{ tag, payload }`.)
 
 ## 3. Build it, step by step
 
-All in `silgen.ml`, all on top of the enum instructions:
+Everything is in `silgen.ml`, and everything is built out of the enum instructions concept 11
+already gave you — `Sil.Enum` to construct, `Sil.Enum_tag` to read the discriminant,
+`Sil.Enum_payload` to read a value out. The parser, sema and IRGen are given. Four holes, in
+this order, because the first one is what builds the optionals the other three take apart:
 
-- `gen_expr_as` — `TODO(13)`: when `expected` is `Types.TOptional t`, lower `nil` to `Sil.Enum (0, [])`,
-  pass through an already-optional value, and wrap any other `v : t` as `Sil.Enum (1, [v])`. Otherwise
-  `gen_expr`.
-- `Force_unwrap` — `TODO(13)`: gen the optional `ov`; `Enum_tag`; `cond_br (tag == 1)` to a cont-block
-  (`Enum_payload (ov, 0)` is the result) or a trap-block (`terminate` with `Sil.Trap "Fatal error:
-  Unexpectedly found nil while unwrapping an Optional value"`).
-- `Coalesce` — `TODO(13)`: `alloc_stack` a result slot; on the some-path store `Enum_payload`, on the
-  none-path store `gen_expr_as b default t`; both `Br` to a merge; load the slot.
-- `If_let` — `TODO(13)`: like `if`, but the condition is `Enum_tag == 1`; in the then-block bind the
-  payload (`Enum_payload` → `alloc_stack` + `store`) before the body.
+- **`gen_expr_as`, `TODO(13)` — the IMPLICIT WRAP.** Where the expected type is a `Types.TOptional`,
+  three cases have to be told apart: `nil`, a value that is already that optional, and a bare `T`.
+  Two of them emit an `Enum`; one emits nothing of its own. Everything else falls through to
+  `gen_expr`, and the `Double`-literal arms above are given. Every other hole depends on this one,
+  and so does `Let`, `Assign`, `Return`, a call argument and a struct field — they all call here.
+- **`Force_unwrap`, `TODO(13)`.** Read the tag, branch. On the good side the result is the payload;
+  the other side never returns — end that block with `Sil.Trap` carrying Swift's own sentence,
+  quoted in §2 above. A `Trap` is a *terminator*, so the block that follows the test is where the
+  rest of the statement is generated.
+- **`Coalesce`, `TODO(13)`.** `a ?? b` is a value-producing diamond, the same shape `&&` uses just
+  above it in the file: a slot both arms store into and one `load` after the merge. The default
+  must be generated **inside** the else block — that is what makes `??` short-circuit — and it is
+  generated *at the result's type*, so `x ?? nil` still type-checks the way sema said it would.
+- **`If_let`, `TODO(13)`.** An `if` whose condition is the tag test, and whose then-block *opens*
+  by reading the payload into a slot registered under the bound name. Compare the `If` case a few
+  lines below and the `switch` dispatch of concept 12 — this is the same construction with one
+  binding in front.
 
-Reference: `solution/silgen.ml`.
+Reference: `solution/silgen.ml` — after you have tried it.
 
 ## 4. Test it
 
@@ -93,10 +175,41 @@ Reference: `solution/silgen.ml`.
 make lab C=phase3-value-types/13-optionals
 ```
 
-The cram test **builds and runs** optional programs (`if let`/`??`/`!`/`== nil`, a `-> Int?` function)
-**and checks the trap's exit code is 133**, like swiftc. The alcotest pins the sema rules (force-unwrap
-on a non-optional, `nil` to a non-optional, `if let` on a non-optional) and the `{ tag, payload }` /
-`@llvm.trap` IR.
+Every `.t` file calls `./lab.exe`, built from **this directory's** library, so the report is about
+your code here. In the order you fill the holes:
+
+- `sema-optionals.t` — `--typecheck`: the given rules from the table above, green from the start.
+  It is the contract the lowering may rely on (no bare `nil`, no `!` on an `Int`, no `if let` on a
+  non-optional ever reaches SILGen).
+- `silgen-wrap.t` — `--emit-sil`, the first hole: `.some` at an annotated `let`, `.none` for `nil`,
+  the wrap on assignment to a `var` and to a struct FIELD (two once-shipped miscompiles), at every
+  `return` of a `-> Int?`, at a call argument, in a memberwise initializer — and the case that says
+  an already-optional value is wrapped once, not twice. It uses none of `!`, `??` or `if let`.
+- `silgen-force-unwrap.t` — `--emit-sil`, the second hole: the tag test, the payload on the taken
+  side, `trap "Fatal error: …"` on the other, the trap as a terminator, `f(3)!` on a call result,
+  and two `!` giving two independent traps.
+- `silgen-coalesce.t` — `--emit-sil`, the third hole: the diamond and its `coalesce` slot, the
+  default generated inside the else block (short-circuiting), composition with arithmetic, two `??`
+  in one expression, `??` on a call result.
+- `silgen-iflet.t` — `--emit-sil`, the fourth hole: the tag test, the payload bound into a slot of
+  its own inside the arm, the `else` join, `if let` on a call result, and one inside a loop.
+- `run-optionals.t` — `build` and run: all four forms together, a `-> Int?` function, the
+  reassignment regression, an optional struct field under a value-semantics copy, optionals in a
+  loop, and the **trap**: exit 133 and Swift's message on stderr.
+- `test_optionals.ml` (alcotest `optionals`) — the same five groups in-process: `sema-optionals`
+  (given — its three cases pass on the skeleton), then one per silgen hole.
+- `oracle.t` — **the headline**, in three parts. 15 programs of `oracle-corpus.txt` built by
+  `swiftc -Onone` and by `./lab.exe build`, run, stdout and exit code compared byte for byte; the
+  force-unwrap trap on its own, because the two messages differ by swiftc's `file:line:` prefix and
+  the comparison strips it; and 16 programs of `typecheck-corpus.txt` where `swiftc -typecheck` and
+  `--typecheck` must reach the same verdict. That last part needs no lowering, so it is green from
+  the start.
+
+A hole you have not started shows as `TODO` with the list of what it will check; a hole in
+progress shows `FAIL` with, under each failing case, what the test wants and what your code
+printed. On the untouched skeleton the four silgen files and `run-optionals.t` are `TODO`,
+`sema-optionals.t` is `PASS`, `oracle.t` is `FAIL` with its front-end part already `OK`, and the
+alcotest is `FAIL` with its three sema cases `OK`.
 
 ## 5. Benchmark it
 
