@@ -11,6 +11,8 @@ bugs shipped GREEN. The pattern is the same every time: *passing ⟹ correct onl
 exercise the idiom.* Three such bugs were caught **only** by running classical whole programs.
 
 Legend:  **[FIXED]** corrected + verified this pass · **[OPEN]** documented, not yet fixed.
+Findings marked *concept-review pass* were closed later, during the per-concept review of
+2026-09-03/04 (one commit per concept; see `git log`).
 Severity: **S1** wrong output / crash / miscompile · **S2** shipped-state / carry-forward · **S3**
 parity divergence (often a documented v0 limit) · **S4** docs / pedagogy.
 
@@ -70,13 +72,14 @@ them. Masked because **every** phase-6 program uses the bare form `id = i`.
   mirroring the bare-field store (take_ownership / Load_take old / Destroy_value, gated on `in_init`).
   Add a `self.field =` case to the 26/27 corpora (the gap that let it ship).
 
-### 5. `14-memory-layout` crashes on every optional program  **[OPEN]** *(phase 3–4 review)*
+### 5. `14-memory-layout` crashes on every optional program  **[FIXED — concept-review pass 4f499d6]**
 Concept 14 is phase-3's latest leaf, so `swiftml3` links it — but its carried `silgen.ml` still has
 concept-13's `TODO(13)` holes unfilled (`Force_unwrap`/`Coalesce`/`If_let` = `failwith`, `Nil` =
 `assert false`). So `x!`, `x ?? d`, `if let` all crash through `swiftml3`. The concept-14 lab stays
 green because it only tests `--emit-layout`. Same class as the 30→31 gap.
-- *Fix:* backport concept-13's solution `silgen.ml` (0 TODOs) into 14's carried skeleton + its
-  `solution/`.
+- *Fixed:* concept-13's lowering was backported into 14's carried skeleton and `solution/`, and
+  14's `lab.ml` widened to swiftml3's full mode set so a cram case can exercise it. Verified:
+  `dune exec swiftml3 -- build` on `if let` / `??` / `!` now matches swiftc.
 
 ### 6. Integer divide / remainder by zero is UB, not a trap  **[OPEN]** *(phases 3–4 & 2 reviews)*
 IRGen lowers `Div`/`Mod` to bare `sdiv`/`srem` with no zero check; `let b=0; print(a/b)` prints
@@ -84,8 +87,11 @@ garbage and exits 0 where swiftc traps "Fatal error: Division by zero", exit 133
 fold passes' comment ("leave ÷0/%0 for the runtime trap", `phase4-optimizer/15,17/opt.ml`) is a
 **false promise** — there is no runtime trap. `Int.min / -1` is likewise LLVM-poison vs a swiftc
 trap. This is a CLAUDE.md parity gotcha and is *not* in the documented-divergence set.
-- *Fix:* emit a zero-check + `llvm.trap` before `sdiv`/`srem` (and the `Int.min/-1` check), or at
-  minimum correct the fold comments and add the asterisk to the "byte-for-byte" claims (09 README).
+- *Half fixed (concept-review pass, 8b0a7f5 … 1d53e1f):* the fold comments in 15/17/18/19/20 and
+  their explainers now say plainly that there is no trap and that the pass refuses to fold ÷0
+  because it has no value to give, not because a trap is waiting; the corpora keep ÷0 out.
+- *Still open:* the runtime behaviour. *Fix:* emit a zero-check + `llvm.trap` before `sdiv`/`srem`
+  (and the `Int.min/-1` check), and add the asterisk to the "byte-for-byte" claims (09 README).
 
 ### 7. `defer` inside a `do` block doesn't fire on a locally-caught throw  **[OPEN]** *(phase 7 review)*
 `do { defer { print(2) }; try mayThrow() } catch { print(3) }` prints `3` (swiftml) vs `2`,`3`
