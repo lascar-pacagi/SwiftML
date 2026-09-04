@@ -56,10 +56,38 @@ let test_opt_pipeline_end_to_end () =
   in
   Alcotest.(check int) "fully promoted to SSA (no memory traffic)" 0 mem
 
+(* ---- the TODO(20) hole itself: does -O actually reach clang as -O2? ---- *)
+
+(* Compile [src] at the given level and return the exit status of running the binary. LLVM at -O2
+   turns self tail-recursion into a loop; at -O0 sixty million frames would need gigabytes of
+   stack, so the process dies whatever the ulimit. The status alone says whether the flag got
+   through — a stubbed "-O0" fails this. *)
+let build_and_run ~(opt : bool) (src : string) : int =
+  let dir = Filename.get_temp_dir_name () in
+  let base = Filename.concat dir (Printf.sprintf "t20_%b_%d" opt (Unix.getpid ())) in
+  let sf = base ^ ".swift" in
+  let oc = open_out sf in
+  output_string oc src;
+  close_out oc;
+  Driver.compile_file ~out:base ~opt ~src_path:sf ~emit:Driver.Exe ();
+  let st = Sys.command (Printf.sprintf "%s >/dev/null 2>&1" (Filename.quote base)) in
+  List.iter (fun f -> try Sys.remove f with _ -> ()) [ sf; base ];
+  st
+
+let deep_tail_recursion =
+  "func count(_ n: Int, _ acc: Int) -> Int {\n  if n == 0 { return acc }\n  return count(n - 1, acc + 1)\n}\nprint(count(60000000, 0))"
+
+let test_o2_reaches_clang () =
+  (* -Onone is expected to die on the stack, which is also the control: if THIS returns 0 the
+     program is not deep enough and the -O2 claim below would be vacuous *)
+  Alcotest.(check bool) "-Onone overflows the stack" true (build_and_run ~opt:false deep_tail_recursion <> 0);
+  Alcotest.(check int) "-O runs it as a loop" 0 (build_and_run ~opt:true deep_tail_recursion)
+
 let () =
   Alcotest.run "llvmopt"
     [
       ("alloca", [ Alcotest.test_case "loop let hoisted" `Quick test_alloca_in_loop_hoisted;
                   Alcotest.test_case "loop struct hoisted" `Quick test_alloca_struct_in_loop_hoisted ]);
       ("pipeline", [ Alcotest.test_case "full -O end to end" `Quick test_opt_pipeline_end_to_end ]);
+      ("clang", [ Alcotest.test_case "-O reaches clang as -O2" `Slow test_o2_reaches_clang ]);
     ]

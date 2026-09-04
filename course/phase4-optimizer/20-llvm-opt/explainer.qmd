@@ -47,6 +47,29 @@ and register-allocated everything (no stack traffic at all). For `fib`, LLVM eve
 the recursion into itself**, cutting the call count several-fold. None of that was worth hand-building
 at the SIL level — that's the point of the hand-off.
 
+### What crosses the hand-off, form by form
+
+This concept adds no Swift syntax and no SIL. What §2 owes you is what the *last* stage of the
+`-O` path receives, because this is where our IR stops being ours. Both levels emit the same
+LLVM IR from the same IRGen; the two differences are (a) whether the SIL pipeline ran first, and
+(b) the flag `run_clang` passes.
+
+| our form | LLVM IR IRGen emits | what `clang -O2` then does with it |
+|---|---|---|
+| `%8 = alloc_stack $Int  // x` | `%v8 = alloca i64` **in the entry block, always** | LLVM's own `mem2reg`/SROA promotes it to a register — but only for an alloca in the entry block, which is why the hoist is not optional |
+| `%9 = load %8 $Int` · `store %0 to %8` | `load i64, ptr %v8` · `store i64 %v0, ptr %v8` | deleted with the alloca they belong to |
+| `bb1(%19 : $Int, %20 : $Int):` | `bb1:` with a `phi i64 [ … ]` per argument | kept; LLVM reasons about them directly (its own SSA is phi-based) |
+| `%6 = binop "%" %3, %4 $Int` | `srem i64 %v3, %v4` | strength-reduced — `i % 2 == 0` becomes a bit test, `i / 2` a shift |
+| `%11 = apply %10(%3) $Int` | `call i64 @sq(i64 %v3)` | inlined by LLVM's own inliner, including the multi-block and recursive callees ours refuses; a self tail-call becomes a loop |
+| `%12 = apply @print(%3)` | `call i32 (ptr, ...) @printf(…)` | untouched — it is the observable behaviour |
+| `trap "…"` | a write plus `call void @llvm.trap()` | kept, and the block after it is unreachable; the process still dies with exit 133 |
+| `return %3` | `ret i64 %v3` | kept, or turned into a jump when the call was inlined |
+
+Nothing on the right is work we would want to do at the SIL level, and that is the argument for
+the hand-off: our passes know Swift's shapes, LLVM's know the machine's. The one obligation this
+concept leaves on IRGen — every `alloca` in the entry block — exists precisely because LLVM's
+promoter refuses to look anywhere else, and the story below is what it cost to learn that.
+
 ### The benchmark — and how to time honestly
 
 The M4 suite is five programs chosen to *resist* constant-folding (data-dependent loop counts,
@@ -124,10 +147,33 @@ Reference: `solution/driver.ml`.
 make lab C=phase4-optimizer/20-llvm-opt
 ```
 
-cram: `-Onone` builds work on the skeleton; `-O` builds are RED until the TODO; the hot-loop alloca
-program runs (3M iterations, no segfault); a composite program exercises the whole Phase-4 pipeline.
-alcotest: every `alloca` is in the entry block (pins the bug fix), and the full `-O` SIL pipeline
-leaves a call-in-loop program fully SSA-promoted and valid.
+The hole is one line, so most of what this concept's tests do is guard the pipeline the previous
+five concepts built:
+
+- `driver-oflag.t` — the hole itself. `-Onone` compiles and runs on the untouched skeleton (its
+  flag was already `-O0`), and `--emit-llvm` with and without `-O` shows what our SIL passes did
+  before the hand-off — both green from the start, because neither touches `run_clang`. Then the
+  two `-O` builds, and the case that makes a stubbed `"-O0"` fail: sixty million frames of self
+  tail-recursion, which no stack can hold at `-O0` and which LLVM turns into a loop at `-O2`. That
+  is the only difference between the two flags that is visible in a program's *output* rather than
+  in its speed.
+- `run-pipeline.t` — the whole of Phase 4 end to end, at both levels: the 3-million-iteration
+  hot loop with a `let` in its body (the alloca bug below), a structural check that every `alloca`
+  is in `bb0`, a four-argument leaf called twice per iteration inside a condition, a loop mixing
+  structs, an enum `switch` and optionals, and a force-unwrap of `nil` that must still exit 133
+  under `-O`.
+- `sema-subset.t` — GIVEN code, `PASS` from the start: the front-end refusals that keep the corpus
+  inside what both compilers mean the same.
+- `test_llvmopt.ml` (alcotest `llvmopt`) — every `alloca` in the entry block, for a scalar and for
+  a struct slot (this pins the bug fix); the full `-O` SIL pipeline leaving a call-in-loop program
+  with no memory traffic and a valid module; and the flag itself, compiled and RUN in process, with
+  the `-O0` overflow as its own control so the `-O2` claim cannot be vacuous.
+- `oracle.t` — 26 programs built four ways (`swiftc -Onone`, `swiftc -O`, `lab build`,
+  `lab build -O`), all run, stdout and exit code identical. It reads `TODO` on the skeleton, since
+  `-O` cannot build until the hole is filled.
+
+What the tests deliberately do NOT assert is that `-O2` is *faster*. Timing belongs in `bench/`,
+where it is measured against `swiftc -O` and reported as a number rather than a pass — §5.
 
 ## 5. Benchmark it
 

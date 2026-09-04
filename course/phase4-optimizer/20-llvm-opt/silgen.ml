@@ -102,16 +102,21 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       switch_to b merge;
       emit b (Sil.Load slot) Types.TBool
   | Ast.Binary (op, l, r, _) ->
-      let lv = gen_expr b l and rv = gen_expr b r in
+      let lv = gen_expr b l in
       (match vty b lv with
       | Types.TEnum _ when op = Ast.Eq || op = Ast.Ne ->
           (* enum equality is tag comparison (payload-free enums only — see sema) *)
+          let rv = gen_expr b r in
           let lt = emit b (Sil.Enum_tag lv) Types.TInt in
           let rt = emit b (Sil.Enum_tag rv) Types.TInt in
           emit b (Sil.Binop (op, lt, rt)) Types.TBool
       | _ ->
-          let operand = if vty b lv = Types.TDouble || vty b rv = Types.TDouble then Types.TDouble else vty b lv in
-          emit b (Sil.Binop (op, lv, rv)) (result_ty op operand))
+          (* sema's `unify` lets an Int-literal tree adopt the other side's Double (`d * 2`,
+             `2 * d`): that side must be generated AT Double, or IRGen emits `fmul double %d, 2`
+             and clang rejects it. Re-generating a literal tree is safe — it has no side effects. *)
+          let rv = if vty b lv = Types.TDouble then gen_expr_as b r Types.TDouble else gen_expr b r in
+          let lv = if vty b rv = Types.TDouble && vty b lv = Types.TInt then gen_expr_as b l Types.TDouble else lv in
+          emit b (Sil.Binop (op, lv, rv)) (result_ty op (vty b lv)))
   | Ast.Call (f, args, _) ->
       if Hashtbl.mem b.structs f then (
         (* a struct field may be optional, so wrap each argument to its field type *)
@@ -249,14 +254,14 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
   | Ast.Set_member { obj; field; value; _ } ->
       (* `p.x = e`: take the field's ADDRESS in p's slot, then store — this is what makes a
          struct a value type, since p has its own slot distinct from any copy *)
-      let v = gen_expr b value in
       let slot = Hashtbl.find b.vars obj in
       let sn = match vty b slot with Types.TStruct sn -> sn | _ -> assert false in
       let sl = Hashtbl.find b.structs sn in
-      let faddr =
-        emit b (Sil.Struct_element_addr (slot, Option.get (Types.field_index sl field)))
-          (Option.get (Types.field_type sl field))
-      in
+      let fty = Option.get (Types.field_type sl field) in
+      (* wrap to the FIELD's type, exactly as `Assign` wraps to the slot's: `box.v = nil` on a
+         `var v: Int?` must store `.none`, not fall through to the raw value *)
+      let v = gen_expr_as b value fty in
+      let faddr = emit b (Sil.Struct_element_addr (slot, Option.get (Types.field_index sl field))) fty in
       ignore (emit b (Sil.Store (v, faddr)) Types.TVoid)
   | Ast.Expr_stmt (e, _) -> ignore (gen_expr b e)
   | Ast.Return (eo, _) -> (

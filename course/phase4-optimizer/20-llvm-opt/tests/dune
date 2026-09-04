@@ -9,11 +9,11 @@
   (:standard -warn-error -a)))
 
 (cram
- (deps lab.exe))
+ (deps lab.exe oracle-corpus.txt))
 
 (tests
  (names test_llvmopt)
  (modules test_llvmopt)
- (libraries alcotest swiftml_llvmopt)
+ (libraries alcotest unix swiftml_llvmopt)
  (flags
   (:standard -warn-error -a)))
