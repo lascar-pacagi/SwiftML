@@ -34,10 +34,14 @@ holes for the *new* functionality of each phase (you never re-type the Phase-1 l
 | `06-control-flow` | `if`/`while`/`for`, `break`/`continue`, short-circuit `&&`/`\|\|` | parity on the control-flow corpus |
 | `07-functions` | `func`, calls, recursion, the call ABI | parity; `fib` matches |
 | `08-sil-silgen` | **SILGen** — lower the checked AST to **SIL** (memory-based raw IR); `--emit-sil` | SIL shape mirrors swiftc's `-emit-sil` |
-| `09-sil-to-llvm` | **IRGen from SIL** + mandatory passes (definite-init, verifier) | parity; DI rejects use-before-init like swiftc |
+| `09-sil-to-llvm` | **IRGen from SIL** — the instruction and terminator lowering | programs build and RUN, byte-identical to swiftc on the phase corpus |
 
-**Milestone M2:** functions + control flow compile *through SIL*; `--emit-sil` is readable and mirrors
-swiftc's structure; definite-initialization diagnostics match.
+**Milestone M2:** functions and control flow compile *through SIL* and run; `--emit-sil` is readable
+and mirrors swiftc's structure; the output and exit code of every corpus program match `swiftc`
+(`Int`/`Bool`/control flow/functions — `Double` printing and `String` are the documented gaps).
+Definite initialization is swiftc's other mandatory SIL pass, and it is **vacuous here**, because
+every `let`/`var` in this subset is initialized where it is declared; writing the dataflow pass for
+an uninitialized `var x: Int` is concept 09's first exercise.
 
 **Design oracle for the phase:** `../../../swift/lib/Sema/` (type checking, the constraint system),
 `../../../swift/lib/SILGen/`, `../../../swift/lib/SIL/`, and `docs/SIL/SIL.md` in the swift tree.
