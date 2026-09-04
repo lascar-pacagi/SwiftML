@@ -58,10 +58,11 @@ function trunc_utf8(s, n,   b) {
   if (length(s) && ord[substr(s, length(s), 1)] >= 192) s = substr(s, 1, length(s) - 1)  # lone lead
   return s
 }
-function load_t(file,   line, blk, prose, started) {
+function load_t(file,   line, blk, prose, started, ln) {
   if (loaded[file]++) return
-  blk = 0; prose = ""; started = 0
+  blk = 0; prose = ""; started = 0; ln = 0
   while ((getline line < file) > 0) {
+    lineblk[file, ++ln] = blk                          # which command's block owns this line
     if (line ~ /^  \$ /) {
       if (prose != "") { blk++; label[file, blk] = first_sentence(prose); prose = "" }
       if (blk > 0) cmdblk[file, substr(line, 3)] = blk   # keep "$ " so it matches the diff line
@@ -138,14 +139,15 @@ function flush(   i, w, g, key) {
   nw = 0; ng = 0; split("", want); split("", got)
 }
 
-cram && /^(diff --git|index |--- |\+\+\+ |@@ )/ { next }
-cram && /^[[:space:]]+\$ / { flush(); sub(/^[[:space:]]+/, ""); pendblk = cmdblk[tfile, $0]; next }
-# a hunk may open in the middle of a multi-line command (`  > …`): those lines name it too
-cram && /^[[:space:]]+> / && pendblk == "" { sub(/^[[:space:]]+/, ""); pendblk = cmdblk[tfile, $0]; next }
-cram && /^-/  { sub(/^-[[:space:]]*/,  ""); want[++nw] = $0; next }
-cram && /^\+/ { sub(/^\+[[:space:]]*/, ""); got[++ng] = $0; next }
-cram && substr($0, 1, 3) == "   " { sub(/^[[:space:]]+/, ""); want[++nw] = $0; got[++ng] = $0; next }
-cram { next }
+cram && /^(diff --git|index |--- |\+\+\+ )/ { next }
+# a hunk header names the .t line it starts at; walking old-file lines from there tells which
+# command a `-`/`+` line belongs to even when the `$` line itself is outside the hunk's context
+cram && /^@@ / { flush(); match($0, /-[0-9]+/); dline = substr($0, RSTART + 1, RLENGTH - 1) + 0; pendblk = ""; next }
+cram && /^[[:space:]]+\$ / { flush(); sub(/^[[:space:]]+/, ""); pendblk = cmdblk[tfile, $0]; dline++; next }
+cram && /^-/  { if (pendblk == "") pendblk = lineblk[tfile, dline]; sub(/^-[[:space:]]*/,  ""); want[++nw] = $0; dline++; next }
+cram && /^\+/ { if (pendblk == "") pendblk = lineblk[tfile, dline - 1]; sub(/^\+[[:space:]]*/, ""); got[++ng] = $0; next }
+cram && substr($0, 1, 3) == "   " { if (pendblk == "") pendblk = lineblk[tfile, dline]; sub(/^[[:space:]]+/, ""); want[++nw] = $0; got[++ng] = $0; dline++; next }
+cram { dline++; next }
 
 # ---- alcotest: it lists every case in a failing suite, [FAIL] and [OK] alike -
 /\[SKIP\]/ {                                            # a case that chose not to run (see the suite's note)
