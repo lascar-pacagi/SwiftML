@@ -170,7 +170,11 @@ cram { dline++; next }
   nf = split(line, a, /[[:space:]][[:space:]]+/)        # name, index, description
   if (nf >= 3) { desc = a[3]; for (k = 4; k <= nf; k++) desc = desc " " a[k]; line = a[1] " — " desc }
   sub(/\.$/, "", line)
-  key = line; sub(/\.\.$/, "", key)                     # alcotest's box truncates 2 chars shorter
+  # Alcotest prints every case twice — once in the running list, once inside the failure box —
+  # and truncates the description differently in the two, so dedupe on the group NAME and the
+  # per-group INDEX, which are identical in both. (Truncating the whole line instead collapsed
+  # every case of a group whose name was long enough to fill the prefix.)
+  key = (nf >= 2 ? a[1] SUBSEP a[2] : line)
   # A group reporting itself "skipped — … not started" is OPTIONAL work (a §6 exercise), not a
   # pass: show it as TODO so it stays visible, and keep it out of both counts.
   if (line ~ / — skipped/) {
@@ -179,7 +183,7 @@ cram { dline++; next }
     next
   }
   if (!ok) curcase = a[1]        # the box repeats this line just before the failure detail
-  if (!seen[cur SUBSEP substr(key, 1, 28)]++) {
+  if (!seen[cur SUBSEP key]++) {
     if (ok) nok[cur]++; else nbad[cur]++
     put(ok ? "  " G "OK  " Z " " line : "  " R "FAIL" Z " " line)
   }
