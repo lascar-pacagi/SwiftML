@@ -66,6 +66,67 @@ requires checking the tag first (you mustn't read `rect`'s second field out of a
 tag-check-then-extract is exactly what `switch` compiles to. So associated-value enums are *built*
 here and *used* in concept 12 — the two halves of ADTs.
 
+### The subset you are growing into
+
+**New lexemes.** Two keywords, both in `token.ml`'s `keyword_or_ident` table; nothing new in the
+scanner itself, since `.` and `;` arrived with concept 10:
+
+| spelling | token | notes |
+|---|---|---|
+| `enum` | `Token.Kw_enum` | a keyword — starts a top-level item, like `struct` and `func` |
+| `case` | `Token.Kw_case` | a keyword, legal only inside an `enum` body (concept 12 gives it a second home, inside `switch`) |
+
+**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05–10.
+Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (zero or more),
+`|` separates alternatives, and quoted text is a terminal.
+
+```
+program     ::= { item NEWLINE }
+item        ::= enum_decl                                          <-- new
+              | struct_decl
+              | func_decl
+              | statement
+enum_decl   ::= "enum" ident [ ":" ident ] "{"                     <-- new (the `: Int` raw type)
+                  { case_line NEWLINE } "}"
+case_line   ::= "case" case { "," case }                           <-- new (several per line)
+case        ::= ident [ "(" ident { "," ident } ")" ]              <-- new (associated values)
+
+statement   ::= ("let" | "var") ident [ ":" type ] "=" expr
+              | ident "=" expr
+              | ident "." ident "=" expr
+              | "if" expr block [ "else" ( block | if-statement ) ]
+              | "while" expr block
+              | "for" ident "in" expr "..<" expr block
+              | "break" | "continue" | "return" [ expr ]
+              | expr
+type        ::= "Int" | "Double" | "Bool" | "String" | "Void"
+              | ident                                                (a struct OR an enum name)
+
+expr        ::= or
+or          ::= and { "||" and }                                     (bp 3)
+and         ::= comparison { "&&" comparison }                       (bp 4)
+comparison  ::= cast { ("==" | "!=" | "<" | "<=" | ">" | ">=") cast } (bp 5)
+cast        ::= sum { "as" type }                                    (bp 7)
+sum         ::= product { ("+" | "-") product }                      (bp 10)
+product     ::= unary { ("*" | "/" | "%") unary }                    (bp 20)
+unary       ::= "-" unary | postfix
+postfix     ::= primary { "." ident [ "(" [ arg { "," arg } ] ")" ] }  <-- the call form is new
+primary     ::= int | float | string | "true" | "false" | ident
+              | ident "(" [ arg { "," arg } ] ")"
+              | "(" expr ")"
+arg         ::= [ ident ":" ] expr
+```
+
+Three things to notice. The enum body is **not** a list of statements: `parse_enum` has its own
+loop, and one `case` line may declare several cases (`case red, green, blue`) — they are numbered
+left to right, which is the ordering the raw-value tests pin. An **associated-value list is a list
+of types**, not of parameters: `circle(Int)` has no argument label, which is why `Shape.circle(5)`
+is a positional call. And the postfix production grew a **call form**, so `E.case(1, 2)` parses as
+one node (`Ast.Method_call`) rather than as a member access applied to a call: `.` followed by an
+identifier followed by `(` is a case construction here, and the same shape becomes method calls in
+Phase 5. Nothing in the *expression* grammar knows about enums — sema decides, from the registry,
+whether `Color.red` names a case or is a member access on a value.
+
 ### The new SIL instructions (swiftc's shape)
 
 | SIL | meaning | LLVM |
@@ -76,18 +137,50 @@ here and *used* in concept 12 — the two halves of ADTs.
 swiftc's real instructions are `enum`/`unchecked_enum_data`/`select_enum`; `enum_tag` stands in for
 "read the discriminator." Concept 12 will add the destructuring counterpart.
 
+### The diagnostics sema owes you (given)
+
+You write no diagnostics in this concept — sema is given — but the lowering may assume every rule
+below has already fired, and `sema-enums.t` keeps them on record. Wording follows `swiftc
+-typecheck` where the subset lets it (`swift/include/swift/AST/DiagnosticsSema.def`, line numbers
+from the pinned snapshot); the differences are stated, not hidden.
+
+| program | our message | swiftc |
+|---|---|---|
+| `Color.blue`, no such case | `type 'Color' has no member 'blue'` | **same** (`could_not_find_type_member`, l.86) — note "type", not "value of type": the receiver is the enum *type* |
+| `Color.red.rawValue` on a plain enum | `value of type 'Color' has no member 'rawValue'` | **same** (`could_not_find_value_member`, l.70) — `rawValue` exists only under a `: Int` raw type |
+| `S.pair(1)` for `case pair(Int, Int)` | `enum case 'S.pair' expects 2 associated value(s) but 1 given` | `missing argument for parameter #2 in call` (`missing_argument_positional`, l.1686) — one message per missing value; ours reports the arity once |
+| `S.pair(1, true)` | `cannot convert value of type 'Bool' to specified type 'Int'` | `… to expected argument type 'Int'` (`cannot_convert_argument_value`, l.382) — we reuse 05's `check_expr` wording |
+| `S.a(1) == S.a(1)` | `type 'S' does not conform to protocol 'Equatable'` (`type_does_not_conform`, l.2897 — a real swiftc line, at a different site) | `referencing operator function '==' on 'Equatable' requires that 'S' conform to 'Equatable'` (`type_does_not_conform_in_decl_ref`, l.2984) — same verdict, longer sentence |
+| `C.a == C.b`, payload-free | **accepted** | **accepted** — a payload-free enum is implicitly `Equatable` |
+| `enum A {…}` and `struct A {…}` | `invalid redeclaration of 'A'` | **same** (`invalid_redecl`, l.1110) — one namespace for both kinds |
+| `let n: Int = Color.red` | `cannot convert value of type 'Color' to specified type 'Int'` | **same** |
+| `let e = E.a` where `case a(Int)` | `enum case 'E.a' requires arguments` | **accepted** — swiftc reads a bare payload case as its *constructor function*, `(Int) -> E`. Our subset has no function values until concept 29, so we refuse instead of inferring a type we cannot represent |
+| `print(c)` of an enum | `cannot print a value of type 'Color' (only Int, Double, Bool and String)` | **accepted** — swiftc prints `red` through reflection; ours has no runtime to do it, so sema refuses rather than letting IRGen crash |
+
+The struct rules of concept 10 are still live and still checked here — the memberwise
+initializer's labels, `p.x = e` needing a `var` binding and a `var` field, `==` on two structs.
+
 ## 3. Build it, step by step
 
-Front-end is given; fill the lowering.
+The front end is given — the parser builds the declarations, sema fills the enum registry and has
+already rejected everything in the table above. Three holes, in this order:
 
-- **`silgen.ml`** — `TODO(11)`: in `gen_expr`, the `Member (Var tn, case)` case (a no-payload enum
-  case): emit `Sil.Enum (Types.case_index (Hashtbl.find b.enums tn) case, [])` of type `Types.TEnum tn`.
-  And the `Method_call (Var tn, case, args)` case (a payload case): `gen_expr` each argument, then emit
-  `Sil.Enum (tag, payloads)`.
-- **`irgen.ml`** — `TODO(11)`: `Enum (tag, payload)` → `insertvalue` the tag at 0 then each payload at
-  `i+1`; `Enum_tag a` → `extractvalue … , 0`. The enum type is `llty (vty …)`.
+- **`silgen.ml`, `TODO(11)` in `gen_expr`, the `Member (Var tn, case, _)` arm** — `Color.red`,
+  a case with no associated values. It must become **one** `Sil.Enum` instruction whose tag is the
+  case's index in the declaration and whose payload list is empty, typed `Types.TEnum tn`. The
+  layout is `Hashtbl.find b.enums tn`; `Types.case_index` turns the case *name* into that index.
+  `silgen-case.t` prints the SIL and pins the tag.
+- **`silgen.ml`, `TODO(11)` in the `Method_call (Var tn, case, args, _)` arm** — `Shape.rect(3, 4)`.
+  The same instruction, with the arguments **evaluated first** (left to right, each through
+  `gen_expr`) and handed over as the payload. `silgen-payload.t` pins both the operand order and
+  the tag, which counts every case, payload-carrying or not.
+- **`irgen.ml`, `TODO(11)`** — the two instructions in LLVM. `Enum` builds the aggregate the way
+  `Struct` does in concept 10, an `insertvalue` chain from `undef`, except that field 0 is the
+  **tag** (an `i64` constant, not an operand) and the payload starts at field 1. `Enum_tag` reads
+  field 0 back out. `llty (vty v)` gives the LLVM type of a value, `fresh ()` a register, `opnd` the
+  operand of a SIL value.
 
-Reference: `solution/`.
+Reference: `solution/` — after you have tried it.
 
 ## 4. Test it
 
@@ -95,9 +188,40 @@ Reference: `solution/`.
 make lab C=phase3-value-types/11-enums-adts
 ```
 
-The cram test **builds and runs** enum programs — simple-enum `==` and raw values — and FileChecks the
-`{ i64, … }` layout. The alcotest pins the sema rules (case lookup, payload arity, the `Equatable`
-rejection, `rawValue` only on raw enums) and the emitted `insertvalue`/`extractvalue`.
+Every `.t` file calls `./lab.exe`, built from **this directory's** library, so the report is about
+your code here. In the order you fill the holes:
+
+- `sema-enums.t` — `--typecheck`: the given rules from the table above, green from the start. It
+  is the contract the lowering may rely on (no unknown case, no payload mismatch, no `==` on an
+  associated-value enum ever reaches SILGen).
+- `silgen-case.t` — `--emit-sil`: `Color.green` is `enum #1 () $Color`; the tag follows the
+  declaration order whether the cases are written on one line or several; `==` is two `enum_tag`
+  reads and an integer compare; `.rawValue` is the same `enum_tag`; an enum in a `var`, and one
+  crossing a function boundary. No program here carries a payload, so this file goes green with
+  the first hole alone.
+- `silgen-payload.t` — `--emit-sil`: `Shape.rect(3, 4)` is `enum #1 (%0, %1)`, with the payload
+  evaluated before the case is built; a one-value case; an arbitrary expression as an associated
+  value; a tag that counts payload-free cases too; a call result as a payload. No program here
+  builds a payload-free case, so this file goes green with the second hole alone.
+- `irgen-enums.t` — `--emit-llvm` then `build`: the one-field aggregate of a payload-free enum,
+  the widest-case sizing, the `insertvalue` chain with the tag at 0, `extractvalue … , 0`; then
+  programs **run** — tag equality, the raw values 0/1/3, the left-to-right case order, an enum
+  driving a loop, an enum through a function, and an associated-value enum built and passed on.
+- `test_enums.ml` (alcotest `enums`) — the same four groups in-process: `sema-enums` (given — its
+  three cases pass on the skeleton), `silgen-case`, `silgen-payload`, `irgen-enums`.
+- `oracle.t` — **the headline**, in two halves. The runtime half compiles the 16 programs of
+  `oracle-corpus.txt` with `swiftc -Onone` and with `./lab.exe build`, runs both binaries, and
+  demands identical stdout and exit code; when ours refuses with a `TODO(` the loop stops, so it
+  stays red until the last hole is filled. The front-end half asks `swiftc -typecheck` and
+  `./lab.exe --typecheck` for a verdict on the 18 programs of `typecheck-corpus.txt` — six
+  well-formed, twelve the enum rules must refuse — and they must agree; that half needs no
+  lowering, so it is green from the start.
+
+A hole you have not started shows as `TODO` with the list of what it will check; a hole in
+progress shows `FAIL` with, under each failing case, what the test wants and what your code
+printed. On the untouched skeleton the two silgen files and `irgen-enums.t` are `TODO`,
+`sema-enums.t` is `PASS`, `oracle.t` is `FAIL` with its front-end half already `OK`, and the
+alcotest is `FAIL` with its three sema cases `OK`.
 
 ## 5. Benchmark it
 

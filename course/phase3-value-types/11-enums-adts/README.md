@@ -34,9 +34,15 @@ sema (enum registry, case typing, raw values, the `Equatable` rule).
 > values needs `switch` — that's concept 12**, which is why enums and pattern matching are a pair.
 > Matching swiftc: a payload-free enum is implicitly `Equatable` (so `==` works); an associated-value
 > enum's `==` is **rejected** unless it declares `: Equatable` (deferred), exactly as swiftc does.
+> Two rules are stricter than swiftc and stay out of the oracle: `print` of a whole enum (swiftc
+> prints the case name through reflection) and `E.a` naming a payload case with no arguments
+> (swiftc reads it as the case's constructor *function*) — the explainer's diagnostics table lists
+> the honest set.
 
 ## Done when
 
-`make lab C=phase3-value-types/11-enums-adts` is green: the cram test **builds and runs** enum
-programs (simple-enum `==`, `rawValue`) and FileChecks the tagged-union IR; the alcotest pins the sema
-rules and the `{ i64, … }` layout. Output matches `swiftc`.
+`make lab C=phase3-value-types/11-enums-adts` is green: one cram file per hole
+(`silgen-case.t`, `silgen-payload.t`, `irgen-enums.t`, each `TODO` until you start it) plus the
+given `sema-enums.t`, the alcotest's four groups, and `oracle.t` — 16 programs compiled by `swiftc`
+and by `./lab.exe build`, run, and compared byte for byte, and 18 more where `swiftc -typecheck`
+and `--typecheck` must reach the same verdict.

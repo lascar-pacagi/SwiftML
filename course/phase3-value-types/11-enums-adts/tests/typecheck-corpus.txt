@@ -1,0 +1,18 @@
+enum Color { case red, green, blue }\nlet c = Color.green\nprint(c == Color.red)
+enum Dir: Int { case north, south }\nprint(Dir.south.rawValue)
+enum Shape {\n  case circle(Int)\n  case rect(Int, Int)\n  case dot\n}\nfunc use(_ s: Shape) -> Int { return 1 }\nprint(use(Shape.rect(3, 4)) + use(Shape.dot))
+enum Color { case red, green }\nfunc flip(_ c: Color) -> Color {\n  if c == Color.red { return Color.green }\n  return Color.red\n}\nlet c: Color = flip(Color.red)\nprint(c == Color.green)
+enum Color { case red, green }\nvar c = Color.red\nc = Color.green\nprint(c == Color.green)
+enum K { case a, b }\nstruct P {\n  var x: Int\n}\nlet k = K.a\nlet p = P(x: 1)\nprint(p.x)\nprint(k == K.b)
+enum Color { case red, green }\nlet c = Color.blue
+enum S { case pair(Int, Int) }\nlet s = S.pair(1)
+enum S { case pair(Int, Int) }\nlet s = S.pair(1, true)
+enum S {\n  case a(Int)\n  case b\n}\nprint(S.a(1) == S.a(1))
+enum Color { case red }\nprint(Color.red.rawValue)
+enum A { case one }\nstruct A {\n  var x: Int\n}
+enum A { case one }\nenum A { case two }
+enum Color { case red, green }\nlet n: Int = Color.red
+enum Color { case red, green }\nprint(Color.red + Color.green)
+enum Color { case red, green }\nlet c = Color.red\nprint(c.x)
+enum Shape { case circle(Nope) }
+enum Color { case red, green }\nlet c = Color.red\nc = Color.green
