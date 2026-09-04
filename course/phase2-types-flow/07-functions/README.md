@@ -36,7 +36,10 @@ function is its own little control-flow graph — the next concept.
 
 ## Done when
 
-`make lab C=phase2-types-flow/07-functions` is green (cram + alcotest), and the type-check oracle
-agrees with `swiftc -typecheck`: recursion and forward refs accepted; missing return, wrong arg
-type/count, return-type mismatch, top-level `return`, and a Void function returning a value all
-rejected.
+`make lab C=phase2-types-flow/07-functions` is green: one cram file per hole (`lexer-arrow`,
+`parser-return`, `parser-params`, `parser-func`, `sema-passes`, `sema-func`, `sema-return`,
+`sema-call`), the two unit suites, and `oracle.t` — every program in `oracle-corpus.txt` gets the
+same accept/reject verdict from swiftc and from your `--typecheck`: recursion and forward refs
+accepted; missing return, wrong arg type/count, return-type mismatch, top-level `return`, and a
+Void function returning a value all rejected. (The oracle runs swiftc as `-emit-sil`: its
+missing-return check is a SIL diagnostic that `-typecheck` never reaches.)
