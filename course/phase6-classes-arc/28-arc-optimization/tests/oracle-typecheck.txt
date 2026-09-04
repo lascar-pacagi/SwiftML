@@ -1,0 +1,16 @@
+class T { var id: Int\n  init(_ i: Int) { id = i }\n  deinit { print(id) } }\nfunc f() { let a = T(1)\n  print(a.id) }\nf()
+class T { var id: Int\n  init(_ i: Int) { id = i }\n  deinit { print(id) } }\nvar v = T(1)\nv = T(2)\nprint(v.id)
+class A { var x: Int\n  init(_ v: Int) { x = v }\n  deinit { print(x) } }\nclass B: A { var y: Int\n  init(_ v: Int, _ w: Int) { y = w\n    super.init(v) }\n  deinit { print(y) } }\nprint(B(1, 2).y)
+class T { var id: Int\n  init(_ i: Int) { id = i } }\nfunc use(_ t: T) -> Int { return t.id }\nprint(use(T(3)))
+class T { var id: Int\n  init(_ i: Int) { id = i } }\nfunc mk() -> T { return T(4) }\nprint(mk().id)
+class L { var id: Int\n  init(_ i: Int) { id = i } }\nclass Box { var l: L\n  init(_ x: L) { l = x }\n  func put(_ x: L) { l = x } }\nlet b = Box(L(1))\nb.put(L(2))\nprint(b.l.id)
+class T { var id: Int\n  init(_ i: Int) { id = i }\n  deinit { print(id) } }\nfor i in 0 ..< 2 { let t = T(i)\n  print(t.id) }
+class T { var id: Int\n  init(_ i: Int) { id = i } }\nclass U: T { var e: Int\n  init(_ i: Int, _ x: Int) { e = x\n    super.init(i) } }\nprint(U(1, 2).e)
+class T { var id: Int\n  init(_ i: Int) { id = i }\n  deinit { } }\nprint(T(1).id)
+class T { let k: Int\n  init() { k = 1 }\n  deinit { print(k) } }\nprint(T().k)
+class K { var x: Int\n  init() { x = 1 }\n  deinit { print(1) }\n  deinit { print(2) } }
+class A { var x: Int\n  init() { x = 1 }\n  func f() -> Int { return 1 } }\nclass B: A { func f() -> Int { return 2 } }
+class A { var x: Int\n  init() { x = 1 } }\nclass B: A { override func f() -> Int { return 2 } }
+class C { let k: Int\n  init() { k = 1 } }\nlet c = C()\nc.k = 5
+class C { var x: Int\n  init() { x = 1 } }\nprint(C() == C())
+class A { var x: Int\n  init() { x = 1 } }\nclass B: A { }\nlet b: B = A()

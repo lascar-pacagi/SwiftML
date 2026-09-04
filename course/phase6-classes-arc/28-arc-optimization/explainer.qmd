@@ -89,6 +89,53 @@ exclusivity machinery — our `-Onone` is leaner because our runtime is leaner, 
 the other half of the gate: **12/12 deinit orderings unchanged**. An ARC optimizer that moves
 a deinit isn't an optimizer; it's a bug with good benchmarks.
 
+### The SIL your pass reads and writes
+
+This concept adds no syntax — the grammar is exactly concept 27's — so what §2 must put on the
+table is the IR. The pass runs on **post-mem2reg SSA**, which is what makes it possible at all:
+every value has one visible definition, so "who owns this, and where does it die?" is a
+def-chain walk rather than a dataflow problem. Only five forms matter, and the ownership column
+is the one your three checks are made of.
+
+| printed form | `Sil.instr` | what your pass does with it |
+|---|---|---|
+| `%7 = copy_value %6` | `Copy_value` (27) | **the candidate.** Deleted when the bracket around it protects nothing |
+| `destroy_value %7` | `Destroy_value` (27) | **the other half of the bracket.** Deleted with its copy — never on its own |
+| `%14 = load [take] %8 $T` | `Load_take` (27) | a source that does NOT prove the object outlives the bracket: the slot it took from may be overwritten inside it. This is check three, and the reason the KEEP case exists |
+| `%0 : $T` (a parameter) | — | a source that DOES prove it: the caller holds the object for the whole call |
+| `%6 = class_method %5, #0 ; apply(…)` | `Apply_class` (25) | the GIVEN devirtualization's candidate: folded to `Func_ref` + `Apply` when the receiver's static class has no subclass in the module |
+
+Two things about that table are worth pausing on. There is **no new instruction** — this
+concept only deletes — which is what an optimizer chapter should look like once the IR is
+right; concepts 26 and 27 did the work of making the deletion checkable. And `Copy_value` and
+`Destroy_value` are still **side-effecting** to every other pass: `Sil.value_key` returns
+`None` for them, so GVN never merges two copies and dead-instruction elimination never drops
+one. This pass is the single place in the compiler allowed to remove ARC traffic, and it is
+allowed only because it carries a proof.
+
+One boundary, stated plainly because it looks like a hole and is not: the **ownership verifier
+of concept 27 guards RAW SIL only**. After mem2reg the slots are gone and ownership threads
+through block arguments, which the v0 verifier does not model — exactly like swiftc, whose OSSA
+is lowered before the late passes run. So the soundness gate for this pass is not the verifier;
+it is the behavioural suite, which is why `oracle.t` re-runs the whole phase's lifetime corpus
+at `-O`.
+
+### The diagnostics you emit
+
+None, and here that is a load-bearing statement rather than a formality. By the time these two
+passes run, sema has accepted the program and the ownership verifier has signed off on its SIL;
+an optimizer that reports something to the user has found a bug in itself. What it owes you
+instead is an invariant, and `oracle.t` is where it is enforced: **a pass that changes when an
+object dies is a bug, not an optimization.** That is a sharper contract than the usual
+"preserves the program's output", because a `deinit` PRINTS — the corpus can see a lifetime
+move by one statement.
+
+The diagnostics this concept inherits are unchanged and their tables live where they were
+introduced: the class and override rules in concept 25's §2, the ARC v0 guards in concept 26's,
+and the four ownership-verifier messages in concept 27's. `sema-arcopt.t` keeps the ones the
+corpus leans on here on record, because a corpus is only a fair oracle while the front end
+refuses what the back end cannot lower.
+
 > Oracle: `swift/docs/ARCOptimization.md` — the real pass's design notes read like this
 > concept's spec (copy propagation, the "no observable lifetime change" rule, motion).
 > `CopyPropagation.cpp` is the production version of your TODO; its extra complexity is
@@ -112,15 +159,42 @@ Reference: `solution/opt.ml`.
 ## 4. Test it
 
 ```bash
-make lab C=phase6-classes-arc/28-arc-optimization
-make bench C=phase6-classes-arc/28-arc-optimization   # the M6 gate
+make lab C=phase6-classes-arc/28-arc-optimization                 # everything
+make lab C=phase6-classes-arc/28-arc-optimization T=opt-copyprop  # the hole
+make bench C=phase6-classes-arc/28-arc-optimization               # the M6 gate (slow)
 ```
 
-cram: a parameter borrow-copy vanishes; three chained copies cascade to zero; the
-deinit-bearing program and the **must-keep load-sourced copy** are byte-identical at `-O`;
-subclass-free dispatch devirtualizes while the overridden hierarchy keeps its `class_method`.
-alcotest: removal cases (param / chain / owned-local), the pass-alone-keeps-escaping-copies
-property, and conservation: destroys = copies + allocs in a leak-free program.
+One cram file for the hole and one for the given pass beside it:
+
+| file | goes green when | how it checks |
+|---|---|---|
+| `tests/opt-copyprop.t` | `TODO(28)` rewrites | `--emit-sil` vs `--sil-opt`: a borrow-copy of a guaranteed parameter vanishes; three chained copies cascade to zero (one rewrite per sweep, to a fixpoint); a copy of an owned local goes too when the source is consumed later. Then the case that must NOT be rewritten — a load-sourced copy whose slot is overwritten inside the bracket — kept, and its `deinit` order printed to prove why. Then two programs run at `-Onone` and `-O` with identical output, and a conservation count |
+| `tests/opt-devirt.t` | it already is | GIVEN code, and green from the first run because none of its programs makes a `copy_value`, so `TODO(28)` never fires on them. A subclass-free class's dispatch folds and inlines to a `load`; an overridden hierarchy keeps its `class_method`, and the surviving one is shown *with its function name*; adding a subclass takes the proof away again; and a subclass that overrides nothing still blocks it, which is an honest v0 imprecision |
+
+`tests/sema-arcopt.t` is the given front-end boundary the corpus depends on, green from the
+first run. And `tests/oracle.t` is the headline — for an ARC optimizer it *is* the
+specification. Three loops: 16 typecheck verdicts against `swiftc -typecheck`, 6
+definite-initialization verdicts against a FULL `swiftc` compile, and 25 programs built four
+ways with `swiftc -Onone` as the reference. That corpus is deliberately the whole phase's
+accumulated lifetime corpus, re-run here with copy propagation and whole-module
+devirtualization both firing, plus four programs of this concept's own: the adversarial KEEP
+case, three chained copies called twice, a devirtualizable class beside an overridden
+hierarchy, and a borrow-copy inside a hot loop.
+
+alcotest (`tests/test_arcopt.ml`) is where the pass is tested *alone*, and that distinction is
+the subtlest thing in this concept. `Opt.run_pipeline [mem2reg; copy_propagation]` is not the
+same as `Opt.optimize`: the pass by itself must KEEP a copy that is consumed by a `return`,
+because that copy transfers ownership to a caller it cannot see — while the full `-O` may
+legitimately erase the same copy *after inlining* has brought both ends of the transfer into
+one function. Sound alone and sound composed are two different claims, and the `safety 28`
+group makes the first one; `removal 28`'s last case makes the second. A `wmo devirt` group then
+pins the given pass from both sides: a subclass-free class loses its dispatch, and adding a
+subclass gives it back.
+
+`make lab` distinguishes three kinds of red. **TODO** means nothing in that file passes — the
+hole has not been started. **FAIL** means *some* cases pass (`DETAIL=1` for the diffs). **SKIP**
+means a compile error stopped dune first. On the untouched skeleton `opt-copyprop.t` reads TODO
+and `oracle.t` reads FAIL, while `opt-devirt.t` and `sema-arcopt.t` read PASS.
 
 ## 5. Benchmark it
 

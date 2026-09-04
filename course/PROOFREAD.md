@@ -61,16 +61,18 @@ both `swiftml7` and `swiftml9`.
   solution silgen of 31, 32, and the live 38/39/40; verified array-param + array-return match
   swiftc.
 
-### 4. `self.field = e` crashes the compiler in concepts 27 & 28  **[OPEN]** *(phase 5–6 review)*
+### 4. `self.field = e` crashes the compiler in concepts 27 & 28  **[FIXED — concept-review pass 25–28]**
 `27-ownership` made class-typed `self` a pure SSA borrow (`b.borrows`, no longer in `b.vars`), and
-updated the *bare* field-write path — but the `Set_member` arm still does
+updated the *bare* field-write path — but the `Set_member` arm still did
 `Hashtbl.find b.vars "self"` → uncaught `Not_found`. So `init(id:Int){ self.id = id }` and any
-`self.x = …` in a method fail to compile (`--emit-sil`/`build`/`-O` all crash); swiftc compiles
-them. Masked because **every** phase-6 program uses the bare form `id = i`.
-`phase6-classes-arc/27-ownership/solution/silgen.ml:528` (and identically `28-…/silgen.ml:528`).
-- *Fix:* add a `Set_member … when not (Hashtbl.mem b.vars obj)` arm resolving `self_ref b` and
-  mirroring the bare-field store (take_ownership / Load_take old / Destroy_value, gated on `in_init`).
-  Add a `self.field =` case to the 26/27 corpora (the gap that let it ship).
+`self.x = …` in a method failed to compile (`--emit-sil`/`build`/`-O` all crashed); swiftc compiles
+them. Masked because **every** phase-6 program used the bare form `id = i`.
+- *Fixed:* `Set_member` now looks the receiver up in `b.borrows` first and falls back to the slot,
+  mirroring the bare-field store (take_ownership / Load_take old / Destroy_value, gated on `in_init`);
+  applied to `27-ownership/silgen.ml` + its `solution/` and to `28-arc-optimization/silgen.ml`.
+  Pinned by a case in 27's `silgen-ossa.t` (the emitted copy/take/destroy for `Box.put`), a runtime
+  case beside it, an alcotest (`fields and self`), and a corpus program in 27 and 28. Verified
+  against swiftc at `-Onone` and `-O`.
 
 ### 5. `14-memory-layout` crashes on every optional program  **[FIXED — concept-review pass 4f499d6]**
 Concept 14 is phase-3's latest leaf, so `swiftml3` links it — but its carried `silgen.ml` still has
