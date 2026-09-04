@@ -354,6 +354,10 @@ let emit_llvm (m : Sil.modul) : string =
       | Sil.Cond_br (c, (th, _), (el, _)) ->
           p (Printf.sprintf "  br i1 %s, label %%bb%d, label %%bb%d\n" (op c) th el)
       | Sil.Return None -> p (if is_main then "  ret i32 0\n" else "  ret void\n")
+      (* a Void function whose terminator still carries a value — a single-expression closure
+         body of type `()`, `{ (x: Int) -> Void in print(x) }` — returns nothing: `ret void %v`
+         is not LLVM *)
+      | Sil.Return (Some _) when f.Sil.ret = Types.TVoid -> p "  ret void\n"
       | Sil.Return (Some v) -> p (Printf.sprintf "  ret %s %s\n" (llty f.Sil.ret) (op v))
       | Sil.Unreachable -> p "  unreachable\n"
       | Sil.Trap msg ->

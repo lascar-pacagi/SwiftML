@@ -96,9 +96,9 @@ let string_of_kind = function
   | Kw_class -> "class"
   | Kw_init -> "init"
   | Kw_override -> "override"
-  | Kw_super
-  | Kw_deinit (* NEW (concept 26) *)
-  | At (* `@` — attributes like `@escaping` (parsed and accepted; concept 29) *) -> "super"
+  | Kw_super -> "super"
+  | Kw_deinit (* NEW (concept 26) *) -> "deinit"
+  | At (* `@` — attributes like `@escaping` (parsed and accepted; concept 29) *) -> "@"
   | Kw_case -> "case"
   | Kw_switch -> "switch"
   | Kw_default -> "default"
