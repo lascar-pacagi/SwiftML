@@ -192,7 +192,7 @@ Two files do not belong to a hole. `tests/sema-subset.t` is GIVEN code and green
 the aggregate refusals carried in from phase 3, plus this concept's three body rules — a member
 that is not in the constraint, `==` on two `T`s, and the unconstrained `<T>` v0 refuses. None of
 them involves a *call*, which is why they work before `infer_generic_call` exists. And
-`tests/oracle.t` is the headline: 22 programs of `oracle-typecheck.txt` where `swiftc -typecheck`
+`tests/oracle.t` is the headline: 22 programs of `typecheck-corpus.txt` where `swiftc -typecheck`
 and `--typecheck` must reach the same verdict, then 18 of `oracle-corpus.txt` compiled **four
 ways** — `swiftc -Onone`, `swiftc -O`, `./lab.exe build`, `./lab.exe build -O` — all run, stdout
 and exit code identical.

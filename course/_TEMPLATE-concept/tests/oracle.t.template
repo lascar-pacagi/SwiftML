@@ -4,6 +4,12 @@ when it was written; this asks swiftc again on every run. Keep the corpus inside
 compilers mean the same — no variadic print, no redeclaration, no >2^62 literals, nothing the
 subset lacks — so only this concept's rule decides. It cannot judge your wording, only verdicts.
 
+A concept that BOTH runs programs and has front-end rules of its own carries TWO corpora and
+both loops in this one file: `oracle-corpus.txt` for the programs that must run, and
+`typecheck-corpus.txt` for the accept/reject verdicts (its `tests/dune` lists both as cram deps).
+Keep the halves apart — the front-end half is green long before any lowering exists, and saying so
+in the file header is how a learner reads the report.
+
 FRONT-END concept (nothing runs yet): accept/reject must agree. On a disagreement our first
 diagnostic is shown, so a rejection that is really an unfinished stage reads as what it is; a
 crash (exit ≠ 0/1) stops the loop when it is an unstarted TODO(:
@@ -19,7 +25,8 @@ crash (exit ≠ 0/1) stops the loop when it is an unstarted TODO(:
   $ echo done
   done
 
-RUNTIME concept (delete the block above, keep this one; add `-O` variants when the phase has -O):
+RUNTIME concept (keep the block above only if this concept adds front-end rules; add `-O`
+variants when the phase has -O):
 both compilers build every program, both binaries run, stdout + exit code must be identical:
 
   $ n=0; while IFS= read -r prog; do

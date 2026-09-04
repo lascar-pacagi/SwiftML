@@ -12,7 +12,7 @@
   (:standard -warn-error -a)))
 
 (cram
- (deps lab.exe oracle-corpus.txt))
+ (deps lab.exe oracle-corpus.txt))     ; + typecheck-corpus.txt when oracle.t has both halves
 
 (tests
  (names test_CONCEPT)

@@ -222,7 +222,7 @@ Two files do not belong to a hole. `tests/sema-subset.t` is GIVEN code and is gr
 start: it records the boundary of the subset — the aggregates `print` and `==` refuse, and the
 `let` stored property — because the oracle below is only a fair test while the corpus stays
 inside what swiftc and we mean the same thing by. And `tests/oracle.t` is the headline: 33
-programs of `oracle-typecheck.txt` where `swiftc -typecheck` and `--typecheck` must reach the
+programs of `typecheck-corpus.txt` where `swiftc -typecheck` and `--typecheck` must reach the
 same verdict, then 20 programs of `oracle-corpus.txt` compiled **four ways** — `swiftc -Onone`,
 `swiftc -O`, `./lab.exe build`, `./lab.exe build -O` — all run, stdout and exit code identical.
 It asks swiftc on every run, so no number in the other files can drift from what Swift prints.

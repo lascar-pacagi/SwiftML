@@ -8,7 +8,7 @@
   (:standard -warn-error -a)))
 
 (cram
- (deps lab.exe oracle-corpus.txt oracle-typecheck.txt))
+ (deps lab.exe oracle-corpus.txt typecheck-corpus.txt))
 
 (tests
  (names test_protocols)
