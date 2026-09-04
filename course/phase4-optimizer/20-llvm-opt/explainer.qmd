@@ -201,8 +201,11 @@ the caveats from §2 — the honesty *is* the deliverable.
 and the M4 benchmark says the generated code is in `swiftc -O`'s class on our subset — measured, with
 the caveats named. **Phase 4 is complete.**
 
-Next: Phase 5 (per `PLAN.md`) — the language grows again (strings, arrays, closures…), and each new
-feature gets to ride the optimizer you just built.
+Next: **Phase 5** — generics and protocols, where the language grows an abstraction the optimizer
+has to *see through*. Concepts 21–23 build protocol witness tables, generic functions and
+existentials; concept 24 then writes the two passes that erase them again — devirtualization and
+specialization — the payoff being that the abstract code ends up as fast as the concrete code you
+just optimized.
 
 ## 8. Appendix — full solution
 

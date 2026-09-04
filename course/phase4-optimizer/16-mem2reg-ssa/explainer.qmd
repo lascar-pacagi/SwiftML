@@ -223,9 +223,9 @@ where φs go, liveness prunes the unnecessary ones, and the dominator-tree **ren
 value's single reaching definition — promoting memory to block arguments. The raw SIL you've emitted
 since Phase 2 is now clean SSA, and `-O` still matches `swiftc`.
 
-Next, **17-constfold-dce** turns the toy passes from concept 15 into the real thing — constant
-*propagation*, dead-*store* elimination, CFG simplification — now devastatingly effective because they
-run on SSA. Then **18-cse-gvn** and **19-inlining**, until `swiftml -O` approaches `swiftc -O`
+Next, **17-constfold-dce** turns the toy passes from concept 15 into the real thing — folding that
+reaches comparisons and bools and propagates through SSA, and **CFG simplification**, which folds a
+branch whose condition is now a constant and deletes the block it made unreachable. Then **18-cse-gvn** and **19-inlining**, until `swiftml -O` approaches `swiftc -O`
 (**Milestone M4**).
 
 ## 8. Appendix — full solution (the renaming)
