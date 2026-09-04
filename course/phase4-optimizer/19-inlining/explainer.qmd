@@ -42,6 +42,28 @@ different: it needs the *callee*, which lives in another function. So it runs as
 transform (over `Sil.modul`), before the per-function pipeline. After inlining, callees that are no
 longer called anywhere are **dead** and removed — `sq` vanishes once its only call is inlined.
 
+### The SIL the splice rewrites
+
+This concept adds no Swift syntax, and no SIL instruction either. What it adds is a *rewrite that
+crosses functions*, and the forms below are the ones the transform has to get right. Everything
+in `Sil.func` that is not a block matters here too, which is what makes this pass different from
+15–18: those only touched `block.instrs`.
+
+| form | what the splice does with it |
+|---|---|
+| `%10 = function_ref @sq` | names the callee. It is left behind and becomes dead — which is why the "is it still called?" count looks at `apply`s, not `function_ref`s |
+| `%11 = apply %10(%3) $Int` | **the site**: replaced by the callee's instructions. Its result `%11` must afterwards mean whatever the callee returned |
+| `f.params : (value * ty) list` | each parameter value maps to the actual argument at the call — `params[i] -> args[i]`, in order |
+| `f.blocks` (exactly one, in v0) | its instructions are renumbered past the caller's highest value and spliced in place of the apply |
+| `return %7` | not copied. `%7` (renumbered) becomes the value the call's result stands for |
+| `f.val_ty : (value, ty) Hashtbl` | every renumbered value needs its type copied into the CALLER's table, or IRGen has nothing to emit for it |
+| `%8 = alloc_stack $Int  // x` inside the callee | copied like any other instruction. Inlining runs BEFORE mem2reg, so the callee's parameter slots come along and are promoted afterwards — that is deliberate: the caller's constants then reach them |
+| `bb2(%12 : $Int):` · `br` · `cond_br` | v0 never meets them in a callee (single-block only), and the caller's are untouched — the splice happens inside one block |
+
+The pipeline order is part of the design: `inline_module` runs over the whole module first, then
+the per-function pipeline (mem2reg, fold, simplify, GVN, DCE) runs on the result. That is what
+turns a copied body into folded, deduplicated straight-line code.
+
 ### Why v0 only inlines single-block leaves
 
 Two real hazards make "inline everything" wrong:
@@ -92,10 +114,32 @@ Reference: `solution/opt.ml`.
 make lab C=phase4-optimizer/19-inlining
 ```
 
-cram checks `sq(5)` is inlined and folded to `25` with `@sq` removed, and that `-O` (nested calls,
-inlining in a loop, recursion left alone) matches `swiftc`. alcotest checks a single-block leaf is
-inlined and removed, a recursive function is kept, a multi-block leaf is kept, and the result still
-verifies after the full pipeline.
+One hole, so the cram is split by what the transform must do and what it must leave alone:
+
+- `opt-inline-splice.t` — the transform and its payoff: `sq(5)` inlined, then folded to the
+  literal `25`, with `@sq` dropped from the module; the cascade (two leaves called in a loop, the
+  bodies spliced and then merged and folded); arguments binding in ORDER, checked with an
+  asymmetric `a - b` where an off-by-one is a wrong answer rather than a crash; a call whose
+  argument is a call, which needs the worklist's second round; and a struct-returning callee,
+  which is where forgetting to copy `val_ty` shows up.
+- `opt-inline-limits.t` — what `inlinable` refuses, each paired with a leaf that must still go:
+  a recursive function, a multi-block leaf, mutual recursion (caught from both sides by the same
+  leaf rule), a leaf called at two sites (inlined at both — copying is the mechanism, and code
+  size is the price exercise 1 puts a cost model on), and a function that is still called and
+  therefore not dropped.
+- `sema-subset.t` — GIVEN code, `PASS` from the start: the front-end refusals that keep the corpus
+  inside what both compilers mean the same.
+- `test_inline.ml` (alcotest `inline`) — the same claims in process, plus one the cram cannot see:
+  every value an instruction defines has a type in its function's table, which is the check that
+  catches a splice that copied the instructions but not `val_ty`.
+- `oracle.t` — 24 programs built four ways (`swiftc -Onone`, `swiftc -O`, `lab build`,
+  `lab build -O`), all run, stdout and exit code identical. Two are this concept's: leaves inlined
+  at several sites with asymmetric arguments, and mutual recursion beside a struct-returning leaf.
+
+An untouched hole reads `TODO`; a partly filled one reads `FAIL` with what each case wanted and
+what your code printed. `oracle.t` is `PASS` on the skeleton — inlining nothing is behaviour-
+preserving — and it must stay `PASS`: an inliner that binds the wrong argument produces a program
+that still compiles and prints the wrong number, which is exactly what the run catches.
 
 ## 5. Benchmark it
 

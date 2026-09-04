@@ -9,7 +9,7 @@
   (:standard -warn-error -a)))
 
 (cram
- (deps lab.exe))
+ (deps lab.exe oracle-corpus.txt))
 
 (tests
  (names test_inline)
