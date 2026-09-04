@@ -35,7 +35,13 @@ let test_pipeline_runs_pass () =
 let test_pipeline_empty () =
   let m = lower "print(2 * 3 + 4)" in
   let before = total m in
-  Alcotest.(check int) "empty pipeline is the identity" before (total (Opt.run_pipeline [] m))
+  Alcotest.(check int) "empty pipeline is the identity" before (total (Opt.run_pipeline [] m));
+  (* and a one-pass pipeline is NOT — otherwise "identity" would be satisfied by a manager that
+     runs nothing at all *)
+  let m2 = lower "let a = 1\na + 1\nprint(a)" in
+  let before2 = total m2 in
+  Alcotest.(check bool) "but one pass does change it" true
+    (total (Opt.run_pipeline [ { Opt.name = "die"; run = Opt.dead_instr_elim } ] m2) < before2)
 
 let test_pipeline_order_and_funcs () =
   (* a recording pass: which function it saw, under which pass name — in order *)
@@ -99,7 +105,8 @@ let test_fold_stops_at_loads () =
 (* ---- dead_instr_elim (given) ---- *)
 
 let test_dce_keeps_effects () =
-  let f = Opt.dead_instr_elim (main_of (lower "let a = 1\na + 1\nprint(a)")) in
+  (* run it THROUGH the manager, not by hand: the rule is what the pipeline must preserve *)
+  let f = main_of (Opt.run_pipeline [ { Opt.name = "die"; run = Opt.dead_instr_elim } ] (lower "let a = 1\na + 1\nprint(a)")) in
   Alcotest.(check int) "dead binop gone" 0 (count_in is_binop f);
   Alcotest.(check int) "store kept" 1 (count_in (function Sil.Store _ -> true | _ -> false) f);
   Alcotest.(check int) "print kept" 1 (count_in (function Sil.Print _ | Sil.Apply _ -> true | _ -> false) f)

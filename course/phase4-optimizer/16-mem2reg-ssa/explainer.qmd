@@ -187,10 +187,10 @@ A file you have not started reads `TODO` with the list of what it will check; on
 `FAIL` with, under each failing case, what the test wanted and what your code printed. Two readings
 are worth knowing in advance for this concept:
 
-- `opt-rename-straight.t` starts at **`FAIL`, not `TODO`**, with exactly one case green — the
-  field-addressed struct. That slot is not promotable, so `mem2reg` returns before it ever reaches
-  your hole; the case passes on GIVEN code, and it is in the file to prove that the promotable-slot
-  check you were handed is the one deciding it.
+- Every case pairs its claim with something that must change, including the ones about what
+  mem2reg must NOT touch: the field-addressed struct slot is checked beside a promotable `let` in
+  the same program, so a hole that promotes nothing fails rather than passing by leaving
+  everything alone.
 - `oracle.t` starts at **`TODO`**. Unlike concept 15, whose unfilled `run_pipeline` was the identity,
   an unfilled renaming raises, so `lab build -O` cannot produce a binary; the loop prints the
   `TODO(` it saw and stops rather than counting a failed build as agreement. It goes green with the

@@ -106,9 +106,13 @@ let test_nested_loop () =
 
 let test_struct_not_broken () =
   (* a struct accessed by field (struct_element_addr) is NOT promoted; mem2reg leaves it valid *)
-  let m = lower "struct P { var x: Int; var y: Int }\nvar p = P(x: 1, y: 2)\np.x = 9\nprint(p.x)" in
+  (* the promotable `let k` beside it must still go, so a mem2reg that promotes nothing fails
+     this case rather than passing by leaving everything alone *)
+  let m = lower "struct P { var x: Int; var y: Int }\nvar p = P(x: 1, y: 2)\nlet k = 5\np.x = 9\nprint(p.x + k)" in
+  let before = count_instr is_mem m in
   let m' = m2r m in
   Alcotest.(check bool) "field-addressed slot kept" true (count_instr is_mem m' > 0);
+  Alcotest.(check bool) "but the scalar slot was promoted" true (count_instr is_mem m' < before);
   Alcotest.(check (list string)) "still verifies after mem2reg" [] (Sil.verify m')
 
 let test_verifies_everywhere () =

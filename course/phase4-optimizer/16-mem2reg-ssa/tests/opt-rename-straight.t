@@ -53,13 +53,25 @@ addressed field by field, so `p.x + p.y` reads out of the `struct` VALUE:
   2
 
 A slot that IS addressed field by field is not promotable, and renaming must leave it alone —
-`p.x = 9` needs `struct_element_addr`, which takes the slot's address:
+`p.x = 9` needs `struct_element_addr`, which takes the slot's address. The `let k` beside it is
+promotable, so of the two slots in the raw SIL exactly one survives:
 
-  $ printf 'struct P {\n  var x: Int\n  var y: Int\n}\nvar p = P(x: 1, y: 2)\np.x = 9\nprint(p.x)\n' > field.swift
+  $ cat > field.swift <<'PROG'
+  > struct P {
+  >   var x: Int
+  >   var y: Int
+  > }
+  > var p = P(x: 1, y: 2)
+  > let k = 5
+  > p.x = 9
+  > print(p.x + k)
+  > PROG
+  $ ./lab.exe --emit-sil field.swift | grep -c 'alloc_stack'
+  2
   $ ./lab.exe --sil-opt field.swift | grep -c 'alloc_stack' || true
   1
   $ ./lab.exe build field.swift -O -o fieldO && ./fieldO
-  9
+  14
 
 `-O` preserves behaviour: the three promoted programs still print 3, 20 and 5:
 
