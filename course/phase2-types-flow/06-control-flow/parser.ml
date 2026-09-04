@@ -1,6 +1,6 @@
-(* Parser — concept 06 (skeleton). Concepts 1–05 are filled in; the && / || precedence is
-   wired through infix_bp / binop_of_kind. You write the TODO(06) holes: parse_block,
-   parse_if, and the control-flow cases of parse_stmt. Reference: solution/parser.ml. *)
+(* Parser — concept 06 (skeleton). Concepts 01–05 are filled in. You write the TODO(06) holes:
+   the two new operators' rows in infix_bp / binop_of_kind, then parse_block, parse_if, and the
+   control-flow cases of parse_stmt. Reference: solution/parser.ml. *)
 
 type t = { toks : Token.t array; mutable pos : int; diags : Diagnostics.sink }
 
@@ -26,13 +26,14 @@ let expect (p : t) (k : Token.kind) (what : string) : Token.t =
     Diagnostics.error p.diags tok.Token.span (Printf.sprintf "expected %s" what);
     tok)
 
-(* binding powers: arithmetic > comparison > && > || (Swift's precedence groups) *)
+(* Binding powers: higher binds tighter, and the Pratt loop keeps folding while the next
+   operator's power is at least the one it was called with. Concepts 05's rows are here.
+   TODO(06): give `&&` and `||` theirs. Both are LOOSER than a comparison, and they differ
+   from each other — §2's precedence table has the numbers and Swift's group names. *)
 let infix_bp : Token.kind -> int option = function
   | Token.Star | Token.Slash | Token.Percent -> Some 20
   | Token.Plus | Token.Minus -> Some 10
   | Token.EqEq | Token.Ne | Token.Lt | Token.Le | Token.Gt | Token.Ge -> Some 5
-  | Token.AmpAmp -> Some 4
-  | Token.PipePipe -> Some 3
   | _ -> None
 
 let binop_of_kind : Token.kind -> Ast.binop option = function
@@ -47,8 +48,7 @@ let binop_of_kind : Token.kind -> Ast.binop option = function
   | Token.Le -> Some Ast.Le
   | Token.Gt -> Some Ast.Gt
   | Token.Ge -> Some Ast.Ge
-  | Token.AmpAmp -> Some Ast.And
-  | Token.PipePipe -> Some Ast.Or
+  (* TODO(06): the two new tokens map to `Ast.And` and `Ast.Or`. *)
   | _ -> None
 
 let unary_bp = 100

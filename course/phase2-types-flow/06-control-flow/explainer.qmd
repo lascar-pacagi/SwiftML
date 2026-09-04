@@ -107,7 +107,7 @@ Five new tokens, all in the operator `match` of the lexer (maximal munch, like `
 
 The syntactic grammar — `<-- new` marks what this concept adds; as in 05, `[ x ]` is optional
 and `{ x }` is zero-or-more. Precedence is the `infix_bp` table, loosest first; the two logical
-rows are **given** in `parser.ml`, the statements are yours:
+rows are yours to add, and so is everything below the grammar:
 
 ```
 program    ::= { statement NEWLINE }
@@ -176,13 +176,18 @@ bidirectional checker paying for itself — a statement rule is one call.
 
 ## 3. Build it, step by step
 
-Three skeletons; concepts 01–05 are filled in. Fill the `TODO(06)` holes.
+Three skeletons; concepts 01–05 are filled in. Fill the `TODO(06)` holes — the rule for the whole
+course is that whatever the concept *adds* to the language is yours, and that includes the two new
+operators' precedence.
 
 1. **`lexer.ml`** — in the operator `match`: `{` → `LBrace`, `}` → `RBrace`; `&` then `&` → `AmpAmp`
    (error on a lone `&`); `|` then `|` → `PipePipe`; and `.` then `.<` → `DotDotLt` (the range; error
    on a lone `.`, since a leading `.` isn't a valid number here). All mirror 05's multi-char `==`/`<=`.
-2. **`parser.ml`** — `parse_block` consumes `{`, parses statements (skipping blank `Newline`s) until
-   `}`, returns the `stmt list`. `parse_if` parses `if <expr> <block>` then an optional `else`
+2. **`parser.ml`** — first the two new operators, one row each in the two tables that Phase 1's
+   Pratt loop reads: a binding power in `infix_bp` (the table above has both numbers) and the
+   `Ast.binop` they build in `binop_of_kind`. Nothing else in the loop changes — that is the point
+   of a table-driven parser. Then the statements. `parse_block` consumes `{`, parses statements
+   (skipping blank `Newline`s) until `}`, returns the `stmt list`. `parse_if` parses `if <expr> <block>` then an optional `else`
    (`else if` recurses into `parse_if`, wrapped in a one-element list). In `parse_stmt`, add `while`
    (`<expr>` then a block), `for` (`<ident> in <expr> ..< <expr>` then a block), and `break`/`continue`
    (just the keyword + its span). `parse_expr` already stops at `{`, so a condition parses cleanly.
@@ -205,8 +210,10 @@ fill the holes:
 
 - `lexer-flow.t` — `--emit-tokens`: `{ }`, `&&`, `||`, `..<` (with and without spaces), and the
   three lone-character diagnostics with their columns. Green with the lexer arm alone.
-- `parser-logical.t` — `--emit-ast`: the precedence of `&&`/`||` (given rows) — green as soon
-  as the tokens exist.
+- `parser-logical.t` — `--emit-ast`: that `a && b || c` is `(a && b) || c`, that both sit below
+  the comparisons, and that parentheses still win. Green with the two `infix_bp` /
+  `binop_of_kind` rows — the smallest hole in the concept, and the one that proves a binding
+  power is just a number.
 - `parser-if.t` — `if`, `if/else`, `else if` as a nested `if`, multi-statement and nested
   blocks, a missing `{`. Green with `parse_block` + `parse_if`.
 - `parser-loops.t` — `while`, `for` with expression bounds, `break`/`continue`, nested loops,

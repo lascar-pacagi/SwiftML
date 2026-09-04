@@ -9,11 +9,13 @@ inside a loop.
 **Prerequisites:** concept 05 (types & bidirectional inference). It's carried forward and working;
 you only fill the `TODO(06)` holes.
 
-**You edit (three skeletons; concepts 1–05 are given):**
+**You edit (three skeletons; concepts 01–05 are given):**
 
 - `lexer.ml` — `TODO(06)`: braces `{ }`, the logical operators `&&` `||`, and the half-open range `..<`.
-- `parser.ml` — `TODO(06)`: `parse_block` (a `{ … }` block), `parse_if` (with `else`/`else if`), and
-  the `while`/`for`/`break`/`continue` cases of `parse_stmt`. The `&&`/`||` precedence is given.
+- `parser.ml` — `TODO(06)`: the `&&`/`||` rows in `infix_bp` and `binop_of_kind` (their binding
+  powers are the new operators' precedence — yours to set, as every new operator's has been), then
+  `parse_block` (a `{ … }` block), `parse_if` (with `else`/`else if`), and the
+  `while`/`for`/`break`/`continue` cases of `parse_stmt`.
 - `sema.ml` — `TODO(06)`: `&&`/`||` typing, and the control-flow rules — `Bool` conditions, the
   `for` variable, block scoping (the scope stack + `check_block` are given), and `break`/`continue`
   placement (via `loop_depth`).
