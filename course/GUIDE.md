@@ -283,8 +283,11 @@ The big checkpoints, in order (full list in `../PLAN.md` §7):
 - **M4** — the optimizer: `swiftml -O` competitive with `swiftc -O`.
 - **M5** — generics & protocols + specialization.
 - **M6** — classes + ARC + the ARC optimizer.
-- **M7** — closures, errors, and a minimal stdlib (`Array`/`String`/`Dictionary`).
-- **M8** — the from-scratch ARM64 backend across the whole corpus; the compiler is "complete."
+- **M7** — closures, errors, and a minimal stdlib (`Array<Int>`, `String`, `map`/`filter`/`reduce`;
+  `Dictionary` and `Set` stay v1).
+- **M8** — the from-scratch ARM64 backend: correct, register-allocated, ABI-conformant and
+  debuggable over the scalar corpus (Int/Bool, control flow, functions), differential against both
+  the LLVM path and `swiftc`. Aggregates and ARC stay on the LLVM backend.
 
 A concept is **done** when its tests pass, it matches `swiftc`, any perf gate is met, and
 (optionally) its explainer renders. Then move to the next.
