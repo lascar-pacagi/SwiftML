@@ -30,6 +30,9 @@ new machinery — almost always the **lowering** (how a language feature becomes
 | `12-pattern-matching` | the `switch` dispatch lowering (tag → `cond_br` chain → payload binding) + exhaustiveness | destructuring + a mini ADT interpreter run; exhaustiveness rejects like swiftc |
 | `13-optionals` | the optional lowering (implicit `T`→`T?` wrap, `!` trap, `??`, `if let`) over the enum engine | force-unwrap-nil **traps with swiftc's exact exit code (133)** |
 
+| `14-memory-layout` | the padding walk and the field offsets (`--emit-layout`) | swiftc's own `MemoryLayout<T>.size/stride/alignment/offset(of:)`, to the byte |
+
 **Milestone M3:** value types end-to-end — struct/enum/switch/optional programs compile, run, and
-match `swiftc` byte-for-byte, including trap behavior. (`14-memory-layout` is deferred; the phase
-pivoted straight into the optimizer.)
+match `swiftc` byte-for-byte, including trap behavior. `14-memory-layout` was written after the
+rest of the phase, as a backfill: it branches off `13-optionals` rather than feeding concept 15,
+so nothing downstream depends on it and it can be read at any time.
