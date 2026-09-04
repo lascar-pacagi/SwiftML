@@ -22,19 +22,45 @@ byte-for-byte. That's **Milestone M2**, and the end of Phase 2.
 
 IRGen is the shortest pass in the compiler, and that's the point: **SILGen already built the
 control-flow graph, so IRGen is almost a one-to-one transliteration.** SIL is raw and memory-based;
-LLVM IR is also memory-capable (it has `alloca`/`load`/`store`) and block-structured. So:
+LLVM IR is also memory-capable (it has `alloca`/`load`/`store`) and block-structured.
 
-| SIL | LLVM IR |
+This concept adds no Swift syntax — the grammar is still concept 07's. What it adds is the mapping
+between two IRs, so this table is the specification of your work: every SIL form concept 08 can
+emit, and the LLVM line it becomes. `<-- yours` marks the cases behind the two `TODO(09)` holes;
+the rest is given.
+
+**Instructions** (`gen_instr`). Several emit *no line at all* into the function body — they only
+bind the SIL value to an operand, which is a shape worth expecting before you meet it:
+
+| SIL | LLVM |
 |---|---|
-| basic block `bbN:` | basic block `bbN:` |
-| `alloc_stack $Int` | `%t = alloca i64` |
-| `load`/`store` | `load`/`store` |
-| `binop "+" … : $Int` | `add i64 …` |
-| `binop "<" … : $Bool` | `icmp slt i64 …` |
-| `cond_br %c, bbT, bbF` | `br i1 %c, label %bbT, label %bbF` |
-| `br bbN` / `return %v` | `br label %bbN` / `ret <ty> %v` |
-| `apply %f(%a)` | `call <ty> @f(<ty> %a)` |
-| `apply @print(%x)` | `call @printf(@.fmt, %x)` |
+| `%n = integer_literal $Int, 7` | the operand `7` — no line (given, as the pattern) |
+| `%n = integer_literal $Bool, true` | the operand `1` — no line (given) |
+| `%n = float_literal $Double, 1.5` | a hex float operand — no line (given) |
+| `%n = string_literal $String, "hi"` | a `private unnamed_addr constant` global (given) |
+| `%n = alloc_stack $T  // x` | `%tK = alloca <ty>`, hoisted to the entry block (given) |
+| `%n = load %a $T` | `%tK = load <ty>, ptr %a` `<-- yours` |
+| `store %v to %a` | `store <ty> %v, ptr %a` — no result `<-- yours` |
+| `%n = binop "+" %a, %b $Int` | `%tK = add i64 %a, %b` (the given `gen_binop` table) `<-- yours` |
+| `%n = unop "-" %a $Int` | `%tK = sub i64 0, %a` — integers have no negate opcode `<-- yours` |
+| `%n = function_ref @f` | the operand `@f` — no line `<-- yours` |
+| `%n = apply %f(%a)` | `%tK = call <ret> %f(<ty> %a)`, or `call void …` with no result `<-- yours` |
+| `%n = apply @print(%a)` | a `printf` call (the given `gen_print`) `<-- yours` |
+
+**Terminators** (`gen_term`) — the CFG, and the one asymmetry in the whole pass:
+
+| SIL | LLVM |
+|---|---|
+| `br bbN` | `br label %bbN` `<-- yours` |
+| `cond_br %c, bbT, bbF` | `br i1 %c, label %bbT, label %bbF` `<-- yours` |
+| `return %v` | `ret <the function's return type> %v` `<-- yours` |
+| `return` | `ret void` — **but `ret i32 0` in `@main`** `<-- yours` |
+| `unreachable` | `unreachable` — a real LLVM instruction `<-- yours` |
+
+The asymmetry is `@main`. In SIL it is an ordinary function returning `$()`; in LLVM it is the C
+entry point, whose `i32` result *is* the process's exit code, so a valueless `return` there has to
+become `ret i32 0`. Blocks and their labels carry across unchanged, which is why an `--emit-llvm`
+dump reads like the `--emit-sil` dump of the same program with the words swapped.
 
 One LLVM rule is worth learning right now: **every `alloca` goes at the top of the entry block**
 (the given `gen_allocas` does this for you). An `alloca` reserves stack space that is only returned
@@ -95,21 +121,40 @@ we deliberately scope out, all documented:
 > of your `gen_instr`. swiftc's IRGen is far larger because it also lowers ARC, generics, and value
 > witnesses; ours handles the Phase-2 subset.
 
+### The diagnostics you emit
+
+**None, again.** IRGen runs on SIL that sema accepted and the verifier passed, so there is nothing
+left for it to refuse: every wording the tests compare belongs to concepts 05–07, and `--emit-llvm`
+and `build` run the whole front end first and bail on its errors before IRGen is reached.
+
+Two failures are still possible, and neither is a Swift diagnostic. Ill-typed LLVM — an `add i64` on
+an `i1`, a `ret void` where the signature says `i64` — is caught by **clang**, which prints its own
+error and makes `build` fail; treat that as a bug in your mapping table, and note that it is a real
+check the cram files lean on (`irgen-terms.t` ends by building the program, not just printing it).
+Second, the exit code: `@main`'s `ret i32 0` is the *process's* exit status, so a program that
+prints nothing must still exit 0 — `run-arith.t` pins that, because it is the kind of thing that
+only shows up when something later depends on it.
+
 ## 3. Build it, step by step
 
-Open `irgen.ml`. The constants in `gen_instr` are given as the pattern (a `Int_lit` maps a SIL value
-to an operand). Fill the `TODO(09)` holes:
+One skeleton, `irgen.ml`, and two holes in it — `gen_instr` and `gen_term`, both inside `gen_func`.
+The plumbing is given: `llty`, the output buffers, `fresh ()`, the `opnd` value map, `gen_binop`'s
+opcode table, `gen_print`, `gen_allocas`, and the loop over blocks. The literal cases of `gen_instr`
+are given too, as the pattern to copy: they call `Hashtbl.replace opnd v <operand>` and emit nothing.
 
-- **`gen_instr`**: for the remaining instructions, emit an LLVM line with `p "..."` and record the
-  result with `Hashtbl.replace opnd v (fresh ())`. `Load`/`Store` →
-  `load`/`store` (use `llty (vty …)` for the type); `Binop` → the given `gen_binop v op l r`;
-  `Unop (Neg)` → `sub i64 0, x`; `Func_ref name` → operand `"@name"`; `Apply` → `call <ret> <fr>(args)`
-  (a `void` call emits no result); `Print` → the given `gen_print x`.
-  (`Alloc_stack` is already handled: the given `gen_allocas` emits every alloca at the top of the
-  entry block — see §2 for why placement matters — so your `gen_instr` case for it is a no-op.)
-- **`gen_term`**: `Br n` → `br label %bbN`; `Cond_br` → `br i1 <c>, label %bbT, label %bbE`;
-  `Return None` → `ret i32 0` in `@main` else `ret void`; `Return (Some v)` → `ret <ret> <v>`;
-  `Unreachable` → `unreachable`.
+The two holes are **coupled** — a function always ends in a terminator, so `--emit-llvm` prints a
+complete module or nothing at all, and no test can go green until both are done. `gen_instr` is what
+raises first, so:
+
+1. **`gen_instr`**, working down the instruction table in §2. Emit a line with `p "…"`; when the
+   instruction has a result, bind it with `Hashtbl.replace opnd v (fresh ())` so later instructions
+   can name it. Types come from `llty (vty v)`. Three traps: an instruction that binds an operand
+   but emits no line, a `store` that emits a line but binds nothing, and a `void` call, which is
+   both a line and no result.
+2. **`gen_term`**, the five terminator forms. `is_main` is in scope for the `@main` exception.
+
+Then `./lab.exe build p.swift -o p && ./p` on anything from §4 — clang will tell you at once if the
+IR is not well-typed.
 
 Reference: `solution/irgen.ml`.
 
@@ -119,10 +164,35 @@ Reference: `solution/irgen.ml`.
 make lab C=phase2-types-flow/09-sil-to-llvm
 ```
 
-The cram test **compiles and runs** real programs (`swiftml2 build a.swift -o a && ./a`) and checks
-their stdout — self-contained, but every expected value also matches `swiftc`. It additionally
-FileChecks the IR shape (`define i64 @sq`, `mul i64`). The alcotest pins the emitted IR (the preamble,
-`alloca`/`load`/`store`, typed opcodes, `br`, `call`).
+Five cram files (`make lab C=… T=run-control` runs one), a unit suite grouped by hole, and the
+oracle. The first two read the IR; the rest **build the program and run it**, which is the point of
+this concept:
+
+- `irgen-instrs.t` — `--emit-llvm` down the instruction table: literals as operands, the
+  `alloca`/`load`/`store` model, the entry-block alloca rule (a `let` inside a loop still allocas
+  in `bb0`), the typed arithmetic mnemonics, the signed `icmp` predicates, `sub i64 0, x` for
+  unary minus, `function_ref` + `apply` becoming one `call`, and `print`'s two shapes.
+- `irgen-terms.t` — the five terminators, `@main`'s `ret i32 0`, an `unreachable` that survives
+  into LLVM, and a `build` at the end, because printable is not the same as well-typed.
+- `run-arith.t` — compiled and run: integer arithmetic and Swift's truncating division and
+  signed remainder, unary minus, `Bool` printing, `&&`/`||` **short-circuiting** (a program that
+  would print if the right operand were evaluated), and a silent program's exit code.
+- `run-control.t` — `if`/`else if`, `while`, `for` (including an empty range), `break` out of a
+  loop with a bound of 100, `continue` in a `for` — the case that caught the real bug — and
+  nested loops where each of `break` and `continue` addresses the inner one only.
+- `run-funcs.t` — argument order and nested calls, recursion (`fib 20`), mutual recursion,
+  `Void` returns and an early bare `return`, a loop inside a function, and `gcd`/`collatz` as a
+  smoke test for the whole phase.
+- `test_irgen.ml` (alcotest `irgen`) — the same in-process, one group per hole plus a "given"
+  group that counts allocas and checks they are all in the entry block. Reading the text lets a
+  case ask *where* a line landed, which the cram greps cannot.
+- `oracle.t` — **the headline, and Milestone M2**: 27 programs from `oracle-corpus.txt` are
+  compiled by `swiftc -Onone` and by `./lab.exe build`, both binaries are run, and stdout and
+  exit code must be identical. The numbers in the other files were written down once; this one
+  asks swiftc on every run.
+
+Every file reads `TODO` until both holes are done — see §3 — and then `FAIL` with the wanted and
+the printed output side by side while the mapping is still wrong.
 
 ## 5. Benchmark it
 
@@ -166,14 +236,17 @@ let gen_instr (v, i) =
   match (i : Sil.instr) with
   | Sil.Int_lit n -> Hashtbl.replace opnd v (string_of_int n)
   | Sil.Bool_lit b -> Hashtbl.replace opnd v (if b then "1" else "0")
-  | Sil.Float_lit x -> Hashtbl.replace opnd v (Printf.sprintf "0x%016LX" (Int64.bits_of_float x))
+  | Sil.Float_lit x ->
+      Hashtbl.replace opnd v (Printf.sprintf "0x%016LX" (Int64.bits_of_float x))
   | Sil.String_lit s -> Hashtbl.replace opnd v (add_string_const s)
-  | Sil.Alloc_stack _ -> () (* emitted in the entry block by the given gen_allocas — see §2 *)
+  (* emitted in the entry block by the given gen_allocas — see §2 *)
+  | Sil.Alloc_stack _ -> ()
   | Sil.Load a ->
       let r = fresh () in
       p (Printf.sprintf "  %s = load %s, ptr %s\n" r (llty (vty v)) (op a));
       Hashtbl.replace opnd v r
-  | Sil.Store (x, a) -> p (Printf.sprintf "  store %s %s, ptr %s\n" (llty (vty x)) (op x) (op a))
+  | Sil.Store (x, a) ->
+      p (Printf.sprintf "  store %s %s, ptr %s\n" (llty (vty x)) (op x) (op a))
   | Sil.Binop (op0, l, r) -> gen_binop v op0 l r
   | Sil.Unop (Ast.Neg, x) -> let r = fresh () in
       (if vty x = Types.TDouble then p (Printf.sprintf "  %s = fneg double %s\n" r (op x))
@@ -187,14 +260,17 @@ let gen_instr (v, i) =
       in
       let rt = vty v in
       if rt = Types.TVoid then p (Printf.sprintf "  call void %s(%s)\n" (op fr) argstr)
-      else (let r = fresh () in p (Printf.sprintf "  %s = call %s %s(%s)\n" r (llty rt) (op fr) argstr);
-            Hashtbl.replace opnd v r)
+      else (
+        let r = fresh () in
+        p (Printf.sprintf "  %s = call %s %s(%s)\n" r (llty rt) (op fr) argstr);
+        Hashtbl.replace opnd v r)
   | Sil.Print x -> gen_print x
 
 let gen_term (t : Sil.term) =
   match t with
   | Sil.Br n -> p (Printf.sprintf "  br label %%bb%d\n" n)
-  | Sil.Cond_br (c, th, el) -> p (Printf.sprintf "  br i1 %s, label %%bb%d, label %%bb%d\n" (op c) th el)
+  | Sil.Cond_br (c, th, el) ->
+      p (Printf.sprintf "  br i1 %s, label %%bb%d, label %%bb%d\n" (op c) th el)
   | Sil.Return None -> p (if is_main then "  ret i32 0\n" else "  ret void\n")
   | Sil.Return (Some v) -> p (Printf.sprintf "  ret %s %s\n" (llty f.Sil.ret) (op v))
   | Sil.Unreachable -> p "  unreachable\n"

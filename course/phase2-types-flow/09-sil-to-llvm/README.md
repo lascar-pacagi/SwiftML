@@ -31,6 +31,8 @@ Language Reference (`https://llvm.org/docs/LangRef.html`).
 
 ## Done when
 
-`make lab C=phase2-types-flow/09-sil-to-llvm` is green: the cram test **builds and runs** programs and
-checks their output (and FileChecks the IR), and the alcotest pins the emitted-IR shape. A program
-compiled with `swiftml2 build` produces the same output as one compiled with `swiftc`.
+`make lab C=phase2-types-flow/09-sil-to-llvm` is green: `irgen-instrs.t` and `irgen-terms.t` match
+the `--emit-llvm` mapping (including the entry-block alloca rule), `run-arith.t`, `run-control.t` and
+`run-funcs.t` **build and run** programs and check their output, the alcotest groups — one per hole —
+pin the emitted IR, and `oracle.t` compiles all 27 corpus programs with `swiftc -Onone` and with
+`./lab.exe build`, runs both, and finds stdout and exit code identical.
