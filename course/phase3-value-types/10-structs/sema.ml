@@ -195,9 +195,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
     | Ast.Return _ -> true
     | Ast.If { then_blk; else_blk = Some e; _ } -> block_returns then_blk && block_returns e
     | _ -> false
-  and block_returns stmts =
-    match List.rev stmts with last :: _ -> stmt_returns last | [] -> false
-  in
+  and block_returns stmts = List.exists stmt_returns stmts (* the rest is unreachable *) in
   let rec check_stmt (s : Ast.stmt) : unit =
     match s with
     | Ast.Let { name; is_var; annot; value; span } ->
@@ -250,7 +248,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
     | Ast.Continue span -> if !loop_depth = 0 then err span "'continue' is only allowed inside a loop"
     | Ast.Return (eo, span) -> (
         match !current_ret with
-        | None -> err span "'return' invalid outside of a func"
+        | None -> err span "return invalid outside of a func"
         | Some rt -> (
             match eo with
             | Some e ->
@@ -275,7 +273,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
     current_ret := saved_ret;
     if ret <> Types.TVoid && not (block_returns f.Ast.body) then
       err f.Ast.fspan
-        (Printf.sprintf "missing return in function expected to return '%s'" (Types.string_of_ty ret))
+        (Printf.sprintf "missing return in %s expected to return '%s'" "global function" (Types.string_of_ty ret))
   in
 
   (* PASS 0: register struct names (so a field can reference another struct), then fill the

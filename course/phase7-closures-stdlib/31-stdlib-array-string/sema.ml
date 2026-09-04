@@ -706,9 +706,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         List.for_all (fun (_, body) -> block_returns body) cases
         && (match default with Some d -> block_returns d | None -> true)
     | _ -> false
-  and block_returns stmts =
-    match List.rev stmts with last :: _ -> stmt_returns last | [] -> false
-  in
+  and block_returns stmts = List.exists stmt_returns stmts (* the rest is unreachable *) in
   let rec check_stmt (s : Ast.stmt) : unit =
     match s with
     | Ast.Let { name; is_var; annot; value; span } ->
@@ -819,7 +817,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
     | Ast.Continue span -> if !loop_depth = 0 then err span "'continue' is only allowed inside a loop"
     | Ast.Return (eo, span) -> (
         match !current_ret with
-        | None -> err span "'return' invalid outside of a func"
+        | None -> err span "return invalid outside of a func"
         | Some rt -> (
             match eo with
             | Some e ->
@@ -971,7 +969,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
     current_generics := saved_generics;
     if ret <> Types.TVoid && not (block_returns f.Ast.body) then
       err f.Ast.fspan
-        (Printf.sprintf "missing return in function expected to return '%s'" (Types.string_of_ty ret))
+        (Printf.sprintf "missing return in %s expected to return '%s'" (if self_of <> None || class_of <> None then "instance method" else "global function") (Types.string_of_ty ret))
   in
 
   (* CONFORMANCE CHECK (concept 21): for each `struct S : P`, P must be a declared protocol and
