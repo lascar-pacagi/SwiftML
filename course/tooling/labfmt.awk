@@ -126,7 +126,11 @@ build { put($0); next }
 function flush(   i, w, g, key) {
   if (nw || ng) {
     for (i = 1; i <= nw; i++) w = w "           " want[i] "\n"
-    for (i = 1; i <= ng; i++) g = g "           " got[i] "\n"
+    # a `timeout N` guard reports 124 — say so, or the learner reads a bare exit code
+    for (i = 1; i <= ng; i++)
+      g = g "           " (got[i] == "[124]" \
+            ? "[124]   (timed out — the command never finished; an unterminated loop?)" \
+            : got[i]) "\n"
     if (w != g) {
       key = cur SUBSEP pendblk; bad[key] = 1
       if (g ~ /Failure\("TODO/) todo[key] = 1        # the skeleton's own failwith, not a wrong answer
