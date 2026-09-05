@@ -377,7 +377,8 @@ integers, `+ - * / %`, `( )`, `=`, newline, `let`, `var`.
 in a form that reads better once productions get longer:
 
 ```
-program    ::= { statement NEWLINE } [ statement ]
+program    ::= [ nl ] [ statement { nl statement } ] [ nl ]
+nl         ::= NEWLINE { NEWLINE }      # one or more: a run of blank lines is one separator
 statement  ::= ("let" | "var") ident [ ":" type ] "=" expr        <-- annotation is new
              | ident "=" expr
              | expr

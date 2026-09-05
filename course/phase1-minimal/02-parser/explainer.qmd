@@ -32,10 +32,12 @@ You'll turn the flat token list into a **tree** — the AST — that captures st
 
 Concept 01 stated the *lexical* grammar — which characters make which tokens. This is the other
 half, the **syntactic** grammar, and it is this concept's actual specification. Notation as before:
-`::=` defines, `|` chooses, `*` is zero-or-more, `?` optional.
+`::=` defines, `|` chooses, `*` is zero-or-more, `+` one-or-more, `?` optional, and `[ x ]` /
+`{ x }` are the EBNF spellings of `?` / `*` used from concept 05 on.
 
 ```
-program    ::= ( Newline | statement Newline )* Eof    # blank/comment-only lines are bare Newlines
+program    ::= [ nl ] [ statement { nl statement } ] [ nl ] Eof
+nl         ::= Newline+                        # one or more; blank and comment-only lines are Newlines
 statement  ::= "let" Ident "=" expr            # constant binding
              | "var" Ident "=" expr            # mutable binding
              | Ident "=" expr                  # reassignment (var only — sema decides that)

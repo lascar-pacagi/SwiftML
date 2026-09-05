@@ -109,7 +109,8 @@ whether a `var` may be reassigned; that's the parser's and sema's job. It's here
 makes sense.
 
 ```
-program    ::= ( Newline | statement Newline )* Eof    # blank/comment-only lines are bare Newlines
+program    ::= nl? ( statement ( nl statement )* )? nl? Eof
+nl         ::= Newline+                        # one or more: blank/comment-only lines are Newlines
 statement  ::= "let" Ident "=" expr            # constant binding
              | "var" Ident "=" expr            # mutable binding
              | Ident "=" expr                  # reassignment (var only — checked in sema)

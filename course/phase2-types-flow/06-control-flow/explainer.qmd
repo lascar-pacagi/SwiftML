@@ -110,7 +110,8 @@ and `{ x }` is zero-or-more. Precedence is the `infix_bp` table, loosest first; 
 rows are yours to add, and so is everything below the grammar:
 
 ```
-program    ::= { statement NEWLINE } [ statement ]
+program    ::= [ nl ] [ statement { nl statement } ] [ nl ]
+nl         ::= NEWLINE { NEWLINE }      # one or more: a run of blank lines is one separator
 statement  ::= ("let" | "var") ident [ ":" type ] "=" expr
              | ident "=" expr
              | expr
@@ -118,7 +119,7 @@ statement  ::= ("let" | "var") ident [ ":" type ] "=" expr
              | "while" expr block                                     <-- new
              | "for" ident "in" expr "..<" expr block                 <-- new
              | "break" | "continue"                                   <-- new
-block      ::= "{" { statement NEWLINE } [ statement ] "}"            <-- new
+block      ::= "{" [ nl ] [ statement { nl statement } ] [ nl ] "}"   <-- new
 
 expr       ::= disjunction
 disjunction ::= conjunction { "||" conjunction }                (bp 3)   <-- new
@@ -133,10 +134,11 @@ primary    ::= int | float | string | "true" | "false" | ident
 ```
 
 Three things to notice. A block's statements are **separated by newlines**, exactly as the
-program's are: `if c { print(1) print(2) }` is an error in Swift and here too. The separator is
-what the `[ statement ]` in the production is about — the closing `}` ends the last statement, so
-`if c { x = 1 }` needs no newline before the brace — and blank lines inside a block are skipped
-the same way they are at top level. `else if` is not a production of
+program's are: `if c { print(1) print(2) }` is an error in Swift and here too. `nl` is *one or
+more* newlines, so blank lines cost nothing — a run of them is a single separator — and the two
+optional `[ nl ]`s let a block open and close on blank lines. The separator sits strictly
+*between* statements, which is why `if c { x = 1 }` is legal with no newline anywhere: the
+closing `}` is what ends the last statement. `else if` is not a production of
 its own: the `else` branch is either a block or another `if`-statement, which is why the parser
 wraps a nested `if` as the sole statement of the else block. And the range `lo ..< hi` is not an
 expression — `..<` appears only in the `for` production, so `let r = 0 ..< 3` is a syntax error
