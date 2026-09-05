@@ -83,6 +83,54 @@ Because the coroutine machinery lives in the runtime, the compiler's job is tiny
 - **draining** — after top-level code, `main`'s epilogue calls `rt_async_run` to run the spawned
   tasks to completion before exit.
 
+### The subset you are growing into
+
+Two keywords and one contextual form. Written as EBNF (`[ x ]` optional, `{ x }` zero-or-more,
+`|` alternatives, quoted terminals), the additions are marked `<-- new`:
+
+| lexeme | kind | |
+|---|---|---|
+| `async` | keyword, between the parameter list and `->` | `<-- new` |
+| `await` | keyword, prefix on an expression | `<-- new` |
+| `Task` | *contextual identifier* — a keyword only before `{` | `<-- new` |
+
+```
+func-decl   ::= "func" ident "(" [ params ] ")" [ "async" ] [ "throws" ]
+                    [ "->" type ] block                        (* "async"    <-- new *)
+stmt        ::= ... | spawn-stmt
+spawn-stmt  ::= "Task" block                                   (*            <-- new *)
+unary       ::= [ "await" ] [ "try" [ "?" | "!" ] ] unary       (* "await"    <-- new *)
+              | ...
+primary     ::= ... | "Task" "." "yield" "(" ")"               (*            <-- new *)
+```
+
+`async` sits exactly where `throws` sits, and for the same reason: both are effects on the
+function's type, written after the parameters. `await` binds like `try` — it is a prefix on the
+whole expression, and Swift, like us, refuses `a + await f()` ("`await` cannot appear to the right
+of a non-assignment operator"), so bind the call to a `let` first.
+
+### The diagnostics you emit
+
+One, and it is OURS rather than swiftc's — a v0 boundary made loud instead of left to chance:
+
+| program | our message | swiftc |
+|---|---|---|
+| `let k = 7`<br>`Task { await w(k) }` | `error: cannot capture 'k' in a task body in this subset (a task runs after the scope that spawned it; pass it to the function the task calls instead)` | *accepts it* |
+
+A task is enqueued and runs later — after the statement that spawned it, when `main` drains the
+queue. Its captured values would therefore have to outlive the scope they came from, and a v0
+task context is EMPTY (`Closure (name, [])`). swiftc accepts the same program because its task
+contexts are real and reference-counted. Without the check the reference lowers to a capture the
+empty context has no room for and the compiler falls over inside SILGen, which is the worst of
+the three possible behaviours; a diagnostic is the second best; capturing properly is exercise 5.
+
+The same v0 emptiness explains one more thing in the lowering, worth knowing rather than
+discovering: the spawn `Destroy_value`s the closure right after handing it to the runtime. That
+releases the (empty) context before the task ever runs, which is only sound because no task body
+reads it — the diagnostic above is what keeps it true. Making a task own its context means
+retaining at the spawn and releasing when the task completes, in the runtime; that is part of
+exercise 5.
+
 ### Sequential async is deterministic — and matches swiftc
 
 A *chain* of awaits (`let a = await f(); let b = await g(a)`) has no concurrency — it's a sequence —
@@ -106,17 +154,24 @@ cooperative), not Swift's concurrent default, and we say so.
 
 ## 3. Build it, step by step
 
-In `silgen.ml`, implement the `Spawn (body, _)` case (`Task { body }`):
+One hole: the `Spawn (body, _)` case in `silgen.ml`. There is no new SIL to invent — a task is a
+coroutine, a coroutine is a function value, and concept 29 already knows how to make a function
+value out of a block of code. So the shape is: lift, wrap, hand over.
 
-1. Lift `body` into a void function `b.fname ^ "$task" ^ counter` (use `b.clo_count`) with
-   `lower_func ~lifted:b.lifted ~throwing:b.throwing ~error_ord:b.error_ord b.structs … b.classes
-   name [("$ctx", Types.TClass "$ctx")] Types.TVoid body`, and record it:
-   `b.lifted := (lf, []) :: !(b.lifted)` (v0 tasks are capture-free).
-2. Make a closure value: `emit b (Sil.Closure (name, [])) (Types.TFunc ([], Types.TVoid))`.
-3. Spawn it: `Apply (Func_ref "rt_async_spawn", [clo])`.
-4. `Destroy_value clo` (the task takes ownership; this balances the verifier).
+1. **Lift the body.** `lower_func` is the same entry point the closure case uses, and it wants a
+   name, a parameter list and a return type. A task returns nothing and (in v0) captures
+   nothing, so both are easy; the name wants a per-function counter, and `b.clo_count` is the
+   one closures already use. A lifted function has to be RECORDED, or it never reaches the
+   module — look at what the closure case does with `b.lifted`.
+2. **Wrap it.** `Sil.Closure` builds the `{code, ctx}` pair, and its capture list is where "v0
+   tasks capture nothing" becomes literal.
+3. **Hand it over.** `rt_async_spawn` is an ordinary function reference applied to that value.
+4. **Balance the ownership.** The closure you just built is owned, and concept 27's verifier runs
+   on every compile — it will tell you, precisely, if you leave it unconsumed. §2 explains what
+   the consuming instruction means here and why it is sound only in v0.
 
-The `await`/`Task.yield()` lowering, the `rt_async_run` epilogue, and the C runtime are given.
+Given: the `await` and `Task.yield()` lowering, the `rt_async_run` epilogue on `main`, the whole
+C runtime (queue, stacks, `swapcontext`), and the sema check that keeps task bodies capture-free.
 Reference: `solution/silgen.ml`. Run with `make lab C=phase8-arm64-backend/38-async-await`.
 
 ## 4. Test it
@@ -125,11 +180,32 @@ Reference: `solution/silgen.ml`. Run with `make lab C=phase8-arm64-backend/38-as
 make lab C=phase8-arm64-backend/38-async-await
 ```
 
-cram: sequential async matches `swiftc` (`36 1296`, `11 12 21 22`); three spawned tasks interleave
-round-robin (`0 11 21 31 12 22 32 13 23 33`); the SIL shows the `rt_async_spawn`/`yield`/`run` calls
-and the lifted `main$task*` coroutines. alcotest: `Task { }` lifts a coroutine + emits a spawn,
-`Task.yield()` is a runtime call, `main` emits exactly one `rt_async_run`, `await` is transparent,
-and `-O` is valid.
+- **`tests/async-await.t`** is green before you start, and it fixes what the given half means:
+  `await` is transparent (an awaiting program's SIL has no extra runtime call at all),
+  `Task.yield()` is one `rt_async_yield`, `main` drains exactly once, and a task body that reads
+  an enclosing binding is rejected — with `swiftc -typecheck` run alongside on the same file, so
+  the divergence is on the page rather than in a footnote. Read it first.
+- **`tests/silgen-spawn.t`** (`TODO(38)`) is the hole: one lifted `main$task<N>` and one
+  `rt_async_spawn` per `Task { }`, the lifted signature, a task spawned inside a function
+  (lifted onto *that* function's name — the queue is global, not scoped), and the same programs
+  again under `-O`, because a spawn is a side-effecting call the optimizer must not move or
+  delete and a lifted task must not be dropped as uncalled. Its centre is **the interleaving
+  golden** — three tasks with two yields each producing `0 11 21 31 12 22 32 13 23 33`, which is
+  OUR documented round-robin, not swiftc's.
+- **`tests/oracle.t`** asks swiftc every run: 18 SEQUENTIAL async programs, each compiled by
+  `swiftc -Onone`, `swiftc -O`, and our build at `-Onone` and `-O`, all run, byte-identical.
+  Sequential async is the part swiftc can arbitrate — awaits in loops and recursion, async
+  results flowing through structs, enums, optionals, `throws`/`do`, arrays, the HOF trio, a
+  class mutated across a yield. Spawned tasks are deliberately NOT here: Swift's default executor
+  is concurrent and its interleaving is nondeterministic, so comparing it against our serial FIFO
+  would be comparing a documented semantics against an undocumented one.
+- **`tests/test_async.ml`** pins the lowering from OCaml: the lift and the spawn count, the yield
+  call, exactly one `rt_async_run`, `await` adding nothing, and the module still verifying after
+  `-O`.
+
+Reading the report: `silgen-spawn.t` shows `TODO … not started` until the hole is filled;
+`async-await.t` and `oracle.t` are green from the start, the latter because nothing in its corpus
+spawns.
 
 ## 5. Benchmark it
 

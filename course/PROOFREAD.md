@@ -147,10 +147,17 @@ enum/proto method bodies.
 - **`missing return` false positive on `while true { return … }`** — `stmt_returns` doesn't treat
   an always-true loop as non-falling-through; swiftc accepts it.
   `phase2/07-functions/solution/sema.ml:133`. *(phase 2 review)*
-- **`38` `Task{}` frees its context before the task runs** — `Spawn` emits `Destroy_value` right
-  after `rt_async_spawn` (refcount 1→0, freed before the trampoline reads it). Benign only because
-  v0 tasks are capture-free; a real use-after-free the moment a task captures.
-  `phase8…/38-async-await/solution/silgen.ml:954`. *(phase 8 tail review)*
+- **`38` `Task{}` frees its context before the task runs** **[CONSTRAINT ENFORCED — concept-review
+  pass 33-40]** — `Spawn` emits `Destroy_value` right after `rt_async_spawn` (refcount 1→0, freed
+  before the trampoline reads it). Benign only because v0 tasks are capture-free; a real
+  use-after-free the moment a task captures. Making the task own its context needs a retain at the
+  spawn and a release in the runtime when the task completes, and that is exercise 5 — so instead
+  the *precondition* is now enforced rather than assumed: sema pushes a floor at a `Task { … }`
+  body and rejects any read of an enclosing binding ("cannot capture 'k' in a task body in this
+  subset…"). Before this a capturing task crashed SILGen with `Invalid_argument("option is None")`.
+  Applied in 38/39/40 `sema.ml`; pinned in `38/tests/async-await.t` (with `swiftc -typecheck` run
+  beside it, since swiftc accepts the program), and the trade-off is written out in 38's explainer
+  §2 "The diagnostics you emit".
 - **Integer overflow wraps instead of trapping** at `-Onone` (`add i64` vs `llvm.sadd.with.overflow`).
   This one *is* a documented divergence (M4 explainer) — flagged only because the 09 "byte-for-byte"
   headline doesn't carry the asterisk.
@@ -168,6 +175,12 @@ enum/proto method bodies.
   now emits swiftc's "call to actor-isolated instance method … in a synchronous nonisolated context".
 - **`32-stdlib-collections/silgen.ml` skeleton was missing the array-return fix** (its solution had
   it). **[FIXED]** backported.
+- **`38-async-await/silgen.ml` skeleton was missing the same array-return fix** (its solution had
+  it, so the gap was invisible to `check-solution` and only showed up when the review's oracle
+  corpus put a `[Int]` parameter in front of the skeleton: `assert false` inside SILGen).
+  **[FIXED — concept-review pass 33-40]** `ty_of_name` now handles `[T]` in the skeleton too;
+  39 and 40 already had it. *Process note: an answer-key-only fix is invisible to
+  `make check-solution` by construction — only a test that runs against the SKELETON catches it.*
 - *Process note:* the phase-0/1 and phase-2 reviews swapped solutions over skeletons to test
   RED/GREEN and, lacking git, **reconstructed** the 01/03/04 and 05/06/07/09 skeletons from the
   solutions + each §3 hole list. Functionally restored (full RED/GREEN matrix + clean build

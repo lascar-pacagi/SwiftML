@@ -1331,6 +1331,11 @@ let lower (prog : Ast.program) : Sil.modul =
     match Types.split_fn_written n with
     | Some (ps, ret) -> Types.TFunc (List.map ty_of_name ps, ty_of_name ret)
     | None ->
+    (* a written ARRAY type `[T]` — concept 31 (review fix: was missing, so a function
+       returning/taking `[Int]` resolved its signature to TInt and miscompiled) *)
+    match Types.split_array_written n with
+    | Some el -> Types.TArray (ty_of_name el)
+    | None ->
     if String.length n > 0 && n.[String.length n - 1] = '?' then
       Types.TOptional (ty_of_name (String.sub n 0 (String.length n - 1)))
     else

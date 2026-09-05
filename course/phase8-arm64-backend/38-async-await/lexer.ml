@@ -159,9 +159,21 @@ let rec next (lx : t) : Token.t =
           error lx lo "invalid character in source file";
           next lx
 
+(* Newlines separate statements — except INSIDE brackets, where there is no statement to
+   separate. `let b = [\n  1,\n  2\n]` is one expression spread over four lines, and swiftc
+   reads it that way; scanning the `Newline` tokens out at depth > 0 is how the parser gets to
+   see it that way too, with no rule of its own. Only `[` `]` is tracked: a multi-line
+   collection literal is the case that came up, and an unbalanced bracket then swallows only
+   the newlines the parser is about to complain about anyway. *)
 let tokenize (lx : t) : Token.t list =
+  let depth = ref 0 in
   let rec loop acc =
     let tok = next lx in
-    match tok.Token.kind with Token.Eof -> List.rev (tok :: acc) | _ -> loop (tok :: acc)
+    match tok.Token.kind with
+    | Token.Eof -> List.rev (tok :: acc)
+    | Token.LBracket -> incr depth; loop (tok :: acc)
+    | Token.RBracket -> if !depth > 0 then decr depth; loop (tok :: acc)
+    | Token.Newline when !depth > 0 -> loop acc
+    | _ -> loop (tok :: acc)
   in
   loop []

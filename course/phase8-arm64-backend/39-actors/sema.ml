@@ -25,8 +25,13 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
      innermost floor is a CAPTURE (by value in v0: assignment to it is rejected, and managed
      types can't be captured at all — the context would need retain/destroy machinery) *)
   let closure_floors : int list ref = ref [] in
-  let binding_is_captured name =
-    match !closure_floors with
+  (* concept 38: the same idea for a `Task { … }` body. A task is enqueued and runs LATER, after
+     the statement that spawned it — so a v0 task, whose context is empty, must not read anything
+     from the scope it was created in. Without this the reference lowers to a capture the empty
+     context has no room for, and the compiler falls over inside SILGen. *)
+  let task_floors : int list ref = ref [] in
+  let older_than_floor floors name =
+    match !floors with
     | [] -> false
     | floor :: _ -> (
         let rec idx i = function
@@ -38,6 +43,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         | Some i -> i >= List.length !env - floor
         | None -> false)
   in
+  let binding_is_captured name = older_than_floor closure_floors name in
   (* concept 25: class layouts (fields incl. inherited, vtable in slot order), and the class
      whose init/method body we're inside (with in_init: field writes + super.init allowed) *)
   let classes : (string, Types.class_layout) Hashtbl.t = Hashtbl.create 16 in
@@ -165,6 +171,11 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
     | Ast.Bool_lit _ -> Types.TBool
     | Ast.String_lit _ -> Types.TString
     | Ast.Var (x, span) -> (
+        if older_than_floor task_floors x then
+          err span
+            (Printf.sprintf
+               "cannot capture '%s' in a task body in this subset (a task runs after the scope \
+                that spawned it; pass it to the function the task calls instead)" x);
         match lookup x with
         | Some ((Types.TClass _ | Types.TFunc _) as t, _) when binding_is_captured x ->
             err span
@@ -837,7 +848,11 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         | None -> err span (Printf.sprintf "cannot find '%s' in scope" arr); ignore (infer value))
     | Ast.Expr_stmt (e, _) -> ignore (infer e)
     (* `Task { … }` — concept 38: the body runs as a concurrent task; type-check it as a block *)
-    | Ast.Spawn (body, _) -> check_block body
+    | Ast.Spawn (body, _) ->
+        let saved = !task_floors in
+        task_floors := List.length !env :: !task_floors;
+        check_block body;
+        task_floors := saved
     | Ast.If { cond; then_blk; else_blk; _ } ->
         check_expr cond Types.TBool;
         check_block then_blk;
