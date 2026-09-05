@@ -132,6 +132,78 @@ ASCII this matches `swiftc` exactly. Swift's real `String` is far richer — UTF
 small-string inlining, grapheme-cluster `count` — so for non-ASCII our byte `count` diverges from
 swiftc's grapheme `count`. That's the documented boundary; concept 32 and beyond could close it.
 
+### The subset you are growing into
+
+**New lexemes.** Two punctuation tokens, added to `token.ml` and to `lexer.ml`'s punctuation
+table — they were simply missing before this concept:
+
+| spelling | token | notes |
+|---|---|---|
+| `[` | `Token.LBracket` | opens an array literal, a subscript, and the `[T]` type sugar |
+| `]` | `Token.RBracket` | closes them |
+
+`tokenize` also tracks the bracket DEPTH and drops `Newline` while it is above zero. A newline
+inside brackets separates nothing — there is no statement there to separate — and swiftc reads
+it that way too. Without it, `let a = [\n 1,\n 2\n]` was a parse error, and the stress corpus
+had to write its boards on one line.
+
+**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05-30.
+Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (zero or more),
+`|` separates alternatives, and quoted text is a terminal. (The metasymbol `[ … ]` and the
+Swift terminal `"[" … "]"` unavoidably share a shape here; the quotes tell them apart.)
+
+```
+type        ::= [ "any" ] ident [ "?" ]
+              | "(" [ type { "," type } ] ")" "->" type
+              | "[" type "]"                                        <-- new
+                (v0 resolves only "[Int]"; see the diagnostics below)
+
+primary     ::= …
+              | "[" [ expr { "," expr } ] "]"                       <-- new
+                (an array literal; empty needs an annotation to name
+                 its element type)
+
+postfix     ::= primary { "." ident [ "(" [ arg { "," arg } ] ")" ]
+                        | "(" [ arg { "," arg } ] ")"
+                        | "[" expr "]"                              <-- new  (subscript)
+                        | "!" | ("as?" | "as!") ident }
+
+statement   ::= …
+              | postfix "[" expr "]" "=" expr                       <-- new  (subscript write)
+              | "for" ident "in" expr block                         <-- new form: the operand
+                                                                         may now be an ARRAY,
+                                                                         not only a range
+```
+
+Three members and one operator come with the types rather than with the grammar, since they
+are ordinary member syntax: `a.count`, `a.isEmpty` and `a.append(x)` on an array, `s.count` on
+a String, and `+` on two Strings. None of them is a declared method anywhere — sema special-
+cases the names on a `TArray`/`TString` receiver and SILGen turns each into one call into the
+runtime.
+
+### The diagnostics you emit
+
+Neither hole produces a diagnostic — they are lowerings. All of these are given, and
+`sema-arrays.t` keeps them on record. Three of them are places our subset is deliberately
+smaller than Swift's, and each one says so rather than failing later and less clearly.
+
+| program | our message | swiftc |
+|---|---|---|
+| `let names = ["a", "b"]` | `arrays of 'String' are not supported in this subset (only '[Int]'; element-generic buffers are this concept's exercise)` | **swiftc accepts.** The buffer is a homogeneous store of machine words; making it element-generic is exercise 1, and it is what unlocks concept 32 for other element types |
+| `let a: [Int] = [1, "x"]` | `cannot convert value of type 'String' to specified type 'Int'` | `… to expected argument type 'Int'` — same refusal, swiftc names the site |
+| `let a = [1, 2]` then `a.append(3)` | `cannot use mutating member on immutable value: 'a' is a 'let' constant` | **same**, character for character. Until this was checked, appending to a `let` array compiled and grew it |
+| `let a = [1, 2]` then `a[0] = 5` | `cannot assign through subscript: 'a' is a 'let' constant` | **same** |
+| `a[0][1]` | `value of type 'Int' has no subscripts` | **same** |
+| `s[0]` on a String | `value of type 'String' has no subscripts` | swiftc: `'subscript(_:)' is unavailable: cannot subscript String with an Int, use a String.Index instead.` Both refuse; Swift's message points at `String.Index`, which we do not have |
+| `for x in 5 { … }` | `type 'Int' is not a sequence` | **same** |
+| `a.nope` | `value of type '[Int]' has no member 'nope'` | **same** |
+| `print(a)` for an array | `cannot print a value of type '[Int]' (only Int, Double, Bool and String)` | **swiftc accepts** and prints `[1, 2]`. Printing an aggregate needs reflection |
+| `a == b` for two arrays | `binary operator '==' cannot be applied to two '[Int]' operands` | **swiftc accepts** — `Array` is `Equatable` when its element is. Ours has no aggregate compare, and reaching IRGen this emitted an `add i64` on two pointers that clang refused |
+
+One divergence has no diagnostic at all, because it is not an error: `s.count` counts **bytes**,
+where Swift counts extended grapheme clusters. On ASCII they agree, which is why the corpus is
+ASCII; on `"é"` or an emoji they do not, and a real `String` is exercise 5.
+
 ### The v0 scope, honestly
 
 Our buffer is a homogeneous **`i64`** store, so v0 supports **`[Int]`** only. `[String]` or
@@ -144,25 +216,22 @@ is elided (we leak — observably harmless, since stdout is unaffected); wiring 
 ## 3. Build it, step by step
 
 You implement the two **copy-on-write mutators** in `silgen.ml`. Everything else — the `[T]`
-parser/typing, literals, subscript *reads*, `count`/`isEmpty`, `for`-`in`, String, the retain on
-`var b = a`, and the entire `rt.*` runtime in `irgen.ml` — is given.
+parser and typing, literals, subscript *reads*, `count`/`isEmpty`, `for`-`in`, String, the
+retain on `var b = a`, and the entire `rt.*` runtime in `irgen.ml` — is given.
 
-1. **`TODO(31a)` — `a.append(x)`** (in the `Method_call` arm guarded by `is_array_recv`). You're
-   given `slot` (the array variable's `alloc_stack`), `elt` (the element type), and `xv` (the
-   lowered argument). Emit the dance:
-   - `load` the buffer pointer from `slot` (type `vty b slot`);
-   - `apply` `Func_ref "rt.array_make_unique"` to it (result typed `vty b slot`) — the CoW check;
-   - `store` that result **back** into `slot`;
-   - `apply` `Func_ref "rt.array_push"` to `[uniquePtr; xv]`, typed `TVoid` — the case's result.
+1. **`TODO(31a)` — `a.append(x)`**, in the `Method_call` arm guarded by `is_array_recv`. You are
+   handed `slot` (the array variable's `alloc_stack`), `elt` (the element type) and `xv` (the
+   lowered argument); the four steps are the ones §2 spells out, and the third one is the one
+   that is easy to leave out. The result of the whole arm is the `rt.array_push` call, typed
+   `TVoid`.
+2. **`TODO(31b)` — `a[i] = e`**, the `Set_subscript` statement. The same four steps, with `iv`
+   and `xv` given, ending in `rt.array_set` rather than a push.
 
-   The `emit b (Sil.Apply (emit b (Sil.Func_ref name) ty, args)) ty` idiom is used throughout the
-   file — grep for `rt.error_get` in the given code for the shape.
+Every runtime call in this file has the same shape, `emit b (Sil.Apply (emit b (Sil.Func_ref
+name) ty, args)) ty`; `rt.error_get` in the given code is a worked example of it, and
+`rt.array_get` is one on this very type.
 
-2. **`TODO(31b)` — `a[i] = e`** (the `Set_subscript` statement). The *same* dance — you're given
-   `slot`, `elt`, `iv` (index), `xv` (value) — ending in `rt.array_set(uniquePtr, iv, xv)` instead
-   of a push.
-
-Reference: `solution/silgen.ml`. Build & run with `make lab C=phase7-closures-stdlib/31-stdlib-array-string`.
+Reference: `solution/silgen.ml`.
 
 ## 4. Test it
 
@@ -170,13 +239,30 @@ Reference: `solution/silgen.ml`. Build & run with `make lab C=phase7-closures-st
 make lab C=phase7-closures-stdlib/31-stdlib-array-string
 ```
 
-cram: a full array+String program (literal, `count`, subscript r/w, `append`, `for`-`in`,
-`isEmpty`, concat) matching `swiftc` at `-Onone` **and** `-O`; the **CoW value-semantics** program
-(`var b = a`, mutate `b`, `a` unchanged); the SIL desugaring (`rt.array_*` / `rt.str_*`, one
-`make_unique` per mutation, one `retain` per share); the **out-of-bounds trap** (exit 133); and the
-`[String]` rejection. alcotest: the literal → `array_new`+`push` shape, concat/length intrinsics,
-the **retain-once / make_unique-per-mutation** counts, *no* retain for a fresh literal, the
-diagnostic, and `-O` validity.
+Six files, and the two given ones are worth reading before you write anything.
+
+- **`tests/silgen-reads.t`** and **`tests/sema-arrays.t`** are green from the start: everything
+  you can do to an array without mutating it (literal, `count`, subscript, `for`-`in`, String,
+  the multi-line literal, the out-of-bounds trap) and every type rule, including the three
+  places we are smaller than Swift. Between them they define what your two mutators may assume.
+- **`tests/silgen-append.t`** is `TODO(31a)`, and **`tests/silgen-subscript-set.t`** is
+  `TODO(31b)`. They are independent — either can be filled first. Each shows the SIL shape
+  (`make_unique` between the load and the write) and then the behaviour that shape buys: the
+  fork on a shared buffer, the *absence* of a fork on a unique one, and the store-back, which is
+  the step whose omission produces a program that runs, prints plausible numbers, and is wrong.
+- **`tests/oracle.t`** asks swiftc every run: 20 programs whose verdict must match `swiftc
+  -typecheck`, then 20 compiled four ways with stdout and exit code byte-identical to `swiftc
+  -Onone`. Five of those twenty exist only to print the length and first element of an array
+  that something else wrote to — value semantics is a claim about what does NOT happen, and the
+  only way to test it is to look at the array nobody touched.
+- **`tests/test_arrays.ml`** counts what cram can only imply: one `retain` per share and none
+  for a fresh literal, one `make_unique` per mutation, and — walking the instruction stream in
+  program order — that every `make_unique` result is the source of a later `store` into the slot
+  it came from. That last one is the store-back bug, pinned structurally.
+
+Reading the report: an untouched hole shows as `TODO … not started`; a hole in progress shows
+`FAIL` with its passing cases still `OK`. `oracle.t` is `FAIL` rather than `TODO` from the
+start, because its front-end half and its read-only programs pass before you write a line.
 
 ## 5. Benchmark it
 

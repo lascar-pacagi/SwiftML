@@ -95,14 +95,17 @@ trap. This is a CLAUDE.md parity gotcha and is *not* in the documented-divergenc
 - *Still open:* the runtime behaviour. *Fix:* emit a zero-check + `llvm.trap` before `sdiv`/`srem`
   (and the `Int.min/-1` check), and add the asterisk to the "byte-for-byte" claims (09 README).
 
-### 7. `defer` inside a `do` block doesn't fire on a locally-caught throw  **[OPEN]** *(phase 7 review)*
-`do { defer { print(2) }; try mayThrow() } catch { print(3) }` prints `3` (swiftml) vs `2`,`3`
-(swiftc). `emit_error_check`'s `HJump` edge jumps straight to the catch dispatch without running
-the defers of scopes between the throw and the `do` body. Function-level defers + propagation work;
-only the do-local-caught path is broken. `phase7…/30-error-handling/solution/silgen.ml:642`.
-- *Fix:* run `run_defers_down_to` + `release_down_to` for the scopes inside the do body before the
-  `Cond_br tgt`; the `HJump` handler must carry the do-entry scope depth. The §2 "any exit" claim
-  should be qualified until fixed. Add a do-internal-defer test (the coverage gap).
+### 7. `defer` inside a `do` block doesn't fire on a locally-caught throw  **[FIXED — concept-review pass 29–32]**
+`do { defer { print(2) }; try mayThrow() } catch { print(3) }` printed `3` (swiftml) vs `2`,`3`
+(swiftc). `emit_error_check`'s `HJump` edge jumped straight to the catch dispatch without running
+the defers of scopes between the throw and the `do` body.
+- *Fixed:* `HJump` now carries the scope depth it was installed at (`HJump of int * int`), and
+  every jump to a handler goes through one new given helper, `goto_handler`, which runs
+  `run_defers_down_to` + `release_down_to` for the scopes the jump crosses before branching.
+  `throw`, `try?`, `try!` and the post-call check all route through it. Pinned in
+  `30-error-handling/tests/silgen-catch.t` (the defer-inside-`do` case, `-Onone` and `-O`), in
+  `silgen-errorcheck.t` (the defer on the propagation edge), in the runtime oracle corpus, and by
+  an alcotest that checks the defer body is emitted on BOTH exits. §2 now explains the depth.
 
 ### 8. Large-frame prologue is malformed (concepts 33 & 34)  **[OPEN]** *(phase 8 backend review)*
 `Stp(X29,X30,SP,frame-16)` overflows STP's signed-7-bit scaled immediate (±512/504) once the frame
@@ -158,10 +161,14 @@ enum/proto method bodies.
 
 - **Newline before `else`** is rejected (`if c { } \n else { }`) though swiftc accepts it; the
   parser is newline-tolerant before `catch` but not `else`. *Caught by 03/20 in the suite.*
-- **Multi-line collection literals** are rejected — a newline inside `[ … ]`/`( … )` is treated as a
+- **Multi-line collection literals** are rejected — a newline inside `[ … ]` was treated as a
   statement separator, where swiftc suppresses newlines inside brackets. *Caught by the sudoku/life
-  stress programs (boards had to be single-line).* Fix: track bracket depth in the lexer and drop
-  `Newline` tokens while depth > 0 (same machinery `else`/`catch` continuation wants).
+  stress programs (boards had to be single-line).* **[FIXED in 31/32 — concept-review pass 29–32]**
+  `tokenize` tracks the `[`/`]` depth and drops `Newline` while it is above zero; pinned in
+  `31-stdlib-array-string/tests/silgen-reads.t`, in its runtime and typecheck corpora, and by an
+  alcotest on the token stream. Concepts 29/30 have no bracket token, so nothing to fix there; the
+  same one-loop change is still wanted in the phase-8 copies (33-40), and the `( … )` half — a
+  multi-line parameter or argument list — is untouched everywhere.
 - **String interpolation** `"\(x)"` prints the literal `(x)` — *silent* wrong output, no diagnostic
   (should at least be rejected). *Caught while probing.*
 - **`39` actor isolation is per-TYPE, not per-INSTANCE** — `current_class <> Some cn` lets a method
@@ -180,8 +187,11 @@ enum/proto method bodies.
 ## S4 — documentation / pedagogy
 
 - **§3 "Build it" spoils the answer** (verbatim solution code, violating the no-spoiler standard):
-  `01-lexer`, `32-collections`, `35-mc-abi`, `36-peephole`, `37-debug-info`, `39-actors`,
-  `40-macros`. Reduce each §3 to signatures + approach; the literal lines belong in §8.
+  `01-lexer`, `35-mc-abi`, `36-peephole`, `37-debug-info`, `39-actors`, `40-macros`. Reduce each
+  §3 to signatures + approach; the literal lines belong in §8. **`32-collections` [FIXED —
+  concept-review pass 29–32]**: its §3 recited the emissions arm by arm and is now approach only,
+  pointing at the new §2 "The SIL you compose" table. (`31`'s §3 got the same treatment while it
+  was open, though it was not on this list.)
 - **Overstated parity claims** needing an asterisk: `07` ("missing-return oracle agrees with
   `swiftc -typecheck`" — swiftc checks at SIL level, so `-typecheck` emits nothing); `09`
   ("byte-for-byte" omits int div/overflow traps); `40` ("`#assert` traps like swiftc's assert" —

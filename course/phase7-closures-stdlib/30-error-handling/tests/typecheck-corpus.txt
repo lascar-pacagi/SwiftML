@@ -1,0 +1,20 @@
+enum E: Error { case x }\nfunc f() throws -> Int { throw E.x }\nfunc g() throws -> Int { return try f() }\ndo { print(try g()) } catch { print(0) }
+enum E: Error { case x }\nfunc f() throws -> Int { throw E.x }\nfunc g() -> Int { return f() }
+enum E: Error { case x }\nfunc f() throws -> Int { throw E.x }\nfunc g() -> Int { return try f() }
+enum E: Error { case x }\nfunc g() -> Int { throw E.x }
+enum C { case a }\nfunc g() throws -> Int { throw C.a }
+func g() throws -> Int { throw 5 }
+enum E: Error { case x }\nfunc f() throws -> Int { throw E.x }\nfunc g() -> Int { return (try? f()) ?? 0 }\nprint(g())
+enum E: Error { case x }\nfunc f() throws -> Int { throw E.x }\nfunc g() -> Int { return try! f() }\nprint(g())
+enum E: Error { case a, b }\nfunc f(_ n: Int) throws -> Int {\n  if n == 0 { throw E.a }\n  return n\n}\nfunc g(_ n: Int) -> Int {\n  do { return try f(n) } catch E.a { return 0 - 1 } catch E.b { return 0 - 2 } catch { return 0 - 3 }\n}\nprint(g(0))
+enum E: Error { case x }\nfunc f() throws {\n  defer { print(1) }\n  throw E.x\n}\ndo { try f() } catch { print(2) }
+enum E: Error { case x }\nclass A {\n  var v: Int\n  init(_ n: Int) { v = n }\n  func take(_ n: Int) throws -> Int {\n    if n > v { throw E.x }\n    return v - n\n  }\n}\nlet a = A(10)\ndo { print(try a.take(3)) } catch { print(0) }
+enum E: Error { case x }\nclass A {\n  var v: Int\n  init(_ n: Int) { v = n }\n  func take(_ n: Int) throws -> Int {\n    if n > v { throw E.x }\n    return v - n\n  }\n}\nlet a = A(10)\nprint(a.take(3))
+enum E: Error { case x }\nstruct S {\n  var v: Int\n  func take(_ n: Int) throws -> Int {\n    if n > v { throw E.x }\n    return v - n\n  }\n}\nlet s = S(v: 4)\ndo { print(try s.take(1)) } catch { print(0) }
+enum E: Error { case x }\nfunc f() throws -> Int { return 1 }\nfunc g() -> Int { return 2 }\nfunc h() -> Int { return try g() }\nprint(h())
+enum E: Error { case x }\nfunc f(_ n: Int) throws -> Int {\n  if n == 0 { throw E.x }\n  return n\n}\ndo { print(try f(1)) } catch E.nope { print(0) } catch { print(1) }
+enum E: Error { case x }\nfunc f() throws -> Int { throw E.x }\nfunc g() throws -> Int {\n  do { return try f() } catch { return 0 - 1 }\n}\ndo { print(try g()) } catch { print(0) }
+enum E: Error { case x }\nfunc f() throws -> Int { throw E.x }\nlet v: Bool = try! f()\nprint(v)
+enum E: Error { case x }\nfunc f() throws -> Int { throw E.x }\nfunc g() -> Int {\n  let o: Int? = try? f()\n  return o ?? 0\n}\nprint(g())
+enum E: Error { case x }\nfunc f() throws -> Int { throw E.x }\nfunc g() -> Int {\n  let o: Bool? = try? f()\n  return 1\n}\nprint(g())
+enum E: Error { case x }\nfunc f(_ n: Int) throws -> Int {\n  defer { print(n) }\n  if n == 0 { throw E.x }\n  return n\n}\nfunc w(_ n: Int) -> Int {\n  do { return try f(n) } catch { return 0 - 1 }\n}\nprint(w(3))\nprint(w(0))

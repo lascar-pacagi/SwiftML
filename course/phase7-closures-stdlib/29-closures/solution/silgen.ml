@@ -241,16 +241,21 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       switch_to b merge;
       emit b (Sil.Load slot) Types.TBool
   | Ast.Binary (op, l, r, _) ->
-      let lv = gen_expr b l and rv = gen_expr b r in
+      let lv = gen_expr b l in
       (match vty b lv with
       | Types.TEnum _ when op = Ast.Eq || op = Ast.Ne ->
           (* enum equality is tag comparison (payload-free enums only — see sema) *)
+          let rv = gen_expr b r in
           let lt = emit b (Sil.Enum_tag lv) Types.TInt in
           let rt = emit b (Sil.Enum_tag rv) Types.TInt in
           emit b (Sil.Binop (op, lt, rt)) Types.TBool
       | _ ->
-          let operand = if vty b lv = Types.TDouble || vty b rv = Types.TDouble then Types.TDouble else vty b lv in
-          emit b (Sil.Binop (op, lv, rv)) (result_ty op operand))
+          (* sema's `unify` lets an Int-literal tree adopt the other side's Double (`d * 2`,
+             `2 * d`): that side must be generated AT Double, or IRGen emits `fmul double %d, 2`
+             and clang rejects it. Re-generating a literal tree is safe — it has no side effects. *)
+          let rv = if vty b lv = Types.TDouble then gen_expr_as b r Types.TDouble else gen_expr b r in
+          let lv = if vty b rv = Types.TDouble && vty b lv = Types.TInt then gen_expr_as b l Types.TDouble else lv in
+          emit b (Sil.Binop (op, lv, rv)) (result_ty op (vty b lv)))
   | Ast.Call (f, args, _) ->
       (* a LOCAL function value: `g(50)` — extract code+context and call indirectly (29) *)
       let local_fnty =
@@ -686,6 +691,27 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
           end
           else ignore (emit b (Sil.Store (v, fa)) Types.TVoid))
   | Ast.Set_member { obj; field; value; _ } -> (
+      (* a class-typed NAME is either a slot (a local) or a GUARANTEED borrow held in SSA
+         (a parameter, and `self` inside a method — concept 27 stopped spilling those). So
+         `self.x = e` has no slot to find, and looking for one used to raise Not_found. *)
+      match Hashtbl.find_opt b.borrows obj with
+      | Some refv -> (
+          let cn = match vty b refv with Types.TClass cn -> cn | _ -> assert false in
+          let cl = Hashtbl.find b.classes cn in
+          let ft = Option.get (Types.cfield_type cl field) in
+          let v = gen_expr_as b value ft in
+          let fa = emit b (Sil.Ref_element_addr (refv, Option.get (Types.cfield_index cl field))) ft in
+          if is_class_ty ft then begin
+            let v = take_ownership b v in
+            if not b.in_init then begin
+              let old = emit b (Sil.Load_take fa) ft in
+              ignore (emit b (Sil.Store (v, fa)) Types.TVoid);
+              ignore (emit b (Sil.Destroy_value old) Types.TVoid)
+            end
+            else ignore (emit b (Sil.Store (v, fa)) Types.TVoid)
+          end
+          else ignore (emit b (Sil.Store (v, fa)) Types.TVoid))
+      | None ->
       let slot = Hashtbl.find b.vars obj in
       match vty b slot with
       | Types.TClass cn ->
@@ -710,12 +736,13 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       | Types.TStruct sn ->
           (* `p.x = e`: take the field's ADDRESS in p's slot, then store — this is what makes a
              struct a value type, since p has its own slot distinct from any copy *)
-          let v = gen_expr b value in
           let sl = Hashtbl.find b.structs sn in
-          let faddr =
-            emit b (Sil.Struct_element_addr (slot, Option.get (Types.field_index sl field)))
-              (Option.get (Types.field_type sl field))
-          in
+          let fty = Option.get (Types.field_type sl field) in
+          (* wrap to the FIELD's type, exactly as `Assign` wraps to the slot's: `box.v = nil` on a
+             `var v: Int?` must store `.none`, and a conformer stored into an `any P` field must
+             be wrapped into the existential, not stored raw *)
+          let v = gen_expr_as b value fty in
+          let faddr = emit b (Sil.Struct_element_addr (slot, Option.get (Types.field_index sl field))) fty in
           ignore (emit b (Sil.Store (v, faddr)) Types.TVoid)
       | _ -> assert false)
   | Ast.Expr_stmt (e, _) -> ignore (gen_expr b e)

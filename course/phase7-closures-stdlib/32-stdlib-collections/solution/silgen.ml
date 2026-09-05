@@ -44,7 +44,12 @@ type builder = {
   mutable handlers : eh list;                    (* throw handler stack; head = current *)
   mutable defers : Ast.stmt list list list;      (* per scope (innermost first): registered defer blocks *)
 }
-and eh = HPropagate | HJump of int (* run cleanups+return-default | branch to this block *)
+and eh =
+  | HPropagate (* run cleanups + return a default: the error travels on to our caller *)
+  | HJump of int * int
+    (* branch to this block — and the SCOPE DEPTH the handler was installed at, so the jump
+       can run the defers and ARC releases of every scope it leaves behind. Without the depth,
+       `do { defer { print(2) }; try f() } catch { print(3) }` printed 3 alone (concept 30). *)
 
 (* --- the builder API (given) --- *)
 let emit (b : builder) (instr : Sil.instr) (ty : Types.ty) : Sil.value =
@@ -206,7 +211,15 @@ let rec default_value (b : builder) (ty : Types.ty) : Sil.value option =
   | Types.TString -> Some (emit b (Sil.String_lit "") Types.TString)
   | Types.TOptional _ -> Some (emit b (Sil.Enum (0, [])) ty)
   | Types.TEnum _ -> Some (emit b (Sil.Enum (0, [])) ty)
-  | _ -> ignore default_value; Some (emit b (Sil.Int_lit 0) ty) (* v0: other return types unsupported *)
+  (* a STRUCT return needs a struct-shaped placeholder, field by field — an `integer_literal 0`
+     typed `$P` reaches IRGen as `ret %P 0`, which clang refuses *)
+  | Types.TStruct sn ->
+      let sl = Hashtbl.find b.structs sn in
+      let fields = List.filter_map (fun (_, ft) -> default_value b ft) sl.Types.sl_fields in
+      Some (emit b (Sil.Struct fields) ty)
+  (* class / existential / function-typed returns have no zero to invent; sema refuses a
+     throwing function that declares one, so this is unreachable (v0) *)
+  | _ -> Some (emit b (Sil.Int_lit 0) ty)
 
 (* concept 21: a method's signature, and the struct we're inside (a method body's `self`
    parameter slot is named "self" — if it exists, bare field/method names resolve through it) *)
@@ -294,20 +307,26 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       switch_to b merge;
       emit b (Sil.Load slot) Types.TBool
   | Ast.Binary (op, l, r, _) ->
-      let lv = gen_expr b l and rv = gen_expr b r in
+      let lv = gen_expr b l in
       (match vty b lv with
       | Types.TEnum _ when op = Ast.Eq || op = Ast.Ne ->
           (* enum equality is tag comparison (payload-free enums only — see sema) *)
+          let rv = gen_expr b r in
           let lt = emit b (Sil.Enum_tag lv) Types.TInt in
           let rt = emit b (Sil.Enum_tag rv) Types.TInt in
           emit b (Sil.Binop (op, lt, rt)) Types.TBool
       (* `s + t` on Strings — concatenation via the runtime (a fresh malloc'd C string) — 31 *)
       | Types.TString when op = Ast.Add ->
+          let rv = gen_expr b r in
           let fr = emit b (Sil.Func_ref "rt.str_concat") Types.TString in
           emit b (Sil.Apply (fr, [ lv; rv ])) Types.TString
       | _ ->
-          let operand = if vty b lv = Types.TDouble || vty b rv = Types.TDouble then Types.TDouble else vty b lv in
-          emit b (Sil.Binop (op, lv, rv)) (result_ty op operand))
+          (* sema's `unify` lets an Int-literal tree adopt the other side's Double (`d * 2`,
+             `2 * d`): that side must be generated AT Double, or IRGen emits `fmul double %d, 2`
+             and clang rejects it. Re-generating a literal tree is safe — it has no side effects. *)
+          let rv = if vty b lv = Types.TDouble then gen_expr_as b r Types.TDouble else gen_expr b r in
+          let lv = if vty b rv = Types.TDouble && vty b lv = Types.TInt then gen_expr_as b l Types.TDouble else lv in
+          emit b (Sil.Binop (op, lv, rv)) (result_ty op (vty b lv)))
   | Ast.Call (f, args, _) ->
       (* a LOCAL function value: `g(50)` — extract code+context and call indirectly (29) *)
       let local_fnty =
@@ -586,7 +605,7 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
   | Ast.Try (Ast.TryPlain, e0, _) -> gen_expr b e0
   | Ast.Try (Ast.TryForce, e0, _) ->
       let trap_b = new_block b in
-      b.handlers <- HJump trap_b.Sil.bid :: b.handlers;
+      b.handlers <- HJump (trap_b.Sil.bid, List.length b.scopes) :: b.handlers;
       let r = gen_expr b e0 in
       b.handlers <- List.tl b.handlers;
       let cont = new_block b in
@@ -597,7 +616,7 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       r
   | Ast.Try (Ast.TryOptional, e0, _) ->
       let none_b = new_block b and merge = new_block b in
-      b.handlers <- HJump none_b.Sil.bid :: b.handlers;
+      b.handlers <- HJump (none_b.Sil.bid, List.length b.scopes) :: b.handlers;
       let r = gen_expr b e0 in
       b.handlers <- List.tl b.handlers;
       let t = vty b r in
@@ -857,20 +876,29 @@ and gen_throw_propagate (b : builder) : unit =
   release_down_to b 0;
   terminate b (Sil.Return (default_value b b.ret))
 
+(* the error edge: jump to the CURRENT handler, running the cleanups the jump CROSSES first.
+   Leaving a scope always runs its defers (LIFO) and releases what it owns, and an error edge
+   leaves every scope between here and the handler's own depth — so
+   `do { defer { print(2) }; try f() } catch { print(3) }` prints 2 then 3, as swiftc does.
+   With no handler installed the error travels on to our caller. *)
+and goto_handler (b : builder) : unit =
+  match b.handlers with
+  | HJump (tgt, depth) :: _ ->
+      run_defers_down_to b depth;
+      release_down_to b depth;
+      terminate b (Sil.Br (tgt, []))
+  | _ -> gen_throw_propagate b
+
 (* after a throwing call (or a `throw`): if the error global is nonzero, branch to the current
    handler — the do's catch dispatch, a try?/try! block, or propagate out of the function *)
 and emit_error_check (b : builder) : unit =
   let e = rt_error_get b in
   let zero = emit b (Sil.Int_lit 0) Types.TInt in
   let nz = emit b (Sil.Binop (Ast.Ne, e, zero)) Types.TBool in
-  let ok = new_block b in
-  (match b.handlers with
-  | HJump tgt :: _ -> terminate b (Sil.Cond_br (nz, (tgt, []), (ok.Sil.bid, [])))
-  | _ ->
-      let prop = new_block b in
-      terminate b (Sil.Cond_br (nz, (prop.Sil.bid, []), (ok.Sil.bid, [])));
-      switch_to b prop;
-      gen_throw_propagate b);
+  let err = new_block b and ok = new_block b in
+  terminate b (Sil.Cond_br (nz, (err.Sil.bid, []), (ok.Sil.bid, [])));
+  switch_to b err;
+  goto_handler b;
   switch_to b ok
 
 and gen_stmts (b : builder) (stmts : Ast.stmt list) : unit =
@@ -942,6 +970,27 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
           end
           else ignore (emit b (Sil.Store (v, fa)) Types.TVoid))
   | Ast.Set_member { obj; field; value; _ } -> (
+      (* a class-typed NAME is either a slot (a local) or a GUARANTEED borrow held in SSA
+         (a parameter, and `self` inside a method — concept 27 stopped spilling those). So
+         `self.x = e` has no slot to find, and looking for one used to raise Not_found. *)
+      match Hashtbl.find_opt b.borrows obj with
+      | Some refv -> (
+          let cn = match vty b refv with Types.TClass cn -> cn | _ -> assert false in
+          let cl = Hashtbl.find b.classes cn in
+          let ft = Option.get (Types.cfield_type cl field) in
+          let v = gen_expr_as b value ft in
+          let fa = emit b (Sil.Ref_element_addr (refv, Option.get (Types.cfield_index cl field))) ft in
+          if is_class_ty ft then begin
+            let v = take_ownership b v in
+            if not b.in_init then begin
+              let old = emit b (Sil.Load_take fa) ft in
+              ignore (emit b (Sil.Store (v, fa)) Types.TVoid);
+              ignore (emit b (Sil.Destroy_value old) Types.TVoid)
+            end
+            else ignore (emit b (Sil.Store (v, fa)) Types.TVoid)
+          end
+          else ignore (emit b (Sil.Store (v, fa)) Types.TVoid))
+      | None ->
       let slot = Hashtbl.find b.vars obj in
       match vty b slot with
       | Types.TClass cn ->
@@ -966,12 +1015,13 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       | Types.TStruct sn ->
           (* `p.x = e`: take the field's ADDRESS in p's slot, then store — this is what makes a
              struct a value type, since p has its own slot distinct from any copy *)
-          let v = gen_expr b value in
           let sl = Hashtbl.find b.structs sn in
-          let faddr =
-            emit b (Sil.Struct_element_addr (slot, Option.get (Types.field_index sl field)))
-              (Option.get (Types.field_type sl field))
-          in
+          let fty = Option.get (Types.field_type sl field) in
+          (* wrap to the FIELD's type, exactly as `Assign` wraps to the slot's: `box.v = nil` on a
+             `var v: Int?` must store `.none`, and a conformer stored into an `any P` field must
+             be wrapped into the existential, not stored raw *)
+          let v = gen_expr_as b value fty in
+          let faddr = emit b (Sil.Struct_element_addr (slot, Option.get (Types.field_index sl field))) fty in
           ignore (emit b (Sil.Store (v, faddr)) Types.TVoid)
       | _ -> assert false)
   (* `a[i] = e` — the copy-on-write WRITE path for subscript (concept 31). Same CoW dance as
@@ -1199,16 +1249,14 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       let ord = try Hashtbl.find b.error_ord (en, cs) with Not_found -> 0 in
       let o = emit b (Sil.Int_lit ord) Types.TInt in
       rt_error_set b o;
-      (match b.handlers with
-      | HJump tgt :: _ -> terminate b (Sil.Br (tgt, []))
-      | _ -> gen_throw_propagate b)
+      goto_handler b
   (* `defer { … }` — register in the current scope; runs LIFO at every exit (concept 30) *)
   | Ast.Defer (body, _) -> (
       match b.defers with d :: rest -> b.defers <- (body :: d) :: rest | [] -> ())
   (* `do { … } catch P { … } … catch { … }` — desugar to an error-ordinal dispatch (concept 30) *)
   | Ast.Do { body; catches; _ } ->
       let dispatch = new_block b and merge = new_block b in
-      b.handlers <- HJump dispatch.Sil.bid :: b.handlers;
+      b.handlers <- HJump (dispatch.Sil.bid, List.length b.scopes) :: b.handlers;
       gen_block b body;
       b.handlers <- List.tl b.handlers;
       if b.cur.Sil.term = Sil.Unreachable then terminate b (Sil.Br (merge.Sil.bid, []));

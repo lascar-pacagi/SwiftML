@@ -71,14 +71,88 @@ defer list off the same scope stack, and every exit point that already releases 
 also runs defers first. The probe pins the ordering: `defer{print(1)} defer{print(2)}` then a
 `return` prints `2, 1` — LIFO, before the value leaves.
 
-### The diagnostics
+The *error* edge is an exit too, and that is the part that is easy to get wrong. A throwing call
+inside a `do` body branches to the catch dispatch; the scopes between the call and the `do` are
+being left, so their defers must run on that branch — before the catch body, not after it and
+not at all. That is why an installed handler carries the scope DEPTH it was installed at, and
+why the jump to it goes through one helper, `goto_handler`, rather than a bare `Br`: the helper
+runs `run_defers_down_to` and `release_down_to` first. Without the depth,
+`do { defer { print(2) }; try f() } catch { print(3) }` printed `3` alone where swiftc prints
+`2` then `3` — the defer was simply skipped.
 
-Two of swiftc's, matched exactly. A throwing call that isn't `try`-marked: *call can throw, but it
-is not marked with 'try' and the error is not handled*. A `try`-marked call with nowhere to send
-the error (not in a `do`, enclosing function not `throws`): *errors thrown from here are not
-handled*. Sema tracks two bits — "am I inside a `try`?" and "can errors be handled here?" (a
-throwing function body, a `do` body, or a `try?`/`try!` which handle locally) — and the two
-diagnostics fall out of their combination.
+### The subset you are growing into
+
+**New lexemes.** Six keywords, all added in `token.ml`'s `keyword_or_ident` — **not** in
+`lexer.ml`, which is where the first edit usually goes and where it silently does nothing:
+
+| spelling | token | notes |
+|---|---|---|
+| `throws` | `Token.Kw_throws` | a modifier on a function, between the parameter list and the `->` |
+| `throw` | `Token.Kw_throw` | a statement |
+| `try` | `Token.Kw_try` | a prefix operator. `try?` and `try!` are `try` followed by the `?`/`!` tokens concept 13 already had |
+| `do` | `Token.Kw_do` | opens the block whose errors are caught |
+| `catch` | `Token.Kw_catch` | a clause, with or without a pattern |
+| `defer` | `Token.Kw_defer` | a statement registering a block to run at scope exit |
+
+**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05-29.
+Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (zero or more),
+`|` separates alternatives, and quoted text is a terminal.
+
+```
+func_decl   ::= "func" ident [ generics ] "(" [ params ] ")"
+                  [ "throws" ] [ "->" type ] block             <-- "throws" is new
+
+enum_decl   ::= "enum" ident [ ":" ident ] "{" { case_line } "}"
+                (the ident after ":" may now be "Error", which makes the
+                 enum's cases throwable and gives each one an ORDINAL)   <-- new meaning
+
+statement   ::= …
+              | "throw" expr                                             <-- new
+              | "defer" block                                            <-- new
+              | do_stmt                                                  <-- new
+do_stmt     ::= "do" block { catch_clause }                              <-- new
+catch_clause::= "catch" [ pattern ] block                                <-- new
+                (a clause with no pattern matches ANY error; it is the
+                 last useful one, since nothing after it can be reached)
+
+unary       ::= …
+              | ("try" | "try" "?" | "try" "!") unary                    <-- new
+```
+
+Two things about the shape. `try` is a *prefix operator on an expression*, not a statement
+wrapper: `print(try f())` marks the call, and `let x = try? f()` gives `x` an optional type —
+which is why `try?` is spelled as a `try` followed by concept 13's `?` rather than as its own
+token. And `catch` may sit on the same line as the closing `}` or on the next one, so the
+parser has to look past a `Newline` and put it back if what follows is not a `catch` —
+`p.pos` is saved and restored around that peek. `else` does **not** get the same courtesy in
+this subset, which is a known divergence (a newline before `else` is rejected where swiftc
+accepts it).
+
+### The diagnostics you emit
+
+Neither hole produces a diagnostic — they are lowerings, and a wrong lowering makes wrong code,
+not a wrong message. All of these are given, and `sema-throws.t` keeps them on record. Sema
+tracks two bits — *am I inside a `try`?* and *can an error be handled here?* (a `throws` body, a
+`do` body, or a `try?`/`try!`, which handle it locally) — and the first two diagnostics fall out
+of their combination.
+
+| program | our message | swiftc |
+|---|---|---|
+| `return f()` where `f` throws | `call can throw, but it is not marked with 'try' and the error is not handled` | **same**, character for character |
+| `return try f()` in a non-`throws` function | `errors thrown from here are not handled` | **same** text; swiftc points at the call, we at the `try` |
+| `print(a.take(3))` for a throwing METHOD | `call can throw, but it is not marked with 'try' and the error is not handled` | **same**. Until methods were checked as well as functions, this compiled — and then swallowed the throw at run time |
+| `throw E.x` in a function without `throws` | `error is not handled because the enclosing function is not declared 'throws'` | **same**, character for character |
+| `throw C.a` for an enum that is not `: Error` | `thrown expression type 'C' does not conform to 'Error'` | **same** text, different column (swiftc points at the operand) |
+| `throw 5` | `thrown expression type 'Int' does not conform to 'Error'` | **same** |
+| `catch E.nope` | `type 'E' has no member 'nope'` | **same** text, different column |
+| `func mk() throws -> C` for a class `C` | `a throwing function cannot return 'C' in this subset` | **swiftc accepts.** The throw path RETURNS a placeholder of the return type (the caller checks the register first and discards it), and a reference has no placeholder to invent — a fake one would enter the ARC accounting. Scalars, structs, enums, optionals and `Void` are all fine |
+| `print(try f())` at top level, outside a `do` | `errors thrown from here are not handled` | **swiftc accepts**: Swift's top-level code may throw, and an uncaught error traps at exit. Ours insists on a `do` or a `try?`/`try!` |
+
+A note on `try!`, because the oracle reports it: a failing `try!` exits **133** under
+`swiftc -Onone` and under both of our builds — SIGTRAP, stdout empty, the buffered `print`
+before it lost. Under `swiftc -O` the same program exits **139**, because its optimizer lowers
+the unreachable failure branch differently. We match `-Onone`, which is the reference; the
+difference between swiftc's own two levels is reported and left alone.
 
 > Oracle: `SILGenStmt.cpp` lowers `do`/`catch` to exactly this dispatch; `SILGenExpr.cpp` handles
 > `try`/`try?`/`try!`; `ErrorHandlingRationale.rst` is *the* document on why Swift chose
@@ -88,15 +162,17 @@ diagnostics fall out of their combination.
 
 In `silgen.ml`:
 
-1. **`TODO(30a)` — `emit_error_check`**: after a throwing call, `rt_error_get b`, compare `!= 0`;
-   on nonzero branch to `List.hd b.handlers` (an `HJump tgt`, or a fresh propagate block that calls
-   `gen_throw_propagate b`); `switch_to` the no-error continue block.
+1. **`TODO(30a)` — `emit_error_check`**: after a throwing call, `rt_error_get b`, compare
+   `!= 0`, and `cond_br` to one of two fresh blocks. The error block is not a jump you write
+   yourself: `goto_handler` (given, immediately above the hole) sends control to the current
+   handler *and* runs the defers and releases that jump crosses. Leave the builder positioned on
+   the continue block, because your caller goes on emitting there.
 2. **`TODO(30b)` — the catch dispatch**: for each clause, a bare catch (`cpat = None`) runs
    `run_handler c`; a pattern catch tests `error == ordinal(en, case)`, branching to a hit block
    (`run_handler`) vs a next block, then recurses.
 
-Everything else — `throw`, `try?`/`try!`, `defer`, the scope integration, the `rt.error_*`
-intrinsics — is given. Reference: `solution/silgen.ml`.
+Everything else — `throw`, `try?`/`try!`, `defer`, `goto_handler` and the scope integration,
+the `rt.error_*` intrinsics — is given. Reference: `solution/silgen.ml`.
 
 ## 4. Test it
 
@@ -104,10 +180,37 @@ intrinsics — is given. Reference: `solution/silgen.ml`.
 make lab C=phase7-closures-stdlib/30-error-handling
 ```
 
-cram: do-catch by case, nested propagation, `try!` exit 133, `try?` nil/some, `defer` LIFO across
-the throw path, the two diagnostics — at `-Onone` and `-O`; plus the SIL showing the
-`rt.error_get`/`rt.error_set` desugaring. alcotest: the desugaring shapes, ordinal assignment, all
-three diagnostics, and `-O` validity.
+Five files, and each hole can be finished, and read, on its own.
+
+- **`tests/sema-throws.t`** is green before you start: the front-end rules, each one a program
+  and the message it earns. Read it first — it is the set of programs your lowering will never
+  have to survive.
+- **`tests/silgen-errorcheck.t`** is `TODO(30a)`. Every case in it avoids `do`/`catch`
+  deliberately, so it exercises the post-call branch alone: `try?` turning the error edge into
+  `nil`, `try!` turning it into a trap (and the exit code that proves it), three-level
+  propagation, and a `defer` firing on the error edge because that edge is an exit like any
+  other.
+- **`tests/silgen-catch.t`** is `TODO(30b)`. Its programs use a bare `throw` inside the `do`,
+  which reaches the dispatch *without* going through the post-call check — so this hole can be
+  filled first if you like. Pattern clauses in order, a bare clause, a `do` that never throws, an
+  error no clause matches (it keeps travelling), the clear-on-match that stops a stale error
+  being seen by the next call, and the defer-inside-`do` ordering.
+- **`tests/oracle.t`** asks swiftc every run: 20 programs whose accept/reject verdict must match
+  `swiftc -typecheck`, then 20 compiled four ways — `swiftc -Onone`, `swiftc -O`, `./lab.exe
+  build`, `./lab.exe build -O` — with stdout and exit code byte-identical to `swiftc -Onone`.
+  Those twenty cover `do`/`catch` by case and by bare clause, three-level propagation, `try?` and
+  `try!`, `defer` at scope exit and on the throw path and inside a `do` and inside a loop,
+  throwing methods on a class and on a struct, throwing functions returning a struct, an optional
+  and nothing at all, a `deinit` that prints (so the corpus pins that an error edge releases what
+  it crosses), and a failing `try!` whose exit CODE is the assertion.
+- **`tests/test_errors.ml`** reaches the same ground from OCaml: the `rt.error_*` shape, ordinal
+  assignment, one error check per throwing call, the struct-shaped throw-path placeholder, the
+  defer body emitted on both exits, and the front-end rules as accept/reject pairs.
+
+Reading the report: an untouched hole shows as `TODO … not started`, listing what it will check;
+a hole in progress shows `FAIL` with its passing cases still `OK`. `oracle.t` is `FAIL` rather
+than `TODO` from the start, because its front-end half passes before you write a line of
+lowering.
 
 ## 5. Benchmark it
 
@@ -142,18 +245,16 @@ closing Milestone **M7**.
 ## 8. Appendix — full solution
 
 ```ocaml
-(* 30a — the post-call error check *)
+(* 30a — the post-call error check. `goto_handler` (given) is what makes the error edge run
+   the defers and releases it crosses on its way to the handler. *)
 and emit_error_check (b : builder) : unit =
   let e = rt_error_get b in
   let zero = emit b (Sil.Int_lit 0) Types.TInt in
   let nz = emit b (Sil.Binop (Ast.Ne, e, zero)) Types.TBool in
-  let ok = new_block b in
-  (match b.handlers with
-  | HJump tgt :: _ -> terminate b (Sil.Cond_br (nz, (tgt, []), (ok.Sil.bid, [])))
-  | _ ->
-      let prop = new_block b in
-      terminate b (Sil.Cond_br (nz, (prop.Sil.bid, []), (ok.Sil.bid, [])));
-      switch_to b prop; gen_throw_propagate b);
+  let err = new_block b and ok = new_block b in
+  terminate b (Sil.Cond_br (nz, (err.Sil.bid, []), (ok.Sil.bid, [])));
+  switch_to b err;
+  goto_handler b;
   switch_to b ok
 
 (* 30b — the catch dispatch *)

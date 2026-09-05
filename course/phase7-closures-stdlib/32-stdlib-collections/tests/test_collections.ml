@@ -62,6 +62,63 @@ let test_accepts_trio () =
   in
   Alcotest.(check bool) "chained trio accepted" false (Diagnostics.has_errors d)
 
+let test_map_result_length () =
+  (* map's result array is the SOURCE's length: one push per element, no branch *)
+  let m = lower mapprog in
+  Alcotest.(check int) "one apply_value per map" 1 (count is_apply_value m);
+  Alcotest.(check int) "two result arrays: literal + map" 2 (count (app_of "rt.array_new") m)
+
+let test_filter_branches () =
+  (* filter's push is under a branch — the predicate decides. A map of the same shape has one
+     conditional branch (the loop test); filter has two (the loop test and the keep/skip). *)
+  let cond (f : Sil.func) =
+    List.length (List.filter (fun (b : Sil.block) ->
+        match b.Sil.term with Sil.Cond_br _ -> true | _ -> false) f.Sil.blocks)
+  in
+  let main mm = List.find (fun (f : Sil.func) -> f.Sil.fname = "main") mm.Sil.funcs in
+  Alcotest.(check bool) "filter branches more than map" true
+    (cond (main (lower filterprog)) > cond (main (lower mapprog)))
+
+let test_reduce_accumulator () =
+  (* the fold threads through an `$acc` stack slot, which mem2reg then promotes *)
+  let m = lower reduceprog in
+  let slots =
+    List.concat_map
+      (fun (f : Sil.func) ->
+        List.concat_map (fun (b : Sil.block) -> List.map snd b.Sil.instrs) f.Sil.blocks)
+      m.Sil.funcs
+  in
+  Alcotest.(check bool) "an accumulator slot exists" true
+    (List.exists (function Sil.Alloc_stack n -> n = "$acc" | _ -> false) slots)
+
+let test_no_new_sil () =
+  (* the whole concept adds no instruction kind and no runtime entry point: every call in a
+     lowered trio is one of concept 31's four buffer intrinsics or concept 29's apply_value *)
+  let m = lower "let a = [1,2,3]\nlet b = a.map({ (x: Int) -> Int in x + 1 })\nlet c = b.filter({ (x: Int) -> Bool in x > 1 })\nprint(c.reduce(0, { (s: Int, x: Int) -> Int in s + x }))" in
+  let names =
+    List.sort_uniq compare
+      (List.concat_map
+         (fun (f : Sil.func) ->
+           List.concat_map
+             (fun (b : Sil.block) ->
+               List.filter_map (function _, Sil.Func_ref n -> Some n | _ -> None) b.Sil.instrs)
+             f.Sil.blocks)
+         m.Sil.funcs)
+  in
+  let known = [ "rt.array_count"; "rt.array_get"; "rt.array_new"; "rt.array_push" ] in
+  Alcotest.(check (list string)) "only concept-31 intrinsics" known
+    (List.filter (fun n -> String.length n > 3 && String.sub n 0 3 = "rt.") names);
+  Alcotest.(check int) "three closures, three apply_values" 3 (count is_apply_value m)
+
+let test_empty_and_arity () =
+  Alcotest.(check bool) "the trio on an empty array is fine" false
+    (Diagnostics.has_errors
+       (snd (front "let e: [Int] = []\nprint(e.map({ (x: Int) -> Int in x }).count)\nprint(e.reduce(7, { (s: Int, x: Int) -> Int in s + x }))")));
+  Alcotest.(check bool) "reduce with one argument rejected" true
+    (Diagnostics.has_errors (snd (front "let a = [1,2,3]\nlet b = a.reduce(0)")));
+  Alcotest.(check bool) "map of a non-closure rejected" true
+    (Diagnostics.has_errors (snd (front "let a = [1,2,3]\nlet b = a.map(5)")))
+
 let test_opt_safe () =
   let m = Opt.optimize (lower mapprog) in
   Alcotest.(check (list string)) "valid after -O" [] (Sil.verify m)
@@ -74,11 +131,16 @@ let () =
           Alcotest.test_case "map calls closure per element" `Quick test_map_calls_closure;
           Alcotest.test_case "filter keeps via predicate" `Quick test_filter_keeps_element;
           Alcotest.test_case "reduce folds to a scalar" `Quick test_reduce_is_scalar;
+          Alcotest.test_case "map: one push per element" `Quick test_map_result_length;
+          Alcotest.test_case "filter: the push is branched" `Quick test_filter_branches;
+          Alcotest.test_case "reduce: an $acc slot" `Quick test_reduce_accumulator;
+          Alcotest.test_case "no new SIL, no new runtime" `Quick test_no_new_sil;
         ] );
       ( "typing",
         [
           Alcotest.test_case "bad closure rejected" `Quick test_reject_bad_closure;
           Alcotest.test_case "chained trio accepted" `Quick test_accepts_trio;
+          Alcotest.test_case "empty arrays and arity" `Quick test_empty_and_arity;
         ] );
       ("optimizer", [ Alcotest.test_case "-O safe" `Quick test_opt_safe ]);
     ]

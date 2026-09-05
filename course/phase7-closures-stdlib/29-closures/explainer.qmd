@@ -11,7 +11,7 @@ Every function so far has been a *name* — something you call, never something 
 concept makes functions **values**: `(Int) -> Int` becomes a type you can store, pass, and
 return; `{ (x: Int) -> Int in x + n }` becomes an expression — one that **captures** `n` from
 its surroundings and carries it along. Closures are the feature that makes `map`/`filter`
-possible (concepts 31–32 need them), and their implementation is one of the great compiler
+possible (concept 32 is built on them), and their implementation is one of the great compiler
 lessons: a closure is *not* magic — it's a plain function plus a record, wearing a trench
 coat.
 
@@ -53,10 +53,13 @@ context (`add7`/`add9` don't interfere), and the captured value is the value *th
 not `b`).
 
 What can be captured? PODs — `Int`, `Bool`, structs, enums. Classes and function values are
-**rejected** in v0: their context slot would need a retain at creation and a release at
+**rejected** in v0 — whether you name one or call one: their context slot would need a retain at creation and a release at
 context destruction — per-type copy/destroy entries in the context's vtable, which is
-precisely the value-witness design from concept 23 knocking again. (Exercise; the rejection
-message points the way.)
+precisely the value-witness design from concept 23 knocking again. (Exercise 3; the rejection
+message points the way. Refusing the *call* as well as the name is not pedantry: while it was
+allowed, a closure that called a captured closure compiled cleanly and printed the wrong
+number, because the inner context was released at the enclosing function's scope exit and then
+called through anyway.)
 
 ### Thin, thick, and the thunk
 
@@ -72,6 +75,81 @@ The null context also explains a runtime tweak: contexts are refcounted objects 
 vtable with no-op destructors, the works — Phase 6's machinery reused wholesale, `TFunc`
 simply joining `TClass` as a *managed* type), and `rt.retain`/`rt.release` gained a
 null-guard so thin functions' ARC traffic costs one branch, taken never.
+
+### The subset you are growing into
+
+**New lexemes.** One punctuation token, and one keyword you already had put to a second use:
+
+| spelling | token | notes |
+|---|---|---|
+| `@` | `Token.At` | an attribute marker, `@escaping`. Added to `lexer.ml`'s punctuation table |
+| `in` | `Token.Kw_in` | already a keyword since `for x in …` (concept 06); it now also separates a closure's signature from its body |
+
+**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05-28.
+Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (zero or more),
+`|` separates alternatives, and quoted text is a terminal.
+
+```
+type        ::= [ "any" ] ident [ "?" ]
+              | "(" [ type { "," type } ] ")" "->" type              <-- new
+                (a FUNCTION type; written canonically, e.g. "(Int,Bool)->Int",
+                 and split apart again by Types.split_fn_written)
+
+param       ::= [ "@" ident ] [ ident ] ident ":" type               <-- "@" ident is new
+                (the attribute is parsed and ACCEPTED; see the divergence below)
+
+primary     ::= …
+              | closure                                              <-- new
+closure     ::= "{" "(" [ cparam { "," cparam } ] ")" "->" type
+                    "in" expr "}"                                    <-- new
+cparam      ::= ident ":" type                                       <-- new
+                (v0: parameter types are WRITTEN, never inferred, and the
+                 body is a single EXPRESSION — no statements, no `return`)
+
+postfix     ::= primary { "." ident [ "(" [ arg { "," arg } ] ")" ]
+                        | "(" [ arg { "," arg } ] ")" | "!"
+                        | ("as?" | "as!") ident }
+                (a call whose callee is a NAME bound to a function type is now
+                 an indirect call through the pair, not a direct `apply`)
+```
+
+Three things to notice, and one that is deliberately absent. A function type is written in
+*type* position, so it can annotate a `let`, a parameter or a return — that is what makes
+`(Int) -> Int` a first-class type rather than a calling convention. A closure literal is an
+*expression*, so it goes wherever an expression goes, including an argument list:
+`apply({ (x: Int) -> Int in x * x }, 9)` parses with no special rule. And a bare `ident` in
+call position no longer means "a declared function": sema looks in the environment first, and
+a local of function type turns the call indirect. What is absent is **trailing-closure syntax**
+(`a.map { … }`) and the `$0` shorthand: both are parser sugar over exactly this production,
+and both are exercises in concept 32, where they earn their keep.
+
+`@escaping` is parsed and then ignored, which makes us *more* permissive than swiftc: a program
+it rejects for letting a non-escaping parameter escape compiles here. That is the one place in
+this concept where our subset is larger rather than smaller, and it is stated in the table
+below.
+
+### The diagnostics you emit
+
+None of these come out of the two holes — the holes are lowerings, and a lowering that is wrong
+produces bad code, not a bad message. They are all given, and `sema-captures.t` keeps the
+interesting ones on record. Wording follows `swiftc` where the subset lets it; the divergences
+are stated, not hidden.
+
+| program | our message | swiftc |
+|---|---|---|
+| `f = { … }` where `f` is a `let` | `cannot assign to value: 'f' is a 'let' constant` | **same** (`assignment_lhs_is_immutable_variable`) |
+| `let h: (Bool) -> Int = g` for `g: (Int) -> Int` | `cannot convert value of type '(Int) -> Int' to specified type '(Bool) -> Int'` | **same**, character for character |
+| `apply(5, 1)` where the parameter is `(Int) -> Int` | `cannot convert value of type 'Int' to specified type '(Int) -> Int'` | `… to expected argument type '(Int) -> Int'` — swiftc names the *site*; we have one wording for all coercions |
+| `let n = 5` then `n(1)` | `cannot call value of non-function type 'Int'` | **same** (`cannot_call_non_function_value`). It used to say "cannot find 'n' in scope", which is false — `n` is right there |
+| `f(1, 2)` for a one-parameter `f` | `function value 'f' expects 1 argument(s) but 2 given` | `extra argument in call` — swiftc reports at the extra argument, we report the arity at the call |
+| `let f: (Int) -> Bool = { (x: Int) -> Int in x }` | `cannot convert value of type '(Int) -> Int' to specified type '(Int) -> Bool'` | `declared closure result 'Int' is incompatible with contextual type 'Bool'` — swiftc points inside the literal; both refuse |
+| `{ (x: Int) -> Int in x + y }` with no `y` | `cannot find 'y' in scope` | **same**. Reported ONCE: the body used to be inferred *and* checked, so every error in a closure came out twice |
+| `let k = K()` then `{ () -> Int in k.v }` | `cannot capture 'k' in this subset (closure captures are plain values)` | **swiftc accepts.** Capturing a class needs a retain at creation and a release at context destruction — per-type copy/destroy entries the context's no-op vtable does not have (exercise 3) |
+| `let inner = mkAdd(n)` then `{ (x: Int) -> Int in inner(x) }` | the same message, for the same reason | **swiftc accepts.** Calling a captured function value copies the `{code, ctx}` pair in without retaining the context. Left accepted, this MISCOMPILED — `compose(3)(4)` printed 8 where swiftc prints 14 |
+| `print(P(x: 1, y: 2))` | `cannot print a value of type 'P' (only Int, Double, Bool and String)` | **swiftc accepts** and prints `P(x: 1, y: 2)`. Printing an aggregate needs reflection; ours lowers a scalar |
+| `a == b` on two structs | `binary operator '==' cannot be applied to two 'P' operands` | **same** — a struct is not `Equatable` unless it says so. This one used to reach IRGen and emit `add i64 %struct`, which clang refuses |
+| `p.x = 9` on a `let` property | `cannot assign to property: 'x' is a 'let' constant` | **same** (`assignment_lhs_is_immutable_property`) |
+| `@escaping` on a parameter that escapes | *(nothing)* | swiftc tracks escaping and reports `escaping_non_escaping_param`. We parse the attribute and accept every program: a divergence in the permissive direction, and exercise 4 |
 
 ### The verifier strikes again (twice)
 
@@ -112,12 +190,37 @@ Reference: `solution/silgen.ml`, `solution/irgen.ml`.
 make lab C=phase7-closures-stdlib/29-closures
 ```
 
-cram: the lifted function, `capture_get`, and `apply_value` in SIL; independent adder
-contexts; named-function values through thunks; struct captures and reassigned function
-vars; the closure/ARC interplay (the Box deinit fires at scope exit, not closure death); the
-managed-capture rejection verbatim — all at `-Onone` and `-O`. alcotest: the lift + layout +
-ABI shapes, ownership-clean generated SIL, capture discipline, `-O` keeping lifted functions
-alive.
+Six files, and the order they go green in is the order you fill the holes.
+
+- **`tests/sema-captures.t`** and **`tests/silgen-stores.t`** are green before you start. They
+  are the given code: the capture discipline, the two aggregate rules, the optional-field and
+  `self.v` stores, an `Int` literal beside a `Double`. Read them first — they are the map of
+  what your lowering may assume.
+- **`tests/silgen-lifting.t`** is `TODO(29a)`. It uses `--emit-sil`, which stops before IRGen,
+  so it reads the lifting alone: the lifted function and its context parameter, `capture_get`
+  at index 0, one `closure` per literal numbered `$clo0`, `$clo1`, an empty context for a
+  capture-free literal, a struct-typed context slot. The last case runs the compiler and expects
+  no output at all — the driver runs concept 27's ownership verifier on every compile, so a
+  lifting that forgets `mark_owned` fails to compile rather than merely leaking.
+- **`tests/irgen-call.t`** is `TODO(29b)`. Its first case is a NAMED function used as a value,
+  which needs no lifting at all — so this hole can be finished, and read, on its own.
+- **`tests/oracle.t`** is the headline, and it asks swiftc every run. Twenty programs are
+  type-checked by both compilers and must reach the same verdict; twenty more are compiled four
+  ways — `swiftc -Onone`, `swiftc -O`, `./lab.exe build`, `./lab.exe build -O` — and all four
+  must print the same bytes and exit the same way. The runtime twenty are the concept's whole
+  story: literals of every result type, higher-order functions taking a named function and a
+  literal, independent adder contexts, a reassigned function-typed `var`, struct and enum and
+  optional captures, closures created inside a loop, a closure built in each arm of an `if`, and
+  the `Box` probe, whose output pins *when* something happens rather than what it computes.
+- **`tests/test_closures.ml`** is the same ground reached from OCaml rather than the CLI: the
+  lifted function's parameter list, the closure layout, instruction counts, `Sil.verify_ownership`
+  on generated SIL, and the given rules as accept/reject pairs.
+
+Reading the report: a hole you have not touched shows as `TODO … not started` — the file lists
+what it *will* check and stops. A hole in progress shows `FAIL` with the passing cases still
+marked `OK`; that mixed line is the progress signal. `oracle.t` is `FAIL` rather than `TODO`
+from the start, because its front-end half passes before you write a line of lowering; its
+runtime half stops at the first `failwith` and says so.
 
 ## 5. Benchmark it
 

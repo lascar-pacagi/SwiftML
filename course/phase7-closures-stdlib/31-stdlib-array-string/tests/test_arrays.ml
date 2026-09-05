@@ -65,6 +65,67 @@ let test_accept_int_array () =
   let _, d = front "var a = [1, 2, 3]\na.append(4)\na[0] = 9\nfor x in a { print(x) }\nlet e: [Int] = []\nprint(e.isEmpty)" in
   Alcotest.(check bool) "[Int] program accepted" false (Diagnostics.has_errors d)
 
+(* the STORE-BACK: every make_unique's result must be stored into the slot it came from, or the
+   copy is written to and then thrown away — the classic copy-on-write bug *)
+let test_store_back () =
+  let m = lower cow in
+  let f = List.find (fun (fn : Sil.func) -> fn.Sil.fname = "main") m.Sil.funcs in
+  (* blocks and instructions are both accumulated by prepending, so both need reversing to
+     read them in program order — and order is exactly what this test is about *)
+  let seq = List.concat_map (fun (b : Sil.block) -> List.rev b.Sil.instrs) (List.rev f.Sil.blocks) in
+  (* walk the instruction stream: each apply of make_unique defines a value, and that value must
+     appear as the SOURCE of a later Store *)
+  let uniq_results =
+    let fr = ref [] in
+    List.filter_map
+      (fun (v, i) ->
+        match i with
+        | Sil.Func_ref "rt.array_make_unique" -> fr := v :: !fr; None
+        | Sil.Apply (callee, _) when List.mem callee !fr -> Some v
+        | _ -> None)
+      seq
+  in
+  Alcotest.(check int) "two make_unique results" 2 (List.length uniq_results);
+  List.iter
+    (fun r ->
+      Alcotest.(check bool) "its result is stored back" true
+        (List.exists (function _, Sil.Store (src, _) -> src = r | _ -> false) seq))
+    uniq_results
+
+let test_multiline_literal () =
+  (* a newline inside brackets separates nothing; the lexer drops it while the depth is > 0 *)
+  let d = Diagnostics.create () in
+  let toks = Lexer.tokenize (Lexer.create "let a = [\n  1,\n  2\n]\nprint(a.count)" d) in
+  Alcotest.(check bool) "no newline inside the brackets" true
+    (let rec scan depth = function
+       | [] -> true
+       | (t : Token.t) :: r -> (
+           match t.Token.kind with
+           | Token.LBracket -> scan (depth + 1) r
+           | Token.RBracket -> scan (depth - 1) r
+           | Token.Newline when depth > 0 -> false
+           | _ -> scan depth r)
+     in
+     scan 0 toks);
+  let _, d2 = front "let a = [\n  1,\n  2\n]\nprint(a.count)" in
+  Alcotest.(check bool) "and it type-checks" false (Diagnostics.has_errors d2)
+
+let test_let_array_rules () =
+  (* `append` mutates, so it needs a `var` — swiftc's rule, and ours since it was checked *)
+  Alcotest.(check bool) "append on a let rejected" true
+    (Diagnostics.has_errors (snd (front "let a = [1, 2]\na.append(3)")));
+  Alcotest.(check bool) "subscript-set on a let rejected" true
+    (Diagnostics.has_errors (snd (front "let a = [1, 2]\na[0] = 5")));
+  Alcotest.(check bool) "on a var, both fine" false
+    (Diagnostics.has_errors (snd (front "var a = [1, 2]\na.append(3)\na[0] = 5\nprint(a.count)")))
+
+let test_aggregate_divergence () =
+  (* the two places we are SMALLER than Swift: no aggregate print, no aggregate compare *)
+  Alcotest.(check bool) "print of an array rejected" true
+    (Diagnostics.has_errors (snd (front "let a = [1, 2]\nprint(a)")));
+  Alcotest.(check bool) "== on two arrays rejected" true
+    (Diagnostics.has_errors (snd (front "let a = [1, 2]\nlet b = [1, 2]\nprint(a == b)")))
+
 let test_opt_safe () =
   let m = Opt.optimize (lower cow) in
   Alcotest.(check (list string)) "valid after -O" [] (Sil.verify m)
@@ -81,11 +142,15 @@ let () =
         [
           Alcotest.test_case "share retains, mutate make_unique" `Quick test_cow_dance;
           Alcotest.test_case "fresh literal no retain" `Quick test_fresh_literal_no_retain;
+          Alcotest.test_case "unique pointer stored back" `Quick test_store_back;
         ] );
       ( "scope",
         [
           Alcotest.test_case "[String] rejected" `Quick test_reject_string_array;
           Alcotest.test_case "[Int] accepted" `Quick test_accept_int_array;
+          Alcotest.test_case "mutating a let array" `Quick test_let_array_rules;
+          Alcotest.test_case "no aggregate print or ==" `Quick test_aggregate_divergence;
         ] );
+      ("lexer", [ Alcotest.test_case "multi-line literal" `Quick test_multiline_literal ]);
       ("optimizer", [ Alcotest.test_case "-O safe" `Quick test_opt_safe ]);
     ]

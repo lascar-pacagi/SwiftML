@@ -41,7 +41,17 @@ let lower_sil ?(opt = false) (src : string) (diags : Diagnostics.sink) : Sil.mod
   | errs ->
       List.iter (fun e -> prerr_endline ("ownership error: " ^ e)) errs;
       exit 1);
-  if opt then Opt.optimize m else m
+  if not opt then m
+  else
+    (* the pipeline runs, then the SAME verifier runs again: a pass that produced a malformed CFG
+       (a branch to a block that does not exist, an argument list of the wrong length, a block with
+       no terminator) is caught here rather than in IRGen or, worse, at run time *)
+    let m = Opt.optimize m in
+    match Sil.verify m with
+    | [] -> m
+    | errs ->
+        List.iter (fun e -> prerr_endline ("SIL verification error after optimization: " ^ e)) errs;
+        exit 1
 
 let run_clang ~(opt : bool) ~(ll_path : string) ~(out : string) : unit =
   (* concept 20: `-O` also engages LLVM's optimizer — clang runs the full -O2 pass pipeline

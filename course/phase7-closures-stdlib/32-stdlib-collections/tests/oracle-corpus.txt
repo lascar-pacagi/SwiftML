@@ -1,0 +1,20 @@
+let a = [1, 2, 3, 4, 5, 6]\nlet doubled = a.map({ (x: Int) -> Int in x * 2 })\nprint(doubled.count)\nprint(doubled[0])\nprint(doubled[5])
+let a = [1, 2, 3, 4, 5, 6]\nlet evens = a.filter({ (x: Int) -> Bool in x % 2 == 0 })\nprint(evens.count)\nfor e in evens { print(e) }
+let a = [1, 2, 3, 4, 5, 6]\nprint(a.reduce(0, { (s: Int, x: Int) -> Int in s + x }))\nprint(a.reduce(1, { (s: Int, x: Int) -> Int in s * x }))
+let a = [1, 2, 3, 4, 5, 6]\nprint(a.map({ (x: Int) -> Int in x * 2 }).reduce(0, { (s: Int, x: Int) -> Int in s + x }))
+let a = [1, 2, 3, 4, 5]\nprint(a.reduce(0, { (acc: Int, x: Int) -> Int in acc + x * x }))
+let a = [1, 2, 3]\nlet factor = 10\nlet scaled = a.map({ (x: Int) -> Int in x * factor })\nprint(scaled[0])\nprint(scaled[2])
+let a = [1, 2, 3]\nprint(a.filter({ (x: Int) -> Bool in x > 100 }).count)\nlet empty: [Int] = []\nprint(empty.map({ (x: Int) -> Int in x + 1 }).count)\nprint(empty.reduce(42, { (acc: Int, x: Int) -> Int in acc + x }))\nprint(empty.filter({ (x: Int) -> Bool in true }).count)
+let a = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]\nlet r = a.filter({ (x: Int) -> Bool in x % 2 == 1 }).map({ (x: Int) -> Int in x * x })\nprint(r.count)\nfor x in r { print(x) }
+let a = [5, 3, 9, 1]\nprint(a.reduce(0, { (m: Int, x: Int) -> Int in m > x ? m : x }))\nprint(a.reduce(100, { (m: Int, x: Int) -> Int in m < x ? m : x }))
+let a = [1, 2, 3]\nprint(a.reduce(0 - 100, { (m: Int, x: Int) -> Int in m + x }))
+func doubleAll(_ a: [Int]) -> [Int] {\n  return a.map({ (x: Int) -> Int in x + x })\n}\nlet d = doubleAll([3, 4])\nprint(d[0])\nprint(d[1])
+func sumOf(_ a: [Int]) -> Int {\n  return a.reduce(0, { (s: Int, x: Int) -> Int in s + x })\n}\nprint(sumOf([1, 2, 3]))\nprint(sumOf([]))
+var a = [1, 2, 3]\nlet b = a.map({ (x: Int) -> Int in x * 3 })\na.append(4)\nprint(a.count)\nprint(b.count)\nprint(b[2])
+let a = [\n  1,\n  2,\n  3,\n  4\n]\nprint(a.filter({ (x: Int) -> Bool in x > 2 }).reduce(0, { (s: Int, x: Int) -> Int in s + x }))
+let base = 100\nlet a = [1, 2, 3]\nlet shifted = a.map({ (x: Int) -> Int in x + base })\nprint(shifted.reduce(0, { (s: Int, x: Int) -> Int in s + x }))
+struct P { var x: Int; var y: Int }\nlet p = P(x: 2, y: 5)\nlet a = [1, 2, 3]\nprint(a.map({ (v: Int) -> Int in v * p.x + p.y }).reduce(0, { (s: Int, v: Int) -> Int in s + v }))
+enum E: Error { case empty }\nfunc totalOf(_ a: [Int]) throws -> Int {\n  if a.isEmpty { throw E.empty }\n  return a.reduce(0, { (s: Int, x: Int) -> Int in s + x })\n}\ndo { print(try totalOf([1, 2, 3])) } catch { print(0 - 1) }\ndo { print(try totalOf([])) } catch { print(0 - 2) }
+var a: [Int] = []\nvar i = 1\nwhile i <= 10 {\n  a.append(i)\n  i = i + 1\n}\nprint(a.filter({ (x: Int) -> Bool in x % 3 == 0 }).count)\nprint(a.map({ (x: Int) -> Int in x * 2 }).reduce(0, { (s: Int, x: Int) -> Int in s + x }))
+let a = [1, 2, 3]\nlet f = { (x: Int) -> Int in x * 7 }\nprint(a.map(f).reduce(0, { (s: Int, x: Int) -> Int in s + x }))
+let a = [4, 8, 15, 16, 23, 42]\nlet big = a.filter({ (x: Int) -> Bool in x > 10 })\nprint(big.count)\nprint(big.reduce(0, { (s: Int, x: Int) -> Int in s + x }))\nprint(big.map({ (x: Int) -> Int in x / 2 })[0])

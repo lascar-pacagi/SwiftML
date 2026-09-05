@@ -1,0 +1,20 @@
+var a = [1, 2, 3]\na.append(4)\na[0] = 9\nprint(a.count)\nprint(a[0])
+var a = [1, 2]\na.append("x")
+let a = [1, 2]\na.append(3)\nprint(a.count)
+let a = [1, 2]\na[0] = 5\nprint(a[0])
+let a = [1, 2]\nprint(a[0][1])
+var a = [1, 2]\na[0] = "x"\nprint(a[0])
+var a = [1, 2]\nprint(a.nope)
+let a: [Int] = [1, "x"]\nprint(a.count)
+let a = [1, 2]\nlet n: Int = a\nprint(n)
+var a = [\n  1,\n  2,\n  3\n]\nprint(a.count)
+func total(_ a: [Int]) -> Int {\n  var s = 0\n  for x in a { s = s + x }\n  return s\n}\nprint(total([1, 2, 3]))
+func mk(_ n: Int) -> [Int] {\n  var r: [Int] = []\n  r.append(n)\n  return r\n}\nprint(mk(4).count)
+struct Bag { var items: [Int] }\nlet b = Bag(items: [1, 2])\nprint(b.items.count)
+let s = "hi"\nlet t = s + " there"\nprint(t)\nprint(t.count)
+let s = "hi"\nlet n: Int = s\nprint(n)
+var a = [1, 2]\nprint(a.isEmpty)\nprint(a.count)
+let a = [1, 2]\nfor x in a { print(x) }
+for x in 5 { print(x) }
+enum E: Error { case empty }\nfunc first(_ a: [Int]) throws -> Int {\n  if a.isEmpty { throw E.empty }\n  return a[0]\n}\ndo { print(try first([7])) } catch { print(0) }
+enum E: Error { case empty }\nfunc first(_ a: [Int]) throws -> Int {\n  if a.isEmpty { throw E.empty }\n  return a[0]\n}\nprint(first([7]))
