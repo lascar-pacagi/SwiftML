@@ -30,3 +30,16 @@ no division by zero, literals below 2^62).
   > done < oracle-corpus.txt
   $ echo done
   done
+
+A multi-line `[ … ]` literal is one expression, not four statements — the shared front end
+carried into Phase 8. Arrays are outside Backend B's v0 scope, so this one is checked two
+ways, against `swiftc` and against Backend A. Without the lexer's bracket-depth rule the
+newlines inside the brackets separate statements and the program does not even parse.
+
+  $ printf 'let xs = [\n  1,\n  2,\n  3\n]\nprint(xs.count)\nprint(xs[2])\n' > multi.swift
+  $ swiftc -Onone multi.swift -o swmulti && ./swmulti
+  3
+  3
+  $ ./lab.exe build multi.swift -o mlmulti && ./mlmulti
+  3
+  3

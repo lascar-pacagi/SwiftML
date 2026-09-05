@@ -36,7 +36,7 @@ registers and makes the load/store traffic disappear.
 
 ### Instruction selection: SIL op → machine instructions
 
-A SIL instruction like `%11 = binop add %9, %10` is *abstract* — it names values, not registers or
+A SIL instruction like `%11 = binop "+" %9, %10` is *abstract* — it names values, not registers or
 memory. Instruction selection picks concrete ARM64 instructions that realize it. The cleanest
 possible scheme, and our v0, is the **stack machine**:
 
@@ -48,6 +48,54 @@ naive bytecode interpreter's stack — hence "stack machine" — and it has one 
 **local**. Each SIL instruction lowers in isolation, needing no knowledge of what's live, what's in
 which register, or what comes next. That locality is why it's the right v0: get *correct* code out,
 then optimize.
+
+### The IR you consume, and the IR you emit
+
+This concept adds no syntax — the language is exactly concept 32's. What is new is the
+*target* IR. So instead of a grammar, here is the recall of both sides of the translation.
+
+The **input** is raw (`-Onone`) SIL, the same form concept 09 hands to LLVM. Written as EBNF
+(`[ x ]` optional, `{ x }` zero-or-more, `|` alternatives, quoted terminals), the fragment
+your templates must cover is:
+
+```
+func    ::= "sil" "@" name "(" { value ":" type } ")" "->" type "{" { block } "}"
+block   ::= "bb" int ":" { instr } term
+instr   ::= [ value "=" ] op
+op      ::= "integer_literal" type "," literal        (* Bool literals print this way too *)
+          | "function_ref" "@" name
+          | "alloc_stack" type | "load" value type | "store" value "to" value
+          | "unop" '"-"' value | "binop" binop value "," value type
+          | "apply" ( value | "@" name ) "(" { value } ")"
+term    ::= "return" [ value ] | "br" "bb" int
+          | "cond_br" value "," "bb" int "," "bb" int
+          | "trap" | "unreachable"
+binop   ::= '"+"' | '"-"' | '"*"' | '"/"' | '"%"'
+          | '"=="' | '"!="' | '"<"' | '"<="' | '">"' | '">="'
+```
+
+(`print(x)` prints as `apply @print(%x)`, but it is its own SIL instruction, not a call:
+`sel_instr` sees `Sil.Print`. `Sil.Binop` also admits `&&` and `||`, but SILGen lowers the
+short-circuiting source operators to branch diamonds, so those two never reach you here.)
+
+Every other SIL op — `struct`, `enum`, `alloc_ref`, `apply_witness`, the array intrinsics —
+is outside v0's scope and takes the `; UNSUPPORTED` path below.
+
+The **output** is `arm64.ml`, and all of it is new here:
+
+| ARM64 form | what it does | |
+|---|---|---|
+| `mov` / `movz` / `movk` | move a register or build a 64-bit constant, 16 bits at a time | `<-- new` |
+| `add` `sub` `mul` `sdiv` `msub` `neg` `and` `orr` | the integer ALU (`msub` synthesizes `%`) | `<-- new` |
+| `cmp` / `cset` / `csel` | set the flags; materialize a Bool from them; select on them | `<-- new` |
+| `ldr` / `str` / `stp` / `ldp` | load, store, and the pair forms the frame record uses | `<-- new` |
+| `adrp` / `add …@PAGEOFF` | the PC-relative pair that addresses a string constant | `<-- new` |
+| `b` / `b.<cond>` / `bl` / `ret` | branch, conditional branch, call, return | `<-- new` |
+| `brk #1` | trap — SIGTRAP, exit 133 | `<-- new` |
+| `Label` / `Comment` | a branch target; a `; …` line (this is where `UNSUPPORTED` goes) | `<-- new` |
+
+Registers are `X n`, `SP` and `XZR`; the fourth constructor, `Virt n`, is reserved for concept
+34's allocator and the printer refuses it, so v0 must only ever emit physical registers.
 
 ### The stack frame
 
