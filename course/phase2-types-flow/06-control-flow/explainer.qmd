@@ -154,9 +154,35 @@ Same three sources as concept 05: swiftc's `.def` files where the construct exis
 
 and a lone pipe is the same shape as a lone ampersand: `expected '|' after '|'`.
 
-**Parser** — nothing new to compose: the given `expect`/`parse_ident` helpers report `expected
-<what>`, and you choose the phrase: `'{'` after a condition, `'in'` and `'..<'` in a `for`, `a loop
-variable` for its name. Each lands on the token that was found instead.
+**Parser** — nothing new to compose: two given helpers do the reporting, and both build the text
+as `"expected " ^ what`.
+
+```ocaml
+(* both given, in parser.ml *)
+let expect (p : t) (k : Token.kind) (what : string) : Token.t
+(* the next token must be [k]; otherwise report "expected <what>" at the token that IS there,
+   and return it anyway so parsing carries on *)
+
+let parse_ident (p : t) (what : string) : string * Token.span
+(* the next token must be an identifier; otherwise report "expected <what>", yield "_" *)
+```
+
+So the only thing you choose is the phrase, and the convention is concept 02's: a **quoted
+literal** for punctuation or a keyword, a lowercase **noun phrase** for a category. The four
+places this concept calls them, and the message each produces:
+
+| where | the call | the message |
+|---|---|---|
+| after an `if`/`while` condition, and at the start of a `for` body | `expect p Token.LBrace "'{'"` | `expected '{'` |
+| the `for` loop variable | `parse_ident p "a loop variable"` | `expected a loop variable` |
+| after that variable | `expect p Token.Kw_in "'in'"` | `expected 'in'` |
+| between the range's bounds | `expect p Token.DotDotLt "'..<'"` | `expected '..<'` |
+
+`parse_block`'s closing brace reuses the first row's helper with `"'}'"`. Three of these are
+pinned by cram goldens — `1:8: error: expected '{'` for `if true` with no brace, `1:7: error:
+expected 'in'` for `for i 0 ..< 3`, `1:12: error: expected '..<'` for `for i in 0 to 3` — so the
+phrase has to be exactly the one in the table, and the column has to be the token that was found
+rather than the one that was wanted.
 
 **Sema** — the tests compare these character for character:
 
@@ -186,11 +212,27 @@ operators' precedence.
 2. **`parser.ml`** — first the two new operators, one row each in the two tables that Phase 1's
    Pratt loop reads: a binding power in `infix_bp` (the table above has both numbers) and the
    `Ast.binop` they build in `binop_of_kind`. Nothing else in the loop changes — that is the point
-   of a table-driven parser. Then the statements. `parse_block` consumes `{`, parses statements
-   (skipping blank `Newline`s) until `}`, returns the `stmt list`. `parse_if` parses `if <expr> <block>` then an optional `else`
-   (`else if` recurses into `parse_if`, wrapped in a one-element list). In `parse_stmt`, add `while`
-   (`<expr>` then a block), `for` (`<ident> in <expr> ..< <expr>` then a block), and `break`/`continue`
-   (just the keyword + its span). `parse_expr` already stops at `{`, so a condition parses cleanly.
+   of a table-driven parser.
+
+   Then the statements — **two named functions and three new arms**, which is why the skeleton
+   shows two `TODO(06)` bodies and one `TODO(06)` comment rather than five stubs. `parse_block`
+   and `parse_if` have functions of their own because they are called from more than one place;
+   `while`, `for`, `break` and `continue` are cases you add to `parse_stmt`'s `match`, next to
+   the `let`/`var`, assignment and expression cases already there:
+
+   | you write | shape | builds |
+   |---|---|---|
+   | function `parse_block` | `{`, then statements until `}`, blank `Newline`s skipped | `Ast.stmt list` |
+   | function `parse_if` | `if <expr> <block>`, then an optional `else` — a block, or another `if` | `Ast.If` |
+   | arm `Token.Kw_while` | `while <expr> <block>` | `Ast.While` |
+   | arm `Token.Kw_for` | `for <ident> in <expr> ..< <expr> <block>` | `Ast.For` |
+   | arm `Token.Kw_break` | the keyword alone | `Ast.Break span` |
+   | arm `Token.Kw_continue` | the keyword alone | `Ast.Continue span` |
+
+   `else if` is not a third form: parse the `else`, and if an `if` follows, recurse into
+   `parse_if` and wrap the result in a one-element list — that is the `(if … ((if …)))` the AST
+   dump shows. `parse_expr` already stops at `{`, so a condition needs no parentheses and no
+   lookahead. Every `expect`/`parse_ident` phrase these need is in §2's table.
 3. **`sema.ml`** — `&&`/`||`: both operands `Bool`, result `Bool`. Then the statements: `If`/`While`
    `check_expr cond Bool` and `check_block` the body (a loop also brackets the body with `loop_depth`);
    `For` checks `lo`/`hi` are `Int` and, in a fresh scope, `bind`s the variable as an immutable `Int`
