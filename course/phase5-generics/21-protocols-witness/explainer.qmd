@@ -91,10 +91,10 @@ Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (
 `|` separates alternatives, and quoted text is a terminal.
 
 ```
-program     ::= { item }
+program     ::= [ nl ] [ item { nl item } ] [ nl ]
 item        ::= func_decl | struct_decl | enum_decl | proto_decl | statement
 
-proto_decl  ::= "protocol" ident "{" { req } "}"                     <-- new
+proto_decl  ::= "protocol" ident "{" [ nl ] [ req { nl req } ] [ nl ] "}"   <-- new
 req         ::= "func" ident "(" [ param { "," param } ] ")"         <-- new
                   [ "->" type ]                                       (a signature, NO body)
 
@@ -109,6 +109,7 @@ type        ::= [ "any" ] ident [ "?" ]                              <-- "any" i
 
 postfix     ::= primary { "." ident [ "(" [ arg { "," arg } ] ")" ] | "!" }
                 (a "." followed by "(" is a METHOD CALL — new; without it, a field read)
+nl          ::= NEWLINE { NEWLINE }   # one or more: a run of blank lines is one separator
 ```
 
 Three things to notice. A requirement is a `func` header with **no body** — the parser reuses

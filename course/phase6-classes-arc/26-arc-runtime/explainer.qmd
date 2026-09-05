@@ -111,11 +111,12 @@ Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (
 `|` separates alternatives, and quoted text is a terminal.
 
 ```
-class_decl  ::= "class" ident [ ":" ident ] "{" { member } "}"
+class_decl  ::= "class" ident [ ":" ident ] "{" [ nl ] [ member { nl member } ] [ nl ] "}"
 member      ::= field
               | "init" "(" [ param { "," param } ] ")" block
               | "deinit" block                                       <-- new
               | [ "override" ] func_decl
+nl          ::= NEWLINE { NEWLINE }   # one or more: a run of blank lines is one separator
 ```
 
 That is the whole syntactic change, and it is worth sitting with: **`deinit` is one production

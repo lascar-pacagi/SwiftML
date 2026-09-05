@@ -69,9 +69,10 @@ Written as EBNF (`[ x ]` optional, `{ x }` zero-or-more, `|` alternatives, quote
 ```
 item        ::= func-decl | struct-decl | enum-decl | proto-decl
               | class-decl | actor-decl | stmt
-class-decl  ::= "class" ident [ ":" ident ] "{" { member } "}"
-actor-decl  ::= "actor" ident "{" { member } "}"       (*              <-- new *)
+class-decl  ::= "class" ident [ ":" ident ] "{" [ nl ] [ member { nl member } ] [ nl ] "}"
+actor-decl  ::= "actor" ident "{" [ nl ] [ member { nl member } ] [ nl ] "}"   (* <-- new *)
 member      ::= "var" ident ":" type | init-decl | method-decl
+nl          ::= NEWLINE { NEWLINE }   # one or more: a run of blank lines is one separator
 ```
 
 `actor-decl` is `class-decl` minus inheritance — the parser routes both through `parse_class` and

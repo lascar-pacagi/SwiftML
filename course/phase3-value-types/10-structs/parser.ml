@@ -304,7 +304,12 @@ let parse_struct (p : t) : Ast.struct_decl =
         let fld_name, _ = parse_ident p "a property name" in
         ignore (expect p Token.Colon "':'");
         let fld_ty, _ = parse_ident p "a property type" in
-        (match peek_kind p with Token.Newline -> ignore (advance p) | _ -> ());
+        (* a declaration ends at a newline or at the body's `}` — `{ var x: Int var y: Int }`
+           is an error here as in Swift (`consecutive declarations on a line …`) *)
+        (match peek_kind p with
+        | Token.Newline -> ignore (advance p)
+        | Token.RBrace | Token.Eof -> ()
+        | _ -> Diagnostics.error p.diags (peek p).Token.span "expected newline or end of declaration");
         loop ({ Ast.fld_name; fld_ty; fld_var } :: acc)
     | _ ->
         let t = peek p in
@@ -331,7 +336,12 @@ let parse_program (p : t) : Ast.program =
         loop (Ast.IFunc f :: acc)
     | Token.Kw_struct ->
         let s = parse_struct p in
-        (match peek_kind p with Token.Newline -> ignore (advance p) | _ -> ());
+        (* a declaration ends at a newline or at the body's `}` — `{ var x: Int var y: Int }`
+           is an error here as in Swift (`consecutive declarations on a line …`) *)
+        (match peek_kind p with
+        | Token.Newline -> ignore (advance p)
+        | Token.RBrace | Token.Eof -> ()
+        | _ -> Diagnostics.error p.diags (peek p).Token.span "expected newline or end of declaration");
         loop (Ast.IStruct s :: acc)
     | _ ->
         let s = parse_stmt p in

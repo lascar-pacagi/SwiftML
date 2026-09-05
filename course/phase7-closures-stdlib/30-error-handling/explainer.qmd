@@ -102,7 +102,7 @@ Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (
 func_decl   ::= "func" ident [ generics ] "(" [ params ] ")"
                   [ "throws" ] [ "->" type ] block             <-- "throws" is new
 
-enum_decl   ::= "enum" ident [ ":" ident ] "{" { case_line } "}"
+enum_decl   ::= "enum" ident [ ":" ident ] "{" [ nl ] [ case_line { nl case_line } ] [ nl ] "}"
                 (the ident after ":" may now be "Error", which makes the
                  enum's cases throwable and gives each one an ORDINAL)   <-- new meaning
 
@@ -117,6 +117,7 @@ catch_clause::= "catch" [ pattern ] block                                <-- new
 
 unary       ::= …
               | ("try" | "try" "?" | "try" "!") unary                    <-- new
+nl          ::= NEWLINE { NEWLINE }   # one or more: a run of blank lines is one separator
 ```
 
 Two things about the shape. `try` is a *prefix operator on an expression*, not a statement

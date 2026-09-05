@@ -92,12 +92,13 @@ statement   ::= switch_stmt                                        <-- new
               | "break" | "continue" | "return" [ expr ]
               | expr
 
-switch_stmt ::= "switch" expr "{" { arm } "}"                      <-- new
+switch_stmt ::= "switch" expr "{" [ nl ] { arm } "}"               <-- new
 arm         ::= "case" pattern ":" { statement NEWLINE }           <-- new
               | "default" ":" { statement NEWLINE }                <-- new
 pattern     ::= "." ident [ "(" binding { "," binding } ")" ]      <-- new (an enum case)
               | [ "-" ] int                                        <-- new (an Int literal)
 binding     ::= "let" ident | "_"                                  <-- new
+nl          ::= NEWLINE { NEWLINE }   # one or more: a run of blank lines is one separator
 ```
 
 Three things to notice. An arm's body is **not** a block: there are no braces, and the body runs

@@ -119,12 +119,12 @@ Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (
 `|` separates alternatives, and quoted text is a terminal.
 
 ```
-program     ::= { item }
+program     ::= [ nl ] [ item { nl item } ] [ nl ]
 item        ::= func_decl | struct_decl | enum_decl | proto_decl
               | class_decl                                           <-- new
               | statement
 
-class_decl  ::= "class" ident [ ":" ident ] "{" { member } "}"       <-- new
+class_decl  ::= "class" ident [ ":" ident ] "{" [ nl ] [ member { nl member } ] [ nl ] "}"       <-- new
                   (the one ident after ":" is the SUPERCLASS)
 member      ::= field                                                <-- new
               | "init" "(" [ param { "," param } ] ")" block         <-- new (at most one)
@@ -139,6 +139,7 @@ primary     ::= … | "super" "." "init" "(" [ arg { "," arg } ] ")"   <-- new
 postfix     ::= primary { "." ident [ "(" [ arg { "," arg } ] ")" ] | "!"
                         | ("as?" | "as!") ident }
                 (a "." followed by "(" on a CLASS receiver is now a vtable dispatch)
+nl          ::= NEWLINE { NEWLINE }   # one or more: a run of blank lines is one separator
 ```
 
 Four things to notice. A class body is a *different* production from a struct body — it admits

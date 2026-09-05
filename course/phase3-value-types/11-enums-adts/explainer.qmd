@@ -88,7 +88,7 @@ item        ::= enum_decl                                          <-- new
               | func_decl
               | statement
 enum_decl   ::= "enum" ident [ ":" ident ] "{"                     <-- new (the `: Int` raw type)
-                  { case_line NEWLINE } "}"
+                  [ nl ] [ case_line { nl case_line } ] [ nl ] "}"
 case_line   ::= "case" case { "," case }                           <-- new (several per line)
 case        ::= ident [ "(" ident { "," ident } ")" ]              <-- new (associated values)
 
