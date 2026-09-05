@@ -225,8 +225,10 @@ let parse_pattern (p : t) : Ast.pattern =
       | _ -> Diagnostics.error p.diags (peek p).Token.span "expected a pattern"; Ast.PInt 0)
   | _ -> Diagnostics.error p.diags (peek p).Token.span "expected a 'case' pattern"; Ast.PInt 0
 
-(* a brace-delimited block: "{" { statement NEWLINE } [ statement ] "}" — a newline SEPARATES
-   statements, blank lines are skipped, and the closing "}" ends the last statement. *)
+(* a brace-delimited block, with `nl` one or more Newlines:
+     block ::= "{" [ nl ] [ statement { nl statement } ] [ nl ] "}"
+   so blank lines are free, a newline SEPARATES statements, and the closing "}" ends the
+   last one — `{ x = 1 }` is legal, `{ x = 1 y = 2 }` is not. *)
 let rec parse_block (p : t) : Ast.stmt list =
   ignore (expect p Token.LBrace "'{'");
   let rec loop acc =
@@ -240,9 +242,9 @@ let rec parse_block (p : t) : Ast.stmt list =
         List.rev acc
     | _ ->
         let s = parse_stmt p in
-        (* `block ::= "{" { statement NEWLINE } [ statement ] "}"`: a newline SEPARATES statements
-           here exactly as it does at top level, and the closing `}` ends the last one — so
-           `if c { x = 1 }` stays legal but `if c { x = 1 y = 2 }` is an error, as in Swift. *)
+        (* `nl` is one or more Newlines, so a run of blank lines is one separator; the separator
+           sits BETWEEN statements and the closing `}` ends the last one — `if c { x = 1 }` is
+           legal, `if c { x = 1 y = 2 }` is an error, as in Swift. *)
         (match peek_kind p with
         | Token.Newline -> ignore (advance p)
         | Token.RBrace | Token.Eof -> ()
