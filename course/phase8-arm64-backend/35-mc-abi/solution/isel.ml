@@ -29,7 +29,8 @@ let lower_func (_m : Sil.modul) (f : Sil.func) : Arm64.func * (string * string) 
      (concept 35). Each function reserves an OUTGOING stack-arg area at the bottom of its frame,
      sized to the widest call it makes (≥2 words, which also holds printf's variadic arg); the value
      slots sit just above it. Incoming stack arguments are read relative to x29 (= the incoming sp,
-     set in the prologue): the (8+j)-th parameter is at [x29, #8*j]. *)
+     set in the prologue), NOT relative to sp: the frame size is not known until register
+     allocation has run, but x29 is a fixed handle. *)
   let max_stack_args =
     List.fold_left
       (fun acc (b : Sil.block) ->
@@ -142,7 +143,7 @@ let lower_func (_m : Sil.modul) (f : Sil.func) : Arm64.func * (string * string) 
   in
 
   (* incoming params 0..7 arrive in x0..x7; params 8+ arrive on the stack, read via x29 (= the
-     incoming sp, set by the prologue): the (8+j)-th parameter is at [x29, #8*j] (AAPCS64) *)
+     incoming sp, set by the prologue) — the caller wrote them at [sp, #8*j] before the `bl` *)
   List.iteri
     (fun k (pv, _) ->
       if k < 8 then emit (Arm64.Mov (v pv, Arm64.R (x k)))
@@ -158,7 +159,7 @@ let lower_func (_m : Sil.modul) (f : Sil.func) : Arm64.func * (string * string) 
   (* total local words = the outgoing stack-arg area + one slot per value *)
   let nslots = outgoing + !next_tmp in
   let collected = Hashtbl.fold (fun l b acc -> (l, b) :: acc) cstrings [] in
-  ({ Arm64.name = f.Sil.fname; instrs = List.rev !out; nslots }, collected)
+  ({ Arm64.name = f.Sil.fname; instrs = List.rev !out; nslots; outgoing }, collected)
 
 (* lower the whole module to per-function vreg ARM64 + the shared C-string set *)
 let select (m : Sil.modul) : Arm64.func list * (string * string) list =

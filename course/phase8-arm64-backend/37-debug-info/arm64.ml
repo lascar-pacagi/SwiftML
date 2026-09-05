@@ -53,9 +53,13 @@ type instr =
   | Comment of string (* a `; …` line, for readability *)
   | Loc of int (* a `.loc 1 N 0` source-line directive — debug info (concept 37) *)
 
-(* a function. `instrs` may contain VIRTUAL registers before register allocation; `nslots` is the
-   number of per-value frame slots the body's [sp, …] offsets assume (concept 34). *)
-type func = { name : string; instrs : instr list; nslots : int }
+(* a function. `instrs` may contain VIRTUAL registers before register allocation. The frame layout
+   is a CONTRACT between isel (which picks the [sp, …] offsets) and regalloc (which must give a
+   spilled virtual register the same home isel gave it): `outgoing` is the size in WORDS of the
+   outgoing stack-argument area at the bottom of the frame (concept 35 — at least 2, for printf's
+   variadic argument), and `nslots` is the total word count, that area plus one slot per value. So
+   value v lives at [sp, #8*(outgoing + v)]. *)
+type func = { name : string; instrs : instr list; nslots : int; outgoing : int }
 type modul = {
   funcs : func list;
   cstrings : (string * string) list; (* (label, bytes) *)

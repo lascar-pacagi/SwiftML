@@ -52,6 +52,29 @@ The caller's `[sp, #8*j]` and the callee's `[x29, #16 + 8*j]` are **the same byt
 `sp` at the call *is* the callee's incoming `sp`, and the callee's `x29` is 16 below it. That
 agreement, between two functions that never see each other's code, is the whole point of an ABI.
 
+### The IR you extend
+
+No new syntax again, and no new ARM64 instruction either — this concept changes only *where* a
+call's operands live. What it does add is a field to the frame contract, and that is worth
+recalling precisely (EBNF: `[ x ]` optional, `{ x }` zero-or-more, `|` alternatives, quoted
+terminals):
+
+```
+func     ::= "{" "name" ":" string ";" "instrs" ":" { instr }
+                 ";" "nslots" ":" int
+                 ";" "outgoing" ":" int "}"          (* words at the frame bottom  <-- new *)
+frame    ::= outgoing-area value-slots callee-saved frame-record
+              (* [sp,#0 .. 8*outgoing)  value v at [sp, #8*(outgoing+v)]  ...  [x29,#0] *)
+argument ::= register-arg | stack-arg                (*                            <-- new *)
+```
+
+`outgoing` is new because isel and register allocation both compute frame addresses and must agree.
+isel puts value `v` at `[sp, #8*(outgoing + v)]`; when the allocator spills `v` it has to name the
+same byte. Before `outgoing` existed the allocator assumed a two-word area — right for every
+function until one made a call wide enough to need three, at which point a spilled value and a
+stack argument shared an address and the argument won. That is the shape of an ABI bug: nothing
+crashes, a number is simply wrong.
+
 ### Why `x29` and not `sp`?
 
 The callee could in principle read a stack parameter at `[sp, #frame + 16 + 8*j]` — but `frame`
@@ -76,7 +99,9 @@ sub  sp, sp, #locals        ; THEN allocate the big locals area
 
 with the mirror image in the epilogue. Now `stp`/`ldp` always use offset 0, no matter how large the
 locals area is, and `x29` is the stable base for stack-parameter access. This is what every real
-AArch64 prologue looks like — we'd merely been cutting a corner.
+AArch64 prologue looks like — we'd merely been cutting a corner. (`sub`/`add sp` have their own
+limit, a 12-bit immediate, so a locals area past 4095 bytes — a couple of hundred variables — is
+carved in several steps. Given, and pinned by a 200-variable `main` in the tests.)
 
 ### What's given, what you write
 
@@ -92,16 +117,20 @@ conformant backend and one that corrupts every wide call.
 
 ## 3. Build it, step by step
 
-In `isel.ml`:
+Both holes are in `isel.ml`, and they are the two ends of one agreement — neither runs without
+the other, so expect both cram files to stay `TODO` until you have written both.
 
-1. **`TODO(35a)` — call arguments.** In the `Apply` lowering, arguments `0..7` are already moved to
-   `x0..x7`. For argument `k ≥ 8`, store it into the outgoing area:
-   `emit (Arm64.Str (v a, Arm64.SP, stackarg_off (k-8)))`.
-2. **`TODO(35b)` — parameters.** In the entry parameter setup, parameters `0..7` already come from
-   `x0..x7`. For parameter `k ≥ 8`, load it from the incoming area via `x29`:
-   `emit (Arm64.Ldr (v pv, x 29, 16 + stackarg_off (k-8)))`.
+1. **`TODO(35a)` — the call site.** In the `Apply` lowering, arguments `0..7` already go to
+   `x0..x7`. Argument `k ≥ 8` belongs in the outgoing area instead: it is a memory write, not a
+   register move, and its offset counts from the *bottom of the frame*, not from `k`. The given
+   `stackarg_off` names that offset for you once you decide what to pass it.
+2. **`TODO(35b)` — the callee.** In the entry parameter setup, parameters `0..7` already arrive
+   in `x0..x7`. Parameter `k ≥ 8` has to be read back out of memory, through `x29` rather than
+   `sp` (§2 says why). One thing sits between `x29` and the caller's arguments; the frame diagram
+   in §2 shows what, and how many bytes it is.
 
-The outgoing-area sizing, the frame, and the prologue/`x29` setup are given. Reference:
+Given: the outgoing-area sizing in isel (`outgoing`, `slot`), the large-frame-safe prologue and
+the `x29` setup in `Regalloc.finalize`, and the whole ≤ 8-argument path. Reference:
 `solution/isel.ml`. Run with `make lab C=phase8-arm64-backend/35-mc-abi`.
 
 ## 4. Test it
@@ -110,11 +139,33 @@ The outgoing-area sizing, the frame, and the prologue/`x29` setup are given. Ref
 make lab C=phase8-arm64-backend/35-mc-abi
 ```
 
-cram: a 10- and a 12-argument function run and match `swiftc` (across all three regalloc rungs); the
-asm shows the outgoing `str`s, the `x29`-relative parameter `ldr`s, and the offset-0 `stp` prologue;
-≤ 8-argument programs are unchanged. alcotest: stack-argument stores and incoming loads are emitted
-for a 10-arg call but *not* for a 2-arg call; the finalized frame uses the large-frame-safe prologue
-and sets `x29`; no virtual register survives allocation.
+- **`tests/abi-frame.t`** is green before you start. It pins the boundary your holes must
+  respect — a function of eight arguments or fewer is untouched — and the given large-frame
+  prologue, on a 200-variable `main` whose locals need both a stepped `sub` and an offset-0
+  `stp`. Read it first.
+- **`tests/abi-callsite.t`** (`TODO(35a)`) is the caller's half: it prints the tail of a
+  ten-argument call whole, so you can see the eight `mov`s and the two `str`s in order; then the
+  widest-call sizing; then the case that motivated the `outgoing` field — a fourteen-argument
+  call in a loop, whose spilled loop variable used to live under an argument, run under all
+  three allocation rungs.
+- **`tests/abi-params.t`** (`TODO(35b)`) is the callee's half: it prints the whole prologue of a
+  ten-argument function, so `x29` being set before the two `[x29, #16]`/`[x29, #24]` loads is
+  visible rather than asserted; then a nine-parameter function reading exactly one word; then a
+  ten-argument *recursion*, where each level writes the same outgoing area its caller just read
+  from — the case that punishes an off-by-one on either side.
+- **`tests/oracle.t`** asks swiftc every run: 32 programs, each built by `swiftc -Onone`, by
+  Backend A and by Backend B under all three rungs, run, and required byte-identical. Six of
+  them cross the eight-register boundary. This is the test that matters most, because an ABI bug
+  is both silent and *asymmetric* — caller and callee are different functions, and only running
+  them together proves they agree.
+- **`tests/test_abi.ml`** pins from OCaml what the asm only implies: that a ten-argument call
+  emits outgoing stores and incoming loads while a two-argument call emits neither; that a
+  spill never reloads from inside the outgoing area; and that on a 200-variable frame every
+  `sub`/`add sp` immediate and every `stp`/`ldp` offset is actually encodable.
+
+Reading the report: both hole files show `TODO … not started` until you fill both holes;
+`abi-frame.t` shows `PASS` from the start, and the oracle and the alcotest suite show `FAIL`
+rather than `TODO` because their given-code cases pass before you write a line.
 
 ## 5. Benchmark it
 

@@ -158,7 +158,7 @@ let lower_func (_m : Sil.modul) (f : Sil.func) : Arm64.func * (string * string) 
   (* total local words = the outgoing stack-arg area + one slot per value *)
   let nslots = outgoing + !next_tmp in
   let collected = Hashtbl.fold (fun l b acc -> (l, b) :: acc) cstrings [] in
-  ({ Arm64.name = f.Sil.fname; instrs = List.rev !out; nslots }, collected)
+  ({ Arm64.name = f.Sil.fname; instrs = List.rev !out; nslots; outgoing }, collected)
 
 (* lower the whole module to per-function vreg ARM64 + the shared C-string set *)
 let select (m : Sil.modul) : Arm64.func list * (string * string) list =

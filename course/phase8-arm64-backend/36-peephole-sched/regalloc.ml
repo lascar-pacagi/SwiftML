@@ -18,7 +18,10 @@ let scratch = [ 9; 10; 11; 12; 13; 14 ] (* reserved for loading/storing spilled 
 type loc = Reg of int | Spill (* a physical register, or "live in your own frame slot" *)
 type strategy = Stack | Linscan | Graphcolor
 
-let slot_of v = 16 + (8 * v)
+(* a spilled vreg lives in the slot ISEL gave it: [sp, #8*(outgoing + v)]. Getting this base
+   wrong is silent — the spill home lands inside the outgoing stack-argument area and a wide call
+   overwrites it — so it is derived from the function's own `outgoing`, never assumed. *)
+let slot_of outgoing v = 8 * (outgoing + v)
 let vnum = function Arm64.Virt n -> Some n | _ -> None
 
 (* === apply a register substitution to every register operand of an instruction === *)
@@ -210,7 +213,7 @@ let stack_alloc (instrs : Arm64.instr array) : (int, loc) Hashtbl.t =
 (* rewrite each instruction: vregs in a register become that register; spilled vregs are loaded
    into scratch before the instruction and stored after it. Returns the physical instrs + the set
    of callee-saved registers actually used (for the prologue). *)
-let rewrite (assign : (int, loc) Hashtbl.t) (instrs : Arm64.instr array) : Arm64.instr list * int list =
+let rewrite (outgoing : int) (assign : (int, loc) Hashtbl.t) (instrs : Arm64.instr array) : Arm64.instr list * int list =
   let used_cs = Hashtbl.create 8 in
   let loc_of n = match Hashtbl.find_opt assign n with Some l -> l | None -> Spill in
   let out = ref [] in
@@ -230,15 +233,15 @@ let rewrite (assign : (int, loc) Hashtbl.t) (instrs : Arm64.instr array) : Arm64
             | Spill -> Arm64.X (Hashtbl.find local n))
         | r -> r
       in
-      List.iter (fun n -> push (Arm64.Ldr (Arm64.X (Hashtbl.find local n), Arm64.SP, slot_of n))) sreads;
+      List.iter (fun n -> push (Arm64.Ldr (Arm64.X (Hashtbl.find local n), Arm64.SP, slot_of outgoing n))) sreads;
       push (map_regs g ins);
-      List.iter (fun n -> push (Arm64.Str (Arm64.X (Hashtbl.find local n), Arm64.SP, slot_of n))) swrites)
+      List.iter (fun n -> push (Arm64.Str (Arm64.X (Hashtbl.find local n), Arm64.SP, slot_of outgoing n))) swrites)
     instrs;
   (List.rev !out, List.sort compare (Hashtbl.fold (fun r () acc -> r :: acc) used_cs []))
 
 (* finalize the frame: prologue (sub sp + save fp/lr + save used callee-saved), and an epilogue
    spliced before every `ret`. The per-value slots sit below the callee-saved save area. *)
-let finalize (name : string) (nslots : int) (body : Arm64.instr list) (used_cs : int list) : Arm64.func =
+let finalize (name : string) (nslots : int) (outgoing : int) (body : Arm64.instr list) (used_cs : int list) : Arm64.func =
   let open Arm64 in
   let ncs = List.length used_cs in
   (* AAPCS64 frame, large-frame-safe (concept 35). PUSH fp/lr first (a small, in-range adjustment),
@@ -249,16 +252,25 @@ let finalize (name : string) (nslots : int) (body : Arm64.instr list) (used_cs :
   let cs_base = 8 * nslots in (* value slots occupy [.., cs_base); callee-saved go above *)
   let locals = round16 (cs_base + (8 * ncs)) in
   let cs_off i = cs_base + (8 * i) in
+  (* `sub`/`add sp` take a 12-bit immediate, so a locals area past 4095 bytes is carved in steps. *)
+  let rec adjust ~grow n =
+    if n <= 0 then []
+    else
+      let step = min n 4080 in
+      (if grow then Sub (SP, SP, Imm step) else Add (SP, SP, Imm step)) :: adjust ~grow (n - step)
+  in
   let prologue =
-    [ Sub (SP, SP, Imm 16); Stp (X 29, X 30, SP, 0); Mov (X 29, R SP); Sub (SP, SP, Imm locals) ]
+    [ Sub (SP, SP, Imm 16); Stp (X 29, X 30, SP, 0); Mov (X 29, R SP) ]
+    @ adjust ~grow:true locals
     @ List.mapi (fun i r -> Str (X r, SP, cs_off i)) used_cs
   in
   let epilogue =
     List.mapi (fun i r -> Ldr (X r, SP, cs_off i)) used_cs
-    @ [ Add (SP, SP, Imm locals); Ldp (X 29, X 30, SP, 0); Add (SP, SP, Imm 16) ]
+    @ adjust ~grow:false locals
+    @ [ Ldp (X 29, X 30, SP, 0); Add (SP, SP, Imm 16) ]
   in
   let body' = List.concat_map (fun i -> if i = Ret then epilogue @ [ Ret ] else [ i ]) body in
-  { name; instrs = prologue @ body'; nslots }
+  { name; instrs = prologue @ body'; nslots; outgoing }
 
 (* allocate one function with the chosen strategy *)
 let run (strat : strategy) (f : Arm64.func) : Arm64.func =
@@ -266,8 +278,8 @@ let run (strat : strategy) (f : Arm64.func) : Arm64.func =
   let assign =
     match strat with Stack -> stack_alloc instrs | Linscan -> linscan instrs | Graphcolor -> graphcolor instrs
   in
-  let body, used_cs = rewrite assign instrs in
-  finalize f.Arm64.name f.Arm64.nslots body used_cs
+  let body, used_cs = rewrite f.Arm64.outgoing assign instrs in
+  finalize f.Arm64.name f.Arm64.nslots f.Arm64.outgoing body used_cs
 
 let run_module (strat : strategy) (funcs : Arm64.func list) (cstrings : (string * string) list) : Arm64.modul =
   { Arm64.funcs = List.map (run strat) funcs; cstrings }

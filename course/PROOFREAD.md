@@ -118,6 +118,21 @@ miscompiles a trivial program. Fixed only at concept 35 (push fp/lr first, then 
   and a 40-`let` `main` in `34/tests/regalloc-graphcolor.t` (no `stp`/`ldp` at a nonzero offset,
   all three rungs run and match swiftc), plus alcotest cases in both concepts.
 
+### 8b. Spill homes alias the outgoing stack-argument area (concepts 35-37)  **[FIXED — concept-review pass 33-40]** *(found by this pass)*
+`Isel` puts value `v` at `[sp, #8*(outgoing + v)]`, where `outgoing` is the stack-argument area
+sized to the widest call the function makes; `Regalloc.slot_of` assumed a fixed `16 + 8*v`. The two
+agree only while `outgoing` is 2 words — i.e. for calls of up to ten arguments. A call with eleven
+or more grows the area over the first spill homes, so an outgoing argument overwrites a spilled
+value: `w14(i,1,…,13)` in a loop printed **273** where swiftc prints 276, silently, under the
+stack and linear-scan rungs.
+- *Fix:* `outgoing` is now a field of `Arm64.func` — the frame layout is a contract between isel
+  and the allocator, so it is written down rather than assumed — and `slot_of` takes it. Applied in
+  35, 36 and 37 (arm64.ml / isel.ml / regalloc.ml, skeleton + solution). Pinned by the
+  fourteen-argument program in `35/tests/abi-callsite.t` under all three rungs, by the same program
+  in 35's oracle corpus, and by a `test_abi` case that checks no reload comes from inside the area.
+- *Also fixed alongside:* `sub`/`add sp` take a 12-bit immediate, so a locals area past 4095 bytes
+  (~200 variables) did not assemble in 34-37 either; `finalize` now steps it in 4080-byte chunks.
+
 ### 9. `40` macro expansion skips type/struct/enum/proto method bodies  **[OPEN]** *(phase 8 tail review)*
 `expand_program` walks only `IStmt`/`IFunc`/`IClass`; `IStruct`/`IEnum`/`IProto` fall through, so
 `struct S { func f()->Int { return #line } }` yields "unknown macro '#line'" in `swiftml9` while
