@@ -95,14 +95,17 @@ trap. This is a CLAUDE.md parity gotcha and is *not* in the documented-divergenc
 - *Still open:* the runtime behaviour. *Fix:* emit a zero-check + `llvm.trap` before `sdiv`/`srem`
   (and the `Int.min/-1` check), and add the asterisk to the "byte-for-byte" claims (09 README).
 
-### 7. `defer` inside a `do` block doesn't fire on a locally-caught throw  **[OPEN]** *(phase 7 review)*
-`do { defer { print(2) }; try mayThrow() } catch { print(3) }` prints `3` (swiftml) vs `2`,`3`
-(swiftc). `emit_error_check`'s `HJump` edge jumps straight to the catch dispatch without running
-the defers of scopes between the throw and the `do` body. Function-level defers + propagation work;
-only the do-local-caught path is broken. `phase7…/30-error-handling/solution/silgen.ml:642`.
-- *Fix:* run `run_defers_down_to` + `release_down_to` for the scopes inside the do body before the
-  `Cond_br tgt`; the `HJump` handler must carry the do-entry scope depth. The §2 "any exit" claim
-  should be qualified until fixed. Add a do-internal-defer test (the coverage gap).
+### 7. `defer` inside a `do` block doesn't fire on a locally-caught throw  **[FIXED — concept-review pass 29–32]**
+`do { defer { print(2) }; try mayThrow() } catch { print(3) }` printed `3` (swiftml) vs `2`,`3`
+(swiftc). `emit_error_check`'s `HJump` edge jumped straight to the catch dispatch without running
+the defers of scopes between the throw and the `do` body.
+- *Fixed:* `HJump` now carries the scope depth it was installed at (`HJump of int * int`), and
+  every jump to a handler goes through one new given helper, `goto_handler`, which runs
+  `run_defers_down_to` + `release_down_to` for the scopes the jump crosses before branching.
+  `throw`, `try?`, `try!` and the post-call check all route through it. Pinned in
+  `30-error-handling/tests/silgen-catch.t` (the defer-inside-`do` case, `-Onone` and `-O`), in
+  `silgen-errorcheck.t` (the defer on the propagation edge), in the runtime oracle corpus, and by
+  an alcotest that checks the defer body is emitted on BOTH exits. §2 now explains the depth.
 
 ### 8. Large-frame prologue is malformed (concepts 33 & 34)  **[OPEN]** *(phase 8 backend review)*
 `Stp(X29,X30,SP,frame-16)` overflows STP's signed-7-bit scaled immediate (±512/504) once the frame

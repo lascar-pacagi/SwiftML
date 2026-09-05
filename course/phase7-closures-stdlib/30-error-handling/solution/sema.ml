@@ -6,6 +6,9 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
   let current_ret : Types.ty option ref = ref None in
   let funcs : (string, Types.ty list * Types.ty) Hashtbl.t = Hashtbl.create 16 in
   let structs : (string, Types.struct_layout) Hashtbl.t = Hashtbl.create 16 in
+  (* (type name, field) for every `let` stored property — of a struct OR of a class: a `let`
+     property is writable exactly once, inside its own `init`, and never through a binding *)
+  let let_fields : (string * string, unit) Hashtbl.t = Hashtbl.create 16 in
   let enums : (string, Types.enum_layout) Hashtbl.t = Hashtbl.create 16 in
   (* concept 21: protocol layouts, per-struct method signatures, and which struct we are
      INSIDE (so method bodies can use `self`, bare field names, and bare method calls) *)
@@ -16,6 +19,10 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
   let current_generics : (string * string) list ref = ref [] in
   (* error handling — concept 30 *)
   let throwing : (string, unit) Hashtbl.t = Hashtbl.create 16 in   (* throwing function names *)
+  (* throwing METHOD names. Keyed by the method's own name, exactly as SILGen keys its
+     `method:<name>` entries — a method call has to be `try`-marked too, and until it was
+     checked, `try acct.withdraw()` type-checked without the `try` and swallowed the throw. *)
+  let throwing_m : (string, unit) Hashtbl.t = Hashtbl.create 16 in
   let error_enums : (string, unit) Hashtbl.t = Hashtbl.create 8 in (* enums declared `: Error` *)
   let current_throws = ref false in (* the function being checked is declared `throws` *)
   let do_depth = ref 0 in           (* >0 inside a do-block body (can handle locally) *)
@@ -271,14 +278,20 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         match infer e0 with
         | Types.TStruct sn -> (
             match method_sig sn m with
-            | Some (ptys, ret) -> check_args (Printf.sprintf "method '%s'" m) ptys; ret
+            | Some (ptys, ret) ->
+                check_args (Printf.sprintf "method '%s'" m) ptys;
+                check_throws span (Hashtbl.mem throwing_m m);
+                ret
             | None ->
                 err span (Printf.sprintf "value of type '%s' has no member '%s'" sn m);
                 List.iter (fun a -> ignore (infer a)) exprs;
                 Types.TInt)
         | Types.TProto pn -> (
             match Option.bind (Hashtbl.find_opt protos pn) (fun pl -> Types.req_sig pl m) with
-            | Some (ptys, ret) -> check_args (Printf.sprintf "method '%s'" m) ptys; ret
+            | Some (ptys, ret) ->
+                check_args (Printf.sprintf "method '%s'" m) ptys;
+                check_throws span (Hashtbl.mem throwing_m m);
+                ret
             | None ->
                 err span (Printf.sprintf "value of type 'any %s' has no member '%s'" pn m);
                 List.iter (fun a -> ignore (infer a)) exprs;
@@ -286,7 +299,10 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         (* a class method call — DYNAMIC dispatch through the vtable (concept 25) *)
         | Types.TClass cn -> (
             match Option.bind (Hashtbl.find_opt classes cn) (fun cl -> Types.vsig cl m) with
-            | Some (ptys, ret) -> check_args (Printf.sprintf "method '%s'" m) ptys; ret
+            | Some (ptys, ret) ->
+                check_args (Printf.sprintf "method '%s'" m) ptys;
+                check_throws span (Hashtbl.mem throwing_m m);
+                ret
             | None ->
                 err span (Printf.sprintf "value of type '%s' has no member '%s'" cn m);
                 List.iter (fun a -> ignore (infer a)) exprs;
@@ -294,7 +310,10 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         (* a value of type parameter T exposes its CONSTRAINT's requirements — concept 22 *)
         | Types.TVar (tn, pn) -> (
             match Option.bind (Hashtbl.find_opt protos pn) (fun pl -> Types.req_sig pl m) with
-            | Some (ptys, ret) -> check_args (Printf.sprintf "method '%s'" m) ptys; ret
+            | Some (ptys, ret) ->
+                check_args (Printf.sprintf "method '%s'" m) ptys;
+                check_throws span (Hashtbl.mem throwing_m m);
+                ret
             | None ->
                 err span (Printf.sprintf "value of type '%s' has no member '%s'" tn m);
                 List.iter (fun a -> ignore (infer a)) exprs;
@@ -325,14 +344,15 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         let saved = !env and saved_floors = !closure_floors in
         closure_floors := List.length !env :: !closure_floors;
         List.iter2 (fun (pr : Ast.param) t -> bind pr.Ast.pname (t, false)) params ptys;
-        let bty = infer body in
+        (* ONE pass over the body: check it against the annotation when there is one, else infer
+           it. Doing both reported every diagnostic inside the closure twice. *)
         let rty =
           match ret with
           | Some n ->
               let rt = resolve_ty span n in
               check_expr body rt;
               rt
-          | None -> bty
+          | None -> infer body
         in
         env := saved;
         closure_floors := saved_floors;
@@ -433,7 +453,13 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         | Some (Types.TVar (tn, _)) ->
             err span (Printf.sprintf "binary operator '==' cannot be applied to two '%s' operands" tn);
             Types.TBool
-        | Some _ -> Types.TBool
+        (* a struct, a class reference, a function value or an array would each need an Equatable
+           conformance, and the back end has no aggregate compare — `opt == nil` is the one
+           optional comparison, and it is handled above. Left to reach IRGen these produced an
+           ill-typed `add i64 %struct` and a clang error; `bad ()` already words the rejection
+           the way swiftc does. Class identity is `===`, an exercise. *)
+        | Some (Types.TInt | Types.TDouble | Types.TBool | Types.TString | Types.TEnum _) -> Types.TBool
+        | Some _ -> ignore (bad ()); Types.TBool
         | None -> ignore (bad ()); Types.TBool)
     | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge -> (
         match unify l tl r tr with
@@ -441,6 +467,13 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         | _ -> ignore (bad ()); Types.TBool)
     | Ast.And | Ast.Or ->
         if tl = Types.TBool && tr = Types.TBool then Types.TBool else (ignore (bad ()); Types.TBool)
+  (* a call that can throw must be `try`-marked AND sit in an error-handling context —
+     swiftc's two distinct diagnostics (concept 30) *)
+  and check_throws span (throws : bool) : unit =
+    if throws then
+      if not !in_try then
+        err span "call can throw, but it is not marked with 'try' and the error is not handled"
+      else if not (can_handle ()) then err span "errors thrown from here are not handled"
   and infer_call f args span : Types.ty =
     (* a LOCAL holding a function value: `g(50)` where g : (Int) -> Int — indirect (29) *)
     match lookup f with
@@ -450,8 +483,19 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         if np <> na then
           err span (Printf.sprintf "function value '%s' expects %d argument(s) but %d given" f np na)
         else List.iter2 (fun a t -> check_expr a t) exprs ptys;
-        if binding_is_captured f && false then ();
+        (* CALLING a captured function value copies the {code, ctx} pair into the context just
+           like naming it does, and nothing retains the context — the `Var` case above refuses
+           the one, so this refuses the other. Left dead, `compose`'s inner closure was captured
+           by value, released at scope exit, and called through a dangling context. *)
+        if binding_is_captured f then
+          err span (Printf.sprintf "cannot capture '%s' in this subset (closure captures are plain values)" f);
         ret
+    (* a local that is NOT a function value: `let n = 5` then `n(1)`. It IS in scope, so
+       "cannot find 'n' in scope" is the wrong complaint — swiftc names the real problem. *)
+    | Some (t, _) when not (Hashtbl.mem funcs f || Hashtbl.mem gfuncs f || Hashtbl.mem classes f) ->
+        err span (Printf.sprintf "cannot call value of non-function type '%s'" (Types.string_of_ty t));
+        List.iter (fun (_, a) -> ignore (infer a)) args;
+        t
     | _ ->
     if Hashtbl.mem classes f then (
       (* `Counter(10)` — a class CONSTRUCTOR: heap-allocate then run the declared init.
@@ -483,11 +527,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             else List.iter2 (fun a t -> check_expr a t) exprs ptypes;
             (* a call to a THROWING function must be `try`-marked AND in an error-handling
                context — swiftc's two distinct diagnostics (concept 30) *)
-            if Hashtbl.mem throwing f then begin
-              if not !in_try then
-                err span "call can throw, but it is not marked with 'try' and the error is not handled"
-              else if not (can_handle ()) then err span "errors thrown from here are not handled"
-            end;
+            check_throws span (Hashtbl.mem throwing f);
             ret
         | None when !current_class <> None
                     && Option.bind (Hashtbl.find_opt classes (Option.get !current_class))
@@ -500,6 +540,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             if np <> na then
               err span (Printf.sprintf "method '%s' expects %d argument(s) but %d given" f np na)
             else List.iter2 (fun a t -> check_expr a t) exprs ptys;
+            check_throws span (Hashtbl.mem throwing_m f);
             ret
         | None when !current_self <> None && method_sig (Option.get !current_self) f <> None ->
             (* bare `m(args)` inside a method = `self.m(args)` (implicit self) — 21 *)
@@ -508,11 +549,22 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             if np <> na then
               err span (Printf.sprintf "method '%s' expects %d argument(s) but %d given" f np na)
             else List.iter2 (fun a t -> check_expr a t) exprs ptys;
+            check_throws span (Hashtbl.mem throwing_m f);
             ret
         | None ->
             if f = "print" then (
               (match exprs with
-              | [ a ] -> ignore (infer a)
+              | [ a ] -> (
+                  (* IRGen prints the scalar types only; swiftc would print `Point(x: 1, y: 2)`
+                     for a struct, `red` for an enum case, `Optional(5)` for an optional, `C(r: 1)`
+                     for a conformer inside an `any P` and `C` for a class — a divergence, §2 *)
+                  match infer a with
+                  | Types.TInt | Types.TDouble | Types.TBool | Types.TString -> ()
+                  | t ->
+                      err (Ast.expr_span a)
+                        (Printf.sprintf
+                           "cannot print a value of type '%s' (only Int, Double, Bool and String)"
+                           (Types.string_of_ty t)))
               | _ ->
                   err span "print(_:) expects exactly one argument";
                   List.iter (fun a -> ignore (infer a)) exprs);
@@ -661,7 +713,10 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
           | None -> infer value
           | Some tyname -> (
               match resolve_opt tyname with
-              | Some t -> check_expr value t; t
+              (* `resolve_ty` reports the v0 guards; a `let k: K? = K()` used to slip past this
+                 one and miscompile — the slot held a class reference the ARC insertion never
+                 saw, so the ownership verifier rejected the function it produced *)
+              | Some t -> ignore (resolve_ty span tyname); check_expr value t; t
               | None -> err span (Printf.sprintf "cannot find type '%s' in scope" tyname); infer value)
         in
         bind name (t, is_var)
@@ -673,6 +728,8 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             (* classes are REFERENCE types: methods may write stored properties (concept 25);
                inside an init this is also how definite-initialization is satisfied *)
             if !in_init then Hashtbl.replace assigned_fields name ();
+            if (not !in_init) && Hashtbl.mem let_fields (Option.get !current_class, name) then
+              err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" name);
             check_expr value (Option.get (field_of_self name))
         | None when field_of_self name <> None ->
             (* a non-`mutating` STRUCT method cannot write a stored property (matches swiftc) — 21 *)
@@ -690,7 +747,11 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
                (the binding is constant, the OBJECT is not) — concept 25 *)
             if obj = "self" && !in_init then Hashtbl.replace assigned_fields field ();
             match Option.bind (Hashtbl.find_opt classes cn) (fun cl -> Types.cfield_type cl field) with
-            | Some ft -> check_expr value ft
+            | Some ft ->
+                (* a `let` property takes its value once, in the initializer that owns it *)
+                if Hashtbl.mem let_fields (cn, field) && not (obj = "self" && !in_init) then
+                  err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" field);
+                check_expr value ft
             | None ->
                 err span (Printf.sprintf "value of type '%s' has no member '%s'" cn field);
                 ignore (infer value))
@@ -702,7 +763,9 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             match Option.bind (Hashtbl.find_opt structs sn) (fun sl -> Types.field_type sl field) with
             | Some ft ->
                 if not is_var then
-                  err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" obj);
+                  err span (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" obj)
+                else if Hashtbl.mem let_fields (sn, field) then
+                  err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" field);
                 check_expr value ft
             | None ->
                 err span (Printf.sprintf "value of type '%s' has no member '%s'" sn field);
@@ -958,6 +1021,10 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
       let own_fields =
         List.map (fun (fl : Ast.field) -> (fl.Ast.fld_name, resolve_ty c.Ast.cspan fl.Ast.fld_ty)) c.Ast.cfields
       in
+      List.iter
+        (fun (fl : Ast.field) ->
+          if not fl.Ast.fld_var then Hashtbl.replace let_fields (c.Ast.cname, fl.Ast.fld_name) ())
+        c.Ast.cfields;
       let methods = ref (match super_layout with Some sl -> sl.Types.cl_methods | None -> []) in
       let impls = ref (match super_layout with Some sl -> sl.Types.cl_impls | None -> []) in
       List.iter
@@ -1013,6 +1080,10 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             List.map (fun (fl : Ast.field) -> (fl.Ast.fld_name, resolve_ty s.Ast.sspan fl.Ast.fld_ty)) s.Ast.sfields
           in
           List.iter (fun (_, t) -> no_class_inside s.Ast.sspan "structs" t) fields;
+          List.iter
+            (fun (fl : Ast.field) ->
+              if not fl.Ast.fld_var then Hashtbl.replace let_fields (s.Ast.sname, fl.Ast.fld_name) ())
+            s.Ast.sfields;
           Hashtbl.replace structs s.Ast.sname { Types.sl_name = s.Ast.sname; sl_fields = fields }
       | Ast.IEnum e ->
           let cases =
@@ -1046,6 +1117,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
               (fun (m : Ast.func_decl) ->
                 let ps = List.map (fun (p : Ast.param) -> resolve_silent p.Ast.ptype) m.Ast.params in
                 let ret = match m.Ast.ret with None -> Types.TVoid | Some n -> resolve_silent n in
+                if m.Ast.throws then Hashtbl.replace throwing_m m.Ast.fname ();
                 (m.Ast.fname, ps, ret))
               st.Ast.smethods
           in
@@ -1066,6 +1138,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             (fun (_, (m : Ast.func_decl)) ->
               let ptys = List.map (fun (p : Ast.param) -> resolve_silent p.Ast.ptype) m.Ast.params in
               let ret = match m.Ast.ret with None -> Types.TVoid | Some n -> resolve_silent n in
+              if m.Ast.throws then Hashtbl.replace throwing_m m.Ast.fname ();
               Hashtbl.replace funcs (c.Ast.cname ^ "." ^ m.Ast.fname) (ptys, ret))
             c.Ast.cmethods
       | Ast.IFunc f when f.Ast.generics <> [] ->
@@ -1084,7 +1157,19 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             err f.Ast.fspan (Printf.sprintf "invalid redeclaration of '%s'" f.Ast.fname);
           let ptypes = List.map (fun (pr : Ast.param) -> resolve_silent pr.Ast.ptype) f.Ast.params in
           let ret = match f.Ast.ret with None -> Types.TVoid | Some n -> resolve_silent n in
-          if f.Ast.throws then Hashtbl.replace throwing f.Ast.fname ();
+          if f.Ast.throws then begin
+            (* the throw path RETURNS a placeholder of the return type (the caller checks the
+               error register first and discards it), so v0 needs a value it can invent: a
+               scalar, a struct of scalars, an enum, an optional, or nothing. A reference has
+               no such value — a fake one would enter the ARC accounting. *)
+            (match ret with
+            | Types.TClass _ | Types.TProto _ | Types.TFunc _ | Types.TVar _ ->
+                err f.Ast.fspan
+                  (Printf.sprintf "a throwing function cannot return '%s' in this subset"
+                     (Types.string_of_ty ret))
+            | _ -> ());
+            Hashtbl.replace throwing f.Ast.fname ()
+          end;
           Hashtbl.replace funcs f.Ast.fname (ptypes, ret)
       | _ -> ())
     prog.Ast.items;
