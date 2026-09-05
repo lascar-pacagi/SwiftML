@@ -13,6 +13,16 @@ let vreg_func (src : string) : Arm64.func =
 let pressured = "let a=1\nlet b=2\nlet c=3\nlet d=4\nlet e=5\nprint(a+b+c+d+e)\nprint(a*b+c*d)"
 let loopy = "var s=0\nfor i in 0..<10 { s = s + i*i }\nprint(s)"
 
+(* The eviction rule only fires when more values are live at once than the pool has registers, and
+   raw (-Onone) SIL keeps variables in memory — so a Swift program of this subset rarely gets
+   there. We hand-build the instruction stream instead, exactly as concept 27 hand-builds illegal
+   SIL: define n virtual registers, then use them all, so all n are live across the middle. *)
+let crowded n =
+  Array.of_list
+    (List.init n (fun i -> Arm64.Mov (Arm64.Virt i, Arm64.Imm i))
+    @ List.init n (fun i -> Arm64.Str (Arm64.Virt i, Arm64.SP, 8 * i))
+    @ [ Arm64.Ret ])
+
 let instrs s = Array.of_list (vreg_func s).Arm64.instrs
 
 let count_reg assign pred =
@@ -77,19 +87,70 @@ let test_fewer_spills_than_stack () =
   Alcotest.(check bool) "graphcolor spills fewer than stack" true
     (spills (Regalloc.graphcolor ins) < spills (Regalloc.stack_alloc ins))
 
+(* under real pressure the pool runs out and SOME value must go back to its slot — an allocator
+   that never spills is either unsound or has an infinite pool *)
+let test_linscan_spills_under_pressure () =
+  let ins = crowded 14 in
+  let assign = Regalloc.linscan ins in
+  Alcotest.(check int) "14 live, 9 registers: 5 spilled" 5
+    (count_reg assign (function Regalloc.Spill -> true | _ -> false));
+  Alcotest.(check bool) "and the 9 kept are still sound" true (sound assign ins)
+
+let test_graphcolor_spills_under_pressure () =
+  let ins = crowded 14 in
+  let assign = Regalloc.graphcolor ins in
+  Alcotest.(check int) "14 mutually adjacent, 9 colours" 5
+    (count_reg assign (function Regalloc.Spill -> true | _ -> false));
+  Alcotest.(check bool) "and is still a proper colouring" true (sound assign ins)
+
+(* the pool is the CALLEE-SAVED registers x19..x27 and nothing else: a value in one of them
+   survives a `bl` with no save/restore at the call site *)
+let allocated_regs assign =
+  Hashtbl.fold (fun _ l acc -> match l with Regalloc.Reg r -> r :: acc | _ -> acc) assign []
+
+let test_pool_is_callee_saved () =
+  List.iter
+    (fun alloc ->
+      Alcotest.(check bool) "every allocated register is in x19..x27" true
+        (List.for_all (fun r -> List.mem r Regalloc.pool) (allocated_regs (alloc (instrs pressured)))))
+    [ Regalloc.linscan; Regalloc.graphcolor ]
+
+(* PROOFREAD #8: `stp x29, x30, [sp, #frame-16]` overflowed stp's 7-bit scaled immediate once the
+   frame grew. The record is pushed first now, so every stp/ldp uses offset 0 whatever the frame. *)
+let wide = String.concat "\n" (List.init 40 (fun i -> Printf.sprintf "let z%d=%d" i i))
+           ^ "\nprint(" ^ String.concat "+" (List.init 40 (fun i -> Printf.sprintf "z%d" i)) ^ ")"
+
+let test_frame_record_at_zero () =
+  let f = Regalloc.run Regalloc.Graphcolor (vreg_func wide) in
+  Alcotest.(check bool) "no stp/ldp uses a nonzero offset" true
+    (List.for_all
+       (fun i -> match i with Arm64.Stp (_, _, _, o) | Arm64.Ldp (_, _, _, o) -> o = 0 | _ -> true)
+       f.Arm64.instrs);
+  Alcotest.(check bool) "the frame really is past stp's range" true (f.Arm64.nslots * 8 > 504)
+
 let () =
   Alcotest.run "regalloc"
     [
-      ( "ladder",
+      ( "given: the stack rung and the frame",
         [
           Alcotest.test_case "stack spills all" `Quick test_stack_spills_all;
-          Alcotest.test_case "linscan uses registers" `Quick test_linscan_uses_registers;
-          Alcotest.test_case "graphcolor uses registers" `Quick test_graphcolor_uses_registers;
+          Alcotest.test_case "frame record at offset 0" `Quick test_frame_record_at_zero;
+        ] );
+      ( "linscan (34a)",
+        [
+          Alcotest.test_case "uses registers" `Quick test_linscan_uses_registers;
+          Alcotest.test_case "spills under pressure" `Quick test_linscan_spills_under_pressure;
+        ] );
+      ( "graphcolor (34b)",
+        [
+          Alcotest.test_case "uses registers" `Quick test_graphcolor_uses_registers;
+          Alcotest.test_case "spills under pressure" `Quick test_graphcolor_spills_under_pressure;
           Alcotest.test_case "fewer spills than stack" `Quick test_fewer_spills_than_stack;
         ] );
-      ( "soundness",
+      ( "soundness (both rungs)",
         [
           Alcotest.test_case "sound on a loop" `Quick test_sound_on_loop;
+          Alcotest.test_case "pool is callee-saved" `Quick test_pool_is_callee_saved;
           Alcotest.test_case "no virtual regs after run" `Quick test_run_is_physical;
         ] );
     ]

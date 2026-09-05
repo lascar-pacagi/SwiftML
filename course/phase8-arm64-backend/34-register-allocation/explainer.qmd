@@ -51,6 +51,32 @@ Three design choices make this tractable (and they're the reason the code is sho
    (`[sp, #16 + 8*v]`). So "spill v" just means "v lives in its slot" — no spill-slot allocation,
    no frame growth. The v0 stack rung is literally "spill everything."
 
+### The IR you allocate over
+
+This concept adds no syntax either — it changes what concept 33's isel *emits*. Its input and
+output are both `arm64.ml`, so the recall is of the register side of that IR, not a grammar
+(EBNF conventions: `[ x ]` optional, `{ x }` zero-or-more, `|` alternatives, quoted terminals):
+
+```
+reg        ::= "X" int | "SP" | "XZR" | "Virt" int         (* Virt: now live  <-- new *)
+loc        ::= "Reg" int | "Spill"                         (*                 <-- new *)
+strategy   ::= "Stack" | "Linscan" | "Graphcolor"          (*                 <-- new *)
+assignment ::= { int "->" loc }        (* what your two holes produce, keyed by vreg *)
+```
+
+Nothing about the *instructions* changes — the same `mov`/`add`/`ldr`/`bl`/`ret` forms concept 33
+introduced, only now with `Virt v` in their register positions. Two given helpers are the whole
+interface to them:
+
+| helper | what it gives you |
+|---|---|
+| `Arm64.reads_writes i` | the registers instruction `i` reads and the ones it writes |
+| `Regalloc.map_regs g i` | `i` with `g` applied to every register operand |
+
+`reads_writes` is what makes liveness possible without a case per opcode, and `map_regs` is what
+makes the rewrite one line per instruction. The printer refuses a `Virt` that reaches it, so an
+allocation that misses a value is a loud failure rather than bad code.
+
 ### Liveness and live intervals (given)
 
 Both algorithms need to know **when each value is alive** — from its definition to its last use. We
@@ -101,9 +127,25 @@ values exceed the pool, which is exactly where colouring's global view pays off.
 Once you've produced an assignment (`vreg → Reg r | Spill`), the given `rewrite` walks the
 instructions: a value in a register becomes that physical register; a spilled value is loaded into
 scratch before the instruction and stored after. It also reports which callee-saved registers got
-used. Then `finalize` builds the frame — `sub sp`, save `fp`/`lr` and the used callee-saved
-registers in the prologue, restore them before every `ret`. The body's slot offsets were fixed at
-isel time, so finalize only needs to know *how many* callee-saved registers to save.
+used. Then `finalize` builds the frame. The body's slot offsets were fixed at isel time, so
+finalize only needs to know *how many* callee-saved registers to save on top of them:
+
+```
+sub  sp, sp, #16          ; room for the frame record
+stp  x29, x30, [sp, #0]   ; save the caller's frame pointer and our return address
+mov  x29, sp              ; x29 = the record (the AAPCS64 frame chain)
+sub  sp, sp, #LOCALS      ; the value slots, then the used callee-saved registers
+str  x19, [sp, #…]        ; one per callee-saved register the allocator handed out
+```
+
+and the epilogue reverses it before every `ret`. The record goes down **first**, at offset 0, and
+that matters: `stp`/`ldp` take a 7-bit signed immediate scaled by 8 (−512…+504), so the shorter
+`sub sp, #FRAME` / `stp x29, x30, [sp, #FRAME-16]` shape stops assembling once the frame passes
+about half a kilobyte — which under this concept's default allocator a forty-`let` `main` reaches.
+Pushing the record first keeps the pair at offset 0 whatever the frame size (and `sub`/`add sp`,
+whose immediate is 12 bits, step a very large locals area down in chunks). It is the same prologue
+concept 35 needs for a different reason: there, `x29` becomes the handle for reading arguments the
+caller passed on the stack.
 
 ### The honest gap to LLVM
 
@@ -137,15 +179,39 @@ are given. Reference: `solution/regalloc.ml`. Select a rung with `--regalloc=…
 ## 4. Test it
 
 ```bash
-make lab  C=phase8-arm64-backend/34-register-allocation
+make lab   C=phase8-arm64-backend/34-register-allocation
 make bench C=phase8-arm64-backend/34-register-allocation
 ```
 
-cram: all three rungs produce native binaries matching `swiftc` (fib, loops, division); graph-colour
-has far less load/store traffic than stack and uses callee-saved registers where stack uses none;
-Backend B still agrees with Backend A. alcotest: stack spills everything; linscan/graphcolor keep
-values in registers and are **sound** (no two overlapping intervals share a register — checked
-directly against the interference relation); after allocation no virtual register remains.
+Two holes, two cram files, and each runs its own rung — so you can finish linear scan and watch
+exactly one of them go green while the other still reads `TODO`.
+
+- **`tests/regalloc-linscan.t`** (`TODO(34a)`) builds fib, a loop and integer division
+  `--regalloc=linscan` and runs them; then contrasts the rung with the given stack rung on the
+  same program — fewer `ldr`/`str`, and the callee-saved pool `x19`–`x27` used where stack uses
+  none. It prints `_fib`'s prologue whole, so the frame contract is visible rather than asserted,
+  and ends on Backend B agreeing with Backend A.
+- **`tests/regalloc-graphcolor.t`** (`TODO(34b)`) is the same shape for colouring, plus the two
+  facts only it can check: that a plain `build --native` picks it (it is the default rung), and
+  that a forty-`let` `main` — a frame past a kilobyte — still assembles, with no `stp`/`ldp` at a
+  nonzero offset.
+- **`tests/oracle.t`** asks swiftc every run: 26 programs, each compiled by `swiftc -Onone`, by
+  Backend A and by Backend B under **all three rungs**, all run, stdout and exit code
+  byte-identical. This is the test that matters most here, because a mis-allocated value is
+  *silent* — the wrong register still holds a number and the program still prints one. Five of
+  the programs are written for pressure (twelve live `let`s, ten loop-carried variables, six live
+  temporaries in a body, a recursion holding values across its own call, and the forty-`let`
+  main).
+- **`tests/test_regalloc.ml`** pins what cram cannot see. Soundness is checked *directly against
+  the interference relation*: no two vregs whose intervals overlap may share a register, on
+  straight-line code and on a loop. Eviction gets its own cases on a **hand-built** instruction
+  stream — fourteen simultaneously-live virtual registers, nine registers, so exactly five must
+  spill — because raw SIL keeps variables in memory and a Swift program of this subset almost
+  never puts more than nine *temporaries* in flight at once.
+
+Reading the report: an untouched hole shows as `TODO … not started`. `oracle.t` and the alcotest
+suite show `FAIL` rather than `TODO` from the start, because their given-code cases (the front
+end's multi-line literal, the stack rung, the frame shape) pass before you write a line.
 
 ## 5. Benchmark it
 

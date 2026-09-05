@@ -107,12 +107,16 @@ the defers of scopes between the throw and the `do` body.
   `silgen-errorcheck.t` (the defer on the propagation edge), in the runtime oracle corpus, and by
   an alcotest that checks the defer body is emitted on BOTH exits. §2 now explains the depth.
 
-### 8. Large-frame prologue is malformed (concepts 33 & 34)  **[OPEN]** *(phase 8 backend review)*
+### 8. Large-frame prologue is malformed (concepts 33 & 34)  **[FIXED — concept-review pass 33-40]**
 `Stp(X29,X30,SP,frame-16)` overflows STP's signed-7-bit scaled immediate (±512/504) once the frame
 exceeds ~520 bytes. A ~16-local function fails to assemble at 33; a 10-local function fails under
 the **default** `--regalloc=graphcolor` at 34 (frame 528 → offset 512 > 504). The default allocator
 miscompiles a trivial program. Fixed only at concept 35 (push fp/lr first, then `sub sp`).
-- *Fix:* backport 35's `finalize` prologue to 33 and 34 (or disclose the cap in both explainers).
+- *Fix:* 35's frame-record-first prologue is now in 33's `isel.ml` and 34's `regalloc.ml`
+  (skeleton + solution), with the locals adjustment stepped in 4080-byte chunks so a frame past
+  `sub`'s 12-bit immediate also works. Pinned by a 40-statement `main` in `33/tests/isel-term.t`
+  and a 40-`let` `main` in `34/tests/regalloc-graphcolor.t` (no `stp`/`ldp` at a nonzero offset,
+  all three rungs run and match swiftc), plus alcotest cases in both concepts.
 
 ### 9. `40` macro expansion skips type/struct/enum/proto method bodies  **[OPEN]** *(phase 8 tail review)*
 `expand_program` walks only `IStmt`/`IFunc`/`IClass`; `IStruct`/`IEnum`/`IProto` fall through, so

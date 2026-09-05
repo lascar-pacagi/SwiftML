@@ -242,15 +242,29 @@ let finalize (name : string) (nslots : int) (body : Arm64.instr list) (used_cs :
   let open Arm64 in
   let ncs = List.length used_cs in
   let cs_base = 16 + (8 * nslots) in
-  let frame = round16 (cs_base + (8 * ncs) + 16) in
+  let locals = round16 (cs_base + (8 * ncs)) in
   let cs_off i = cs_base + (8 * i) in
+  (* `sub`/`add sp` take a 12-bit immediate, so a big locals area is carved in steps. *)
+  let rec adjust ~grow n =
+    if n <= 0 then []
+    else
+      let step = min n 4080 in
+      (if grow then Sub (SP, SP, Imm step) else Add (SP, SP, Imm step)) :: adjust ~grow (n - step)
+  in
+  (* PUSH the frame record first, then carve the locals: `stp`/`ldp` take a 7-bit signed immediate
+     scaled by 8 (-512..+504), so `stp x29, x30, [sp, #frame-16]` stops assembling once the frame
+     passes ~520 bytes — about sixty values, which a twenty-statement function reaches. At offset 0
+     the pair is always in range whatever the frame size. x29 then holds a stable handle on the
+     record; concept 35 reads stack-passed arguments through it. *)
   let prologue =
-    [ Sub (SP, SP, Imm frame); Stp (X 29, X 30, SP, frame - 16) ]
+    [ Sub (SP, SP, Imm 16); Stp (X 29, X 30, SP, 0); Mov (X 29, R SP) ]
+    @ adjust ~grow:true locals
     @ List.mapi (fun i r -> Str (X r, SP, cs_off i)) used_cs
   in
   let epilogue =
     List.mapi (fun i r -> Ldr (X r, SP, cs_off i)) used_cs
-    @ [ Ldp (X 29, X 30, SP, frame - 16); Add (SP, SP, Imm frame) ]
+    @ adjust ~grow:false locals
+    @ [ Ldp (X 29, X 30, SP, 0); Add (SP, SP, Imm 16) ]
   in
   let body' = List.concat_map (fun i -> if i = Ret then epilogue @ [ Ret ] else [ i ]) body in
   { name; instrs = prologue @ body'; nslots }
