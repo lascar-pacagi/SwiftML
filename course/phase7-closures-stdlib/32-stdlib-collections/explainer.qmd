@@ -98,6 +98,30 @@ pointer), walked with `rt.array_get`, and left untouched. The *results* are fres
 mutators (`append`, `a[i]=`) pay the make_unique cost; the functional trio is copy-free on its
 input.
 
+### The SIL you compose — nothing new
+
+This concept adds **no syntax**: `a.map({ … })` was already a `Method_call` with a `Closure`
+argument the moment concept 29 gave you closure literals and concept 31 gave you `[Int]`.
+Nothing in `token.ml`, `lexer.ml`, `ast.ml` or `parser.ml` changes. It adds **no SIL
+instruction** and **no runtime entry point** either. All three lowerings are built out of forms
+you already have — which is worth pausing on, because it is the sign that the two previous
+concepts were designed to meet:
+
+| form | from | what it does here |
+|---|---|---|
+| `%c = apply @rt.array_count(%buf)` | 31 | the loop bound, read once before the walk |
+| `%e = apply @rt.array_get(%buf, %i)` | 31 | the element at the current index |
+| `%r = apply @rt.array_new()` | 31 | `map`'s and `filter`'s fresh result buffer; `reduce` builds none |
+| `apply @rt.array_push(%r, %v)` | 31 | one per kept/mapped element |
+| `%v = apply_value %f(%e)` | 29 | **the call into the closure**, through the `{code, ctx}` pair |
+| `%s = alloc_stack $T` / `load` / `store` | 09 | the `$i` index and `reduce`'s `$acc` |
+| `cond_br %b, bbT, bbF` / `br bbN` | 08 | the counted loop, and `filter`'s keep/skip |
+
+Three shapes come out of those seven forms. `map` pushes `apply_value`'s result; `filter`
+pushes the *element* under a `cond_br` on `apply_value`'s `Bool`; `reduce` stores
+`apply_value`'s result into `$acc` and, after the loop, loads it. Same walk, different body —
+which is why the given scaffolding hands you a `loop ~body_fill` and asks only for the body.
+
 ### Typing the trio
 
 Sema checks each closure's shape against the array's element type `E`:
@@ -106,32 +130,54 @@ Sema checks each closure's shape against the array's element type `E`:
 - `filter`: the closure must be `(E) -> Bool`; the call's type is `[E]`.
 - `reduce`: given `init : R`, the closure must be `(R, E) -> R`; the call's type is `R`.
 
-A mismatch — `a.filter { (x: Int) -> Int in … }` — is rejected with a message naming the expected
-shape, exactly as `swiftc` rejects it (its error is phrased around generic inference, but the
-effect is the same: a non-`Bool` predicate doesn't type-check).
+A mismatch is rejected with a message naming the expected shape. swiftc rejects the same
+programs, and rarely in the same words: it solves a constraint system and points *inside* the
+closure literal at the offending result type, while we match a shape and name the whole shape.
+The verdicts agree on all nine rejections in `typecheck-corpus.txt`, which is what the oracle
+can check; the wordings are below.
+
+### The diagnostics you emit
+
+The hole is a lowering, so none of these come out of it — they are all given, and `sema-hof.t`
+keeps them on record.
+
+| program | our message | swiftc |
+|---|---|---|
+| `a.map({ (s: Bool) -> Int in 1 })` | `map expects a closure '(Int) -> R', found '(Bool) -> Int'` | `cannot convert value of type '(Bool) -> Int' to expected argument type '(Int) -> Int'` |
+| `a.filter({ (x: Int) -> Int in x * 2 })` | `filter expects a closure '(Int) -> Bool', found '(Int) -> Int'` | `declared closure result 'Int' is incompatible with contextual type 'Bool'` |
+| `a.reduce(0, { (s: Int, x: Int) -> Bool in true })` | `reduce expects '(Int, Int) -> Int', found '(Int, Int) -> Bool'` | `declared closure result 'Bool' is incompatible with contextual type 'Int'` |
+| `a.reduce(0)` | `method 'reduce' expects 2 argument(s) but 1 given` | `missing argument for parameter #2 in call`. Ours used to say the array had no member `reduce`, and then complain about printing `()` |
+| `a.map(5)` | `map expects a closure '(Int) -> R', found 'Int'` | `no exact matches in call to instance method 'map'` |
+| `a.fold(…)` | `value of type '[Int]' has no member 'fold'` | **same** |
+| `a.map({ (x: Int) -> Bool in x > 1 })` | `arrays of 'Bool' are not supported in this subset …` | **swiftc accepts** and gives `[Bool]`. Concept 31's buffer is a homogeneous `i64` store, so a `map` out of `Int` is refused at the type level rather than at the store — the same v0 limit, arriving one concept later |
+
+That last row is the honest edge of this concept: `map` is the one of the three whose result
+element type is free, and ours is not. Element-generic buffers (concept 31, exercise 1) is the
+single change that would lift it.
 
 ## 3. Build it, step by step
 
-You implement `TODO(32)` in `silgen.ml`, inside `gen_array_hof`. Given to you: `count` (the
-element count), an `$i` index slot, a **`loop ~body_fill`** helper that emits the counted walk and
-hands each loaded element to your `body_fill` callback, and **`rt_call b name args ret`** (the
-`apply @rt.name(args)` shortcut). A fresh result array is
-`emit b (Sil.Apply (emit b (Sil.Func_ref "rt.array_new") (TArray t), [])) (TArray t)`; the closure
-is `fv = gen_expr b fexpr` and you call it with `emit b (Sil.Apply_value (fv, [args])) retTy`.
+`TODO(32)` is one function, `gen_array_hof` in `silgen.ml`, and three `match (m, args)` arms
+inside it. Everything around them is given: `count` (the element count), an `$i` index slot, the
+**`loop ~body_fill`** helper that emits the counted walk and hands each loaded element to your
+callback, and **`rt_call b name args ret`**, the `apply @rt.name(args)` shortcut. The closure
+itself is `gen_expr b fexpr`, and calling it is `Sil.Apply_value (fv, args)`.
 
-Write the three `match (m, args)` arms:
+Write the three bodies, in this order — each is a small change to the one before:
 
-1. **`"map", [ (_, fexpr) ]`** — `rty` = the result type of `vty b fv` (a `TFunc`); make a
-   `TArray rty` result; `loop ~body_fill:(fun elt -> push (apply_value fv [elt]) onto result)`;
-   return the result.
-2. **`"filter", [ (_, fexpr) ]`** — make a `TArray el` result; in `body_fill`, `apply_value fv
-   [elt]` is a `Bool`; **branch** on it (a `keep`/`skip` block pair, like the For_in shape) and
-   push `elt` only on the keep side; return the result.
-3. **`"reduce", [ (_, initexpr); (_, fexpr) ]`** — lower `init` (type `rty = vty b init`), store it
-   in an `Alloc_stack "$acc"`; in `body_fill`, `acc := apply_value fv [load acc; elt]`; after the
-   loop, return `load acc`.
+1. **`map`** — the closure's result type is the `TFunc`'s return type; make a result array of
+   `[that]`, and let `body_fill` push the call's result into it. Return the array.
+2. **`filter`** — the result array's element type is the SOURCE's, not the predicate's. The call
+   gives a `Bool`, so the push happens on one side of a branch; the `For_in` lowering above is
+   the shape to copy for the keep/skip block pair.
+3. **`reduce`** — no result array. Lower `init`, put it in an `Alloc_stack "$acc"`, and have
+   `body_fill` overwrite the slot with the call's result. After the loop, load it.
 
-Reference: `solution/silgen.ml`. Run with `make lab C=phase7-closures-stdlib/32-stdlib-collections`.
+The two things worth getting right before you run anything: `reduce`'s closure takes the
+accumulator FIRST and the element second (a left fold), and `filter` returns `[E]` while `map`
+returns `[R]`. Both are visible in §2's table, and both are what the tests check first.
+
+Reference: `solution/silgen.ml`.
 
 ## 4. Test it
 
@@ -139,12 +185,31 @@ Reference: `solution/silgen.ml`. Run with `make lab C=phase7-closures-stdlib/32-
 make lab C=phase7-closures-stdlib/32-stdlib-collections
 ```
 
-cram: the chained trio (with a captured variable, sum-of-squares via reduce) matching `swiftc` at
-`-Onone` **and** `-O`; boundary cases (a filter that keeps nothing, the trio on an empty array);
-the SIL shape (`apply_value` per closure; `reduce` builds no result array while `map`/`filter`
-each build one); and the wrong-shape-closure diagnostic. alcotest: each lowering calls the closure
-via `apply_value`, `reduce` allocates only the literal's array (not a result), the typing accepts
-a chained pipeline and rejects a bad predicate, and `-O` validity.
+The hole is one function with three rules, so there is one file per RULE — you can finish `map`
+and watch exactly one of them go green.
+
+- **`tests/sema-hof.t`** is green before you start: the closure shapes, the arity, and the one
+  place the `[Int]`-only buffer shows through. Read it first — it fixes what each arm's argument
+  types are before you lower any of them.
+- **`tests/silgen-map.t`**, **`tests/silgen-filter.t`**, **`tests/silgen-reduce.t`** are the
+  three rules of `TODO(32)`. Each runs its own programs at `-Onone` and `-O`, and each checks
+  the one structural fact that distinguishes it: `map` builds a result array and calls
+  `apply_value` once per element; `filter` returns the source's element type and pushes under a
+  branch; `reduce` builds **no** result array at all — the only `rt.array_new` in a reduce
+  program is the literal's.
+- **`tests/oracle.t`** asks swiftc every run: 20 programs whose verdict must match `swiftc
+  -typecheck`, then 20 compiled four ways with stdout and exit code byte-identical to `swiftc
+  -Onone`. This is the strongest test the concept can have, because `Sequence.map`, `filter` and
+  `reduce` are ordinary for-loops in Swift's own standard library — agreeing with swiftc byte
+  for byte is the claim that our loop is the same loop.
+- **`tests/test_collections.ml`** pins from OCaml what cram can only imply: one `apply_value`
+  per closure, `filter` having strictly more conditional branches than the same-shaped `map`,
+  `reduce`'s `$acc` slot existing, and — the whole concept's thesis — that a chained trio calls
+  nothing but concept 31's four buffer intrinsics and concept 29's `apply_value`.
+
+Reading the report: an untouched rule shows as `TODO … not started`; a rule in progress shows
+`FAIL` with its passing cases still `OK`. `oracle.t` is `FAIL` rather than `TODO` from the
+start, because its front-end half passes before you write a line of lowering.
 
 ## 5. Benchmark it
 

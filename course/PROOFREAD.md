@@ -187,8 +187,11 @@ enum/proto method bodies.
 ## S4 — documentation / pedagogy
 
 - **§3 "Build it" spoils the answer** (verbatim solution code, violating the no-spoiler standard):
-  `01-lexer`, `32-collections`, `35-mc-abi`, `36-peephole`, `37-debug-info`, `39-actors`,
-  `40-macros`. Reduce each §3 to signatures + approach; the literal lines belong in §8.
+  `01-lexer`, `35-mc-abi`, `36-peephole`, `37-debug-info`, `39-actors`, `40-macros`. Reduce each
+  §3 to signatures + approach; the literal lines belong in §8. **`32-collections` [FIXED —
+  concept-review pass 29–32]**: its §3 recited the emissions arm by arm and is now approach only,
+  pointing at the new §2 "The SIL you compose" table. (`31`'s §3 got the same treatment while it
+  was open, though it was not on this list.)
 - **Overstated parity claims** needing an asterisk: `07` ("missing-return oracle agrees with
   `swiftc -typecheck`" — swiftc checks at SIL level, so `-typecheck` emits nothing); `09`
   ("byte-for-byte" omits int div/overflow traps); `40` ("`#assert` traps like swiftc's assert" —

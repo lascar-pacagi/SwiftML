@@ -642,12 +642,12 @@ let parse_struct (p : t) : Ast.struct_decl =
     | Token.RBrace -> ignore (advance p); (List.rev flds, List.rev meths)
     | Token.Eof -> ignore (expect p Token.RBrace "'}'"); (List.rev flds, List.rev meths)
     | Token.Kw_let | Token.Kw_var ->
-        ignore (advance p (* let/var *));
+        let fld_var = (advance p (* let/var *)).Token.kind = Token.Kw_var in
         let fld_name, _ = parse_ident p "a property name" in
         ignore (expect p Token.Colon "':'");
         let fld_ty = parse_type_name p "a property type" in
         (match peek_kind p with Token.Newline -> ignore (advance p) | _ -> ());
-        loop ({ Ast.fld_name; fld_ty } :: flds) meths
+        loop ({ Ast.fld_name; fld_ty; fld_var } :: flds) meths
     | Token.Kw_func ->
         let m = parse_func p in
         (match peek_kind p with Token.Newline -> ignore (advance p) | _ -> ());
@@ -677,12 +677,12 @@ let parse_class (p : t) : Ast.class_decl =
     match peek_kind p with
     | Token.RBrace -> ignore (advance p)
     | Token.Eof -> ignore (expect p Token.RBrace "'}'")
-    | Token.Kw_var ->
-        ignore (advance p);
+    | Token.Kw_let | Token.Kw_var ->
+        let fld_var = (advance p (* let/var *)).Token.kind = Token.Kw_var in
         let fld_name, _ = parse_ident p "a property name" in
         ignore (expect p Token.Colon "':'");
         let fld_ty = parse_type_name p "a property type" in
-        fields := { Ast.fld_name; fld_ty } :: !fields;
+        fields := { Ast.fld_name; fld_ty; fld_var } :: !fields;
         (match peek_kind p with Token.Newline -> ignore (advance p) | _ -> ());
         loop ()
     | Token.Kw_init ->
