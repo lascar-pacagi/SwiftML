@@ -178,11 +178,19 @@ places this concept reports, and the message each must produce:
 | the `for` loop variable | `expected a loop variable` |
 | after that variable | `expected 'in'` |
 | between the range's bounds | `expected '..<'` |
+| after a statement at top level, when the next token is not a newline | `expected newline or end of statement` — **given**, in `parse_program` |
 
 Three of them are pinned by cram goldens — `1:8: error: expected '{'` for an `if true` with no
 brace, `1:7: error: expected 'in'` for `for i 0 ..< 3`, `1:12: error: expected '..<'` for
 `for i in 0 to 3` — so the phrase has to be exactly the one in the table, and the column has to
 be the token that was found rather than the one that was wanted.
+
+The last row is the one your `parse_block` does *not* do. `parse_program` requires a newline
+after every top-level statement, so `let a = 1 print(a)` is rejected there; inside a block our
+loop simply consumes a newline if one is present, so `if true { print(1) print(2) }` is
+**accepted here and refused by swiftc** (*consecutive statements on a line must be separated by
+';'*). A v0 leniency rather than a rule — the oracle corpus stays off it, and making the block
+loop as strict as `parse_program` is a two-line change worth doing once the rest is green.
 
 **Sema** — the tests compare these character for character:
 

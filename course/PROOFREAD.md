@@ -141,6 +141,17 @@ swiftc prints the line. A given-walk bug (not the learner's hole).
 `s.smethods` (and the class/enum/protocol bodies) in both the skeleton and `solution/`, pinned by a
 cram case — a `#line` inside a struct method expands like any other.
 
+### 9b. Two statements on one line are accepted *inside a block*  **[OPEN]** *(found 2026-09-05)*
+`parse_program` reports `expected newline or end of statement`, but `parse_block`'s loop only
+consumes a `Newline` if one happens to be there, so `if true { print(1) print(2) }` compiles here
+and swiftc refuses it (*consecutive statements on a line must be separated by ';'*). Top level and
+block bodies disagree about the same rule. Present from concept 06 onward (every carried
+`parse_block`). Not in any corpus.
+- *Fix:* after `parse_stmt` in the block loop, require `Newline` unless the next token is `}` or
+  `Eof`, reporting the same message `parse_program` does; then re-promote the block goldens. Do it
+  when the learner is not inside `06/parser.ml` — it changes a file they are working in.
+- *Documented meanwhile* in 06's explainer §2 as a stated v0 leniency.
+
 ### 10. Smaller S1s
 - **Integer-literal overflow crashes the lexer** (uncaught `Failure` from `int_of_string` on
   `> 2^62`) instead of swiftc's clean "integer literal overflows" diagnostic.
