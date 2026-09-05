@@ -133,12 +133,13 @@ stack and linear-scan rungs.
 - *Also fixed alongside:* `sub`/`add sp` take a 12-bit immediate, so a locals area past 4095 bytes
   (~200 variables) did not assemble in 34-37 either; `finalize` now steps it in 4080-byte chunks.
 
-### 9. `40` macro expansion skips type/struct/enum/proto method bodies  **[OPEN]** *(phase 8 tail review)*
+### 9. `40` macro expansion skips type/struct/enum/proto method bodies  **[FIXED — concept-review pass d41eb00]**
 `expand_program` walks only `IStmt`/`IFunc`/`IClass`; `IStruct`/`IEnum`/`IProto` fall through, so
 `struct S { func f()->Int { return #line } }` yields "unknown macro '#line'" in `swiftml9` while
 swiftc prints the line. A given-walk bug (not the learner's hole).
-`phase8…/40-macros/macros.ml:99` (and `solution/`). *Fix:* also map over `s.smethods` and
-enum/proto method bodies.
+`phase8…/40-macros/macros.ml:99` (and `solution/`). *Fixed:* the given walk now maps over
+`s.smethods` (and the class/enum/protocol bodies) in both the skeleton and `solution/`, pinned by a
+cram case — a `#line` inside a struct method expands like any other.
 
 ### 10. Smaller S1s
 - **Integer-literal overflow crashes the lexer** (uncaught `Failure` from `int_of_string` on
