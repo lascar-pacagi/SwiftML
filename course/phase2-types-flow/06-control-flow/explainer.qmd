@@ -168,21 +168,21 @@ let parse_ident (p : t) (what : string) : string * Token.span
 ```
 
 So the only thing you choose is the phrase, and the convention is concept 02's: a **quoted
-literal** for punctuation or a keyword, a lowercase **noun phrase** for a category. The four
-places this concept calls them, and the message each produces:
+literal** for punctuation or a keyword, a lowercase **noun phrase** for a category. The five
+places this concept reports, and the message each must produce:
 
-| where | the call | the message |
-|---|---|---|
-| after an `if`/`while` condition, and at the start of a `for` body | `expect p Token.LBrace "'{'"` | `expected '{'` |
-| the `for` loop variable | `parse_ident p "a loop variable"` | `expected a loop variable` |
-| after that variable | `expect p Token.Kw_in "'in'"` | `expected 'in'` |
-| between the range's bounds | `expect p Token.DotDotLt "'..<'"` | `expected '..<'` |
+| where | the message |
+|---|---|
+| after an `if`/`while` condition, and at the start of a `for` body | `expected '{'` |
+| the closing brace of a block | `expected '}'` |
+| the `for` loop variable | `expected a loop variable` |
+| after that variable | `expected 'in'` |
+| between the range's bounds | `expected '..<'` |
 
-`parse_block`'s closing brace reuses the first row's helper with `"'}'"`. Three of these are
-pinned by cram goldens — `1:8: error: expected '{'` for `if true` with no brace, `1:7: error:
-expected 'in'` for `for i 0 ..< 3`, `1:12: error: expected '..<'` for `for i in 0 to 3` — so the
-phrase has to be exactly the one in the table, and the column has to be the token that was found
-rather than the one that was wanted.
+Three of them are pinned by cram goldens — `1:8: error: expected '{'` for an `if true` with no
+brace, `1:7: error: expected 'in'` for `for i 0 ..< 3`, `1:12: error: expected '..<'` for
+`for i in 0 to 3` — so the phrase has to be exactly the one in the table, and the column has to
+be the token that was found rather than the one that was wanted.
 
 **Sema** — the tests compare these character for character:
 
