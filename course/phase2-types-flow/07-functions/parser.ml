@@ -140,7 +140,8 @@ let parse_annot (p : t) : string option =
     Some name)
   else None
 
-(* a brace-delimited block: { (Newline | stmt Newline)* } *)
+(* a brace-delimited block: "{" { statement NEWLINE } [ statement ] "}" — a newline SEPARATES
+   statements, blank lines are skipped, and the closing "}" ends the last statement. *)
 let rec parse_block (p : t) : Ast.stmt list =
   ignore (expect p Token.LBrace "'{'");
   let rec loop acc =

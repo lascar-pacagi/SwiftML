@@ -205,7 +205,8 @@ let parse_pattern (p : t) : Ast.pattern =
       | _ -> Diagnostics.error p.diags (peek p).Token.span "expected a pattern"; Ast.PInt 0)
   | _ -> Diagnostics.error p.diags (peek p).Token.span "expected a 'case' pattern"; Ast.PInt 0
 
-(* a brace-delimited block: { (Newline | stmt Newline)* } *)
+(* a brace-delimited block: "{" { statement NEWLINE } [ statement ] "}" — a newline SEPARATES
+   statements, blank lines are skipped, and the closing "}" ends the last statement. *)
 let rec parse_block (p : t) : Ast.stmt list =
   ignore (expect p Token.LBrace "'{'");
   let rec loop acc =
