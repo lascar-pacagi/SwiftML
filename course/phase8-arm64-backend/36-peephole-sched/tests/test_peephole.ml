@@ -29,6 +29,25 @@ let test_invalidation () =
   Alcotest.(check bool) "reload kept after holder clobbered" true
     (List.exists (function Ldr (X 20, SP, 24) -> true | _ -> false) got)
 
+(* a call clobbers broadly, so the table is dropped at a `bl` *)
+let test_call_resets () =
+  let got = pp [ Str (X 19, SP, 24); Bl "_f"; Ldr (X 20, SP, 24); Ret ] in
+  Alcotest.(check bool) "reload kept across a call" true
+    (List.exists (function Ldr (X 20, SP, 24) -> true | _ -> false) got)
+
+(* two loads of the SAME slot: the second is forwarded from the first's destination *)
+let test_load_load () =
+  let got = pp [ Ldr (X 19, SP, 24); Ldr (X 20, SP, 24); Ret ] in
+  Alcotest.(check (list string)) "second load forwarded"
+    [ "\tldr\tx19, [sp, #24]"; "\tmov\tx20, x19"; "\tret" ]
+    (List.map string_of_instr got)
+
+(* a store to a DIFFERENT slot leaves the first slot's entry alone (memory, not a register) *)
+let test_other_slot_kept () =
+  let got = pp [ Str (X 19, SP, 24); Str (X 21, SP, 32); Ldr (X 20, SP, 24); Ret ] in
+  Alcotest.(check bool) "unrelated store does not invalidate" true
+    (List.exists (function Mov (X 20, R (X 19)) -> true | _ -> false) got)
+
 (* a label boundary resets the table — no cross-block forwarding *)
 let test_block_boundary () =
   let got = pp [ Str (X 19, SP, 24); Label "L1"; Ldr (X 20, SP, 24); Ret ] in
@@ -60,11 +79,14 @@ let () =
         [
           Alcotest.test_case "store/reload same reg -> drop" `Quick test_store_reload_same;
           Alcotest.test_case "store/reload other reg -> mov" `Quick test_store_reload_other;
+          Alcotest.test_case "load/load -> mov" `Quick test_load_load;
           Alcotest.test_case "mov self -> drop" `Quick test_mov_self;
         ] );
       ( "soundness",
         [
           Alcotest.test_case "clobber invalidates" `Quick test_invalidation;
+          Alcotest.test_case "a call resets the table" `Quick test_call_resets;
+          Alcotest.test_case "other slot not invalidated" `Quick test_other_slot_kept;
           Alcotest.test_case "no cross-block forwarding" `Quick test_block_boundary;
         ] );
       ("effect", [ Alcotest.test_case "reduces memory loads" `Quick test_reduces_loads ]);

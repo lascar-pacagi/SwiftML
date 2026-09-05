@@ -50,6 +50,32 @@ answers "which register currently holds the value at this stack slot?" Then walk
 - **anything else** — it may *overwrite* registers. Any slot whose holder was just overwritten is
   now stale, so **invalidate** it. A `bl` (call) clobbers broadly, so clear the table.
 
+### The IR you rewrite
+
+Nothing is new here — no syntax, no SIL, not even a new ARM64 instruction. A peephole is a
+function from an instruction stream to an instruction stream, and the only thing worth recalling
+is which forms it has to recognize and what a "block" means to it (EBNF: `[ x ]` optional,
+`{ x }` zero-or-more, `|` alternatives, quoted terminals):
+
+```
+block      ::= [ label ] { plain-instr } [ terminator ]
+terminator ::= "B" | "Bcond" | "Bl" | "Ret" | "Brk"     (* also ENDS a block *)
+matched    ::= "Str" reg base off        (* records: this slot is now in this register *)
+             | "Ldr" reg base off        (* the rewrite candidate *)
+             | "Mov" reg reg             (* the move-to-self case *)
+other      ::= any instr                 (* may write registers: invalidate, never rewrite *)
+```
+
+The registers in the stream are all physical by now — this pass runs *after* allocation, which is
+the point: the redundancy it removes is created by the spill rewrite and by the memory-based
+lowering, and neither is visible before that. Two given helpers do all the plumbing:
+
+| helper | what it gives you |
+|---|---|
+| `Arm64.reads_writes i` | the registers `i` reads and the ones it writes (`snd` is what to kill) |
+| `Peephole.kill_reg held r` | forget every slot whose current holder is `r` |
+| `Peephole.blocks_of instrs` | split the flat stream at labels and after terminators |
+
 ### Why invalidation is the whole game
 
 The rewrites are easy; *correctness* is the table's invalidation. If a register that the table
@@ -98,19 +124,25 @@ dependence-DAG list scheduler is the exercise, valuable mainly as a lesson about
 
 ## 3. Build it, step by step
 
-In `peephole.ml`, implement `rewrite_block`. Keep the `held : slot → register` table; for each
-instruction:
+One hole, `rewrite_block` in `peephole.ml`, and it is a single walk over one block carrying the
+`held : slot → register` table. §2 states the four rules the walk has to implement; the work is
+turning them into a loop that keeps the table TRUE at every step.
 
-1. **`Str (rs, b, o)`** — emit it; `Hashtbl.replace held (mem_key b o) rs`.
-2. **`Ldr (rd, b, o)`** — look up `held (mem_key b o)`: `Some rsrc = rd` → drop; `Some rsrc` → emit
-   `Mov (rd, R rsrc)` (and `kill_reg held rd` first); `None` → emit it (`kill_reg held rd` first).
-   Then `Hashtbl.replace held (mem_key b o) rd`.
-3. **`Mov (rd, R rs)` with `rd = rs`** — drop it.
-4. **otherwise** — `kill_reg held` each written register (`snd (Arm64.reads_writes i)`); on `Bl`,
-   `Hashtbl.reset held`; emit it.
+Two things to get right, and they are the two the tests separate:
 
-The block splitting, the fixpoint, and the scheduler are given. Reference: `solution/peephole.ml`.
-Run with `make lab C=phase8-arm64-backend/36-peephole-sched`.
+1. **The rewrites.** A `ldr` of a slot the table already accounts for is either a `mov` or
+   nothing at all — decide which by looking at where the value already is. A store teaches the
+   table something; a load teaches it something too, and forgetting that is the usual reason a
+   second reload survives.
+2. **The invalidation.** Every instruction that WRITES a register makes some entries false, and
+   the general case is not `Ldr`/`Str`/`Mov` — it is everything else, which is why
+   `Arm64.reads_writes` is given. A call is the broad case. Set `changed` whenever you actually
+   rewrite something, or the fixpoint stops early.
+
+Given: `mem_key`, `kill_reg`, `blocks_of`, the fixpoint driver `peephole`, the (identity)
+scheduler, and the driver wiring (`--no-peephole` turns the pass off, which is how the tests
+compare). Reference: `solution/peephole.ml`. Run with
+`make lab C=phase8-arm64-backend/36-peephole-sched`.
 
 ## 4. Test it
 
@@ -118,10 +150,31 @@ Run with `make lab C=phase8-arm64-backend/36-peephole-sched`.
 make lab C=phase8-arm64-backend/36-peephole-sched
 ```
 
-cram: peephole-optimized programs match `swiftc` (and the `--no-peephole` backend); straight-line
-code's `ldr` count drops; a store-then-reload-same-register pair loses its load. alcotest: the three
-rewrite shapes (drop, forward-to-mov, mov-self), the **soundness** guards (a clobber keeps the
-reload a load; no forwarding across a label), and that a real program's load count falls.
+The hole is one function with two halves — what it rewrites and what it must refuse to rewrite —
+so there is one cram file for each.
+
+- **`tests/peephole-forward.t`** is the rewriting half: a straight-line program's `ldr` count
+  falling (18 → 11), a store-then-reload-the-same-register pair losing its load outright, and
+  reloads into other registers turning into the `mov`s that replace them. Every case ends by
+  running the program against `swiftc` *and* against the `--no-peephole` backend.
+- **`tests/peephole-invalidate.t`** is the refusing half, and it is where the pass is actually
+  hard: a clobbered holder, a `bl`, and a loop header reached from two edges. It closes with the
+  honest measurement — the pass trims what it can see inside the loop body, but the reloads that
+  open each iteration survive, because that redundancy is cross-block and belongs to mem2reg.
+- **`tests/oracle.t`** asks swiftc every run: 32 programs (concept 35's corpus), each built by
+  `swiftc -Onone`, by Backend A, and by Backend B **both ways** — with the pass and with
+  `--no-peephole` — then run and required byte-identical. The `--no-peephole` build is the
+  control: an optimization is only correct if the program means the same thing without it, and a
+  peephole that forwards a stale register produces a plausible wrong number, not a crash.
+- **`tests/test_peephole.ml`** works on hand-built instruction streams, where a rule can be
+  stated exactly: three rewrite shapes (drop, forward-to-`mov`, `mov`-to-self) and four soundness
+  guards (a clobbered holder keeps the load, a `bl` resets the table, a store to an *unrelated*
+  slot does not invalidate, and nothing forwards across a label), plus the load count of a real
+  program falling.
+
+Reading the report: the hole is one function, so both cram files and the alcotest suite go from
+`TODO … not started` to green together. `oracle.t` shows `FAIL` rather than `TODO`, because its
+front-end case passes before you write a line.
 
 ## 5. Benchmark it
 
