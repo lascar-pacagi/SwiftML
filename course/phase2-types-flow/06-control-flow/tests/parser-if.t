@@ -40,12 +40,3 @@ A missing `{` after the condition is "expected '{'", reported at the token found
   $ ./lab.exe --emit-ast e1.swift; echo "exit=$?"
   1:8: error: expected '{'
   exit=1
-
-Two statements on one line inside a block are an error, exactly as at top level.
-The grammar separates a block's statements with newlines, and the closing `}` ends the last one —
-so `{ print(1) }` is fine on one line but `{ print(1) print(2) }` is not:
-
-  $ printf 'if true {\n  print(1) print(2)\n}\n' > e2.swift
-  $ ./lab.exe --emit-ast e2.swift; echo "exit=$?"
-  2:12: error: expected newline or end of statement
-  exit=1

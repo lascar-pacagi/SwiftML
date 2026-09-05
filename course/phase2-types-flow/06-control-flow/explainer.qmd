@@ -187,11 +187,11 @@ places this concept reports, and the message each must produce:
 | between the range's bounds | `expected '..<'` |
 | between two statements with no newline between them | `expected newline or end of statement` |
 
-The last one is **yours as much as given**. `parse_program` already reports it between top-level
-statements; your `parse_block` owes the same message between the statements of a block, because
-the grammar separates them the same way — `if c { x = 1 y = 2 }` is an error, as it is in Swift.
-The closing `}` ends the last statement, so it is not an error there: that is what the trailing
-`[ statement ]` in the block production says.
+The last one you report **yourself**. `parse_program` already gives it between top-level
+statements, and your `parse_block` owes the same message between the statements of a block: the
+grammar separates them the same way in both, so `if c { x = 1 y = 2 }` is an error here exactly as
+it is in Swift. The closing `}` ends the last statement, so it is not an error there — that is what
+the trailing `[ statement ]` in the block production says.
 
 **Sema** — the tests compare these character for character:
 
@@ -259,8 +259,11 @@ Reference: `solution/`. Don't peek until you've tried it.
 make lab C=phase2-types-flow/06-control-flow
 ```
 
-Seven cram files, one per hole and stage, plus two unit suites and the oracle — in the order you
-fill the holes:
+Eight cram files, one per hole and stage, plus two unit suites and the oracle — in the order you
+fill the holes. The lab binary has a flag per stage (`--emit-tokens`, `--emit-block`,
+`--emit-ast`, `--typecheck`), so each hole is reachable without the next one existing —
+`--emit-block` parses its whole input as a single block, which is how `parse_block` is tested
+before anything calls it:
 
 - `lexer-flow.t` — `--emit-tokens`: `{ }`, `&&`, `||`, `..<` (with and without spaces), and the
   three lone-character diagnostics with their columns. Green with the lexer arm alone.
@@ -268,6 +271,10 @@ fill the holes:
   the comparisons, and that parentheses still win. Green with the two `infix_bp` /
   `binop_of_kind` rows — the smallest hole in the concept, and the one that proves a binding
   power is just a number.
+- `parser-block.t` — **`parse_block` on its own**, through `--emit-block`: the file it reads *is*
+  a block, so this file goes green with that one function, before `parse_if` or any loop exists.
+  Statements in order, an empty block, blank lines however many, a one-line `{ print(1) }`, the
+  two-statements-on-one-line error, and a block that runs off the end of the file.
 - `parser-if.t` — `if`, `if/else`, `else if` as a nested `if`, multi-statement and nested
   blocks, a missing `{`. Green with `parse_block` + `parse_if`.
 - `parser-loops.t` — `while`, `for` with expression bounds, `break`/`continue`, nested loops,
