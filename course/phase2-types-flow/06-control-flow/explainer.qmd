@@ -110,7 +110,7 @@ and `{ x }` is zero-or-more. Precedence is the `infix_bp` table, loosest first; 
 rows are yours to add, and so is everything below the grammar:
 
 ```
-program    ::= { statement NEWLINE }
+program    ::= { statement NEWLINE } [ statement ]
 statement  ::= ("let" | "var") ident [ ":" type ] "=" expr
              | ident "=" expr
              | expr
@@ -118,7 +118,7 @@ statement  ::= ("let" | "var") ident [ ":" type ] "=" expr
              | "while" expr block                                     <-- new
              | "for" ident "in" expr "..<" expr block                 <-- new
              | "break" | "continue"                                   <-- new
-block      ::= "{" { NEWLINE } { statement NEWLINE } "}"              <-- new
+block      ::= "{" { statement NEWLINE } [ statement ] "}"            <-- new
 
 expr       ::= disjunction
 disjunction ::= conjunction { "||" conjunction }                (bp 3)   <-- new
@@ -132,8 +132,11 @@ primary    ::= int | float | string | "true" | "false" | ident
              | ident "(" [ expr { "," expr } ] ")" | "(" expr ")"
 ```
 
-Three things to notice. A block's statements are separated by newlines exactly as the program's
-are, and blank lines inside a block are skipped the same way. `else if` is not a production of
+Three things to notice. A block's statements are **separated by newlines**, exactly as the
+program's are: `if c { print(1) print(2) }` is an error in Swift and here too. The separator is
+what the `[ statement ]` in the production is about — the closing `}` ends the last statement, so
+`if c { x = 1 }` needs no newline before the brace — and blank lines inside a block are skipped
+the same way they are at top level. `else if` is not a production of
 its own: the `else` branch is either a block or another `if`-statement, which is why the parser
 wraps a nested `if` as the sole statement of the else block. And the range `lo ..< hi` is not an
 expression — `..<` appears only in the `for` production, so `let r = 0 ..< 3` is a syntax error
@@ -179,18 +182,6 @@ places this concept reports, and the message each must produce:
 | after that variable | `expected 'in'` |
 | between the range's bounds | `expected '..<'` |
 | after a statement at top level, when the next token is not a newline | `expected newline or end of statement` — **given**, in `parse_program` |
-
-Three of them are pinned by cram goldens — `1:8: error: expected '{'` for an `if true` with no
-brace, `1:7: error: expected 'in'` for `for i 0 ..< 3`, `1:12: error: expected '..<'` for
-`for i in 0 to 3` — so the phrase has to be exactly the one in the table, and the column has to
-be the token that was found rather than the one that was wanted.
-
-The last row is the one your `parse_block` does *not* do. `parse_program` requires a newline
-after every top-level statement, so `let a = 1 print(a)` is rejected there; inside a block our
-loop simply consumes a newline if one is present, so `if true { print(1) print(2) }` is
-**accepted here and refused by swiftc** (*consecutive statements on a line must be separated by
-';'*). A v0 leniency rather than a rule — the oracle corpus stays off it, and making the block
-loop as strict as `parse_program` is a two-line change worth doing once the rest is green.
 
 **Sema** — the tests compare these character for character:
 

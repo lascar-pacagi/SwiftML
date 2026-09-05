@@ -141,7 +141,7 @@ made of old tokens in a new order. No new operator, so the precedence table is c
 **The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05–06:
 
 ```
-program    ::= { item NEWLINE }                                    <-- items, not statements
+program    ::= { item NEWLINE } [ item ]                           <-- items, not statements
 item       ::= func_decl                                           <-- new
              | statement
 func_decl  ::= "func" ident "(" [ param { "," param } ] ")"        <-- new
@@ -156,7 +156,7 @@ statement  ::= ("let" | "var") ident [ ":" type ] "=" expr
              | "break" | "continue"
              | "return" [ expr ]                                   <-- new
              | expr
-block      ::= "{" { statement NEWLINE } "}"
+block      ::= "{" { statement NEWLINE } [ statement ] "}"
 type       ::= "Int" | "Double" | "Bool" | "String" | "Void"       <-- Void is new (rarely written)
 
 expr       ::= or

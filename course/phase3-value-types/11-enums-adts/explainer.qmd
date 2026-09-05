@@ -81,7 +81,7 @@ Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (
 `|` separates alternatives, and quoted text is a terminal.
 
 ```
-program     ::= { item NEWLINE }
+program     ::= { item NEWLINE } [ item ]
 item        ::= enum_decl                                          <-- new
               | struct_decl
               | func_decl

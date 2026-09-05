@@ -100,7 +100,7 @@ Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (
 `|` separates alternatives, and quoted text is a terminal.
 
 ```
-program     ::= { item NEWLINE }
+program     ::= { item NEWLINE } [ item ]
 item        ::= struct_decl                                        <-- new
               | func_decl
               | statement
@@ -115,7 +115,7 @@ statement   ::= ("let" | "var") ident [ ":" type ] "=" expr
               | "for" ident "in" expr "..<" expr block
               | "break" | "continue" | "return" [ expr ]
               | expr
-block       ::= "{" { statement NEWLINE } "}"
+block       ::= "{" { statement NEWLINE } [ statement ] "}"
 type        ::= "Int" | "Double" | "Bool" | "String" | "Void"
               | ident                                              <-- new (a struct name)
 

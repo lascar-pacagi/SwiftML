@@ -377,7 +377,7 @@ integers, `+ - * / %`, `( )`, `=`, newline, `let`, `var`.
 in a form that reads better once productions get longer:
 
 ```
-program    ::= { statement NEWLINE }
+program    ::= { statement NEWLINE } [ statement ]
 statement  ::= ("let" | "var") ident [ ":" type ] "=" expr        <-- annotation is new
              | ident "=" expr
              | expr

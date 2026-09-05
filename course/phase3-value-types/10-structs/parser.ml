@@ -179,7 +179,13 @@ let rec parse_block (p : t) : Ast.stmt list =
         List.rev acc
     | _ ->
         let s = parse_stmt p in
-        (match peek_kind p with Token.Newline -> ignore (advance p) | _ -> ());
+        (* `block ::= "{" { statement NEWLINE } [ statement ] "}"`: a newline SEPARATES statements
+           here exactly as it does at top level, and the closing `}` ends the last one — so
+           `if c { x = 1 }` stays legal but `if c { x = 1 y = 2 }` is an error, as in Swift. *)
+        (match peek_kind p with
+        | Token.Newline -> ignore (advance p)
+        | Token.RBrace | Token.Eof -> ()
+        | _ -> Diagnostics.error p.diags (peek p).Token.span "expected newline or end of statement");
         loop (s :: acc)
   in
   loop []
@@ -315,7 +321,10 @@ let parse_program (p : t) : Ast.program =
     | Token.Eof -> { Ast.items = List.rev acc }
     | Token.Kw_func ->
         let f = parse_func p in
-        (match peek_kind p with Token.Newline -> ignore (advance p) | _ -> ());
+        (match peek_kind p with
+        | Token.Newline -> ignore (advance p)
+        | Token.Eof -> ()
+        | _ -> Diagnostics.error p.diags (peek p).Token.span "expected newline or end of statement");
         loop (Ast.IFunc f :: acc)
     | Token.Kw_struct ->
         let s = parse_struct p in
