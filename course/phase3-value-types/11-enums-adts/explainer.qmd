@@ -95,11 +95,12 @@ case        ::= ident [ "(" ident { "," ident } ")" ]              <-- new (asso
 statement   ::= ("let" | "var") ident [ ":" type ] "=" expr
               | ident "=" expr
               | ident "." ident "=" expr
-              | "if" expr block [ "else" ( block | if-statement ) ]
+              | if-stmt
               | "while" expr block
               | "for" ident "in" expr "..<" expr block
               | "break" | "continue" | "return" [ expr ]
               | expr
+if-stmt     ::= "if" expr block [ "else" ( block | if-stmt ) ]
 type        ::= "Int" | "Double" | "Bool" | "String" | "Void"
               | ident                                                (a struct OR an enum name)
 

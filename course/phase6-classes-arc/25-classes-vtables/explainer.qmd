@@ -114,7 +114,7 @@ type.
 | `override` | `Token.Kw_override` | a modifier before `func` inside a class body |
 | `super` | `Token.Kw_super` | parsed only in the one position `super.init(…)`, in `parse_primary` |
 
-**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05-24.
+**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05–24.
 Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (zero or more),
 `|` separates alternatives, and quoted text is a terminal.
 

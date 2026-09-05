@@ -94,7 +94,7 @@ runs `run_defers_down_to` and `release_down_to` first. Without the depth,
 | `catch` | `Token.Kw_catch` | a clause, with or without a pattern |
 | `defer` | `Token.Kw_defer` | a statement registering a block to run at scope exit |
 
-**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05-29.
+**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05–29.
 Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (zero or more),
 `|` separates alternatives, and quoted text is a terminal.
 

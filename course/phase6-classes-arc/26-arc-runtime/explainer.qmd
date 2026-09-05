@@ -106,7 +106,7 @@ which is where the first attempt usually goes:
 |---|---|---|
 | `deinit` | `Token.Kw_deinit` | a class member with no parameters, no return type and no name of its own. At most one per class |
 
-**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05-25.
+**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05–25.
 Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (zero or more),
 `|` separates alternatives, and quoted text is a terminal.
 

@@ -85,7 +85,7 @@ null-guard so thin functions' ARC traffic costs one branch, taken never.
 | `@` | `Token.At` | an attribute marker, `@escaping`. Added to `lexer.ml`'s punctuation table |
 | `in` | `Token.Kw_in` | already a keyword since `for x in …` (concept 06); it now also separates a closure's signature from its body |
 
-**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05-28.
+**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05–28.
 Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (zero or more),
 `|` separates alternatives, and quoted text is a terminal.
 

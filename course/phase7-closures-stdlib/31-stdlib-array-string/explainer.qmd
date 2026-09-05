@@ -147,7 +147,7 @@ inside brackets separates nothing — there is no statement there to separate �
 it that way too. Without it, `let a = [\n 1,\n 2\n]` was a parse error, and the stress corpus
 had to write its boards on one line.
 
-**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05-30.
+**The grammar** — `<-- new` marks what this concept adds; everything else is concepts 05–30.
 Notation is EBNF: `[ x ]` is *optional* (zero or one), `{ x }` is *repetition* (zero or more),
 `|` separates alternatives, and quoted text is a terminal. (The metasymbol `[ … ]` and the
 Swift terminal `"[" … "]"` unavoidably share a shape here; the quotes tell them apart.)

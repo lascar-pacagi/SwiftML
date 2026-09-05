@@ -115,10 +115,12 @@ nl         ::= NEWLINE { NEWLINE }      # one or more: a run of blank lines is o
 statement  ::= ("let" | "var") ident [ ":" type ] "=" expr
              | ident "=" expr
              | expr
-             | "if" expr block [ "else" ( block | if-statement ) ]     <-- new
+             | if-stmt                                                 <-- new
              | "while" expr block                                     <-- new
              | "for" ident "in" expr "..<" expr block                 <-- new
              | "break" | "continue"                                   <-- new
+if-stmt    ::= "if" expr block [ "else" ( block | if-stmt ) ]        <-- new
+type       ::= "Int" | "Double" | "Bool" | "String"
 block      ::= "{" [ nl ] [ statement { nl statement } ] [ nl ] "}"   <-- new
 
 expr       ::= disjunction
