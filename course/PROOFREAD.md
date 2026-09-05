@@ -161,10 +161,14 @@ enum/proto method bodies.
 
 - **Newline before `else`** is rejected (`if c { } \n else { }`) though swiftc accepts it; the
   parser is newline-tolerant before `catch` but not `else`. *Caught by 03/20 in the suite.*
-- **Multi-line collection literals** are rejected — a newline inside `[ … ]`/`( … )` is treated as a
+- **Multi-line collection literals** are rejected — a newline inside `[ … ]` was treated as a
   statement separator, where swiftc suppresses newlines inside brackets. *Caught by the sudoku/life
-  stress programs (boards had to be single-line).* Fix: track bracket depth in the lexer and drop
-  `Newline` tokens while depth > 0 (same machinery `else`/`catch` continuation wants).
+  stress programs (boards had to be single-line).* **[FIXED in 31/32 — concept-review pass 29–32]**
+  `tokenize` tracks the `[`/`]` depth and drops `Newline` while it is above zero; pinned in
+  `31-stdlib-array-string/tests/silgen-reads.t`, in its runtime and typecheck corpora, and by an
+  alcotest on the token stream. Concepts 29/30 have no bracket token, so nothing to fix there; the
+  same one-loop change is still wanted in the phase-8 copies (33-40), and the `( … )` half — a
+  multi-line parameter or argument list — is untouched everywhere.
 - **String interpolation** `"\(x)"` prints the literal `(x)` — *silent* wrong output, no diagnostic
   (should at least be rejected). *Caught while probing.*
 - **`39` actor isolation is per-TYPE, not per-INSTANCE** — `current_class <> Some cn` lets a method
