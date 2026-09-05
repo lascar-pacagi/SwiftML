@@ -72,6 +72,40 @@ inside an expression gets the expression rule. That split — expression-positio
 expansion — is exactly how real macro systems classify macros (`@freestanding(expression)` vs
 `@freestanding(declaration)`/`statement`).
 
+### The subset you are growing into
+
+One token, and a form that can appear in two positions. Written as EBNF (`[ x ]` optional,
+`{ x }` zero-or-more, `|` alternatives, quoted terminals):
+
+| lexeme | kind | |
+|---|---|---|
+| `#` | punctuation, only before an identifier | `<-- new` |
+
+```
+primary     ::= ... | macro-use                        (*                <-- new *)
+macro-use   ::= "#" ident [ "(" [ expr { "," expr } ] ")" ]   (*         <-- new *)
+stmt        ::= ... | macro-use                        (* statement position <-- new *)
+```
+
+That is the entire syntactic addition: `#name` and `#name(args)`, in expression position or as a
+statement of its own. The AST node is `MacroExpr of string * expr list * span`, and it is the only
+node in the whole compiler that is guaranteed not to survive to sema — which is why nothing
+downstream has a case for it.
+
+### The diagnostics you emit
+
+One, and it comes from sema rather than from the expander — deliberately:
+
+| program | our message | swiftc |
+|---|---|---|
+| `print(#nope)` | `1:7: error: unknown macro '#nope'` | `error: no macro named 'nope'` |
+
+The expander leaves an unrecognized macro **in place** instead of guessing or failing. That is
+what puts the error in the type checker, where it gets a span and joins the ordinary diagnostic
+stream, rather than in a pass that has no error machinery of its own. swiftc reaches the same
+verdict by a different route (macros are declarations there, so an unknown one is an unresolved
+name), and words it differently — a divergence in wording, not in behaviour.
+
 ### Why this matters: the same machine, one level up
 
 Look at what the expansion *reuses*: `#assert` becomes an `if` (concept 6) calling `fatalError`,
@@ -86,18 +120,23 @@ rules. Everything you built — types, control flow, traps — is what a macro e
 
 ## 3. Build it, step by step
 
-In `macros.ml`:
+Two holes in `macros.ml`, and between them they are the whole macro system — the tree walk that
+reaches every macro is given, so what is left is *what each macro turns into*.
 
-1. **`TODO(40a)` — `expand_macro_expr name args span`**: `"line"` → `int_lit span.Token.lo.Token.line
-   span`; `"column"` → `int_lit span.Token.lo.Token.col span`; anything else → `Ast.MacroExpr (other,
-   [], span)` (leave it for sema to reject).
-2. **`TODO(40b)` — `expand_macro_stmt name args span`**: `("assert", [cond])` →
-   `Some (Ast.If { cond; then_blk = []; else_blk = Some [fatal_error span]; span })`; otherwise
-   `None`.
+1. **`TODO(40a)` — `expand_macro_expr name args span`.** Two magic identifiers, each becoming a
+   literal of the position it was written at. Everything you need is on the `span` you were
+   handed; `int_lit` is given for building the result. The third case is the one worth thinking
+   about: an unrecognized macro must be returned UNCHANGED, not rejected here — §2 says why the
+   error belongs to sema.
+2. **`TODO(40b)` — `expand_macro_stmt name args span`.** `#assert(cond)` becomes the `if` a
+   hand-written assertion would be — with the failing side calling the given `fatal_error`, and
+   the passing side doing nothing at all. The return type is an `option`, and `None` is how you
+   say "this is not a statement macro", which sends it back through the expression rule.
 
-The tree walk (`ex`/`exs`/`expand_program`), the `fatalError()` primitive (→ `Sil.Trap`), and the
-wiring of `Macros.expand_program` into the front end (before `Sema.check`) are given. Reference:
-`solution/macros.ml`. Run with `make lab C=phase8-arm64-backend/40-macros`.
+Given: the whole walk (`ex`, `exs`, `expand_program` — including reaching struct and class method
+bodies), the `int_lit` and `fatal_error` builders, `fatalError()`'s lowering to `Sil.Trap`, and
+the wiring of `Macros.expand_program` into the front end between the parser and `Sema.check`.
+Reference: `solution/macros.ml`. Run with `make lab C=phase8-arm64-backend/40-macros`.
 
 ## 4. Test it
 
@@ -105,10 +144,32 @@ wiring of `Macros.expand_program` into the front end (before `Sema.check`) are g
 make lab C=phase8-arm64-backend/40-macros
 ```
 
-cram: `#line`/`#column` produce the right numbers (matching `swiftc`), nested in ordinary
-expressions; `#assert(false)` traps (exit 133) like `swiftc`'s `assert`; an unknown macro is a clean
-type error. alcotest: `#line` expands to the literal `1`, no `MacroExpr` survives expansion,
-`#assert` expands to an `if`/`fatalError`, and an unknown macro is rejected by sema.
+Two holes, two cram files — finish the expression rule and exactly one of them goes green.
+
+- **`tests/macros-expr.t`** (`TODO(40a)`) is `#line` and `#column`, each checked against
+  `swiftc`, which has the same magic identifiers: three `#line`s on three lines, `#column`
+  moving when the macro moves, macros nested in arithmetic and in a `return`, a `#line` inside a
+  **struct method** (the walk has to reach that body), the written-position rule shown by a macro
+  whose value is printed on another line, and the unknown macro left in place for sema to reject.
+- **`tests/macros-stmt.t`** (`TODO(40b)`) is `#assert`, and it is careful about what swiftc can
+  arbitrate: Swift has no `#assert` macro, only the function `assert(_:)`, so every case runs
+  `swiftc`'s `assert` on the same condition beside ours. A true assertion is silent; a false one
+  traps with **exit 133**, the same code swiftc's failed `assert` and concept 13's force-unwrap
+  of `nil` produce; and a condition with a side effect shows that the expansion really is an
+  `if` — the operand is evaluated once and the untaken branch runs nothing.
+- **`tests/oracle.t`** asks swiftc every run: 18 programs by `swiftc -Onone`, `swiftc -O` and our
+  build at `-Onone` and `-O`, byte-identical, putting the two macros everywhere a macro can go —
+  top level, function, struct method, class `init`, loop, `if`, `switch` case, array literal, a
+  closure passed to `map`, an optional return, and arithmetic between them.
+- **`tests/test_macros.ml`** works on the tree, which is the only place the *rewrite itself* is
+  visible: `#line` becoming the literal `1`, no `MacroExpr` surviving the walk, `#assert`
+  becoming an `if` whose else-branch calls `fatalError`, and the unknown macro reaching sema.
+
+One thing to know when reading the report: `--emit-ast` prints the PARSER's output, before the
+expander runs, so those two cases pass from the start and both cram files read `FAIL` rather than
+`TODO`. That is not a gap — it is the pipeline's shape, and each case says so where it stands.
+The expansion is observed two ways instead: by what the programs print (cram) and by inspecting
+the tree directly (alcotest).
 
 ## 5. Benchmark it
 
@@ -187,6 +248,10 @@ and exs s = match s with
   | Ast.Expr_stmt (Ast.MacroExpr (name, args, sp), _) ->
       (match expand_macro_stmt name (List.map ex args) sp with Some s' -> s' | None -> …)
   | … (* destructure each inline-record statement, recurse *) …
+
+(* expand_program maps over the ITEMS: statements, functions, class inits/methods/deinit, and
+   struct methods — every place a body can hide. A body it forgets is a macro that survives to
+   sema and is reported as unknown, which is exactly how the struct-method gap was found. *)
 
 (* in the driver's frontend, BEFORE Sema.check: *)
 let prog = Macros.expand_program prog in

@@ -247,8 +247,12 @@ enum/proto method bodies.
 - **Overstated parity claims** needing an asterisk: `07` ("missing-return oracle agrees with
   `swiftc -typecheck`" — swiftc checks at SIL level, so `-typecheck` emits nothing); `09`
   ("byte-for-byte" omits int div/overflow traps); `40` ("`#assert` traps like swiftc's assert" —
-  swiftc has **no** `#assert` macro; `#line`/`#column` *are* faithful); `34` ("graph-colour ≈ 2.9×"
-  is honest vs stack, but linscan ≡ graphcolor on this corpus — the top rung never climbs).
+  swiftc has **no** `#assert` macro; `#line`/`#column` *are* faithful) **[FIXED — pass 33-40:
+  `macros-stmt.t` says so in its header and runs swiftc's `assert(_:)` on the same condition
+  beside every `#assert` case, so the claim is about behaviour, not spelling]**; `34`
+  ("graph-colour ≈ 2.9×" is honest vs stack, but linscan ≡ graphcolor on this corpus — the top
+  rung never climbs) **[already stated in 34's §2 and §5; the review left both as they are and
+  made the coincidence explicit in `regalloc-linscan.t`]**.
 - **`03-sema` exercises** contradict the oracle: Exercise 1's hint says Swift allows top-level
   redeclaration shadowing (swiftc rejects it; §9 says the opposite); Exercise 2 is already
   implemented in the shipped solution.

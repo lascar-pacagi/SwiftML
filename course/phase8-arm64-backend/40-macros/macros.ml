@@ -98,6 +98,10 @@ let expand_program (prog : Ast.program) : Ast.program =
             Ast.cinit = Option.map expand_func c.Ast.cinit;
             cmethods = List.map (fun (ov, m) -> (ov, expand_func m)) c.Ast.cmethods;
             cdeinit = Option.map (List.map exs) c.Ast.cdeinit }
+    (* a struct's methods have bodies too (concept 21) — a `#line` inside one used to survive
+       expansion and be rejected as an unknown macro. Enums carry no bodies, and a protocol
+       requirement is a signature, so those two really are pass-through. *)
+    | Ast.IStruct s -> Ast.IStruct { s with Ast.smethods = List.map expand_func s.Ast.smethods }
     | other -> other
   in
   { prog with Ast.items = List.map item prog.Ast.items }

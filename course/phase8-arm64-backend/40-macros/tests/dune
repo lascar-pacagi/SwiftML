@@ -1,3 +1,18 @@
-(executable (name lab) (modules lab) (libraries swiftml_macros) (flags (:standard -warn-error -a)))
-(cram (deps lab.exe))
-(tests (names test_macros) (modules test_macros) (libraries alcotest swiftml_macros) (flags (:standard -warn-error -a)))
+; The concept lab binary: the .t cram tests run ./lab.exe, which links THIS concept's library —
+; so the tests are RED until you fill this directory's TODO holes.
+(executable
+ (name lab)
+ (modules lab)
+ (libraries swiftml_macros)
+ (flags
+  (:standard -warn-error -a)))
+
+(cram
+ (deps lab.exe oracle-corpus.txt))
+
+(tests
+ (names test_macros)
+ (modules test_macros)
+ (libraries alcotest swiftml_macros)
+ (flags
+  (:standard -warn-error -a)))
