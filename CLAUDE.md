@@ -1082,6 +1082,37 @@ checkpoint each step.
   index table (concept → pipeline stage → folder → what you build), how a concept dir is structured +
   the commands, and the measured milestones. Both HTML + PDF render clean. Tree consistent: build
   clean, skeletons RED, comparison 31/31.
+- **PER-CONCEPT REVIEW PASS done, all 41 concepts (2026-09-03/04/05).** Every concept 00–40 was
+  brought to the testing standard above and its explainer re-read: `tests/lab.ml` built from THAT
+  concept's library with one flag per hole (never the phase binary, which links the whole chain);
+  the single end-to-end `.t` split into **one file per TODO hole**, each case a claim sentence,
+  every golden **promoted from `solution/`** and then read against its sentence; and a new
+  **`tests/oracle.t` + corpora in every concept** that re-asks `swiftc` on each run —
+  `oracle-corpus.txt` for programs that must build and run (stdout+exit byte-identical, at both
+  optimisation levels where the phase has `-O`, three-way in 33–37 where Backend B exists) and
+  `typecheck-corpus.txt` for accept/reject verdicts. Unit suites stay **exercise-neutral**
+  (`Alcotest.skip` for cases an exercise makes unobservable). Every concept verified GREEN via
+  `make check-solution` and TODO-on-skeleton via `make lab`; tree builds clean; `comparisons/`
+  stayed 32/32 throughout.
+  **The oracles found real bugs the per-concept corpora had missed** — a partial list, all fixed
+  and pinned: `p.x = e` not lowered at the field's type (a `nil` or a class into an optional field
+  miscompiled or crashed); `let k: K? = K(1)` freed its object early (the annotated-`let` path
+  bypassed `resolve_ty`); calling a captured function value was accepted and miscompiled (a guard
+  written `&& false`); `defer` inside a `do` did not fire on a locally-caught throw (PROOFREAD #7);
+  a spill home aliased the outgoing argument area, so an 11+-argument call overwrote a live value
+  (a new S1, found in 35); the large-frame prologue in 33/34 (PROOFREAD #8); 40's macro walk
+  skipping struct-method bodies (#9); 14's carry-gap crashing `swiftml3` on every optional program
+  (#5); `==`/`print` on aggregates reaching IRGen instead of sema; the `fmul double %d, 2`
+  literal; `let` stored properties unenforced; Swift's implicit `super.init()` rejected; and
+  concept 20's `-O` being untestable because every case compared it against `-Onone`.
+  Wording was swept tree-wide where swiftc's differs (`an operand`, `has no member`, `cannot
+  assign to property:`, `missing return in global function` / `instance method`, `return invalid
+  outside of a func`). Documented divergences are now *stated* in each explainer's §2 rather than
+  implied: `print`/`==` on aggregates, `%g` Double printing, ÷0 as UB, `[String]` rejected,
+  swiftc's own `-Onone`/`-O` disagreements on two ARC programs and on `try!`'s exit code.
+  Each explainer §2 now **recalls the grammar** (EBNF with `<-- new`, or an IR-recall table for a
+  concept that adds no syntax) and tables **every diagnostic** the learner must emit against
+  swiftc's, and §4 lists the files in fill order with the TODO/FAIL reading.
 - Build each concept's verified `solution/` only when you can run it (you can — toolchain is here).
 - Prefer reading the matching `swift/lib/…` file before implementing — it's the design oracle.
 
