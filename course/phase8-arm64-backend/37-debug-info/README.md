@@ -2,9 +2,9 @@
 
 **Objective:** make a `swiftml`-built native binary **debuggable**. Thread source line numbers from
 the AST all the way to the machine code, emit `.file`/`.loc` directives, and let the assembler turn
-them into a real **DWARF line table** — so `lldb` can set a breakpoint by source line and step
-through the program. This is the last piece of **M8-core**: a from-scratch native backend that is
-not just correct and fast, but *debuggable*.
+them into a real **DWARF line table** — an address↔line map, the section a debugger consults
+first. This is the last piece of **M8-core**: a from-scratch native backend that is not just
+correct and fast, but traceable back to source.
 
 **You edit:** `isel.ml` — `TODO(37)`: `emit_loc`, which emits a `.loc` directive whenever the source
 line changes. The line *threading* (SILGen stamps each SIL value with its statement's line; the SIL
@@ -19,17 +19,20 @@ carries a `lines` map; `clang -g` builds the DWARF) is given.
 - **`.loc` / `.file` emission.** isel emits `Arm64.Loc n` when the line changes; the printer renders
   `.file 1 "<source>"` once and `.loc 1 n 0` per change. `clang -g` assembles these into a DWARF
   line table.
-- **A debuggable native build.** The `--native` build now passes `-g` and keeps the `.o` (macOS
-  stores DWARF there and leaves a debug map in the executable), so `lldb` can step by source line.
+- **A `-g` native build.** The `--native` build now passes `-g` and keeps the `.o` (macOS stores
+  DWARF there and leaves a debug map in the executable, and `clang -g x.s -o exe` would delete the
+  temporary object and lose the DWARF entirely).
 
 ## Done when
 `make lab C=phase8-arm64-backend/37-debug-info` green: the asm carries a `.file` and one `.loc` per
 statement line; the built `.o` has a **DWARF line table** mapping machine addresses to the right
-source lines (verified with `dwarfdump --debug-line`); and programs still run and match `swiftc`. A
-manual `lldb` session (in the explainer) confirms breakpoints-by-line and stepping resolve.
+source lines (verified with `dwarfdump --debug-line`); and programs still run and match `swiftc`
+under both backends.
 
-> **Scope (v0).** A **line table** only — address ↔ source line, which is what enables breakpoints
-> and stepping. Full debug info (variable locations / DWARF `.debug_info` DIEs, so you can `print x`
-> in the debugger; `lldb` *expression* evaluation; column-accurate locations; inlined-frame info) is
-> the documented next layer. We let `clang -g` build the DWARF from our directives rather than
-> hand-encode the line-number program (that encoding is the exercise).
+> **Scope (v0), stated plainly.** A **line table** only. `.debug_info` is EMPTY, so `lldb` has no
+> compile-unit or subprogram DIE to bind a source breakpoint to: `breakpoint set --file … --line …`
+> answers "no locations (pending)". The table is real and complete — `dwarfdump --debug-line` is the
+> automated check — and it is what a debugger needs *first*, not all it needs. Emitting a minimal
+> compile unit + subprogram DIE (exercise 2) is what makes the debugger work; variable locations,
+> column accuracy, `.dSYM` and inlined frames follow. We also let `clang -g` build the DWARF from our
+> directives rather than hand-encode the line-number program (that encoding is exercise 1).

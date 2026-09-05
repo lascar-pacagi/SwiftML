@@ -193,11 +193,16 @@ enum/proto method bodies.
 - **`39` actor isolation is per-TYPE, not per-INSTANCE** — `current_class <> Some cn` lets a method
   of `actor A` call another `A` instance synchronously; swiftc requires `await`. Honest v0 note
   missing (cram only tests `self.`-calls).
-- **`37` lldb stepping doesn't actually work** — the pass emits a correct `__debug_line` table
-  (`dwarfdump` is right) but **no `__debug_info`** DIEs, which the macOS debug map/lldb require to
-  bind a source breakpoint. README "Done when … lldb stepping" and the §8 lldb transcript claim a
-  capability the artifact lacks. Either emit minimal CU+subprogram DIEs or rescope to
-  "dwarfdump-readable line table".
+- **`37` lldb stepping doesn't actually work** **[FIXED — rescoped, concept-review pass 33-40]** —
+  the pass emits a correct `__debug_line` table (`dwarfdump` is right) but **no `__debug_info`**
+  DIEs, which the macOS debug map/lldb require to bind a source breakpoint (re-confirmed this pass:
+  `breakpoint set --file x.swift --line 7` → "no locations (pending)"). Rescoped rather than
+  implemented: README's objective/scope note, the explainer's §1 outcome, the figure caption, the
+  §2 "What you can do with it" section (the invented lldb transcript replaced by a real `dwarfdump`
+  one plus the reason the debugger cannot bind) and §7's recap now claim a dwarfdump-readable line
+  table and say plainly what is missing. Exercise 2 is reframed as emitting the compile-unit +
+  subprogram DIEs that make the debugger claim true, and `tests/debuginfo-dwarf.t` pins
+  `DW_TAG_compile_unit` count = 0 so the gap cannot close silently.
 - Cosmetic: `Double` prints via `%g` (`1.0`→`1`); redeclaration says `'g'` not `'g()'`;
   missing-return lacks the word "global"; a couple of 05 diagnostic wording/span offsets.
 

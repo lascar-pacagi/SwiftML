@@ -11,15 +11,18 @@ A compiler that produces correct, fast machine code is still missing something a
 has: **debuggability**. When you set a breakpoint at line 12 and the debugger stops there — when you
 single-step and the source line tracks the program counter — that's **debug info** at work: a
 mapping from machine addresses back to source locations. This concept builds the foundational piece,
-the **line table**, and threads it through the whole backend, so a `swiftml`-built native binary can
-be stepped in `lldb` by source line.
+the **line table**, and threads it through the whole backend, so a `swiftml`-built native binary
+carries a real DWARF address↔line map.
 
 It's the last piece of **M8-core**: the from-scratch ARM64 backend is correct (concept 33),
 fast (34), ABI-conformant (35), polished (36) — and now **debuggable**.
 
 - **You implement:** `emit_loc` — emitting a `.loc` source-line directive whenever the line changes.
-- **Outcome:** the built object has a real DWARF line table (`dwarfdump` confirms address→line), and
-  `lldb` steps the binary by source line.
+- **Outcome:** the built object has a real DWARF line table — `dwarfdump --debug-line` shows each
+  machine address against the source line it came from.
+- **Not in v0, and said plainly:** the `.debug_info` section stays empty, so `lldb` has no compile
+  unit or subprogram DIE to bind a source breakpoint to. The table is real; the debugger session
+  is exercise 2. §2 has the honest version.
 
 > **What's a line table?** Compiled code has no idea it came from "line 12" — it's just
 > instructions. The **line table** is a side table the compiler emits: a list of (machine address →
@@ -32,7 +35,7 @@ fast (34), ABI-conformant (35), polished (36) — and now **debuggable**.
 
 ### Threading a source line end-to-end
 
-![A source line, threaded all the way through: SILGen stamps each SIL value with its statement's line (a `lines : value→line` map on the SIL function); isel emits a `.loc 1 N 0` directive whenever the line changes; `clang -g` assembles those directives into a real DWARF line table (address→line); and `lldb` follows it to set breakpoints by line and step. macOS keeps the DWARF in the `.o` plus a debug map in the executable, so we keep the `.o`.](figs/debuginfo.png)
+![A source line, threaded all the way through: SILGen stamps each SIL value with its statement's line (a `lines : value→line` map on the SIL function); isel emits a `.loc 1 N 0` directive whenever the line changes; `clang -g` assembles those directives into a real DWARF line table (address→line), which `dwarfdump` reads back. macOS keeps the DWARF in the `.o` plus a debug map in the executable, so we keep the `.o`. A debugger needs this table AND the `.debug_info` DIEs, which v0 does not emit.](figs/debuginfo.png)
 
 The line number starts at the front end and has to *survive* every lowering. Here's the chain:
 
@@ -48,7 +51,8 @@ The line number starts at the front end and has to *survive* every lowering. Her
 4. **The assembler builds DWARF.** A `.file 1 "src.swift"` names the source; `clang -g` turns the
    stream of `.loc` directives into the DWARF `.debug_line` section — a real line-number program
    mapping each instruction address to its source line.
-5. **lldb reads it.** Breakpoint-by-line and single-stepping both consult this table.
+5. **A debugger reads it.** Breakpoint-by-line and single-stepping both consult this table — and
+   both need one more section besides, which is where v0 stops (below).
 
 The elegance is that the *line table is the easy part* once the line is threaded — `emit_loc` is
 three lines. The work is the plumbing (SILGen stamping every value), which is given; you write the
@@ -71,45 +75,58 @@ On Linux, DWARF lives in the executable and you're done. macOS is different: the
 pointing at the `.o` files). `lldb` follows the map to the `.o` to read the DWARF; `dsymutil` can
 also gather it into a `.dSYM` bundle. The practical consequence for us: `clang -g file.s -o exe`
 compiles to a *temporary* `.o`, links, and **deletes** the `.o` — so the executable's debug map
-points at nothing and `lldb` finds no line info. The fix is to **keep the `.o`**: assemble to
-`<out>.o`, then link it. Now the debug map resolves and `lldb` steps. (Our `dwarfdump` test reads the
-`.o`'s line table directly, which is reproducible regardless of the link step.)
+points at nothing and no line info survives the build at all. The fix is to **keep the `.o`**:
+assemble to `<out>.o`, then link it. Our `dwarfdump` test reads the `.o`'s line table directly,
+which is reproducible regardless of the link step.
 
-### What you can do with it
+### What you can do with it — and what you can't
 
 ```bash
-$ swiftml8 build square.swift --native -o square      # builds square + square.o (with DWARF)
-$ lldb square
-(lldb) breakpoint set --file square.swift --line 3
-Breakpoint 1: where = square`square + …, address = 0x…
-(lldb) run
-Process stopped at square.swift:3
-   1   func square(_ n: Int) -> Int {
-   2     let r = n * n
--> 3     return r
-   4   }
-(lldb) step
+$ swiftml8 build square.swift --native -o square    # builds square + square.o (with DWARF)
+$ dwarfdump --debug-line square.o
+Address    Line   Column  ...  Flags
+0x00000024 2      0            is_stmt
+0x00000030 3      0            is_stmt
+0x00000070 5      0            is_stmt
+...
 ```
 
-The debugger is stepping through *our* register-allocated, peephole-optimized ARM64 — and the source
-line tracks it, because every instruction carries the line it came from.
+Every address is against the line it came from, and it is *our* register-allocated,
+peephole-optimized ARM64 the table describes. That is a real, standard DWARF line table, produced
+by a real assembler from our directives.
+
+What it is not yet is a debugger session. `lldb square` followed by `breakpoint set --file
+square.swift --line 3` answers **"no locations (pending)"**, and it is right to: a debugger finds
+a file and a function through the **`.debug_info`** section — a `DW_TAG_compile_unit` DIE naming
+the source, a `DW_TAG_subprogram` DIE per function, `DW_TAG_variable` DIEs for the locals — and
+we emit none of it. The line table alone has no names in it; it is a table of numbers that
+`.debug_info` gives meaning to. Concept 33's `; UNSUPPORTED` comment made the same choice for a
+different reason: say what you do not do, in the artifact, rather than let someone discover it.
+
+So v0's claim is exactly this: **line numbers threaded end to end into a dwarfdump-readable DWARF
+line table**. Emitting a minimal compile-unit + subprogram DIE — enough for `lldb` to bind a
+breakpoint — is exercise 2, and it is a smaller step from here than it looks, because the hard
+part (knowing which line each instruction came from) is what you just built.
 
 > Oracle: the DWARF spec's "Line Number Program" chapter; LLVM's `.loc`/`.file` MC directives;
 > `man dwarfdump`; Apple's debug-map documentation (DWARF-in-`.o` + the linker's `N_OSO` map).
 
 ## 3. Build it, step by step
 
-In `isel.ml`, implement `emit_loc vv` (called before lowering each SIL instruction). Given:
-`f.Sil.lines` (the `value → line` map filled by SILGen), and `last_line` (the last line emitted):
+One hole: `emit_loc vv` in `isel.ml`, called once before each SIL instruction is lowered. It is a
+few lines, and each of the three things it has to decide is a rule the tests check separately.
 
-- look up `Hashtbl.find_opt f.Sil.lines vv`;
-- if it's `Some line` with `line > 0` and `line <> !last_line`: set `last_line := line` and
-  `emit (Arm64.Loc line)`;
-- otherwise do nothing (so consecutive instructions on the same statement share one `.loc`).
+- **Where the line comes from.** `f.Sil.lines` is the `value → line` map SILGen filled; `vv` is
+  the value about to be lowered. Not every value has an entry.
+- **When to emit.** A `.loc` is a *change* marker, not a per-instruction annotation. `last_line`
+  (given, and yours to maintain) is what makes a statement that lowers to a dozen instructions
+  cost one directive rather than twelve.
+- **What to skip.** Line 0 is not a source line; a value without a line has nothing to say.
 
-The line threading (SILGen stamping, the `lines` map, the `.file` directive, the `-g` build keeping
-the `.o`) is given. Reference: `solution/isel.ml`. Run with
-`make lab C=phase8-arm64-backend/37-debug-info`.
+Given: the whole threading chain (`Ast.stmt_line`, SILGen's `cur_line` and the stamping inside
+`emit`, the `lines` field on `Sil.func`), the `Arm64.Loc` instruction and its printer, the
+`.file` directive, and the `-g` build that keeps the `.o`. Reference: `solution/isel.ml`. Run
+with `make lab C=phase8-arm64-backend/37-debug-info`.
 
 ## 4. Test it
 
@@ -117,11 +134,30 @@ the `.o`) is given. Reference: `solution/isel.ml`. Run with
 make lab C=phase8-arm64-backend/37-debug-info
 ```
 
-cram: the asm has a `.file` and one `.loc` per statement line; the built `.o` has a DWARF line table
-whose addresses map to exactly the source lines with code (`dwarfdump --debug-line` shows
-`2 3 5 6 7 8`); programs still run and match `swiftc`. alcotest: a `.loc` is emitted for each source
-line; adjacent `.loc`s never repeat a line (deduped per statement); SILGen stamps SIL values with
-their line; the printed asm contains `.file` and `.loc`.
+One hole, but two things to be right about — the directives you emit, and the table the
+assembler builds out of them — so there is a file for each.
+
+- **`tests/debuginfo-loc.t`** is the directive stream: a `.file` naming the source; a `.loc` for
+  each line that has code (and none for the `func` header or the closing brace); one directive
+  for a statement that lowers to a dozen instructions; a `while` marking its condition line once,
+  because the back-edge returns to the same address. It ends by running the program against
+  `swiftc`, since debug info must be inert.
+- **`tests/debuginfo-dwarf.t`** is the artifact: `dwarfdump --debug-line` on the `.o`, showing
+  the addresses mapped to exactly the lines that have code, the statement-boundary rows a
+  debugger would offer as breakpoint locations, and the kept `.o` the macOS debug map needs. Its
+  last case is the honest one — `.debug_info` has zero DIEs, which is why the automated check is
+  `dwarfdump` and not an `lldb` session.
+- **`tests/oracle.t`** asks swiftc every run: 32 programs by `swiftc -Onone`, by Backend A and by
+  Backend B under two allocation rungs, byte-identical. A `.loc` is a directive, not an
+  instruction, so adding one must not change what a single program computes — this file is that
+  claim, over concept 36's whole corpus.
+- **`tests/test_debuginfo.ml`** pins the two rules from OCaml: every source line gets a `.loc`,
+  and no two ADJACENT directives repeat a line (the dedup), plus that SILGen really stamps the
+  values and the printer really renders `.file`/`.loc`.
+
+Reading the report: both cram files go green together — they are two views of one hole.
+`oracle.t` and the alcotest suite read `FAIL` rather than `TODO`, because their given-code cases
+(the front end, the SILGen stamping) pass before you write a line.
 
 ## 5. Benchmark it
 
@@ -136,9 +172,11 @@ a separate `.dSYM`) by default.
 1. **Hand-encode the line program.** Emit the DWARF `.debug_line` section yourself — the header plus
    the line-number program (special opcodes that advance address/line by deltas) — instead of
    `.loc` directives. The right way to *understand* the table you've been generating.
-2. **Variable locations (`.debug_info`).** Emit DWARF DIEs for each function and its variables, with
-   location expressions (`DW_OP_fbreg` for a frame slot, a register for an allocated value). Now
-   `lldb` can `print x`. This is the big next layer.
+2. **`.debug_info` DIEs — the section v0 leaves empty.** Emit a `DW_TAG_compile_unit` naming the
+   source and a `DW_TAG_subprogram` per function; that alone is what `lldb` needs to bind a
+   breakpoint by line to the table you already emit. Then add `DW_TAG_variable` DIEs with
+   location expressions (`DW_OP_fbreg` for a frame slot, a register for an allocated value), and
+   `print x` works too. This is the big next layer, and the one that makes the debugger claim true.
 3. **Column info & is_stmt.** Track columns (not just lines) and mark statement boundaries precisely,
    so the debugger steps statement-by-statement and points at the right sub-expression.
 4. **A `.dSYM`.** Run `dsymutil` after the link to gather DWARF into a bundle, so the executable is
@@ -150,14 +188,16 @@ a separate `.dSYM`) by default.
 
 Debug info is a **line table**: a map from machine addresses to source lines. We thread the line from
 the AST (SILGen stamps every SIL value), emit a `.loc` when it changes (your `emit_loc`), let
-`clang -g` build the DWARF, and keep the `.o` so `lldb` resolves it. The result is a `swiftml`-built
-native binary you can step through by source line — the last piece of **M8-core**.
+`clang -g` build the DWARF, and keep the `.o` so the debug map resolves. The result is a
+`swiftml`-built native binary carrying a real address↔line table — the last piece of
+**M8-core**. Honest boundary: that table is what a debugger needs *first*, not all it needs;
+without `.debug_info` DIEs `lldb` still cannot bind a breakpoint, and emitting them is exercise 2.
 
 **Milestone M8-core is reached:** the from-scratch ARM64 backend — instruction selection, a
 register-allocation ladder, AAPCS64 conformance, peephole polish, and debug info — compiles the
 scalar + control-flow + functions corpus correctly (differential vs both the LLVM path and `swiftc`),
-fast (graph-colouring ~2.9× over the naive baseline), and debuggable. Two backends now share one
-front end.
+fast (graph-colouring ~2.9× over the naive baseline), and traceable back to source. Two backends
+now share one front end.
 
 Next is the **project's final tail**: **38-async-await** (coroutine lowering + a cooperative
 executor), **39-actors** (isolation), and **40-macros** (a compile-time expression-macro expander) —
@@ -209,11 +249,16 @@ lengths), then the program — for each row, a `DW_LNS_advance_pc` / `DW_LNS_adv
 `DW_LNE_end_sequence`. It's the bytecode the assembler was generating from your `.loc`s; writing it
 once demystifies the format.
 
-### 2 — variable locations
-Emit `.debug_info` DIEs: a `DW_TAG_subprogram` per function, with `DW_TAG_variable` children carrying
-a `DW_AT_location`. For a spilled value, the location is `DW_OP_fbreg <offset>` (frame-relative); for
-an allocated value, `DW_OP_reg<n>`. The hard part is that an allocated value's location *changes*
-over its live range — you'd emit a location *list*. With this, `(lldb) print r` works.
+### 2 — `.debug_info` DIEs
+Two layers. The first is small and is what unlocks the debugger: a `DW_TAG_compile_unit` DIE naming
+the source file and its language, plus a `DW_TAG_subprogram` per function with `DW_AT_low_pc` /
+`DW_AT_high_pc` and `DW_AT_decl_line`. With just those, `lldb` can bind a `breakpoint set --file … --line …`
+to the line table you already emit — the section is emitted through `.section
+__DWARF,__debug_info` plus a matching `__debug_abbrev`, so it is assembler directives, not new
+machinery. The second layer is variables: `DW_TAG_variable` children carrying a `DW_AT_location` —
+`DW_OP_fbreg <offset>` for a spilled value, `DW_OP_reg<n>` for an allocated one. That one is
+genuinely hard, because an allocated value's location *changes* over its live range, so a single
+expression is not enough and you need a location *list*. With it, `(lldb) print r` works.
 
 ### 3 — column info & is_stmt
 Track the column from the span (`span.lo.col`) and pass it as the third `.loc` field; mark the first
