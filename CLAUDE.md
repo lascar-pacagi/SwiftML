@@ -1018,7 +1018,7 @@ checkpoint each step.
   incremental compilation = the final exercises.
 - **PROJECT COMPLETE — all 41 concepts (00–40) done & verified, M0–M8 + tail all green.** From a
   single integer (Phase 0) to a Swift compiler subset: full value/reference type system (structs/
-  enums/optionals/tuples, pattern matching, generics+protocols, classes+inheritance, ARC+ownership,
+  enums/optionals, pattern matching, generics+protocols, classes+inheritance, ARC+ownership,
   closures, errors, CoW Array/String + map/filter/reduce, async/await + actors, macros); lowered
   through a real SIL + optimizer (mem2reg/SSA, fold, CSE/GVN, inline, specialize, ARC-opt) ≈ swiftc
   -O; emitted via TWO backends — the LLVM spine AND a from-scratch ARM64 backend (isel, regalloc

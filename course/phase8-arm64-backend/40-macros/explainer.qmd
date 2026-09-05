@@ -207,7 +207,7 @@ expansion *composes the language's own constructs*, which is what makes macros p
 
 **The project is done.** From a single integer in Phase 0 to a Swift compiler subset that:
 
-- parses and type-checks a large language — value types (structs, enums, optionals, tuples), pattern
+- parses and type-checks a large language — value types (structs, enums, optionals), pattern
   matching, generics & protocols, classes & inheritance, ARC & ownership, closures, error handling,
   a copy-on-write `Array`/`String` and the `map`/`filter`/`reduce` stdlib, async/await & actors, and
   now macros;
