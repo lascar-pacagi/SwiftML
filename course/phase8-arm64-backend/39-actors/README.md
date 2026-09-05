@@ -34,3 +34,9 @@ inside-actor access is synchronous; a regular `class` is unaffected.
 > documented but degenerate in our serial model. The rule covers instance-method calls; property
 > isolation, `nonisolated`, global actors (`@MainActor`), and `Sendable` checking are the next
 > layers (exercises).
+>
+> One more gap, stated plainly: our third condition is **per-TYPE**, not per-INSTANCE. A method of
+> `A` calling a *different* `A` instance synchronously is accepted here; swiftc rejects it (with
+> "…in a synchronous **actor-isolated** context", since the caller is isolated too). Tracking which
+> instance `self` is bound to is a dataflow question beyond v0. `tests/sema-isolation.t` pins the
+> divergence against `swiftc -typecheck` so it cannot drift into a silent claim.

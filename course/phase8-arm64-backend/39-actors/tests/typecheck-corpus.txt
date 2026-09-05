@@ -1,0 +1,18 @@
+actor C {\n  var v: Int\n  init() { v = 0 }\n  func get() -> Int { return v }\n}\nlet c = C()\nprint(c.get())
+actor C {\n  var v: Int\n  init() { v = 0 }\n  func get() -> Int { return v }\n}\nlet c = C()\nprint(await c.get())
+actor C {\n  var v: Int\n  init() { v = 0 }\n  func bump() { v = v + 1 }\n  func get() -> Int { return v }\n}\nlet c = C()\nawait c.bump()\nprint(await c.get())
+actor C {\n  var v: Int\n  init() { v = 0 }\n  func step() { v = v + 1 }\n  func twice() { self.step()\n    self.step() }\n  func get() -> Int { return v }\n}\nlet c = C()\nawait c.twice()\nprint(await c.get())
+class P {\n  var x: Int\n  init() { x = 5 }\n  func get() -> Int { return x }\n}\nlet p = P()\nprint(p.get())
+class P {\n  var x: Int\n  init() { x = 5 }\n  func get() -> Int { return x }\n}\nfunc use(_ q: P) -> Int { return q.get() }\nlet p = P()\nprint(use(p))
+actor C {\n  var v: Int\n  init() { v = 0 }\n  func get() -> Int { return v }\n}\nfunc peek(_ c: C) -> Int { return c.get() }\nlet c = C()\nprint(peek(c))
+actor C {\n  var v: Int\n  init() { v = 0 }\n  func get() -> Int { return v }\n}\nfunc peek(_ c: C) async -> Int { return await c.get() }\nlet c = C()\nprint(await peek(c))
+actor C {\n  var v: Int\n  init() { v = 0 }\n  func get() -> Int { return v }\n}\nlet c = C()\nvar t = 0\nfor i in 0 ..< 3 {\n  let g = c.get()\n  t = t + g\n}\nprint(t)
+actor C {\n  var v: Int\n  init() { v = 0 }\n  func get() -> Int { return v }\n}\nlet c = C()\nvar t = 0\nfor i in 0 ..< 3 {\n  let g = await c.get()\n  t = t + g\n}\nprint(t)
+actor C {\n  var v: Int\n  init() { v = 0 }\n  func get() -> Int { return v }\n}\nlet c = C()\nif c.get() > 0 { print(1) } else { print(2) }
+actor C {\n  var v: Int\n  init() { v = 0 }\n  func get() -> Int { return v }\n}\nlet c = C()\nlet g = await c.get()\nif g > 0 { print(1) } else { print(2) }
+actor C {\n  var v: Int\n  init() { v = 0 }\n  func get() -> Int { return v }\n}\nlet c = C()\nprint(await c.missing())
+class Base {\n  var x: Int\n  init() { x = 1 }\n  func get() -> Int { return x }\n}\nclass Derived: Base {\n  override func get() -> Int { return x + 1 }\n}\nlet d = Derived()\nprint(d.get())
+actor C {\n  var v: Int\n  init() { v = 3 }\n  func get() -> Int { return v }\n}\nfunc mk() -> C { return C() }\nprint(mk().get())
+actor C {\n  var v: Int\n  init() { v = 3 }\n  func get() -> Int { return v }\n}\nfunc mk() -> C { return C() }\nprint(await mk().get())
+actor C {\n  var v: Int\n  init() { v = 0 }\n  func bump() { v = v + 1 }\n}\nlet c = C()\nc.bump()\nprint(0)
+actor C {\n  var v: Int\n  init() { v = 0 }\n  func bump() { v = v + 1 }\n}\nlet c = C()\nawait c.bump()\nprint(0)

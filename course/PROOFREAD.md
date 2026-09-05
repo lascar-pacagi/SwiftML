@@ -201,11 +201,26 @@ enum/proto method bodies.
   alcotest on the token stream. Concepts 29/30 have no bracket token, so nothing to fix there; the
   same one-loop change is still wanted in the phase-8 copies (33-40), and the `( … )` half — a
   multi-line parameter or argument list — is untouched everywhere.
+- **An array stored PROPERTY mutated through a method crashes SILGen** *(found by this pass, while
+  building 39's runtime corpus)* — `class B { var xs: [Int]; func add(_ n: Int) { xs.append(n) } }`
+  type-checks and then hits `assert false` in `silgen.ml` (39's line 799, and the same line in every
+  carried copy from 31 on). Arrays in a class field are outside the v0 subset; the boundary should
+  be a sema diagnostic rather than an assertion. **[OPEN]** — kept out of 39's corpus, not fixed
+  (it belongs to concept 31's scope, not the isolation rule).
 - **String interpolation** `"\(x)"` prints the literal `(x)` — *silent* wrong output, no diagnostic
   (should at least be rejected). *Caught while probing.*
-- **`39` actor isolation is per-TYPE, not per-INSTANCE** — `current_class <> Some cn` lets a method
-  of `actor A` call another `A` instance synchronously; swiftc requires `await`. Honest v0 note
-  missing (cram only tests `self.`-calls).
+- **`39` actor isolation is per-TYPE, not per-INSTANCE** **[DOCUMENTED + PINNED — concept-review
+  pass 33-40]** — `current_class <> Some cn` lets a method of `actor A` call another `A` instance
+  synchronously; swiftc requires `await` (and words it "in a synchronous *actor-isolated* context",
+  since the caller is isolated too). Tracking which instance `self` is bound to is a dataflow
+  question beyond v0, so it is now stated rather than closed: a §2 subsection "The v0 divergence",
+  a scope paragraph in the README, and a `tests/sema-isolation.t` case that runs `swiftc -typecheck`
+  on the same file beside us, so the gap cannot drift into a silent claim.
+- **`39` isolation message dropped the parentheses** **[FIXED — concept-review pass 33-40]** — we
+  said `'get'` where `diag::actor_isolated_call_decl` (`DiagnosticsSema.def:5960`) renders
+  `%kind1` as `instance method 'get()'`. Fixed in 39's solution and in 40's carried-forward sema;
+  the two remaining differences (swiftc's `[#ActorIsolatedCall]` group tag and its note at the
+  declaration) are now listed in §2's diagnostics table.
 - **`37` lldb stepping doesn't actually work** **[FIXED — rescoped, concept-review pass 33-40]** —
   the pass emits a correct `__debug_line` table (`dwarfdump` is right) but **no `__debug_info`**
   DIEs, which the macOS debug map/lldb require to bind a source breakpoint (re-confirmed this pass:

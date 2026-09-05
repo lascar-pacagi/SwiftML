@@ -57,6 +57,48 @@ it's false and we reject. (We also track `current_class` — already there from 
 synchronous access *inside* the actor.) The set of actor names is collected up front from the
 declarations.
 
+### The subset you are growing into
+
+One keyword, and it is a *declaration* form — the expression grammar does not change at all.
+Written as EBNF (`[ x ]` optional, `{ x }` zero-or-more, `|` alternatives, quoted terminals):
+
+| lexeme | kind | |
+|---|---|---|
+| `actor` | keyword, where `class` goes | `<-- new` |
+
+```
+item        ::= func-decl | struct-decl | enum-decl | proto-decl
+              | class-decl | actor-decl | stmt
+class-decl  ::= "class" ident [ ":" ident ] "{" { member } "}"
+actor-decl  ::= "actor" ident "{" { member } "}"       (*              <-- new *)
+member      ::= "var" ident ":" type | init-decl | method-decl
+```
+
+`actor-decl` is `class-decl` minus inheritance — the parser routes both through `parse_class` and
+records `is_actor` from the keyword it saw. Nothing else in the grammar moves, which is the point:
+an actor is a class the type checker treats differently, not a new kind of thing.
+
+### The diagnostics you emit
+
+One, and it is swiftc's, near-verbatim:
+
+| program | our message | swiftc |
+|---|---|---|
+| `let c = Counter()`<br>`print(c.get())` | `error: call to actor-isolated instance method 'get()' in a synchronous nonisolated context` | same text, plus `[#ActorIsolatedCall]` and a note pointing at the declaration |
+
+The wording is `diag::actor_isolated_call_decl`, `DiagnosticsSema.def:5960` —
+`"call to %0 %kind1 in a synchronous %2 context"`, where `%0` and `%2` are `ActorIsolation`
+values and `%kind1` renders the declaration as *instance method `'get()'`* (with the parentheses;
+ours matches). Two honest gaps beside it:
+
+- swiftc attaches a **note** at the method — *"calls to instance method 'get()' from outside of
+  its actor context are implicitly asynchronous"* — and a diagnostic **group** tag. We emit the
+  error only.
+- swiftc's `%2` varies: from the top level it is *nonisolated*, but from inside another actor's
+  method it is *actor-isolated*, because the caller is isolated too. We always say
+  *nonisolated*, and only because our rule never fires in that position at all — see the v0
+  divergence below.
+
 ### An actor is a class at runtime
 
 Everything else — the `actor` keyword, the heap object, the `init`, the methods, dynamic dispatch —
@@ -77,18 +119,53 @@ build the part that makes actors *safe* (the type rule, which is real and matche
 that the runtime queue-hop a concurrent executor needs is the same `await`-suspend mechanism from
 concept 38, here trivial.
 
+### The v0 divergence: isolation is per-TYPE here, per-INSTANCE in Swift
+
+The third condition asks whether we are inside *the actor's type* (`current_class = Some cn`).
+Swift asks whether we are inside *that instance*. The difference shows up in exactly one shape —
+a method of `A` reaching into a **different** `A`:
+
+```swift
+actor A {
+  var v: Int
+  func step() { v = v + 1 }
+  func poke(_ other: A) { other.step() }   // swiftc: error. us: accepted.
+}
+```
+
+swiftc rejects it ("in a synchronous **actor-isolated** context"), and it is right to: `other` is
+a separate actor with a separate executor, so reaching into it synchronously is exactly the race
+the rule exists to prevent. Tracking instances rather than types needs the checker to know *which*
+value `self` is bound to, which is a real dataflow question and out of v0's scope. It is pinned as
+a divergence in `tests/sema-isolation.t` — with `swiftc -typecheck` run beside us on the same
+file, so the gap is on the page rather than in a footnote.
+
 > Oracle: `swift/lib/Sema/TypeCheckConcurrency.cpp` (the `ActorIsolation` checker — `SE-0306`);
 > `SerialExecutor` in `_Concurrency`. The diagnostic we match — *"call to actor-isolated instance
 > method '…' in a synchronous nonisolated context"* — is swiftc's, near-verbatim.
 
 ## 3. Build it, step by step
 
-In `sema.ml`, in the `Method_call` handler's `TClass cn` case, add the isolation check. Given:
-`actors` (the set of actor names), `in_await` (true under an `await`), `current_class` (the type
-whose method we're checking), and `m`/`span`. Emit
-`err span "call to actor-isolated instance method '%s' in a synchronous nonisolated context"` when
-**all three** hold: `Hashtbl.mem actors cn`, `not !in_await`, and `!current_class <> Some cn`. Then
-fall through to the normal method lookup. Reference: `solution/sema.ml`. Run with
+One hole, in `sema.ml`, in the `Method_call` handler's `TClass cn` case — the *only* place in the
+compiler that has to know actors exist. It is a guard before the ordinary method lookup: when the
+call is isolated, report it, then carry on checking the call normally (a diagnostic should not
+also cost you the argument checking).
+
+Three conditions have to hold together, and §2 argues each one:
+
+1. the receiver's type is an **actor** — `actors` is the set of names, filled in the same pass
+   that records class layouts;
+2. the call is **not under an `await`** — `in_await` is the flag set while the operand of an
+   `await` is being checked, so it is true for the awaited call and false for its neighbours;
+3. we are **outside** the actor — `current_class` is the type whose method body we are in.
+
+Each condition is load-bearing: drop the first and a plain `class` starts failing, drop the
+second and every correct program fails, drop the third and an actor cannot call its own methods.
+`tests/sema-isolation.t` has a case per condition for exactly that reason.
+
+The message is in §2's table, and it is worth matching character for character — the parentheses
+in `'get()'` included. Given: the `actors` set, `in_await`, `current_class`, the parser routing,
+and the whole runtime (an actor is a class). Reference: `solution/sema.ml`. Run with
 `make lab C=phase8-arm64-backend/39-actors`.
 
 ## 4. Test it
@@ -97,10 +174,29 @@ fall through to the normal method lookup. Reference: `solution/sema.ml`. Run wit
 make lab C=phase8-arm64-backend/39-actors
 ```
 
-cram: an actor (a `Bank`) runs and matches `swiftc` through awaited deposits/withdrawals; a
-synchronous non-awaited actor call is rejected with `swiftc`'s wording; inside-actor access is
-synchronous and a regular `class` is unaffected. alcotest: the sync call is rejected, the awaited
-call accepted, inside-actor access accepted, and a plain class is never isolated.
+- **`tests/actors-runtime.t`** is green before you start, and says what the hole is NOT about: a
+  `Bank` actor runs and matches `swiftc`, its SIL contains an ordinary `sil_vtable` and the word
+  "actor" zero times, and two bindings to one actor share one state. An actor *is* a class; only
+  the type checker knows otherwise. Read it first.
+- **`tests/sema-isolation.t`** (`TODO(39)`) has a case per condition, plus the case that fails if
+  you drop it: the rejection with swiftc's wording at the call's own column (with
+  `swiftc -typecheck` run beside it), a plain `class` staying accepted, the awaited call
+  accepted, a second un-awaited call in the *same statement* still rejected (the flag tracks the
+  operand, not the statement), `self.step()` inside the actor accepted, a nonisolated `func`
+  rejected like the top level, and the per-TYPE-not-per-INSTANCE divergence shown against swiftc.
+- **`tests/oracle.t`** asks swiftc every run, in two halves. 18 programs whose VERDICT must match
+  `swiftc -typecheck` — nine accepted, nine rejected, and each rejected program paired with the
+  awaited version of itself, so the corpus tests "does it refuse exactly the right half", not
+  "does it refuse". Then 10 programs compiled by `swiftc -Onone`, `swiftc -O` and our build at
+  `-Onone` and `-O`, run, byte-identical: the runtime claim that an actor behaves as its class.
+- **`tests/test_actors.ml`** pins the four verdicts from OCaml, on diagnostics rather than exit
+  codes.
+
+Reading the report: this hole only ever *rejects*, so its accept-cases are green from the start —
+`sema-isolation.t`, `oracle.t` and the alcotest suite all read `FAIL` rather than `TODO`, with the
+rejection cases red and the acceptance cases `OK`. That mixture IS the progress signal here:
+finishing the rule turns the red half green without disturbing the green half, which is the
+property a rule like this has to have.
 
 ## 5. Benchmark it
 
@@ -143,7 +239,7 @@ With it, the project — a complete Swift compiler subset, two backends — is d
     if Hashtbl.mem actors cn && (not !in_await) && !current_class <> Some cn then
       err span
         (Printf.sprintf
-           "call to actor-isolated instance method '%s' in a synchronous nonisolated context" m);
+           "call to actor-isolated instance method '%s()' in a synchronous nonisolated context" m);
     match Option.bind (Hashtbl.find_opt classes cn) (fun cl -> Types.vsig cl m) with
     | Some (ptys, ret) -> check_args (Printf.sprintf "method '%s'" m) ptys; ret
     | None -> err span (…); …)

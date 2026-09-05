@@ -362,7 +362,8 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
                executor. Inside the actor's own methods (`current_class = cn`) access is direct. *)
             if Hashtbl.mem actors cn && (not !in_await) && !current_class <> Some cn then
               err span
-                (Printf.sprintf "call to actor-isolated instance method '%s' in a synchronous nonisolated context" m);
+                (Printf.sprintf
+                   "call to actor-isolated instance method '%s()' in a synchronous nonisolated context" m);
             match Option.bind (Hashtbl.find_opt classes cn) (fun cl -> Types.vsig cl m) with
             | Some (ptys, ret) -> check_args (Printf.sprintf "method '%s'" m) ptys; ret
             | None ->
