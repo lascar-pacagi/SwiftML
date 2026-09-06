@@ -38,6 +38,18 @@ let test_scope () =
   (* but the outer scope is visible inside the block *)
   accepted "let outer = 1\nif true { print(outer) }"
 
+(* A watchdog. The holes in this concept are LOOPS — a `parse_block` that forgets to advance
+   never returns — and alcotest runs in-process, so without this the suite hangs instead of
+   failing. The cram files use `timeout 5`; this is the same guard for the unit tests. *)
+let () =
+  Sys.set_signal Sys.sigalrm
+    (Sys.Signal_handle
+       (fun _ ->
+         prerr_endline
+           "TIMEOUT after 30s — a test never finished. A loop that does not advance the parser?";
+         exit 124));
+  ignore (Unix.alarm 30)
+
 let () =
   Alcotest.run "sema-flow"
     [

@@ -14,6 +14,6 @@
 (tests
  (names test_parser test_sema)
  (modules test_parser test_sema)
- (libraries alcotest swiftml_flow)
+ (libraries alcotest unix swiftml_flow)
  (flags
   (:standard -warn-error -a)))
