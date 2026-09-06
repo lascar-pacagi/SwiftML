@@ -241,9 +241,15 @@ operators' precedence.
    In `parse_block`, after each statement: consume a `Newline` if there is one; if the next token
    is `}` or end of input the statement was the last, so that is fine too; anything else is
    `expected newline or end of statement` — the same message `parse_program` gives at top level,
-   reported at the token that is actually there. `else if` is not a third form: parse the `else`,
-   and if an `if` follows, recurse into `parse_if` and wrap the result in a one-element list — that is the `(if … ((if …)))` the AST
-   dump shows. `parse_expr` already stops at `{`, so a condition needs no parentheses and no
+   reported at the token that is actually there.
+
+   In `parse_if`, two details. `else if` is not a third form: parse the `else`, and if an `if`
+   follows, recurse into `parse_if` and wrap the result in a one-element list — that is the
+   `(if … ((if …)))` the AST dump shows. And `else` may start a **later line**: swiftc accepts any
+   number of blank lines between the then-block's `}` and the keyword, so look past the newlines
+   for it and **put them back** (save `p.pos`, restore it) when what follows is not an `else` —
+   they are the separator the caller is about to need. Both halves are loops, not single steps,
+   because `nl` is one *or more* newlines. `parse_expr` already stops at `{`, so a condition needs no parentheses and no
    lookahead. Every `expect`/`parse_ident` phrase these need is in §2's table.
 3. **`sema.ml`** — `&&`/`||`: both operands `Bool`, result `Bool`. Then the statements: `If`/`While`
    `check_expr cond Bool` and `check_block` the body (a loop also brackets the body with `loop_depth`);
@@ -277,8 +283,9 @@ one if-statement, while `--emit-ast` needs `parse_stmt` to dispatch on the new k
   two-statements-on-one-line error, and a block that runs off the end of the file.
 - `parser-if.t` — **`parse_if` on its own**, through `--emit-if`: `if` with and without `else`,
   `else if` chained three deep, empty blocks, a condition using the new logical operators, a
-  one-line `if`, `else` on the next line (and after a blank or comment line), that an `if` with
-  no `else` leaves those newlines for the caller, and the two missing-`{` errors. Green with
+  one-line `if`, `else` on the next line and four lines later (and after a comment line), that
+  an `if` with no `else` leaves every one of those newlines for the caller, and the two
+  missing-`{` errors. Green with
   `parse_block` + `parse_if`, before `parse_stmt` dispatches on anything new.
 - `parser-loops.t` — **the `parse_stmt` arms**, through `--emit-ast`: `while`, `for` with
   expression bounds, `break`/`continue`, nested loops, a `for` without `in`, a `for` without
@@ -290,7 +297,7 @@ one if-statement, while `--emit-ast` needs `parse_stmt` to dispatch on the new k
 - `sema-flow.t` — the statement rules: conditions, the immutable loop variable and its scope,
   Int bounds, `break`/`continue` in and out of loops, block scoping and shadowing.
 - `test_sema.ml` (alcotest `sema-flow`) — the exact diagnostics, in-process.
-- `oracle.t` — **the headline**: every program in `oracle-corpus.txt` (22, accept and reject
+- `oracle.t` — **the headline**: every program in `oracle-corpus.txt` (28, accept and reject
   side by side) goes to `swiftc -typecheck` and to your `--typecheck`, and the verdicts must
   agree. On a disagreement it prints our first diagnostic, so a rejection that is really an
   unfinished stage (`invalid character in source file` from a lexer that does not know `{`)
