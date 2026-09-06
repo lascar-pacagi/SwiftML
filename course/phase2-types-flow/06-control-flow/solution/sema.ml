@@ -12,6 +12,13 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
   let env : (string * (Types.ty * bool)) list ref = ref [] in
   let loop_depth = ref 0 in
   let err span msg = Diagnostics.error diags span msg in
+  (* GIVEN — the three operations on that stack.
+       lookup x    the closest binding of [x], innermost first, or None
+       bind n (t, is_var)   add a binding IN FRONT, so it shadows any outer one of the same name
+       in_scope f  run [f] in a nested scope: everything it binds is dropped afterwards
+     `bind` takes the pair the env holds — the type, and whether the name is a `var`. That flag is
+     what the assignment rule reads, so a `for` variable is bound `(Types.TInt, false)` and
+     assigning to it is refused by the concept-05 rule you already have. *)
   let lookup x = List.assoc_opt x !env in
   let bind name v = env := (name, v) :: !env in
   let in_scope (f : unit -> unit) =
