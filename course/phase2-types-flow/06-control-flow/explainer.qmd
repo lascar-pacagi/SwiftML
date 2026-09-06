@@ -247,9 +247,10 @@ operators' precedence.
    follows, recurse into `parse_if` and wrap the result in a one-element list — that is the
    `(if … ((if …)))` the AST dump shows. And `else` may start a **later line**: swiftc accepts any
    number of blank lines between the then-block's `}` and the keyword, so look past the newlines
-   for it and **put them back** (save `p.pos`, restore it) when what follows is not an `else` —
-   they are the separator the caller is about to need. Both halves are loops, not single steps,
-   because `nl` is one *or more* newlines. `parse_expr` already stops at `{`, so a condition needs no parentheses and no
+   for it and **put them back** when what follows is not an `else` — they are the separator the
+   caller is about to need. Saving `p.pos` before the skip and restoring it is the obvious way;
+   putting back a *single* newline works too, since the caller consumes one and then skips the
+   rest — both pass this concept's tests, and the first needs less reasoning to trust. `parse_expr` already stops at `{`, so a condition needs no parentheses and no
    lookahead. Every `expect`/`parse_ident` phrase these need is in §2's table.
 3. **`sema.ml`** — `&&`/`||`: both operands `Bool`, result `Bool`. Then the statements: `If`/`While`
    `check_expr cond Bool` and `check_block` the body (a loop also brackets the body with `loop_depth`);
