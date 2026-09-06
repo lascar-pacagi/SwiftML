@@ -2,7 +2,8 @@ Rename to <stage>-<hole>.t — ONE FILE PER TODO HOLE, not one per concept. `mak
 PASS/FAIL line per file, so file granularity is how a learner sees which hole they just finished.
 State the RED condition in the header: which TODO(NN) hole must be filled before this goes green.
 
-The paragraph above each case IS ITS NAME in the report (its first sentence, up to ~76 chars).
+The paragraph above each case IS ITS NAME in the report (its first sentence; a long one wraps
+under the label rather than being cut, but a claim that fits one line reads best).
 Write it as a claim that names the input and the expected outcome:
 
   `a == b` lexes as one `==`, not two `=` — maximal munch.

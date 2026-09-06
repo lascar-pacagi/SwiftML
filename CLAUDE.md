@@ -118,8 +118,9 @@ string cases are written `print("…")`, not `let s = "…"`, because `=` belong
 — otherwise a correct string scanner still shows red.
 
 **Every case carries a sentence, and it is the case's name in the report.** For cram that is the
-first sentence of the paragraph above the case (≤76 chars, else the runner elides it); write it as
-a claim naming the input and the outcome — *"`print("oops` reports an unterminated literal once, on
+first sentence of the paragraph above the case — the runner WRAPS it under the label rather than
+eliding it, so length costs a line, not meaning; write it as a claim naming the input and the
+outcome — *"`print("oops` reports an unterminated literal once, on
 the opening quote"*, not *"unterminated strings"*. For alcotest it is the `test_case` string, which
 **alcotest itself truncates near 34 characters** — keep those terse (`cannot find in scope; let
 const`) and put the detail in the group name.

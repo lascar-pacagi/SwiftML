@@ -45,8 +45,29 @@ function first_sentence(p,   s) {
   s = p
   if (match(s, /\. /)) s = substr(s, 1, RSTART)          # first sentence
   sub(/[:.][[:space:]]*$/, "", s); sub(/^[[:space:]]+/, "", s)
-  if (length(s) > 76) s = trunc_utf8(s, 75) "…"
   return s
+}
+# Wrap a case label instead of cutting it: a truncated sentence loses exactly the half that says
+# what the case expects. Breaks on spaces, continues under the label's first column.
+function wrap_label(s, width,   out, line, n, i, a, w) {
+  if (!("\200" in ord)) for (i = 0; i < 256; i++) ord[sprintf("%c", i)] = i
+  n = split(s, a, " ")
+  line = ""; out = ""
+  for (i = 1; i <= n; i++) {
+    w = a[i]
+    if (line == "") line = w
+    else if (vislen(line " " w) <= width) line = line " " w
+    else { out = out line "\n       "; line = w }
+  }
+  return out line
+}
+# length in characters, not bytes — a UTF-8 lead byte counts once, continuations not at all
+function vislen(s,   i, c, n) {
+  for (i = 1; i <= length(s); i++) {
+    c = ord[substr(s, i, 1)]
+    if (c < 128 || c >= 192) n++
+  }
+  return n
 }
 # awk here is byte-oriented: a cut inside a multibyte character (an em dash, a `…`) leaves a
 # partial sequence that later aborts the run ("towc: multibyte conversion failure").
@@ -189,7 +210,7 @@ cram { dline++; next }
   if (!ok) curcase = a[1]        # the box repeats this line just before the failure detail
   if (!seen[cur SUBSEP key]++) {
     if (ok) nok[cur]++; else nbad[cur]++
-    put(ok ? "  " G "OK  " Z " " line : "  " R "FAIL" Z " " line)
+    put(ok ? "  " G "OK  " Z " " wrap_label(line, 84) : "  " R "FAIL" Z " " wrap_label(line, 84))
   }
   next
 }
@@ -298,11 +319,11 @@ function cases_str(si, file, unstarted,   b, key, out) {
   for (b = 1; b <= nblk[file]; b++) {
     key = si SUBSEP b
     if (si && (key in bad)) {
-      if (unstarted) { out = out sprintf("  %s·%s   %s\n", D, Z, label[file, b]); continue }
-      out = out sprintf("  %sFAIL%s %s\n", R, Z, label[file, b])
+      if (unstarted) { out = out sprintf("  %s·%s   %s\n", D, Z, wrap_label(label[file, b], 84)); continue }
+      out = out sprintf("  %sFAIL%s %s\n", R, Z, wrap_label(label[file, b], 84))
       if (key in todo) out = out sprintf("         %snot implemented yet (the skeleton's failwith)%s\n", D, Z)
       else out = out detail[key]
-    } else out = out sprintf("  %sOK  %s %s\n", G, Z, label[file, b])
+    } else out = out sprintf("  %sOK  %s %s\n", G, Z, wrap_label(label[file, b], 84))
   }
   if (unstarted) out = out sprintf("       %snothing here passes yet — DETAIL=1 to see the diffs%s\n", D, Z)
   return out
