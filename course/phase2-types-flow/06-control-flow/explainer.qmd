@@ -187,12 +187,6 @@ places this concept reports, and the message each must produce:
 | between the range's bounds | `expected '..<'` |
 | between two statements with no newline between them | `expected newline or end of statement` |
 
-The last one you report **yourself**. `parse_program` already gives it between top-level
-statements, and your `parse_block` owes the same message between the statements of a block: the
-grammar separates them the same way in both, so `if c { x = 1 y = 2 }` is an error here exactly as
-it is in Swift. The closing `}` ends the last statement, so it is not an error there — that is what
-the trailing `[ statement ]` in the block production says.
-
 **Sema** — the tests compare these character for character:
 
 | program | message | swiftc |
