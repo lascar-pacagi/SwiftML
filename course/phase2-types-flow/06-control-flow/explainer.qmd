@@ -232,6 +232,9 @@ operators' precedence.
    | arm `Token.Kw_break` | the keyword alone | `Ast.Break span` |
    | arm `Token.Kw_continue` | the keyword alone | `Ast.Continue span` |
 
+   Each of these can be run the moment it is written: `--emit-block` reaches `parse_block`,
+   `--emit-if` reaches `parse_if`, and `--emit-ast` reaches the `parse_stmt` arms (§4).
+
    In `parse_block`, after each statement: consume a `Newline` if there is one; if the next token
    is `}` or end of input the statement was the last, so that is fine too; anything else is
    `expected newline or end of statement` — the same message `parse_program` gives at top level,
@@ -255,9 +258,9 @@ make lab C=phase2-types-flow/06-control-flow
 
 Eight cram files, one per hole and stage, plus two unit suites and the oracle — in the order you
 fill the holes. The lab binary has a flag per stage (`--emit-tokens`, `--emit-block`,
-`--emit-ast`, `--typecheck`), so each hole is reachable without the next one existing —
-`--emit-block` parses its whole input as a single block, which is how `parse_block` is tested
-before anything calls it:
+`--emit-if`, `--emit-ast`, `--typecheck`), so every hole is reachable before the thing that
+normally calls it exists: `--emit-block` parses its whole input as one block and `--emit-if` as
+one if-statement, while `--emit-ast` needs `parse_stmt` to dispatch on the new keywords:
 
 - `lexer-flow.t` — `--emit-tokens`: `{ }`, `&&`, `||`, `..<` (with and without spaces), and the
   three lone-character diagnostics with their columns. Green with the lexer arm alone.
@@ -269,10 +272,13 @@ before anything calls it:
   a block, so this file goes green with that one function, before `parse_if` or any loop exists.
   Statements in order, an empty block, blank lines however many, a one-line `{ print(1) }`, the
   two-statements-on-one-line error, and a block that runs off the end of the file.
-- `parser-if.t` — `if`, `if/else`, `else if` as a nested `if`, multi-statement and nested
-  blocks, a missing `{`. Green with `parse_block` + `parse_if`.
-- `parser-loops.t` — `while`, `for` with expression bounds, `break`/`continue`, nested loops,
-  a `for` without `in`, a `for` without `..<`. Green with the statement arms.
+- `parser-if.t` — **`parse_if` on its own**, through `--emit-if`: `if` with and without `else`,
+  `else if` as a nested `if`, multi-statement blocks, a one-line `if`, and a missing `{`. Green
+  with `parse_block` + `parse_if`, before `parse_stmt` dispatches on anything new.
+- `parser-loops.t` — **the `parse_stmt` arms**, through `--emit-ast`: `while`, `for` with
+  expression bounds, `break`/`continue`, nested loops, a `for` without `in`, a `for` without
+  `..<`, and an `if` inside a loop body — that last one because the dispatch has to know every
+  new keyword, not just the loops.
 - `test_parser.ml` (alcotest `parser-flow`) — the same syntax as AST structure.
 - `sema-logical.t` — `--typecheck`: `&&`/`||` accepted on Bools, both rejection wordings, and an
   annotation mismatch on their Bool result. Green with the `infer_binary` arm.

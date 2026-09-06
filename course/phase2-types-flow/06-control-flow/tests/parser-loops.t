@@ -40,3 +40,9 @@ Loops nest, and a body can hold every statement kind:
   $ printf 'for i in 0 to 3 {\n}\n' > e2.swift
   $ timeout 5 ./lab.exe --emit-ast e2.swift 2>&1 | head -1
   1:12: error: expected '..<'
+
+An `if` inside a loop body needs `parse_stmt` to dispatch on `if` as well as on the loop keywords:
+
+  $ printf 'while true {\n  if true {\n    print(1)\n  }\n  print(2)\n}\n' > nest2.swift
+  $ timeout 5 ./lab.exe --emit-ast nest2.swift
+  (while true ((if true ((print 1))) (print 2)))

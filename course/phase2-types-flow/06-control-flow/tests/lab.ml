@@ -3,15 +3,17 @@
    not see your work in this directory):
 
      ./lab.exe --emit-tokens <file>   the token stream            (the lexer hole)
-     ./lab.exe --emit-block  <file>   parse the file as ONE block (parse_block, on its own)
-     ./lab.exe --emit-ast    <file>   the whole program           (needs parse_stmt's new arms)
-     ./lab.exe --typecheck   <file>   lex → parse → sema          (the sema holes)
+     ./lab.exe --emit-block  <file>   parse the file as ONE block     (parse_block, alone)
+     ./lab.exe --emit-if     <file>   parse the file as ONE if-stmt   (parse_if, alone)
+     ./lab.exe --emit-ast    <file>   the whole program               (parse_stmt's new arms)
+     ./lab.exe --typecheck   <file>   lex → parse → sema              (the sema holes)
 
-   `--emit-block` exists so `parse_block` can be finished and tested before `parse_if` and the
-   loop statements are written: the file it reads IS a block, braces and all. *)
+   `--emit-block` and `--emit-if` exist so each function can be finished and tested BEFORE the
+   thing that normally calls it: the file they read is a block, or an if-statement, on its own.
+   Once `parse_stmt` dispatches on the new keywords, `--emit-ast` reaches them all. *)
 
 let usage () =
-  prerr_endline "usage: lab --emit-tokens|--emit-block|--emit-ast|--typecheck <file.swift>";
+  prerr_endline "usage: lab --emit-tokens|--emit-block|--emit-if|--emit-ast|--typecheck <file.swift>";
   exit 2
 
 let emit_of_flag : string -> Driver.emit option = function
@@ -25,20 +27,21 @@ let read_file (path : string) : string =
   Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
       really_input_string ic (in_channel_length ic))
 
-(* parse the file as a single block and print it, so the report is about parse_block alone *)
-let emit_block (file : string) : unit =
+(* parse the file as ONE construct and print it, so the report is about that function alone *)
+let emit_one (file : string) (parse : Parser.t -> string) : unit =
   let diags = Diagnostics.create () in
   let toks = Lexer.tokenize (Lexer.create (read_file file) diags) in
   let bail () = if Diagnostics.has_errors diags then (Diagnostics.print diags; exit 1) in
   bail ();
   let p = Parser.create toks diags in
-  let stmts = Parser.parse_block p in
+  let out = parse p in
   bail ();
-  print_endline (Ast.dump_block stmts)
+  print_endline out
 
 let () =
   match Array.to_list Sys.argv with
-  | [ _; "--emit-block"; file ] -> emit_block file
+  | [ _; "--emit-block"; file ] -> emit_one file (fun p -> Ast.dump_block (Parser.parse_block p))
+  | [ _; "--emit-if"; file ] -> emit_one file (fun p -> Ast.dump_stmt (Parser.parse_if p))
   | _ :: flag :: [ file ] when emit_of_flag flag <> None ->
       Driver.compile_file ~src_path:file ~emit:(Option.get (emit_of_flag flag))
   | _ -> usage ()
