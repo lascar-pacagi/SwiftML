@@ -19,6 +19,14 @@ let advance (p : t) : Token.t =
   if p.pos < Array.length p.toks - 1 then p.pos <- p.pos + 1;
   tok
 
+(* GIVEN — a lookahead that may have to un-read what it read. `mark` remembers where the cursor
+   is; `put_back` returns it there. Use them when you must peek PAST something to decide, and
+   leave the input untouched if the answer is no: `else` may start a line of its own, so
+   `parse_if` skips newlines to look for it and puts the cursor back when it finds anything
+   else — those newlines are the separator the caller is about to need. *)
+let mark (p : t) : int = p.pos
+let put_back (p : t) (saved : int) : unit = p.pos <- saved
+
 let expect (p : t) (k : Token.kind) (what : string) : Token.t =
   let tok = peek p in
   if tok.Token.kind = k then advance p
@@ -385,6 +393,11 @@ and parse_if (p : t) : Ast.stmt =
   else
   let cond = parse_expr p in
   let then_blk = parse_block p in
+  (* `else` may start a later line — look past the newlines for it, and put the cursor back if
+     what follows is not an `else`. *)
+  let saved = mark p in
+  while peek_kind p = Token.Newline do ignore (advance p) done;
+  if peek_kind p <> Token.Kw_else then put_back p saved;
   let else_blk =
     if peek_kind p = Token.Kw_else then (
       ignore (advance p);
