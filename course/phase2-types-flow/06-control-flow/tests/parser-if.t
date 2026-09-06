@@ -81,6 +81,21 @@ A blank line before `else` is fine too, and so is a comment-only line:
   $ timeout 5 ./lab.exe --emit-if i10.swift
   (if c ((print 1)) ((print 2)))
 
+However many lines separate them: `nl` is one-or-more newlines, so the skip is a loop, not one
+step. swiftc accepts this too:
+
+  $ printf 'if c {\n  print(1)\n}\n\n\n\nelse {\n  print(2)\n}\n' > i12.swift
+  $ timeout 5 ./lab.exe --emit-if i12.swift
+  (if c ((print 1)) ((print 2)))
+
+And the put-back is a loop as well — four blank lines after an `if` with no `else` are still the
+caller's separator, not part of the statement:
+
+  $ printf 'if c {\n  print(1)\n}\n\n\n\nprint(2)\n' > i13.swift
+  $ timeout 5 ./lab.exe --emit-ast i13.swift
+  (if c ((print 1)))
+  (print 2)
+
 But an `if` with no `else` still ends at its `}`: the newlines after it are left for the caller,
 so the statement that follows parses as its own:
 
