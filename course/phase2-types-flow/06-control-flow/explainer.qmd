@@ -301,11 +301,18 @@ one if-statement, while `--emit-ast` needs `parse_stmt` to dispatch on the new k
   `..<`, and an `if` inside a loop body — that last one because the dispatch has to know every
   new keyword, not just the loops.
 - `test_parser.ml` (alcotest `parser-flow`) — the same syntax as AST structure.
-- `sema-logical.t` — `--typecheck`: `&&`/`||` accepted on Bools, both rejection wordings, and an
-  annotation mismatch on their Bool result. Green with the `infer_binary` arm.
+- `sema-logical.t` — `--typecheck`: `&&`/`||` on Bools, chained and mixed, fed by comparisons and
+  feeding a condition; both rejection wordings (`Double` and `Bool`, two `String`s); two bad
+  operands reporting twice; an annotation mismatch on their Bool result. Green with the
+  `infer_binary` arm.
 - `sema-flow.t` — the statement rules: conditions, the immutable loop variable and its scope,
-  Int bounds, `break`/`continue` in and out of loops, block scoping and shadowing.
-- `test_sema.ml` (alcotest `sema-flow`) — the exact diagnostics, in-process.
+  Int bounds (both of them, and the body still checked when a bound is wrong), `break`/`continue`
+  in and out of loops and after one, three levels of nesting, then-and-else as sibling scopes,
+  and shadowing — including a loop variable shadowing an outer name of the same type.
+- `test_sema.ml` (alcotest `sema-flow`) — the exact diagnostics, in-process, plus two groups the
+  cram files cannot express as sharply: **recovery** (every rule reports exactly once, and one run
+  reports everything it can see — the property a wrong `err`-then-return pair breaks) and **loop
+  context** (the depth counter goes back down, so what matters is where a statement sits).
 - `oracle.t` — **the headline**: every program in `oracle-corpus.txt` (28, accept and reject
   side by side) goes to `swiftc -typecheck` and to your `--typecheck`, and the verdicts must
   agree. On a disagreement it prints our first diagnostic, so a rejection that is really an

@@ -75,3 +75,69 @@ An inner `let` may shadow an outer name, and the outer one is back after the blo
   $ printf 'let x = 1\nif true {\n  let x = "s"\n  print(x)\n}\nlet y: Int = x\n' > s3.swift
   $ timeout 5 ./lab.exe --typecheck s3.swift; echo "exit=$?"
   exit=0
+
+An `else` block is checked like any other, and gets its own scope:
+
+  $ printf 'var n = 0\nif n == 0 {\n  let a = 1\n  n = a\n} else {\n  let a = "s"\n  print(a)\n}\nprint(n)\n' > s4.swift
+  $ timeout 5 ./lab.exe --typecheck s4.swift; echo "exit=$?"
+  exit=0
+
+A name from the then-block is not in scope in the else-block — the two are siblings:
+
+  $ printf 'if true {\n  let a = 1\n} else {\n  print(a)\n}\n' > s5.swift
+  $ timeout 5 ./lab.exe --typecheck s5.swift; echo "exit=$?"
+  4:9: error: cannot find 'a' in scope
+  exit=1
+
+Conditions nest: an `if` inside a `while` inside a `for`, each checked in its own scope:
+
+  $ printf 'var s = 0\nfor i in 0 ..< 3 {\n  var j = 0\n  while j < i {\n    if j == 1 {\n      s = s + j\n    }\n    j = j + 1\n  }\n}\nprint(s)\n' > s6.swift
+  $ timeout 5 ./lab.exe --typecheck s6.swift; echo "exit=$?"
+  exit=0
+
+The loop variable shadows an outer name of the same type, and the outer one is back afterwards:
+
+  $ printf 'var i = 100\nfor i in 0 ..< 3 {\n  print(i)\n}\ni = 7\nprint(i)\n' > s7.swift
+  $ timeout 5 ./lab.exe --typecheck s7.swift; echo "exit=$?"
+  exit=0
+
+A `break` in a `for` body is fine, and so is one in a `while` nested in a `for`:
+
+  $ printf 'for i in 0 ..< 3 {\n  if i == 1 { break }\n  var j = 0\n  while j < 2 {\n    continue\n  }\n}\n' > b3.swift
+  $ timeout 5 ./lab.exe --typecheck b3.swift; echo "exit=$?"
+  exit=0
+
+`break` AFTER a loop is outside it again — the depth goes back down:
+
+  $ printf 'while true {\n  break\n}\nbreak\n' > b4.swift
+  $ timeout 5 ./lab.exe --typecheck b4.swift; echo "exit=$?"
+  4:1: error: 'break' is only allowed inside a loop
+  exit=1
+
+The condition of a `while` may use a name the loop itself assigns, and the body may shadow it:
+
+  $ printf 'var n = 3\nwhile n > 0 {\n  let n = "inner"\n  print(n)\n}\n' > s8.swift
+  $ timeout 5 ./lab.exe --typecheck s8.swift; echo "exit=$?"
+  exit=0
+
+A range bound may be any Int expression, including one using the outer variables:
+
+  $ printf 'let lo = 1\nvar hi = 5\nfor i in lo + 1 ..< hi * 2 {\n  hi = i\n}\nprint(hi)\n' > f4.swift
+  $ timeout 5 ./lab.exe --typecheck f4.swift; echo "exit=$?"
+  exit=0
+
+Both bounds are checked, so two bad ones report twice:
+
+  $ printf 'for i in "a" ..< true {\n}\n' > f5.swift
+  $ timeout 5 ./lab.exe --typecheck f5.swift; echo "exit=$?"
+  1:10: error: cannot convert value of type 'String' to specified type 'Int'
+  1:18: error: cannot convert value of type 'Bool' to specified type 'Int'
+  exit=1
+
+The body is checked even when the bounds are wrong — one run reports everything:
+
+  $ printf 'for i in 0.0 ..< 3 {\n  print(nope)\n}\n' > f6.swift
+  $ timeout 5 ./lab.exe --typecheck f6.swift; echo "exit=$?"
+  1:10: error: cannot convert value of type 'Double' to specified type 'Int'
+  2:9: error: cannot find 'nope' in scope
+  exit=1
