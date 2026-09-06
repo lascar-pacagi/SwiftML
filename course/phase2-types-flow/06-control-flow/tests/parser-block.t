@@ -48,3 +48,30 @@ A block that runs off the end of the file is "expected '}'", at the end:
   $ timeout 5 ./lab.exe --emit-block b7.swift; echo "exit=$?"
   3:1: error: expected '}'
   exit=1
+
+A block whose statements are every given form — binding, reassignment, bare expression:
+
+  $ printf '{\n  let a = 1\n  var b = 2\n  b = a + b\n  print(b)\n  b\n}\n' > b8.swift
+  $ timeout 5 ./lab.exe --emit-block b8.swift
+  ((let a 1) (var b 2) (= b (+ a b)) (print b) b)
+
+The `}` may sit on the same line as the last statement of a multi-statement block:
+
+  $ printf '{\n  let a = 1\n  print(a) }\n' > b9.swift
+  $ timeout 5 ./lab.exe --emit-block b9.swift
+  ((let a 1) (print a))
+
+A missing `{` is reported at the token that is there, and nothing is parsed as a block:
+
+  $ printf 'print(1)\n' > b10.swift
+  $ timeout 5 ./lab.exe --emit-block b10.swift; echo "exit=$?"
+  1:1: error: expected '{'
+  2:1: error: expected '}'
+  exit=1
+
+A statement that is itself broken is reported inside the block, once:
+
+  $ printf '{\n  let = 1\n}\n' > b11.swift
+  $ timeout 5 ./lab.exe --emit-block b11.swift; echo "exit=$?"
+  2:7: error: expected identifier
+  exit=1

@@ -173,6 +173,11 @@ and parse_if (p : t) : Ast.stmt =
   let kw = advance p (* if *) in
   let cond = parse_expr p in
   let then_blk = parse_block p in
+  (* `else` may start the next LINE — swiftc accepts that, so look past newlines for it, and put
+     them back when what follows is not an `else` (they are the separator the caller needs). *)
+  let saved = p.pos in
+  while peek_kind p = Token.Newline do ignore (advance p) done;
+  if peek_kind p <> Token.Kw_else then p.pos <- saved;
   let else_blk =
     if peek_kind p = Token.Kw_else then (
       ignore (advance p);

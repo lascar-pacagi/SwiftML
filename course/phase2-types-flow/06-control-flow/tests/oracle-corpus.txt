@@ -22,3 +22,6 @@ let b: Int = true && false
 let a = true\nlet b = a & false
 if true {\n  print(1) print(2)\n}
 let a = 1\nif true {\n  let b = 2\n  print(b)\n}\nprint(a)
+let c = true\nif c {\n  print(1)\n}\nelse {\n  print(2)\n}
+let c = true\nif c {\n  print(1)\n}\n\nelse {\n  print(2)\n}
+var n = 0\nwhile n < 3 {\n  n = n + 1 }\nprint(n)
