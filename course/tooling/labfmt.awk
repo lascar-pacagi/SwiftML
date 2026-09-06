@@ -284,7 +284,23 @@ END {
         if (kind == "cram") out = out cases_str(si, tf, unstarted)
         else if (si) {
           b2 = body[si]
-          if (unstarted && !detail_all) gsub(/  \033\[31mFAIL\033\[0m |  FAIL /, "  " D "·" Z "    ", b2)
+          # An untouched suite fails every case the SAME way, and alcotest reports the detail of
+          # only the first — dangling under the last case, where it reads as if it belonged to it.
+          # List what the suite will check, then say once why nothing runs yet.
+          if (unstarted && !detail_all) {
+            gsub(/  \033\[31mFAIL\033\[0m |  FAIL /, "  " D "·" Z "    ", b2)
+            why = ""
+            n2 = split(b2, bl, "\n"); b2 = ""
+            for (li = 1; li <= n2; li++) {
+              if (bl[li] ~ /^ *(\033\[[0-9;]*m)?(error|failed):/) {
+                if (why == "") { why = bl[li]; sub(/^ *(\033\[[0-9;]*m)?(error|failed):(\033\[0m)? */, "", why) }
+                continue
+              }
+              if (bl[li] ~ /^ *(Expected|Received):/ || bl[li] ~ /^ *└ /) continue
+              if (bl[li] != "" || li < n2) b2 = b2 bl[li] "\n"
+            }
+            if (why != "") b2 = b2 "       " D "nothing here passes yet — " why Z "\n"
+          }
           out = out b2
         }
       }
