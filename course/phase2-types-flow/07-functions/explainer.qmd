@@ -355,9 +355,14 @@ oracle — in the order you fill the holes:
   chain with and without a final `else`, a `return` inside a `while` and inside a `for`, a loop
   then a return, a return with unreachable statements after it, and several functions at once.
   `Sema.check` never runs, so this file reports while every other sema hole still raises.
-- `sema-passes.t` — `--typecheck`: the two-pass driver. Its first four cases need only the
-  driver (a statement-only program, a bad top-level `let`, a redeclaration, items checked in
-  order); the rest are the forward reference, `fib`, `isEven`/`isOdd` and need every hole.
+- `sema-passes.t` — `--typecheck`: the two-pass driver. Only its first two cases need the driver
+  alone, and only because they declare no functions (a bad top-level `let`, a statement-only
+  program). Every case after them declares one, so pass 2 reaches `check_func` — including the
+  redeclaration and the item-order cases, whose *diagnostic* your driver produces correctly long
+  before they can go green. That is worth knowing when you read the report: the driver prints
+  through `bail_on_errors` only after the whole program is checked, so a `failwith` in any later
+  hole takes the process down first and the errors you did produce never reach stdout. A `FAIL`
+  here means "something in this program is still unwritten", not "your two passes are wrong".
 - `sema-func.t` — `check_func`: parameters in scope and immutable, the fresh scope (no top-level
   names, no leak), unknown types, and the missing-return rule case by case — `if` without
   `else`, a loop, both branches returning, an `else if` chain, a statement after `return`.
