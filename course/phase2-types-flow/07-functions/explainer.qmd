@@ -305,9 +305,11 @@ Three skeletons; concepts 01–06 are filled in.
 
    **The definite-return analysis stands alone** — start there if you like. It is a pure function
    of the AST: no environment, no diagnostics, nothing else in the file. So it sits at module
-   level, and `test_sema.ml`'s *definite return* group calls `Sema.block_returns` on statements it
-   builds by hand, with no parser and no `check` in the way. Those five cases go green on that one
-   hole while every other TODO in `sema.ml` still raises.
+   level, and two tests reach it without going through `check`: `sema-definite-return.t`
+   (`make lab C=… T=sema-definite-return`) asks `--emit-returns` about each function in a program,
+   and `test_sema.ml`'s *definite return* group calls `Sema.block_returns` on statements it builds
+   by hand — no parser at all. Both go green on that one hole while every other TODO in `sema.ml`
+   still raises.
 
    The rest do have an order, and `check` forces it: fill the **two passes first**, because they
    are its entry point and until they exist no sema *program* can be checked — every sema cram
@@ -324,7 +326,7 @@ Reference: `solution/`.
 make lab C=phase2-types-flow/07-functions
 ```
 
-Nine cram files, one per hole (`make lab C=… T=sema-return` runs one), two unit suites and the
+Ten cram files, one per hole (`make lab C=… T=sema-return` runs one), two unit suites and the
 oracle — in the order you fill the holes:
 
 - `lexer-arrow.t` — `--emit-tokens`: `->` with and without spaces, `-` alone, `- >`, `a->-b`.
@@ -345,6 +347,11 @@ oracle — in the order you fill the holes:
 - `test_sema.ml` (alcotest `sema-funcs`) — its *definite return* group is the exception to that
   order: it builds statements as AST values and calls `Sema.block_returns` directly, so it grades
   that hole alone, before `check` runs at all.
+- `sema-definite-return.t` — `--emit-returns`: the analysis on its own, one case per rule — a
+  plain `return`, a body with none, an `if` with and without an `else`, one arm only, an `else if`
+  chain with and without a final `else`, a `return` inside a `while` and inside a `for`, a loop
+  then a return, a return with unreachable statements after it, and several functions at once.
+  `Sema.check` never runs, so this file reports while every other sema hole still raises.
 - `sema-passes.t` — `--typecheck`: the two-pass driver. Its first four cases need only the
   driver (a statement-only program, a bad top-level `let`, a redeclaration, items checked in
   order); the rest are the forward reference, `fib`, `isEven`/`isOdd` and need every hole.
