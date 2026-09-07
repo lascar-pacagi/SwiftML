@@ -224,10 +224,21 @@ cram case, character for character.
 by `>` is still `Minus`.
 
 **Parser** — the given `expect` / `parse_ident` helpers say `expected <what>`, at the token found
-instead; you choose the phrase: `'('`, `a parameter name`, `':'`, `a parameter type`, `')'`,
-`a function name`, `a return type`, and `parse_block`'s `'{'`. The tests pin the *first* error of
-a malformed declaration only — `expect` does not skip the offending token, so what follows is
-recovery noise, and a different recovery is not wrong.
+instead; you supply the phrase, one per site:
+
+| site | phrase |
+|---|---|
+| the name after `func` | `a function name` |
+| the `(` opening the parameter list | `'('` |
+| each parameter's identifier (label or name) | `a parameter name` |
+| the `:` before a parameter's type | `':'` |
+| that type | `a parameter type` |
+| the `)` closing the list | `')'` |
+| the type after `->` | `a return type` |
+| the body's opening brace, in `parse_block` | `'{'` |
+
+The tests pin the *first* error of a malformed declaration only — `expect` does not skip the
+offending token, so what follows is recovery noise, and a different recovery is not wrong.
 
 **Sema** — the tests compare these character for character:
 
