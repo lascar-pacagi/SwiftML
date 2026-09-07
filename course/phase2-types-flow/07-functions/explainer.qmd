@@ -311,12 +311,11 @@ Three skeletons; concepts 01–06 are filled in.
    by hand — no parser at all. Both go green on that one hole while every other TODO in `sema.ml`
    still raises.
 
-   The rest do have an order, and `check` forces it: fill the **two passes first**, because they
-   are its entry point and until they exist no sema *program* can be checked — every sema cram
-   file reads `TODO` whatever else you have written. Then `check_func`, which is where the
-   analysis gets used: it asks `block_returns` about every non-`Void` function, so leaving that
-   hole raising while you write this one puts red across all five sema files. Then `return`, then
-   the call; §4 lists which file each turns green.
+   The other four all run inside `check`, so they do have an order. Start with the **two passes**.
+   They are `check`'s entry point: until they exist, no program is checked at all. Then
+   **`check_func`**. It calls `block_returns` on every function that declares a return type, so
+   write the analysis before this one — otherwise every such function dies there. Then **`return`**,
+   then the **call**. §4 says which file each turns green.
 
 Reference: `solution/`.
 
