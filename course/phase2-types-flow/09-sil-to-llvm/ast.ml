@@ -1,6 +1,5 @@
-(* AST for concept 07 — a *contract*. Concept-06 nodes + functions: a parameter, a
-   function declaration, a `return` statement, and a top-level *item* that is either a
-   function or a statement (so a program is an interleaving of the two).
+(* AST for concept 09 — a *contract*. It carries every node the concepts before it
+   introduced; the ones this concept adds, if any, are marked NEW below.
 
    Design oracle: swift/include/swift/AST/Decl.h (FuncDecl, ParamDecl), Stmt.h (ReturnStmt). *)
 
@@ -20,7 +19,7 @@ type expr =
   | Unary of unop * expr * Token.span
   | Binary of binop * expr * expr * Token.span
   | Call of string * expr list * Token.span
-  (* added in concept 05: `e as T` — a *coercion*. The type is written, so `infer` has
+  (* `e as T` — a *coercion*. The type is written, so `infer` has
      nothing to synthesise and must CHECK the operand against it. *)
   | Ascribe of expr * string * Token.span
 
@@ -33,9 +32,9 @@ type stmt =
   | For of { var : string; lo : expr; hi : expr; body : stmt list; span : Token.span }
   | Break of Token.span
   | Continue of Token.span
-  | Return of expr option * Token.span (* added in concept 07: `return` or `return e` *)
+  | Return of expr option * Token.span (* `return` or `return e` *)
 
-(* added in concept 07: functions *)
+(* functions *)
 type param = { pname : string; ptype : string (* written type name; sema resolves it *) }
 
 type func_decl = {

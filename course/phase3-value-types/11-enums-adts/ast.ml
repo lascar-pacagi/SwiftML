@@ -1,6 +1,5 @@
-(* AST for concept 07 — a *contract*. Concept-06 nodes + functions: a parameter, a
-   function declaration, a `return` statement, and a top-level *item* that is either a
-   function or a statement (so a program is an interleaving of the two).
+(* AST for concept 11 — a *contract*. It carries every node the concepts before it
+   introduced; the ones this concept adds, if any, are marked NEW below.
 
    Design oracle: swift/include/swift/AST/Decl.h (FuncDecl, ParamDecl), Stmt.h (ReturnStmt). *)
 
@@ -22,7 +21,7 @@ type expr =
   | Call of string * (string option * expr) list * Token.span (* function call OR struct init *)
   | Member of expr * string * Token.span (* `e.field` (concept 10) / `E.case` / `e.rawValue` (11) *)
   | Method_call of expr * string * (string option * expr) list * Token.span (* `e.name(args)` — 11: `E.case(args)` *)
-  (* added in concept 05: `e as T` — a *coercion*. The type is written, so `infer` has
+  (* `e as T` — a *coercion*. The type is written, so `infer` has
      nothing to synthesise and must CHECK the operand against it. *)
   | Ascribe of expr * string * Token.span
 
@@ -32,7 +31,7 @@ type arg = string option * expr
 type stmt =
   | Let of { name : string; is_var : bool; annot : string option; value : expr; span : Token.span }
   | Assign of { name : string; value : expr; span : Token.span }
-  | Set_member of { obj : string; field : string; value : expr; span : Token.span } (* added in concept 10: `p.x = e` *)
+  | Set_member of { obj : string; field : string; value : expr; span : Token.span } (* `p.x = e` *)
   | Expr_stmt of expr * Token.span
   | If of { cond : expr; then_blk : stmt list; else_blk : stmt list option; span : Token.span }
   | While of { cond : expr; body : stmt list; span : Token.span }
@@ -41,7 +40,7 @@ type stmt =
   | Continue of Token.span
   | Return of expr option * Token.span
 
-(* added in concept 07: functions *)
+(* functions *)
 type param = { pname : string; ptype : string (* written type name; sema resolves it *) }
 
 type func_decl = {
@@ -52,7 +51,7 @@ type func_decl = {
   fspan : Token.span;
 }
 
-(* added in concept 10: a struct declaration — stored properties in order *)
+(* a struct declaration — stored properties in order *)
 type field = {
   fld_name : string;
   fld_ty : string; (* written type name; sema resolves it *)

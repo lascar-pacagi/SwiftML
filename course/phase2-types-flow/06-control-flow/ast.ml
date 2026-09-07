@@ -31,7 +31,7 @@ type expr =
   | Unary of unop * expr * Token.span
   | Binary of binop * expr * expr * Token.span
   | Call of string * expr list * Token.span
-  (* added in concept 05: `e as T` — a *coercion*. The type is written, so `infer` has
+  (* `e as T` — a *coercion*. The type is written, so `infer` has
      nothing to synthesise and must CHECK the operand against it. *)
   | Ascribe of expr * string * Token.span
 
