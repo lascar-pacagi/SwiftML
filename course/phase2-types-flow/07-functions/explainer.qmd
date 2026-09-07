@@ -121,8 +121,9 @@ Type-checking a call is half the story; the other half (concepts 08–09) is *ru
 evaluates its arguments, hands control to the function with those values bound to the parameters, and
 the function `return`s a value and control to the caller. In SIL/LLVM that's a calling convention —
 arguments in registers/stack, a return slot, a return address — and **each function is its own
-control-flow graph** with its own entry and exits. You've now built every front-end piece those two
-concepts need.
+control-flow graph** with its own entry and exits. By the end of this concept you will have built
+every front-end piece those two need: a signature to lower the call against, a body checked in its
+own scope, and a return type to lower the `return` to.
 
 ### The subset you are growing into
 
