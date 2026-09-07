@@ -10,6 +10,19 @@ type ty =
   | TString
   | TVoid (* () — a value-less result *)
 
+(* NOT inverses, and `TVoid` is where that shows. `string_of_ty` produces what a DIAGNOSTIC says;
+   `of_name` reads what SOURCE writes — and Swift spells those differently. `Void` is a standard
+   library typealias for the empty tuple (`public typealias Void = ()`), so you write `Void` but
+   swiftc prints the canonical `()`: "cannot convert value of type '()' to specified type 'Int'",
+   which §2's table pins character for character.
+
+   So `of_name (string_of_ty TVoid)` is `None`. A function with no `-> T` returns `TVoid`
+   directly — there is no written name to resolve, and asking for one by its printed form is how
+   you end up reporting `cannot find type '()' in scope`.
+
+   (Divergence: swiftc also accepts `-> ()` as a written type. Our `parse_ident_ty` reads an
+   identifier and `()` is two punctuation tokens, so the subset cannot spell it either way.) *)
+
 let string_of_ty : ty -> string = function
   | TInt -> "Int"
   | TBool -> "Bool"
