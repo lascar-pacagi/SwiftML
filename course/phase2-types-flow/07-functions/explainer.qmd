@@ -266,6 +266,9 @@ Three skeletons; concepts 01–06 are filled in.
    (accept an optional external label — a `_` or identifier before the name — and drop it), up to
    `)`. `parse_func`: `func`, a name, `parse_params`, an optional `-> Type`, then `parse_block`.
    `return`: a bare `return` if the next token ends the statement, else `return <expr>`.
+   Check the list before you write the declaration that reaches it —
+   `make lab C=phase2-types-flow/07-functions T=parser-params` runs `parse_params` on its own
+   through `--emit-params`, whose input is a bare `(a: Int, …)`.
 3. **`sema.ml`** — four holes: **call typing** in `infer_call` (look the name up in `funcs`; check
    arity and each arg against its parameter type with `check_expr`; return the function's return
    type); **`return`** (valid only in a function — `current_ret` says whether you are in one, and
@@ -295,9 +298,10 @@ oracle — in the order you fill the holes:
   `-` arm already does that).
 - `parser-return.t` — `--emit-ast`: `return e`, and a bare `return` before a newline, a `}`, and
   end of input. Green with the `Kw_return` arm; sema never runs, so top-level returns are fine.
-- `parser-params.t` — parameter lists through `func f(…) { }`: empty, one, three, the `_`
-  label dropped, a named label dropped, and the first error of five malformed lists. Needs
-  `parse_params` and `parse_func` (the list is only reachable through a declaration).
+- `parser-params.t` — `--emit-params`: parameter lists on their own — empty, one, three, the
+  `_` label dropped, a named label dropped, and the first error of five malformed lists. Green
+  with `parse_params` alone: the mode parses one list and stops, so the source of each case is
+  the list itself and this file never waits for `parse_func`.
 - `parser-func.t` — declarations with and without `-> T`, multi-line bodies, an empty body,
   items interleaved with statements, and the first error of a nameless / typeless / bodyless
   declaration.
