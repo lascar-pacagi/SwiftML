@@ -295,9 +295,9 @@ Three skeletons; concepts 01–06 are filled in.
    arity and each arg against its parameter type with `check_expr`; return the function's return
    type); **`return`** (valid only in a function — `current_ret` says whether you are in one, and
    what it returns; the value, or its absence, against the Void rules of §2); the **definite-return
-   analysis** `stmt_returns` / `block_returns` (§2 works out all four cases: a `return` returns; an
-   `if` returns only with an `else` *and* both blocks returning; a loop never does; a block returns
-   if **any** statement does — the two are mutually recursive because an `if` holds blocks);
+   analysis** `stmt_returns` / `block_returns` (§2 reasons out which statements count and which do
+   not — four cases, two of which are the ones people get wrong; the pair is mutually recursive
+   because an `if` holds blocks, which is the shape the skeleton gives you);
    **`check_func`** (fresh `env`, parameters bound immutable, set `current_ret`, check the body,
    restore both, then the "missing return" rule, which is `block_returns` on the body); and the
    **two passes** (fill `funcs` with signatures — a name seen twice is a redeclaration — then check
