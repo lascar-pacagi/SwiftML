@@ -1,5 +1,6 @@
 (* Sema — concept 07 (skeleton): concepts 05–06 + functions. Concepts 05–06 are filled in;
-   you write the TODO(07) holes (call typing, return, check_func, the two passes). Reference:
+   you write the TODO(07) holes (call typing, return, the definite-return analysis, check_func,
+   the two passes). Reference:
    solution/sema.ml.
 
    New vs 06:
@@ -149,12 +150,17 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             (Printf.sprintf "cannot convert value of type '%s' to specified type '%s'"
                (Types.string_of_ty t) (Types.string_of_ty expected))
   in
-  (* does a block definitely return on every path? (the "missing return" check) *)
-  let rec stmt_returns = function
-    | Ast.Return _ -> true
-    | Ast.If { then_blk; else_blk = Some e; _ } -> block_returns then_blk && block_returns e
-    | _ -> false
-  and block_returns stmts = List.exists stmt_returns stmts (* the rest is unreachable *) in
+  (* Does a block definitely return on every path? — the analysis the "missing return" rule
+     asks. It is flow-sensitive but tiny: four cases decide it, and one of them is a trap.
+     TODO(07): §2 "Missing return: your first real flow analysis" works them out. *)
+  let rec stmt_returns (s : Ast.stmt) : bool =
+    ignore s;
+    failwith "TODO(07): does this statement definitely return?"
+  and block_returns (stmts : Ast.stmt list) : bool =
+    ignore stmts;
+    ignore stmt_returns;
+    failwith "TODO(07): does this block definitely return?"
+  in
   let rec check_stmt (s : Ast.stmt) : unit =
     match s with
     | Ast.Let { name; is_var; annot; value; span } ->
