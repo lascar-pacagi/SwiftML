@@ -148,7 +148,9 @@ item       ::= func_decl                                           <-- new
              | statement
 func_decl  ::= "func" ident "(" [ param { "," param } ] ")"        <-- new
                [ "->" type ] block
-param      ::= [ ident | "_" ] ident ":" type                      <-- new (label dropped)
+param      ::= [ label ] name ":" type                             <-- new
+label      ::= ident | "_"        # the word the CALLER writes; "_" means "no label"
+name       ::= ident              # the name the BODY uses
 
 statement  ::= ("let" | "var") ident [ ":" type ] "=" expr
              | ident "=" expr
@@ -183,10 +185,24 @@ is decided by the next token — a newline, a `}`, or end of input means bare. A
 production is unchanged: `f(1, 2)` parsed already in Phase 1 (for `print`); what is new is that
 sema now finds `f` in a table you build.
 
-A parameter is `[label] name : type`. Swift's `_` is an identifier-shaped token here (the lexer
-treats it as an identifier), so `_ a: Int` and `from start: Int` are the same shape — two
-identifiers before the colon — and `a: Int` is one. The parser keeps the *inner* name and drops
-the label; the "argument labels" note above says what that costs.
+A Swift parameter can carry **two** names, and the production is easier to read once you know
+which is which: the optional first one is the **label** — the word the *caller* writes at the call
+site — and the second is the **name** the *body* uses. Three shapes, all legal Swift:
+
+| written | label | name | called as |
+|---|---|---|---|
+| `func f(_ a: Int)` | `_`, i.e. none | `a` | `f(1)` — what this subset uses |
+| `func f(from a: Int)` | `from` | `a` | `f(from: 1)` |
+| `func f(a: Int)` | *omitted → defaults to the name* | `a` | `f(a: 1)` |
+
+The third row is why the note above insists on the `_` form: with one identifier Swift makes the
+label the same as the name, so `func add(a: Int, b: Int)` *must* be called `add(a: 1, b: 2)`, and
+we call positionally.
+
+For the parser this is one token of lookahead, not three cases: `_` is lexed as an ordinary
+identifier, so both `_ a: Int` and `from a: Int` are simply two identifiers before the colon, and
+`a: Int` is one. Read an identifier; if the next token is not `:`, what you read was the label —
+throw it away and read the name.
 
 ### The diagnostics you emit
 
