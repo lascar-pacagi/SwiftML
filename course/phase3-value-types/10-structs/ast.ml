@@ -20,8 +20,8 @@ type expr =
   | Unary of unop * expr * Token.span
   | Binary of binop * expr * expr * Token.span
   | Call of string * (string option * expr) list * Token.span (* function call OR struct init *)
-  | Member of expr * string * Token.span (* NEW (concept 10): `e.field` *)
-  (* NEW (concept 05): `e as T` — a *coercion*. The type is written, so `infer` has
+  | Member of expr * string * Token.span (* NEW in this concept: `e.field` *)
+  (* added in concept 05: `e as T` — a *coercion*. The type is written, so `infer` has
      nothing to synthesise and must CHECK the operand against it. *)
   | Ascribe of expr * string * Token.span
 
@@ -31,7 +31,7 @@ type arg = string option * expr
 type stmt =
   | Let of { name : string; is_var : bool; annot : string option; value : expr; span : Token.span }
   | Assign of { name : string; value : expr; span : Token.span }
-  | Set_member of { obj : string; field : string; value : expr; span : Token.span } (* NEW: `p.x = e` *)
+  | Set_member of { obj : string; field : string; value : expr; span : Token.span } (* NEW in this concept: `p.x = e` *)
   | Expr_stmt of expr * Token.span
   | If of { cond : expr; then_blk : stmt list; else_blk : stmt list option; span : Token.span }
   | While of { cond : expr; body : stmt list; span : Token.span }
@@ -40,7 +40,7 @@ type stmt =
   | Continue of Token.span
   | Return of expr option * Token.span
 
-(* NEW: functions *)
+(* added in concept 07: functions *)
 type param = { pname : string; ptype : string (* written type name; sema resolves it *) }
 
 type func_decl = {
@@ -51,7 +51,7 @@ type func_decl = {
   fspan : Token.span;
 }
 
-(* NEW (concept 10): a struct declaration — stored properties in order *)
+(* NEW in this concept: a struct declaration — stored properties in order *)
 type field = {
   fld_name : string;
   fld_ty : string; (* written type name; sema resolves it *)

@@ -37,7 +37,7 @@ type stmt =
   | Let of {
       name : string;
       is_var : bool;
-      annot : string option; (* NEW: the written type name, e.g. Some "Double"; sema resolves it *)
+      annot : string option; (* NEW in this concept: the written type name, e.g. Some "Double"; sema resolves it *)
       value : expr;
       span : Token.span;
     }

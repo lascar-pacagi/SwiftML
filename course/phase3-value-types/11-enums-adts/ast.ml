@@ -22,7 +22,7 @@ type expr =
   | Call of string * (string option * expr) list * Token.span (* function call OR struct init *)
   | Member of expr * string * Token.span (* `e.field` (concept 10) / `E.case` / `e.rawValue` (11) *)
   | Method_call of expr * string * (string option * expr) list * Token.span (* `e.name(args)` — 11: `E.case(args)` *)
-  (* NEW (concept 05): `e as T` — a *coercion*. The type is written, so `infer` has
+  (* added in concept 05: `e as T` — a *coercion*. The type is written, so `infer` has
      nothing to synthesise and must CHECK the operand against it. *)
   | Ascribe of expr * string * Token.span
 
@@ -32,7 +32,7 @@ type arg = string option * expr
 type stmt =
   | Let of { name : string; is_var : bool; annot : string option; value : expr; span : Token.span }
   | Assign of { name : string; value : expr; span : Token.span }
-  | Set_member of { obj : string; field : string; value : expr; span : Token.span } (* NEW: `p.x = e` *)
+  | Set_member of { obj : string; field : string; value : expr; span : Token.span } (* added in concept 10: `p.x = e` *)
   | Expr_stmt of expr * Token.span
   | If of { cond : expr; then_blk : stmt list; else_blk : stmt list option; span : Token.span }
   | While of { cond : expr; body : stmt list; span : Token.span }
@@ -41,7 +41,7 @@ type stmt =
   | Continue of Token.span
   | Return of expr option * Token.span
 
-(* NEW: functions *)
+(* added in concept 07: functions *)
 type param = { pname : string; ptype : string (* written type name; sema resolves it *) }
 
 type func_decl = {
@@ -52,7 +52,7 @@ type func_decl = {
   fspan : Token.span;
 }
 
-(* NEW (concept 10): a struct declaration — stored properties in order *)
+(* added in concept 10: a struct declaration — stored properties in order *)
 type field = {
   fld_name : string;
   fld_ty : string; (* written type name; sema resolves it *)
@@ -60,7 +60,7 @@ type field = {
 }
 type struct_decl = { sname : string; sfields : field list; sspan : Token.span }
 
-(* NEW (concept 11): an enum declaration — cases in order; each case has payload type names
+(* NEW in this concept: an enum declaration — cases in order; each case has payload type names
    (empty for a simple case). eraw = Some "Int" for a `: Int` raw-value enum. *)
 type enum_case = { cname : string; payload : string list }
 type enum_decl = { ename : string; ecases : enum_case list; eraw : string option; espan : Token.span }

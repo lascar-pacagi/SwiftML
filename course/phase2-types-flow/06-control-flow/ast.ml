@@ -17,8 +17,8 @@ type binop =
   | Le
   | Gt
   | Ge
-  | And (* && NEW *)
-  | Or (* || NEW *)
+  | And (* && — NEW in this concept *)
+  | Or (* || — NEW in this concept *)
 
 type unop = Neg
 
@@ -31,7 +31,7 @@ type expr =
   | Unary of unop * expr * Token.span
   | Binary of binop * expr * expr * Token.span
   | Call of string * expr list * Token.span
-  (* NEW (concept 05): `e as T` — a *coercion*. The type is written, so `infer` has
+  (* added in concept 05: `e as T` — a *coercion*. The type is written, so `infer` has
      nothing to synthesise and must CHECK the operand against it. *)
   | Ascribe of expr * string * Token.span
 
@@ -39,7 +39,7 @@ type stmt =
   | Let of { name : string; is_var : bool; annot : string option; value : expr; span : Token.span }
   | Assign of { name : string; value : expr; span : Token.span }
   | Expr_stmt of expr * Token.span
-  (* control flow (NEW) *)
+  (* control flow — NEW in this concept *)
   | If of { cond : expr; then_blk : stmt list; else_blk : stmt list option; span : Token.span }
   | While of { cond : expr; body : stmt list; span : Token.span }
   | For of { var : string; lo : expr; hi : expr; body : stmt list; span : Token.span }

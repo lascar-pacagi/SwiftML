@@ -202,7 +202,15 @@ we call positionally.
 For the parser this is one token of lookahead, not three cases: `_` is lexed as an ordinary
 identifier, so both `_ a: Int` and `from a: Int` are simply two identifiers before the colon, and
 `a: Int` is one. Read an identifier; if the next token is not `:`, what you read was the label —
-throw it away and read the name.
+**throw it away** and read the name. That is why `Ast.param` has two fields and not three:
+
+```ocaml
+type param = { pname : string; ptype : string }   (* no label: the parser dropped it *)
+```
+
+The label exists in the grammar because it exists in the *source* you must accept; it does not
+exist in the tree, because nothing downstream can use it while calls are positional. §6's first
+exercise adds the field, and with it the check that a call's labels match the declaration's.
 
 ### The diagnostics you emit
 

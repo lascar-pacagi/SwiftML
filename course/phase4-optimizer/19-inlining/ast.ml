@@ -27,14 +27,14 @@ type expr =
   | Force_unwrap of expr * Token.span (* `e!` — traps if nil *)
   | Coalesce of expr * expr * Token.span (* `a ?? b` *)
   | Ternary of expr * expr * expr * Token.span (* `c ? a : b` — value-producing diamond *)
-  (* NEW (concept 05): `e as T` — a *coercion*. The type is written, so `infer` has
+  (* added in concept 05: `e as T` — a *coercion*. The type is written, so `infer` has
      nothing to synthesise and must CHECK the operand against it. *)
   | Ascribe of expr * string * Token.span
 
 (* a call/init argument may carry an external label, e.g. `Point(x: 1)` — concept 10 *)
 type arg = string option * expr
 
-(* NEW (concept 12): patterns for `switch`. A binding is `let x` (Bind) or `_` (Ignore). *)
+(* added in concept 12: patterns for `switch`. A binding is `let x` (Bind) or `_` (Ignore). *)
 type pat_binding = Bind of string | Ignore
 type pattern =
   | PEnumCase of string * pat_binding list (* `.circle(let r)` / `.dot` *)
@@ -43,14 +43,14 @@ type pattern =
 type stmt =
   | Let of { name : string; is_var : bool; annot : string option; value : expr; span : Token.span }
   | Assign of { name : string; value : expr; span : Token.span }
-  | Set_member of { obj : string; field : string; value : expr; span : Token.span } (* NEW: `p.x = e` *)
+  | Set_member of { obj : string; field : string; value : expr; span : Token.span } (* added in concept 10: `p.x = e` *)
   | Expr_stmt of expr * Token.span
   | If of { cond : expr; then_blk : stmt list; else_blk : stmt list option; span : Token.span }
-  (* NEW (concept 13): `if let name = opt { … } [else { … }]` — optional binding *)
+  (* added in concept 13: `if let name = opt { … } [else { … }]` — optional binding *)
   | If_let of { name : string; opt : expr; then_blk : stmt list; else_blk : stmt list option; span : Token.span }
   | While of { cond : expr; body : stmt list; span : Token.span }
   | For of { var : string; lo : expr; hi : expr; body : stmt list; span : Token.span }
-  (* NEW (concept 12): `switch subject { case <pat>: <body> … [default: <body>] }` *)
+  (* added in concept 12: `switch subject { case <pat>: <body> … [default: <body>] }` *)
   | Switch of {
       subject : expr;
       cases : (pattern * stmt list) list;
@@ -61,7 +61,7 @@ type stmt =
   | Continue of Token.span
   | Return of expr option * Token.span
 
-(* NEW: functions *)
+(* added in concept 07: functions *)
 type param = { pname : string; ptype : string (* written type name; sema resolves it *) }
 
 type func_decl = {
@@ -72,7 +72,7 @@ type func_decl = {
   fspan : Token.span;
 }
 
-(* NEW (concept 10): a struct declaration — stored properties in order *)
+(* added in concept 10: a struct declaration — stored properties in order *)
 type field = {
   fld_name : string;
   fld_ty : string; (* written type name; sema resolves it *)
@@ -80,7 +80,7 @@ type field = {
 }
 type struct_decl = { sname : string; sfields : field list; sspan : Token.span }
 
-(* NEW (concept 11): an enum declaration — cases in order; each case has payload type names
+(* added in concept 11: an enum declaration — cases in order; each case has payload type names
    (empty for a simple case). eraw = Some "Int" for a `: Int` raw-value enum. *)
 type enum_case = { cname : string; payload : string list }
 type enum_decl = { ename : string; ecases : enum_case list; eraw : string option; espan : Token.span }

@@ -20,7 +20,7 @@ type expr =
   | Unary of unop * expr * Token.span
   | Binary of binop * expr * expr * Token.span
   | Call of string * expr list * Token.span
-  (* NEW (concept 05): `e as T` — a *coercion*. The type is written, so `infer` has
+  (* added in concept 05: `e as T` — a *coercion*. The type is written, so `infer` has
      nothing to synthesise and must CHECK the operand against it. *)
   | Ascribe of expr * string * Token.span
 
@@ -33,9 +33,9 @@ type stmt =
   | For of { var : string; lo : expr; hi : expr; body : stmt list; span : Token.span }
   | Break of Token.span
   | Continue of Token.span
-  | Return of expr option * Token.span (* NEW: `return` or `return e` *)
+  | Return of expr option * Token.span (* NEW in this concept: `return` or `return e` *)
 
-(* NEW: functions *)
+(* NEW in this concept: functions *)
 type param = { pname : string; ptype : string (* written type name; sema resolves it *) }
 
 type func_decl = {

@@ -33,27 +33,27 @@ type expr =
   | Force_unwrap of expr * Token.span (* `e!` — traps if nil *)
   | Coalesce of expr * expr * Token.span (* `a ?? b` *)
   | Ternary of expr * expr * expr * Token.span (* `c ? a : b` — value-producing diamond *)
-  (* NEW (concept 23): dynamic casts on existentials. `e as? T` (conditional -> T?) and
+  (* added in concept 23: dynamic casts on existentials. `e as? T` (conditional -> T?) and
      `e as! T` (forced -> T, aborts on mismatch). *)
   | Cast of expr * string * bool (* conditional? *) * Token.span
-  (* NEW (concept 29): a closure literal `{ (x: Int) -> Int in <expr> }` — explicitly typed
+  (* added in concept 29: a closure literal `{ (x: Int) -> Int in <expr> }` — explicitly typed
      parameters, a single-expression body (multi-statement bodies are an exercise). Free
      variables of the body are CAPTURED by value at creation. *)
   | Closure of param list * string option * expr * Token.span
-  (* NEW (concept 30): `try e` / `try? e` / `try! e` — the call site of a throwing call. *)
+  (* added in concept 30: `try e` / `try? e` / `try! e` — the call site of a throwing call. *)
   | Try of try_kind * expr * Token.span
   | Await of expr * Token.span (* concept 38: `await e` *)
   (* collections — concept 31 *)
   | Array_lit of expr list * Token.span       (* `[a, b, c]` (element type from context/first) *)
   | Subscript of expr * expr * Token.span      (* `a[i]` — read *)
-  (* NEW (concept 05): `e as T` — a *coercion*. The type is written, so `infer` has
+  (* added in concept 05: `e as T` — a *coercion*. The type is written, so `infer` has
      nothing to synthesise and must CHECK the operand against it. *)
   | Ascribe of expr * string * Token.span
 
 (* a call/init argument may carry an external label, e.g. `Point(x: 1)` — concept 10 *)
 type arg = string option * expr
 
-(* NEW (concept 12): patterns for `switch`. A binding is `let x` (Bind) or `_` (Ignore). *)
+(* added in concept 12: patterns for `switch`. A binding is `let x` (Bind) or `_` (Ignore). *)
 type pat_binding = Bind of string | Ignore
 type pattern =
   | PEnumCase of string * pat_binding list (* `.circle(let r)` / `.dot` *)
@@ -62,14 +62,14 @@ type pattern =
 type stmt =
   | Let of { name : string; is_var : bool; annot : string option; value : expr; span : Token.span }
   | Assign of { name : string; value : expr; span : Token.span }
-  | Set_member of { obj : string; field : string; value : expr; span : Token.span } (* NEW: `p.x = e` *)
+  | Set_member of { obj : string; field : string; value : expr; span : Token.span } (* added in concept 10: `p.x = e` *)
   | Expr_stmt of expr * Token.span
   | If of { cond : expr; then_blk : stmt list; else_blk : stmt list option; span : Token.span }
-  (* NEW (concept 13): `if let name = opt { … } [else { … }]` — optional binding *)
+  (* added in concept 13: `if let name = opt { … } [else { … }]` — optional binding *)
   | If_let of { name : string; opt : expr; then_blk : stmt list; else_blk : stmt list option; span : Token.span }
   | While of { cond : expr; body : stmt list; span : Token.span }
   | For of { var : string; lo : expr; hi : expr; body : stmt list; span : Token.span }
-  (* NEW (concept 12): `switch subject { case <pat>: <body> … [default: <body>] }` *)
+  (* added in concept 12: `switch subject { case <pat>: <body> … [default: <body>] }` *)
   | Switch of {
       subject : expr;
       cases : (pattern * stmt list) list;
@@ -97,11 +97,11 @@ and catch_clause = { cpat : (string * string) option; cbind : string option; cbo
 type func_decl = {
   fname : string;
   generics : (string * string option) list;
-    (* NEW (concept 22): type parameters with their constraint — `<T: P>` = [("T", Some "P")].
+    (* added in concept 22: type parameters with their constraint — `<T: P>` = [("T", Some "P")].
        A `where T: P` clause fills the constraint the same way. v0 requires a constraint. *)
   params : param list;
-  throws : bool; (* NEW (concept 30): declared `throws` *)
-  is_async : bool; (* NEW (concept 38): declared `async` *)
+  throws : bool; (* added in concept 30: declared `throws` *)
+  is_async : bool; (* NEW in this concept: declared `async` *)
   ret : string option; (* the written return type name; None = Void *)
   body : stmt list;
   fspan : Token.span;
@@ -119,31 +119,31 @@ type struct_decl = {
   sspan : Token.span;
 }
 
-(* NEW (concept 25): a class declaration — stored properties, ONE initializer (v0), methods
+(* added in concept 25: a class declaration — stored properties, ONE initializer (v0), methods
    (each flagged if it `override`s), an optional superclass. *)
 type class_decl = {
   cname : string;
   csuper : string option;
   cfields : field list;
   cinit : func_decl option; (* fname = "init"; ret ignored *)
-  cdeinit : stmt list option; (* NEW (concept 26): the `deinit { … }` body *)
+  cdeinit : stmt list option; (* added in concept 26: the `deinit { … }` body *)
   cmethods : (bool * func_decl) list; (* (is_override, decl) *)
   cspan : Token.span;
 }
 
-(* NEW (concept 21): a protocol declaration — METHOD REQUIREMENTS only (signatures, no
+(* added in concept 21: a protocol declaration — METHOD REQUIREMENTS only (signatures, no
    bodies). Property/init/associated-type requirements are later concepts/exercises. *)
 type proto_req = { rname : string; rparams : param list; rret : string option }
 type proto_decl = { pname : string; reqs : proto_req list; pspan : Token.span }
 
-(* NEW (concept 11): an enum declaration — cases in order; each case has payload type names
+(* added in concept 11: an enum declaration — cases in order; each case has payload type names
    (empty for a simple case). eraw = Some "Int" for a `: Int` raw-value enum. *)
 type enum_case = { cname : string; payload : string list }
 type enum_decl = {
   ename : string;
   ecases : enum_case list;
   eraw : string option;
-  is_error : bool; (* NEW (concept 30): declared `: Error` — an error type *)
+  is_error : bool; (* added in concept 30: declared `: Error` — an error type *)
   espan : Token.span;
 }
 
