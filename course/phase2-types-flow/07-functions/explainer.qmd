@@ -303,14 +303,18 @@ Three skeletons; concepts 01–06 are filled in.
    **two passes** (fill `funcs` with signatures — a name seen twice is a redeclaration — then check
    each item in order). The scope helpers, `loop_depth`, `current_ret` and `resolve_*` are given.
 
-   Fill the **two passes first**: they are the entry point of `check`, and until they exist no
-   sema test can run — every sema file reads `TODO`. Then **`check_func` and the analysis
-   together**: `check_func` asks `block_returns` about *every* non-`Void` function, so while the
-   analysis is still a `failwith` any program that declares one dies there — the red you see will
-   be spread across all five sema files, not confined to the missing-return cases. Once it
-   returns, those five cases in `sema-func.t` are what grade it: a body that never returns, an
-   `if` with no `else`, a `return` inside a loop, an `else if` chain, and a `return` with
-   statements after it. Then `return`, then the call; §4 lists which file each turns green.
+   **The definite-return analysis stands alone** — start there if you like. It is a pure function
+   of the AST: no environment, no diagnostics, nothing else in the file. So it sits at module
+   level, and `test_sema.ml`'s *definite return* group calls `Sema.block_returns` on statements it
+   builds by hand, with no parser and no `check` in the way. Those five cases go green on that one
+   hole while every other TODO in `sema.ml` still raises.
+
+   The rest do have an order, and `check` forces it: fill the **two passes first**, because they
+   are its entry point and until they exist no sema *program* can be checked — every sema cram
+   file reads `TODO` whatever else you have written. Then `check_func`, which is where the
+   analysis gets used: it asks `block_returns` about every non-`Void` function, so leaving that
+   hole raising while you write this one puts red across all five sema files. Then `return`, then
+   the call; §4 lists which file each turns green.
 
 Reference: `solution/`.
 
@@ -338,6 +342,9 @@ oracle — in the order you fill the holes:
   items interleaved with statements, and the first error of a nameless / typeless / bodyless
   declaration.
 - `test_parser.ml` (alcotest `parser-funcs`) — the same, as AST structure, one group per hole.
+- `test_sema.ml` (alcotest `sema-funcs`) — its *definite return* group is the exception to that
+  order: it builds statements as AST values and calls `Sema.block_returns` directly, so it grades
+  that hole alone, before `check` runs at all.
 - `sema-passes.t` — `--typecheck`: the two-pass driver. Its first four cases need only the
   driver (a statement-only program, a bad top-level `let`, a redeclaration, items checked in
   order); the rest are the forward reference, `fib`, `isEven`/`isOdd` and need every hole.

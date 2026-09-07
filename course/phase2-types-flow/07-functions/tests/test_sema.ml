@@ -130,9 +130,63 @@ let test_call_args () =
   accepted "func f(_ x: Double) -> Double { return x }\nprint(f(1))";
   has_error "nope()" "cannot find 'nope' in scope"
 
+(* ---- the definite-return analysis, on its own ------------------------------------------- *)
+
+(* `Sema.block_returns` is a pure function of the AST, so these build statements directly
+   instead of parsing source: the group grades that one hole and nothing else — it passes with
+   every other TODO in sema.ml still raising. *)
+let sp = Token.dummy_span
+let e = Ast.Int_lit (1, sp)
+let ret = Ast.Return (Some e, sp)
+let bare_ret = Ast.Return (None, sp)
+let noise = Ast.Expr_stmt (e, sp)
+let if_ c t el = Ast.If { cond = c; then_blk = t; else_blk = el; span = sp }
+let while_ b = Ast.While { cond = Ast.Bool_lit (true, sp); body = b; span = sp }
+let for_ b = Ast.For { var = "i"; lo = e; hi = e; body = b; span = sp }
+
+let returns what expected stmts =
+  Alcotest.(check bool) what expected (Sema.block_returns stmts)
+
+let test_ret_plain () =
+  returns "an empty block returns nothing" false [];
+  returns "a block of one `return`" true [ ret ];
+  returns "a bare `return` counts too" true [ bare_ret ];
+  returns "statements with no return" false [ noise; noise ]
+
+let test_ret_after () =
+  (* whatever follows a return is unreachable, so the block still returns *)
+  returns "`return` then a statement" true [ ret; noise ];
+  returns "a statement then `return`" true [ noise; ret ]
+
+let test_ret_if () =
+  returns "`if` with no else" false [ if_ e [ ret ] None ];
+  returns "`if`/`else`, both return" true [ if_ e [ ret ] (Some [ ret ]) ];
+  returns "`if`/`else`, only then returns" false [ if_ e [ ret ] (Some [ noise ]) ];
+  returns "`if`/`else`, only else returns" false [ if_ e [ noise ] (Some [ ret ]) ]
+
+let test_ret_chain () =
+  (* an `else if` is an If in the else block — the recursion is what handles it *)
+  let chain last = if_ e [ ret ] (Some [ if_ e [ ret ] last ]) in
+  returns "`else if` ending in a returning else" true [ chain (Some [ ret ]) ];
+  returns "`else if` with no final else" false [ chain None ]
+
+let test_ret_loops () =
+  (* the trap: a loop body may never run, so a `return` inside one proves nothing *)
+  returns "`while` holding a return" false [ while_ [ ret ] ];
+  returns "`for` holding a return" false [ for_ [ ret ] ];
+  returns "a loop, then a return" true [ while_ [ noise ]; ret ]
+
 let () =
   Alcotest.run "sema-funcs"
     [
+      ( "definite return",
+        [
+          Alcotest.test_case "a block of returns" `Quick test_ret_plain;
+          Alcotest.test_case "what follows a return" `Quick test_ret_after;
+          Alcotest.test_case "if needs both branches" `Quick test_ret_if;
+          Alcotest.test_case "an else-if chain" `Quick test_ret_chain;
+          Alcotest.test_case "a loop never counts" `Quick test_ret_loops;
+        ] );
       ( "passes",
         [
           Alcotest.test_case "statements only; top level" `Quick test_statements_only;

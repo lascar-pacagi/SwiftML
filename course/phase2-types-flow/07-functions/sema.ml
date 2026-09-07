@@ -12,6 +12,20 @@
      - functions are self-contained (params + the function table only — no top-level capture)
      - print and Void functions yield () (Types.TVoid) *)
 
+(* Does a block definitely return on every path? — the analysis the "missing return" rule asks.
+   Flow-sensitive but tiny: four cases decide it, and one of them is a trap. Pure functions of
+   the AST — they need no environment, which is why they live out here and can be written (and
+   tested, by `tests/test_sema.ml`) before anything else in this file exists.
+   TODO(07): §2 "Missing return: your first real flow analysis" works out all four. *)
+let rec stmt_returns (s : Ast.stmt) : bool =
+  ignore s;
+  failwith "TODO(07): does this statement definitely return?"
+
+and block_returns (stmts : Ast.stmt list) : bool =
+  ignore stmts;
+  ignore stmt_returns;
+  failwith "TODO(07): does this block definitely return?"
+
 let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
   let env : (string * (Types.ty * bool)) list ref = ref [] in
   let loop_depth = ref 0 in
@@ -149,17 +163,6 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
           err (Ast.expr_span e)
             (Printf.sprintf "cannot convert value of type '%s' to specified type '%s'"
                (Types.string_of_ty t) (Types.string_of_ty expected))
-  in
-  (* Does a block definitely return on every path? — the analysis the "missing return" rule
-     asks. It is flow-sensitive but tiny: four cases decide it, and one of them is a trap.
-     TODO(07): §2 "Missing return: your first real flow analysis" works them out. *)
-  let rec stmt_returns (s : Ast.stmt) : bool =
-    ignore s;
-    failwith "TODO(07): does this statement definitely return?"
-  and block_returns (stmts : Ast.stmt list) : bool =
-    ignore stmts;
-    ignore stmt_returns;
-    failwith "TODO(07): does this block definitely return?"
   in
   let rec check_stmt (s : Ast.stmt) : unit =
     match s with

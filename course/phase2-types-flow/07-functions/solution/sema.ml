@@ -9,6 +9,15 @@
      - functions are self-contained (params + the function table only — no top-level capture)
      - print and Void functions yield () (Types.TVoid) *)
 
+(* Does a block definitely return on every path? — the "missing return" analysis. Pure functions
+   of the AST, so they live at module level and can be tested on their own. *)
+let rec stmt_returns = function
+  | Ast.Return _ -> true
+  | Ast.If { then_blk; else_blk = Some e; _ } -> block_returns then_blk && block_returns e
+  | _ -> false
+
+and block_returns stmts = List.exists stmt_returns stmts (* the rest is unreachable *)
+
 let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
   let env : (string * (Types.ty * bool)) list ref = ref [] in
   let loop_depth = ref 0 in
@@ -147,11 +156,6 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
                (Types.string_of_ty t) (Types.string_of_ty expected))
   in
   (* does a block definitely return on every path? (the "missing return" check) *)
-  let rec stmt_returns = function
-    | Ast.Return _ -> true
-    | Ast.If { then_blk; else_blk = Some e; _ } -> block_returns then_blk && block_returns e
-    | _ -> false
-  and block_returns stmts = List.exists stmt_returns stmts (* the rest is unreachable *) in
   let rec check_stmt (s : Ast.stmt) : unit =
     match s with
     | Ast.Let { name; is_var; annot; value; span } ->
