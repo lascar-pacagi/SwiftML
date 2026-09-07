@@ -20,9 +20,7 @@ type expr =
   | Unary of unop * expr * Token.span
   | Binary of binop * expr * expr * Token.span
   | Call of string * expr list * Token.span
-  (* `e as T` — a *coercion*. The type is written, so `infer` has
-     nothing to synthesise and must CHECK the operand against it. *)
-  | Ascribe of expr * string * Token.span
+  | Ascribe of expr * string * Token.span (* `e as T` — a coercion *)
 
 type stmt =
   | Let of { name : string; is_var : bool; annot : string option; value : expr; span : Token.span }

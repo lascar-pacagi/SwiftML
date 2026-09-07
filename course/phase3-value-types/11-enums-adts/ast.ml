@@ -21,9 +21,7 @@ type expr =
   | Call of string * (string option * expr) list * Token.span (* function call OR struct init *)
   | Member of expr * string * Token.span (* `e.field` (concept 10) / `E.case` / `e.rawValue` (11) *)
   | Method_call of expr * string * (string option * expr) list * Token.span (* `e.name(args)` — 11: `E.case(args)` *)
-  (* `e as T` — a *coercion*. The type is written, so `infer` has
-     nothing to synthesise and must CHECK the operand against it. *)
-  | Ascribe of expr * string * Token.span
+  | Ascribe of expr * string * Token.span (* `e as T` — a coercion *)
 
 (* a call/init argument may carry an external label, e.g. `Point(x: 1)` — concept 10 *)
 type arg = string option * expr

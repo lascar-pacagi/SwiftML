@@ -39,14 +39,12 @@ type expr =
      parameters, a single-expression body (multi-statement bodies are an exercise). Free
      variables of the body are CAPTURED by value at creation. *)
   | Closure of param list * string option * expr * Token.span
-  (* `try e` / `try? e` / `try! e` — the call site of a throwing call. *)
+  (* `try e` / `try? e` / `try! e` *)
   | Try of try_kind * expr * Token.span
   (* collections — concept 31 *)
   | Array_lit of expr list * Token.span       (* `[a, b, c]` (element type from context/first) *)
   | Subscript of expr * expr * Token.span      (* `a[i]` — read *)
-  (* `e as T` — a *coercion*. The type is written, so `infer` has
-     nothing to synthesise and must CHECK the operand against it. *)
-  | Ascribe of expr * string * Token.span
+  | Ascribe of expr * string * Token.span (* `e as T` — a coercion *)
 
 (* a call/init argument may carry an external label, e.g. `Point(x: 1)` — concept 10 *)
 type arg = string option * expr

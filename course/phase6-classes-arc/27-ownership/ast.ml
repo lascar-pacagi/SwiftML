@@ -29,9 +29,7 @@ type expr =
   (* dynamic casts on existentials. `e as? T` (conditional -> T?) and
      `e as! T` (forced -> T, aborts on mismatch). *)
   | Cast of expr * string * bool (* conditional? *) * Token.span
-  (* `e as T` — a *coercion*. The type is written, so `infer` has
-     nothing to synthesise and must CHECK the operand against it. *)
-  | Ascribe of expr * string * Token.span
+  | Ascribe of expr * string * Token.span (* `e as T` — a coercion *)
 
 (* a call/init argument may carry an external label, e.g. `Point(x: 1)` — concept 10 *)
 type arg = string option * expr

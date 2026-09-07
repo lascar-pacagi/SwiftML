@@ -41,9 +41,7 @@ type expr =
   | Closure of param list * string option * expr * Token.span
   (* NEW in this concept: `try e` / `try? e` / `try! e` — the call site of a throwing call. *)
   | Try of try_kind * expr * Token.span
-  (* `e as T` — a *coercion*. The type is written, so `infer` has
-     nothing to synthesise and must CHECK the operand against it. *)
-  | Ascribe of expr * string * Token.span
+  | Ascribe of expr * string * Token.span (* `e as T` — a coercion *)
 
 (* a call/init argument may carry an external label, e.g. `Point(x: 1)` — concept 10 *)
 type arg = string option * expr
