@@ -29,6 +29,15 @@ and block_returns (stmts : Ast.stmt list) : bool =
 let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
   let env : (string * (Types.ty * bool)) list ref = ref [] in
   let loop_depth = ref 0 in
+  (* The state the function rules read. Each answers TWO questions, which is why it has the type
+     it has:
+       `current_ret` — `None` means "not inside a function", `Some t` means "inside one, and it
+         returns t". A `return` needs both halves: the first decides whether it is legal at all,
+         the second what its value is checked against.
+       `funcs` — every function's signature, keyed by name: (parameter types, return type). It is
+         filled by pass 1 and read by pass 2, which is what lets a call resolve whether the callee
+         is declared above it or below. A Hashtbl, not the `env` list, because a function is not a
+         variable: it is not scoped, not shadowed, and not bound by `let`. *)
   let current_ret : Types.ty option ref = ref None in
   let funcs : (string, Types.ty list * Types.ty) Hashtbl.t = Hashtbl.create 16 in
   let err span msg = Diagnostics.error diags span msg in
