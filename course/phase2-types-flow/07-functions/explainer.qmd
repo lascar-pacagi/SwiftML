@@ -180,8 +180,9 @@ primary    ::= int | float | string | "true" | "false" | ident
 Three things to notice. A program is no longer a list of statements but of *items*, and a
 function declaration is not a statement: `func` is only legal at top level, so `parse_program`
 dispatches on `Kw_func` and everything else still goes to `parse_stmt` (nested functions are real
-Swift; not in this subset). `return` is a statement with an *optional* operand, and "optional"
-is decided by the next token — a newline, a `}`, or end of input means bare. And the call
+Swift; not in this subset). `return` takes an *optional* operand, and the parser decides which it is by
+looking at the next token: a newline, a `}` or end of input means the `return` stands alone
+(`return`), and anything else starts the expression to return (`return e`). And the call
 production is unchanged: `f(1, 2)` parsed already in Phase 1 (for `print`); what is new is that
 sema now finds `f` in a table you build.
 
