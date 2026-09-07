@@ -16,7 +16,7 @@ type kind =
   | Kw_var
   | Kw_true
   | Kw_false
-  | Kw_as (* NEW (concept 05): the `e as T` coercion *)
+  | Kw_as
   | Kw_if
   | Kw_else
   | Kw_while
@@ -24,8 +24,8 @@ type kind =
   | Kw_in
   | Kw_break
   | Kw_continue
-  | Kw_func (* NEW *)
-  | Kw_return (* NEW *)
+  | Kw_func (* NEW in this concept *)
+  | Kw_return (* NEW in this concept *)
   | Plus
   | Minus
   | Star
@@ -41,7 +41,7 @@ type kind =
   | AmpAmp
   | PipePipe
   | DotDotLt
-  | Arrow (* -> NEW *)
+  | Arrow (* `->`, before a return type — NEW in this concept *)
   | Colon
   | LParen
   | RParen
