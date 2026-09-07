@@ -40,6 +40,21 @@ let check_params what expected src =
   Alcotest.(check string) (Printf.sprintf "%s: %S" what src) expected got;
   Alcotest.(check (list string)) (Printf.sprintf "%S is accepted silently" src) [] msgs
 
+(* `(a)` has two defensible readings: `a` was the LABEL (so the NAME is missing) or `a` was the
+   NAME (so the `:` is). Swift takes a third — a lone identifier there is the parameter's TYPE,
+   and it reports `parameter_unnamed`, DiagnosticsParse.def:1052 — but our subset does not need
+   to choose, so either of ours is accepted. Whatever else comes out is reported verbatim. *)
+let param_error_either src options =
+  let d = Diagnostics.create () in
+  ignore (Parser.parse_params (Parser.create (Lexer.tokenize (Lexer.create src d)) d));
+  let msgs = Diagnostics.all d |> List.map (fun (x : Diagnostics.t) -> x.Diagnostics.message) in
+  let canonical = String.concat " OR " options in
+  let fold m = if List.mem m options then canonical else m in
+  Alcotest.(check (option string))
+    (Printf.sprintf "%S first error" src)
+    (Some canonical)
+    (Option.map fold (List.nth_opt msgs 0))
+
 let param_error src msg =
   let d = Diagnostics.create () in
   ignore (Parser.parse_params (Parser.create (Lexer.tokenize (Lexer.create src d)) d));
@@ -88,7 +103,8 @@ let test_params_labels () =
   check_params "no label at all" "(x:Int)" "(x: Int)"
 
 let test_params_no_lparen () = param_error "x: Int)" "expected '('"
-let test_params_label_no_name () = param_error "(a)" "expected a parameter name"
+let test_params_label_no_name () =
+  param_error_either "(a)" [ "expected a parameter name"; "expected ':'" ]
 let test_params_no_type () = param_error "(a:)" "expected a parameter type"
 let test_params_unclosed () = param_error "(a: Int {" "expected ')'"
 let test_params_trailing_comma () = param_error "(a: Int,)" "expected a parameter name"
@@ -129,7 +145,7 @@ let () =
           Alcotest.test_case "empty, one, three in order" `Quick test_params_shape;
           Alcotest.test_case "labels dropped: _, named, none" `Quick test_params_labels;
           Alcotest.test_case "bad: no '(' to open it" `Quick test_params_no_lparen;
-          Alcotest.test_case "bad: label with no name" `Quick test_params_label_no_name;
+          Alcotest.test_case "bad: `(a)`, name or ':' missing" `Quick test_params_label_no_name;
           Alcotest.test_case "bad: no type after ':'" `Quick test_params_no_type;
           Alcotest.test_case "bad: list never closed" `Quick test_params_unclosed;
           Alcotest.test_case "bad: trailing comma" `Quick test_params_trailing_comma;

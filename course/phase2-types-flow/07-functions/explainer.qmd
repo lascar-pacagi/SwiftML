@@ -240,6 +240,22 @@ instead; you supply the phrase, one per site:
 The tests pin the *first* error of a malformed declaration only — `expect` does not skip the
 offending token, so what follows is recovery noise, and a different recovery is not wrong.
 
+One list is genuinely ambiguous, and the tests take either answer: `(a)`, one identifier and no
+type. Read `a` as the external label and the parameter *name* is what is missing; read it as the
+name and the `:` is. **Swift reads it a third way** — since SE-0111 a lone identifier in a
+parameter list is the *type*, so `func f(a)` is an unnamed parameter of type `a`, and swiftc
+reports two errors, neither of them ours:
+
+```
+error: unnamed parameters must be written with the empty name '_'
+error: cannot find type 'a' in scope
+```
+
+That is `parameter_unnamed` (`DiagnosticsParse.def:1052`). Our grammar has no unnamed parameters
+— every one is `[label] name: Type` — so the case cannot arise for us and the wording is ours to
+pick. Note swiftc's neighbouring `expected_parameter_colon` (`:1030`), *"expected ':' following
+argument label and parameter name"*: when the colon is what is missing, Swift says so too.
+
 **Sema** — the tests compare these character for character:
 
 | program | our message | swiftc |

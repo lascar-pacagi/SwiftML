@@ -40,12 +40,14 @@ diagnostic is pinned: the given `expect` does not skip, so what follows is recov
   $ ./lab.exe --emit-params e1.swift 2>&1 | head -1
   1:1: error: expected '('
 
-`(a)` — a name with no type — reads `a` as an external label whose name is missing, so the
-first error is "expected a parameter name", at the `)`:
+`(a)` — one identifier, no type — has two defensible readings and this case takes EITHER: `a`
+was the label, so the parameter NAME is missing; or `a` was the name, so the `:` is. Both
+report at the `)`, and the `sed` folds the two wordings into one line. Swift reads it a third
+way — see the explainer's §2:
 
   $ printf '(a)\n' > e2.swift
-  $ ./lab.exe --emit-params e2.swift 2>&1 | head -1
-  1:3: error: expected a parameter name
+  $ ./lab.exe --emit-params e2.swift 2>&1 | head -1 | sed -E "s/(a parameter name|':')/a parameter name or ':'/"
+  1:3: error: expected a parameter name or ':'
 
 A colon with nothing after it — `(a:)` — is "expected a parameter type", and the run exits 1:
 
