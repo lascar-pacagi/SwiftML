@@ -154,7 +154,11 @@ function flush(   i, w, g, key) {
             : got[i]) "\n"
     if (w != g) {
       key = cur SUBSEP pendblk; bad[key] = 1
-      if (g ~ /Failure\("TODO/) todo[key] = 1        # the skeleton's own failwith, not a wrong answer
+      # The skeleton's own failwith, not a wrong answer. Keep the message: the hole that raised
+      # is often NOT the one this case is about (a `check` that dies in a later hole loses the
+      # diagnostics an earlier one correctly produced), and naming it is the difference between
+      # "my code is wrong" and "something after it is unwritten".
+      if (match(g, /TODO\([^)]*\)[^"]*/)) { todo[key] = 1; todotext[key] = substr(g, RSTART, RLENGTH) }
       detail[key] = detail[key] "         " G "the test wants:" Z "\n" \
                     (w == "" ? "           (nothing)\n" : w) \
                     "         " R "your code printed:" Z "\n" \
@@ -337,7 +341,8 @@ function cases_str(si, file, unstarted,   b, key, out) {
     if (si && (key in bad)) {
       if (unstarted) { out = out sprintf("  %s·%s   %s\n", D, Z, wrap_label(label[file, b], 84)); continue }
       out = out sprintf("  %sFAIL%s %s\n", R, Z, wrap_label(label[file, b], 84))
-      if (key in todo) out = out sprintf("         %snot implemented yet (the skeleton's failwith)%s\n", D, Z)
+      if (key in todo)
+        out = out sprintf("         %sblocked by an unwritten hole: %s%s\n", D, todotext[key], Z)
       else out = out detail[key]
     } else out = out sprintf("  %sOK  %s %s\n", G, Z, wrap_label(label[file, b], 84))
   }
