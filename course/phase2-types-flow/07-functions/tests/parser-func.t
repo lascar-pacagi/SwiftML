@@ -70,3 +70,17 @@ A body that never closes is "expected '}'", reported at end of input:
   $ ./lab.exe --emit-ast e4.swift; echo "exit=$?"
   3:1: error: expected '}'
   exit=1
+
+Whitespace is not part of the grammar — `func f()->Int{return 1}` with no spaces at all parses
+into the same tree as the spaced form:
+
+  $ printf 'func f()->Int{return 1}\n' > f7.swift
+  $ ./lab.exe --emit-ast f7.swift
+  (func f () -> Int ((return 1)))
+
+A body nests: a `while` holding an `if` holding a `return`, with statements after the loop —
+`parse_block` recurses, and the dump shows the nesting:
+
+  $ printf 'func f(_ n: Int) -> Int {\n  var i = 0\n  while i < n {\n    if i > 2 {\n      return i\n    }\n    i = i + 1\n  }\n  return 0\n}\n' > f8.swift
+  $ ./lab.exe --emit-ast f8.swift
+  (func f (n:Int) -> Int ((var i 0) (while (< i n) ((if (> i 2) ((return i))) (= i (+ i 1)))) (return 0)))

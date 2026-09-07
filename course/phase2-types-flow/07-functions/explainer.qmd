@@ -256,6 +256,12 @@ That is `parameter_unnamed` (`DiagnosticsParse.def:1052`). Our grammar has no un
 pick. Note swiftc's neighbouring `expected_parameter_colon` (`:1030`), *"expected ':' following
 argument label and parameter name"*: when the colon is what is missing, Swift says so too.
 
+One more divergence, this one ours to own: Swift lets most keywords stand as argument labels and
+only *warns* — `func f(let a: Int)` compiles, with *"'let' in this position is interpreted as an
+argument label"* — while our lexer turns `let` into `Kw_let` before the parser ever sees it, so
+`parse_ident` rejects it. Keyword labels are outside the v0 subset. `tests/parser-params.t` pins
+that, so the limit stays known rather than being rediscovered later.
+
 **Sema** — the tests compare these character for character:
 
 | program | our message | swiftc |
@@ -314,10 +320,12 @@ oracle — in the order you fill the holes:
   `-` arm already does that).
 - `parser-return.t` — `--emit-ast`: `return e`, and a bare `return` before a newline, a `}`, and
   end of input. Green with the `Kw_return` arm; sema never runs, so top-level returns are fine.
-- `parser-params.t` — `--emit-params`: parameter lists on their own — empty, one, three, the
-  `_` label dropped, a named label dropped, and the first error of five malformed lists. Green
-  with `parse_params` alone: the mode parses one list and stops, so the source of each case is
-  the list itself and this file never waits for `parse_func`.
+- `parser-params.t` — `--emit-params`: parameter lists on their own. Eight that parse (empty,
+  one, three in order, each of the three label forms, `_` as the name, types the parser has
+  never heard of) and eleven that do not (no `(`, a lone identifier, no type after `:`, never
+  closed, a trailing / leading / doubled comma, no comma at all, no colon, end of input, a
+  keyword label). Green with `parse_params` alone: the mode parses one list and stops, so the
+  source of each case is the list itself and this file never waits for `parse_func`.
 - `parser-func.t` — declarations with and without `-> T`, multi-line bodies, an empty body,
   items interleaved with statements, and the first error of a nameless / typeless / bodyless
   declaration.

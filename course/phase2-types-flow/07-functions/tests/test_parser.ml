@@ -109,6 +109,25 @@ let test_params_no_type () = param_error "(a:)" "expected a parameter type"
 let test_params_unclosed () = param_error "(a: Int {" "expected ')'"
 let test_params_trailing_comma () = param_error "(a: Int,)" "expected a parameter name"
 
+let test_params_underscore () = check_params "`_` is a name" "(_:Int)" "(_: Int)"
+
+let test_params_forms () =
+  check_params "all three label forms" "(a:Int b:Bool c:String)"
+    "(_ a: Int, from b: Bool, c: String)";
+  (* the parser only reads the written type name; sema is what knows the types *)
+  check_params "the type is just a name" "(a:Bool b:String c:Double)"
+    "(a: Bool, b: String, c: Double)"
+
+let test_params_leading_comma () = param_error "(, _ a: Int)" "expected a parameter name"
+let test_params_double_comma () = param_error "(_ a: Int,, _ b: Int)" "expected a parameter name"
+let test_params_missing_comma () = param_error "(_ a: Int _ b: Int)" "expected ')'"
+let test_params_missing_colon () = param_error "(a Int)" "expected ':'"
+let test_params_eof () = param_error "(_ a: Int" "expected ')'"
+
+(* Swift takes most keywords as argument labels and only warns; our lexer makes `let` a
+   keyword token, so `parse_ident` cannot take it. A v0 divergence, pinned so it stays known. *)
+let test_params_keyword_label () = param_error "(let a: Int)" "expected a parameter name"
+
 (* ---- parser: function declarations ----------------------------------------------------- *)
 
 let test_func () =
@@ -149,6 +168,14 @@ let () =
           Alcotest.test_case "bad: no type after ':'" `Quick test_params_no_type;
           Alcotest.test_case "bad: list never closed" `Quick test_params_unclosed;
           Alcotest.test_case "bad: trailing comma" `Quick test_params_trailing_comma;
+          Alcotest.test_case "`_` is an ordinary name" `Quick test_params_underscore;
+          Alcotest.test_case "all three label forms" `Quick test_params_forms;
+          Alcotest.test_case "bad: leading comma" `Quick test_params_leading_comma;
+          Alcotest.test_case "bad: two commas in a row" `Quick test_params_double_comma;
+          Alcotest.test_case "bad: no comma between two" `Quick test_params_missing_comma;
+          Alcotest.test_case "bad: no ':' name/type" `Quick test_params_missing_colon;
+          Alcotest.test_case "bad: end of input, no ')'" `Quick test_params_eof;
+          Alcotest.test_case "bad: keyword as a label" `Quick test_params_keyword_label;
         ] );
       ( "func",
         [

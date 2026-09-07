@@ -33,6 +33,26 @@ text `--emit-ast` shows between the parentheses of a `func`.
   $ ./lab.exe --emit-params p4.swift
   (start:Int)
 
+`(_: Int)` is Swift's UNNAMED parameter — `_` is an ordinary identifier to the lexer, so it
+lands in `pname` like any other name and the list is one parameter called `_`:
+
+  $ printf '(_: Int)\n' > p5.swift
+  $ ./lab.exe --emit-params p5.swift
+  (_:Int)
+
+All three label forms in one list — dropped `_`, a named label, none at all — read the same way:
+
+  $ printf '(_ a: Int, from b: Bool, c: String)\n' > p6.swift
+  $ ./lab.exe --emit-params p6.swift
+  (a:Int b:Bool c:String)
+
+The parser does not know what a type IS — it reads the written name and hands it to sema, so a
+list of `Bool`, `String` and `Double` parses exactly like a list of `Int`:
+
+  $ printf '(a: Bool, b: String, c: Double)\n' > p7.swift
+  $ ./lab.exe --emit-params p7.swift
+  (a:Bool b:String c:Double)
+
 A list that does not open with `(` is "expected '('", at the token found there (only the first
 diagnostic is pinned: the given `expect` does not skip, so what follows is recovery noise):
 
@@ -68,3 +88,52 @@ A trailing comma — `(a: Int,)` — is "expected a parameter name", at the `)`:
   $ printf '(a: Int,)\n' > e5.swift
   $ ./lab.exe --emit-params e5.swift 2>&1 | head -1
   1:9: error: expected a parameter name
+
+A list that opens with a comma — `(, _ a: Int)` — reports at the comma, where a name was due
+(swiftc points at the same comma, calling it an "unexpected ',' separator"). Only the first
+diagnostic is pinned; the parser then runs on:
+
+  $ printf '(, _ a: Int)\n' > e6.swift
+  $ ./lab.exe --emit-params e6.swift 2>&1 | head -1
+  1:2: error: expected a parameter name
+
+Two commas in a row — `(_ a: Int,, _ b: Int)` — report at the SECOND comma, the one standing
+where a parameter should be (swiftc points there too):
+
+  $ printf '(_ a: Int,, _ b: Int)\n' > e7.swift
+  $ ./lab.exe --emit-params e7.swift 2>&1 | head -1
+  1:11: error: expected a parameter name
+
+Two parameters with no comma between them — `(_ a: Int _ b: Int)` — end the list at the second
+`_`, so the error is "expected ')'" there, exactly once (swiftc points at the same token, and
+says "expected ',' separator" — it knows a list continues, we only know it stopped):
+
+  $ printf '(_ a: Int _ b: Int)\n' > e8.swift
+  $ ./lab.exe --emit-params e8.swift; echo "exit=$?"
+  1:11: error: expected ')'
+  exit=1
+
+A name and a type with no colon — `(a Int)` — is "expected ':'", at the `)`. This is the one
+malformed list where our wording is swiftc's own: `expected_parameter_colon`, "expected ':'
+following argument label and parameter name", reported at the same token:
+
+  $ printf '(a Int)\n' > e9.swift
+  $ ./lab.exe --emit-params e9.swift 2>&1 | head -1
+  1:7: error: expected ':'
+
+A list that hits end of input — `(_ a: Int` with no `)` — reports "expected ')'" at the end,
+once. There is no token left to point at, so the span is the position after the last one:
+
+  $ printf '(_ a: Int\n' > e10.swift
+  $ ./lab.exe --emit-params e10.swift; echo "exit=$?"
+  1:10: error: expected ')'
+  exit=1
+
+A keyword where a name goes — `(let a: Int)` — is rejected, and this is a DIVERGENCE we accept:
+Swift allows most keywords as argument labels and merely warns ("'let' in this position is
+interpreted as an argument label"), but our lexer turns `let` into `Kw_let`, which `parse_ident`
+cannot take. Keyword labels are out of the v0 subset:
+
+  $ printf '(let a: Int)\n' > e11.swift
+  $ ./lab.exe --emit-params e11.swift 2>&1 | head -1
+  1:2: error: expected a parameter name
