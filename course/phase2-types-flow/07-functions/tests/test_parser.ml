@@ -1,6 +1,7 @@
 (* Alcotest unit tests for concept-07's lexer and parser holes: the `->` arrow, the `return`
    statement, parameter lists (with the external label dropped), function declarations, and
-   top-level items. One group per hole. *)
+   top-level items. One group per hole — and the `params` group calls `parse_params` directly,
+   so it reports before `parse_func` exists to reach a list. *)
 
 let tokens (src : string) : Token.kind list =
   let d = Diagnostics.create () in
@@ -21,6 +22,30 @@ let check name expected src = Alcotest.(check string) name expected (dump src)
 let first_error src msg =
   Alcotest.(check (option string)) (Printf.sprintf "%S first error" src) (Some msg)
     (List.nth_opt (diagnostics src) 0)
+
+(* `parse_params` reached DIRECTLY, not through a declaration: the source is the list itself,
+   `(from start: Int)`. That is what lets the params cases below report on their own hole while
+   `parse_func` — the only thing that would reach a list in a real program — is still a TODO.
+   Same idea as the lab's `--emit-params`, and the same printer, so the two agree. *)
+let params_of (src : string) : string * string list =
+  let d = Diagnostics.create () in
+  let ps = Parser.parse_params (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
+  ( Printf.sprintf "(%s)" (String.concat " " (List.map Ast.dump_param ps)),
+    Diagnostics.all d |> List.map (fun (x : Diagnostics.t) -> x.Diagnostics.message) )
+
+(* A well-formed list must produce the right parameters AND no diagnostic: reporting on `()`
+   while still returning the empty list would otherwise pass unnoticed. *)
+let check_params what expected src =
+  let got, msgs = params_of src in
+  Alcotest.(check string) (Printf.sprintf "%s: %S" what src) expected got;
+  Alcotest.(check (list string)) (Printf.sprintf "%S is accepted silently" src) [] msgs
+
+let param_error src msg =
+  let d = Diagnostics.create () in
+  ignore (Parser.parse_params (Parser.create (Lexer.tokenize (Lexer.create src d)) d));
+  let msgs = Diagnostics.all d |> List.map (fun (x : Diagnostics.t) -> x.Diagnostics.message) in
+  Alcotest.(check (option string)) (Printf.sprintf "%S first error" src) (Some msg)
+    (List.nth_opt msgs 0)
 
 (* ---- lexer: the arrow ------------------------------------------------------------------ *)
 
@@ -52,19 +77,21 @@ let test_return () =
 
 (* ---- parser: parameter lists ----------------------------------------------------------- *)
 
-let test_params () =
-  check "empty" "(func f () ())" "func f() { }";
-  check "one, `_` label dropped" "(func f (a:Int) ())" "func f(_ a: Int) { }";
-  check "three, in order" "(func f (a:Int b:Bool c:String) ())"
-    "func f(_ a: Int, _ b: Bool, _ c: String) { }";
-  check "no label at all" "(func f (x:Int) ())" "func f(x: Int) { }";
-  check "named label dropped" "(func f (start:Int) ())" "func f(from start: Int) { }"
+let test_params_shape () =
+  check_params "empty" "()" "()";
+  check_params "one" "(a:Int)" "(_ a: Int)";
+  check_params "three, in order" "(a:Int b:Bool c:String)" "(_ a: Int, _ b: Bool, _ c: String)"
 
-let test_params_errors () =
-  first_error "func f { }" "expected '('";
-  first_error "func f(a:) { }" "expected a parameter type";
-  first_error "func f(a: Int { }" "expected ')'";
-  first_error "func f(a: Int,) { }" "expected a parameter name"
+let test_params_labels () =
+  check_params "`_` dropped" "(a:Int)" "(_ a: Int)";
+  check_params "named label dropped" "(start:Int)" "(from start: Int)";
+  check_params "no label at all" "(x:Int)" "(x: Int)"
+
+let test_params_no_lparen () = param_error "x: Int)" "expected '('"
+let test_params_label_no_name () = param_error "(a)" "expected a parameter name"
+let test_params_no_type () = param_error "(a:)" "expected a parameter type"
+let test_params_unclosed () = param_error "(a: Int {" "expected ')'"
+let test_params_trailing_comma () = param_error "(a: Int,)" "expected a parameter name"
 
 (* ---- parser: function declarations ----------------------------------------------------- *)
 
@@ -99,8 +126,13 @@ let () =
       ("return", [ Alcotest.test_case "with and without a value" `Quick test_return ]);
       ( "params",
         [
-          Alcotest.test_case "lists, labels dropped" `Quick test_params;
-          Alcotest.test_case "first error of a bad list" `Quick test_params_errors;
+          Alcotest.test_case "empty, one, three in order" `Quick test_params_shape;
+          Alcotest.test_case "labels dropped: _, named, none" `Quick test_params_labels;
+          Alcotest.test_case "bad: no '(' to open it" `Quick test_params_no_lparen;
+          Alcotest.test_case "bad: label with no name" `Quick test_params_label_no_name;
+          Alcotest.test_case "bad: no type after ':'" `Quick test_params_no_type;
+          Alcotest.test_case "bad: list never closed" `Quick test_params_unclosed;
+          Alcotest.test_case "bad: trailing comma" `Quick test_params_trailing_comma;
         ] );
       ( "func",
         [
