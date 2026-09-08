@@ -230,6 +230,13 @@ block bodies disagree about the same rule. Present from concept 06 onward (every
   carried copy from 31 on). Arrays in a class field are outside the v0 subset; the boundary should
   be a sema diagnostic rather than an assertion. **[OPEN]** — kept out of 39's corpus, not fixed
   (it belongs to concept 31's scope, not the isolation rule).
+- **`e as T` only names a scalar type** *(found 2026-09-08)* — sema resolves an ascription through
+  `Types.of_name`, which knows `Int`/`Bool`/`Double`/`String`/`Void` and nothing else, while a type
+  ANNOTATION goes through the struct/enum/class registry. So `let q: P = p` compiles and
+  `let q = p as P` is rejected with *cannot find type 'P' in scope*, where swiftc accepts both (an
+  identity coercion). *Fix:* resolve `as` with the same resolver annotations use. Note this is why
+  SILGen's `Ascribe` arm never takes its `None` branch; widening `as` is what would start using it,
+  and lowering the operand unchanged is already the right answer there.
 - **String interpolation** `"\(x)"` prints the literal `(x)` — *silent* wrong output, no diagnostic
   (should at least be rejected). *Caught while probing.*
 - **`39` actor isolation is per-TYPE, not per-INSTANCE** **[DOCUMENTED + PINNED — concept-review

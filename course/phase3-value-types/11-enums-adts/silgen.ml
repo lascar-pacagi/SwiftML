@@ -64,7 +64,10 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
   | Ast.Double_lit (f, _) -> emit b (Sil.Float_lit f) Types.TDouble
   | Ast.Bool_lit (x, _) -> emit b (Sil.Bool_lit x) Types.TBool
   | Ast.String_lit (s, _) -> emit b (Sil.String_lit s) Types.TString
-  (* `e as T`: generate the operand AT the written type (see gen_expr_as). *)
+  (* `e as T`: generate the operand AT the written type (see gen_expr_as). The `None` arm cannot
+     be reached today — sema resolved this same name through `Types.of_name` and rejected it if it
+     failed — but it is not dead weight either: an ascription with nothing to coerce lowers to its
+     operand, which is what it does. Widening `as` to name a struct would start using it. *)
   | Ast.Ascribe (e0, tyname, _) -> (
       match Types.of_name tyname with
       | Some t -> gen_expr_as b e0 t
