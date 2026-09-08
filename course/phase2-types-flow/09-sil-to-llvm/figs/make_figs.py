@@ -1,73 +1,69 @@
 #!/usr/bin/env python3
-"""Figures for 09-sil-to-llvm/explainer.qmd.
+"""Generate the Phase-2 source-to-native pipeline for concept 09."""
+from pathlib import Path
 
-    .venv/bin/python phase2-types-flow/09-sil-to-llvm/figs/make_figs.py
-
-Produces:
-    figs/pipeline.png — the complete Phase-2 pipeline, source to native, with the concept
-    that builds each stage. IRGen (concept 09) is the last hop; then clang + the program runs.
-"""
-import os
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-EDGE = "#5b6b7b"
-TEXT = "#1b2733"
-STAGE = "#fff3d6"
-ART = "#eef2f7"
-HL = "#dceede"
-
-
-def stage(ax, x, y, label, sub, color, w=1.7, h=0.95):
-    ax.add_patch(FancyBboxPatch((x - w / 2, y - h / 2), w, h, boxstyle="round,pad=0.03,rounding_size=0.08",
-                 linewidth=1.3, edgecolor=EDGE, facecolor=color, zorder=3))
-    ax.text(x, y + 0.13, label, ha="center", va="center", fontsize=10.5, fontweight="bold", color=TEXT, zorder=4)
-    ax.text(x, y - 0.22, sub, ha="center", va="center", fontsize=7.5, color="#777", fontstyle="italic", zorder=4)
-
-
-def artifact(ax, x, y, label):
-    ax.text(x, y, label, ha="center", va="center", fontsize=8.5, family="monospace", color=TEXT, zorder=4)
-
-
-def arr(ax, x0, x1, y):
-    ax.add_patch(FancyArrowPatch((x0, y), (x1, y), arrowstyle="-|>", mutation_scale=12, linewidth=1.4, color=EDGE, zorder=2))
+HERE = Path(__file__).resolve().parent
+INK = "#203247"
+MUTED = "#627185"
+LINE = "#9aa9b9"
+TEAL = "#087f82"
 
 
 def make_pipeline():
-    fig, ax = plt.subplots(figsize=(11.5, 3.4))
-    ax.set_xlim(0, 23)
-    ax.set_ylim(0, 4)
+    fig, ax = plt.subplots(figsize=(12, 3.1))
+    fig.patch.set_facecolor("white")
+    ax.set(xlim=(-0.8, 12.8), ylim=(-1.05, 2.25))
     ax.axis("off")
-    y = 2.4
-    # stages and the artifacts flowing between them
-    stages = [
-        ("Lexer", "01", STAGE), ("Parser", "02", STAGE), ("Sema", "03·05–07", STAGE),
-        ("SILGen", "08", STAGE), ("IRGen", "09", HL), ("clang", "—", ART),
-    ]
-    arts = [".swift", "tokens", "AST", "typed AST", "SIL", "LLVM IR", "a.out"]
-    xs_stage = [2.2, 5.6, 9.0, 12.4, 15.8, 19.2]
-    xs_art = [0.6, 3.9, 7.3, 10.7, 14.1, 17.5, 21.4]
-    for (lbl, sub, col), x in zip(stages, xs_stage):
-        stage(ax, x, y, lbl, sub, col)
-    for a, x in zip(arts, xs_art):
-        artifact(ax, x, y + 1.05, a)
-    # arrows: artifact -> stage -> artifact ...
-    seq = []
-    for i in range(len(xs_stage)):
-        seq.append((xs_art[i] + 0.5, xs_stage[i] - 0.9))
-        seq.append((xs_stage[i] + 0.9, xs_art[i + 1] - 0.5))
-    for x0, x1 in seq:
-        arr(ax, x0, x1, y)
-    ax.text(21.4, y - 0.7, "./a.out\nruns!", ha="center", fontsize=9, color="#2f6f4f", fontweight="bold")
-    ax.set_title("The complete Phase-2 pipeline — source to native (IRGen, concept 09, is the last hop)",
-                 fontsize=12.5, color=TEXT, pad=6)
-    fig.tight_layout()
-    out = os.path.join(HERE, "pipeline.png")
-    fig.savefig(out, dpi=160, bbox_inches="tight")
+
+    ax.text(-0.65, 1.98, "From Swift source to a running program",
+            fontsize=17, weight="bold", color=INK, va="center")
+    ax.text(-0.65, 1.58, "PHASE 2   /   CONCEPT 09",
+            fontsize=9, weight="bold", color=MUTED, va="center")
+
+    # Artifacts sit on the path; each labelled arrow is a compiler stage.
+    artifacts = ["Swift\nsource", "Tokens", "AST", "Typed\nAST", "SIL", "LLVM IR", "Native\nexecutable"]
+    stages = [("Lexer", "01"), ("Parser", "02"), ("Sema", "03 · 05–07"),
+              ("SILGen", "08"), ("IRGen", "09 · you build"),
+              ("clang", "compile + link")]
+    y, width, height = 0.45, 1.3, 0.88
+    for i, label in enumerate(artifacts):
+        x = 2 * i
+        highlighted = i in (4, 5)
+        ax.add_patch(FancyBboxPatch(
+            (x - width / 2, y - height / 2), width, height,
+            boxstyle="round,pad=0.02,rounding_size=0.09",
+            linewidth=1.3 if highlighted else 0.8,
+            edgecolor=TEAL if highlighted else "#d8e0e8",
+            facecolor="#edf8f7" if highlighted else "#f3f6f9"))
+        ax.text(x, y, label, ha="center", va="center", fontsize=11,
+                color=INK, weight="bold")
+
+    for i, (name, concept) in enumerate(stages):
+        x = 2 * i + 1
+        color = TEAL if name == "IRGen" else MUTED
+        ax.add_patch(FancyArrowPatch(
+            (2 * i + width / 2 + 0.06, y),
+            (2 * (i + 1) - width / 2 - 0.06, y),
+            arrowstyle="-|>", mutation_scale=12, linewidth=1.5, color=color))
+        ax.text(x, 1.12, name, ha="center", fontsize=10,
+                weight="bold", color=color)
+        ax.text(x, -0.23, concept, ha="center", fontsize=8, color=color)
+
+    ax.plot([7.4, 10.6], [-0.53, -0.53], color=TEAL, linewidth=2,
+            solid_capstyle="round")
+    ax.text(9, -0.83, "This lesson: SIL → LLVM IR", ha="center",
+            fontsize=10, weight="bold", color=TEAL)
+    ax.text(12, -0.83, "Run ./a.out", ha="center", fontsize=10, color=INK)
+
+    fig.subplots_adjust(left=0.025, right=0.975, top=0.97, bottom=0.06)
+    out = HERE / "pipeline.png"
+    fig.savefig(out, dpi=220, facecolor="white")
     plt.close(fig)
     print("wrote", out)
 
