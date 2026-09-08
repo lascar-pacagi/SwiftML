@@ -1,7 +1,8 @@
 (* SILGen — concept 08 (skeleton). The builder API, the arithmetic/call lowering and
-   lower_func/lower are given. You implement two things: the MEMORY MODEL (TODO(08a) — a
-   variable is a stack slot, read with load, written with store) and the CONTROL-FLOW lowering
-   (TODO(08b) in gen_stmt) — the heart of SILGen: turning the AST tree into a basic-block CFG.
+   lower_func/lower are given. You implement three things: the MEMORY MODEL (TODO(08a) — a
+   variable is a stack slot, read with load, written with store), the ordinary BINARY OPERATOR
+   (TODO(08b)), and the CONTROL-FLOW lowering (TODO(08c) in gen_stmt) — the heart of SILGen:
+   turning the AST tree into a basic-block CFG.
    Reference: solution/silgen.ml.
 
    Each variable becomes an `alloc_stack` slot, read with `load`, written with `store` (no
@@ -114,9 +115,14 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       switch_to b merge;
       emit b (Sil.Load slot) Types.TBool
   | Ast.Binary (op, l, r, _) ->
-      let lv = gen_expr b l and rv = gen_expr b r in
-      let operand = if vty b lv = Types.TDouble || vty b rv = Types.TDouble then Types.TDouble else vty b lv in
-      emit b (Sil.Binop (op, lv, rv)) (result_ty op operand)
+      ignore (op, l, r);
+      ignore result_ty;
+      (* TODO(08b): every other operator. Lower both operands, then emit one `Sil.Binop`. Two
+         types are in play and they are not always the same: the type the operation happens AT
+         (`Int + Int` is Int arithmetic; if either side is a Double it is Double arithmetic) and
+         the type of its RESULT, which `result_ty` gives you — a comparison is a Bool whatever it
+         compared. §2. *)
+      failwith "TODO(08b): lower a binary operator"
   | Ast.Call (f, args, _) ->
       let argvs = List.map (gen_expr b) args in
       if Hashtbl.mem b.funcs f then (
@@ -180,29 +186,29 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
           let v = gen_expr b e in
           terminate b (Sil.Return (Some v))
       | None -> terminate b (Sil.Return None))
-  (* --- build the control-flow GRAPH (TODO(08b)) --- *)
+  (* --- build the control-flow GRAPH (TODO(08c)) --- *)
   | Ast.If { cond; then_blk; else_blk; _ } ->
-      (* TODO(08b): the if-DIAMOND — a block per branch, both ending in a Br to the merge block
+      (* TODO(08c): the if-DIAMOND — a block per branch, both ending in a Br to the merge block
          that execution continues from. §2 and its figure draw the shape. *)
       ignore (cond, then_blk, else_blk);
-      failwith "TODO(08b): lower `if`"
+      failwith "TODO(08c): lower `if`"
   | Ast.While { cond; body; _ } ->
-      (* TODO(08b): the while LOOP — a header that re-tests the condition, a body whose last
+      (* TODO(08c): the while LOOP — a header that re-tests the condition, a body whose last
          terminator is the BACK-EDGE to that header, an exit block. Push (header, exit) on
          [b.loops] around the body: that is how break and continue find their targets. §2. *)
       ignore (cond, body);
-      failwith "TODO(08b): lower `while`"
+      failwith "TODO(08c): lower `while`"
   | Ast.For { var; lo; hi; body; _ } ->
-      (* TODO(08b): `for v in lo ..< hi` DESUGARS to the counted loop above, over a slot for v.
+      (* TODO(08c): `for v in lo ..< hi` DESUGARS to the counted loop above, over a slot for v.
          Evaluate hi once, before the loop. §2. *)
       ignore (var, lo, hi, body);
-      failwith "TODO(08b): lower `for`"
+      failwith "TODO(08c): lower `for`"
   | Ast.Break _ ->
-      (* TODO(08b): branch to the current loop's exit block (the break-target on b.loops). *)
-      failwith "TODO(08b): lower `break`"
+      (* TODO(08c): branch to the current loop's exit block (the break-target on b.loops). *)
+      failwith "TODO(08c): lower `break`"
   | Ast.Continue _ ->
-      (* TODO(08b): branch to the current loop's header (the continue-target on b.loops). *)
-      failwith "TODO(08b): lower `continue`"
+      (* TODO(08c): branch to the current loop's header (the continue-target on b.loops). *)
+      failwith "TODO(08c): lower `continue`"
 
 (* --- lowering a function: params get slots; then the body --- *)
 let lower_func funcs (name : string) (params : (string * Types.ty) list) (ret : Types.ty)

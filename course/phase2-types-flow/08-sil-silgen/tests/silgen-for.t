@@ -1,4 +1,4 @@
-TODO(08b) — `for v in lo ..< hi`, DESUGARED to the counted loop. `for` adds no new SIL: a slot
+TODO(08c) — `for v in lo ..< hi`, DESUGARED to the counted loop. `for` adds no new SIL: a slot
 for `v` initialized to `lo`, a while-shaped loop testing `v < hi`, and the increment in a
 block of its own — the LATCH — so that `continue` can branch there instead of skipping it.
 

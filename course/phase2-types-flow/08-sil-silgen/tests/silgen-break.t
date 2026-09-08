@@ -1,4 +1,4 @@
-TODO(08b) — `break`, a branch to the enclosing loop's EXIT block. It needs the loop holes too:
+TODO(08c) — `break`, a branch to the enclosing loop's EXIT block. It needs the loop holes too:
 `b.loops` is only pushed by `while` and `for`, so this file stays red until one of them is
 built. Everything here is about which block the branch names.
 

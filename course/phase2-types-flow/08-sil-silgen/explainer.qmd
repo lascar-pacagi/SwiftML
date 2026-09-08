@@ -241,7 +241,12 @@ value, `Ast.Assign` stores over the slot the name already has. `lower` does the 
 each parameter, so the shape is already in the file. Do this first — it is the vocabulary
 everything below produces, and `silgen-memory.t` reports on it alone.
 
-**`TODO(08b)` — the control flow**, the five cases of `gen_stmt` described one by one above. Use
+**`TODO(08b)` — the ordinary binary operator**, one `emit`, but two types that are not always the
+same: the one the operation happens AT (either side a `Double` makes it Double arithmetic) and the
+one it produces, which `result_ty` gives you — a comparison is a `Bool` whatever it compared.
+`&&` and `||` are not yours: they short-circuit, so the given `gen_expr` lowers them as a diamond.
+
+**`TODO(08c)` — the control flow**, the five cases of `gen_stmt` described one by one above. Use
 `new_block` to make blocks, `terminate` to set the current block's branch, `gen_block` to lower a
 list of statements into the current block, and `switch_to` to move the cursor.
 
@@ -273,10 +278,13 @@ make lab C=phase2-types-flow/08-sil-silgen
 Six cram files, one per hole (`make lab C=… T=silgen-if` runs one), a unit suite grouped the same
 way, and the oracle — in the order you fill the holes:
 
+- `silgen-binops.t` — `TODO(08b)`: `Int` and `Double` arithmetic, a comparison producing a `Bool`,
+  remainder, and an `Int` literal beside a `Double` making the whole operation Double. Nothing here
+  branches or names a variable, so it reports on that hole alone.
 - `silgen-memory.t` — `TODO(08a)`, and the file to start with: `let`/`var` as `alloc_stack` +
   `store` + `load`, reassignment storing over the same slot, a parameter in a slot of its own, a
   call whose result is bound through one, and the `&&` diamond `gen_expr` already builds. Nothing
-  here branches, so it goes green on the memory model alone, with every `TODO(08b)` still raising.
+  here branches, so it goes green on the memory model alone, with every `TODO(08c)` still raising.
 - `silgen-if.t` — `--emit-sil` on an `if`/`else` (then, merge, else; both arms `br` to the merge;
   the next statement lands there), an `if` with no `else` (the false edge *is* the merge), an `if`
   whose arms both `return` (the merge keeps `unreachable`), an `else if` chain, and the verifier.

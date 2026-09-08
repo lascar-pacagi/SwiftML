@@ -2,7 +2,7 @@ TODO(08a) — the MEMORY MODEL, and the SIL vocabulary every control-flow hole h
 Raw SIL keeps each variable in an `alloc_stack` slot and touches it only through `load` and
 `store`; there is no SSA here, and Phase-4's mem2reg is the pass that later takes it away.
 Nothing in this file branches, so it reports on TODO(08a) alone — it can go green while every
-TODO(08b) in `gen_stmt` still raises.
+TODO(08c) in `gen_stmt` still raises.
 
 `let x = 1` becomes an alloc_stack slot, a store, and a load at the use.
 

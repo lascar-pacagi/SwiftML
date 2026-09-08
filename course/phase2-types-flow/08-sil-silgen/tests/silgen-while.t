@@ -1,4 +1,4 @@
-TODO(08b) — the `while` LOOP. The shape a tree cannot hold: a header block that re-tests the
+TODO(08c) — the `while` LOOP. The shape a tree cannot hold: a header block that re-tests the
 condition, a body that branches BACK to it, and an exit block. The back-edge is the whole
 point of moving from the AST to a CFG.
 
