@@ -32,6 +32,9 @@ the rest is given.
 **Instructions** (`gen_instr`). Several emit *no line at all* into the function body — they only
 bind the SIL value to an operand, which is a shape worth expecting before you meet it:
 
+In the table, `$T` stands for a SIL type. `<ty>` and `<ret>` stand for the corresponding LLVM type
+spelling produced by `llty`, such as `i64`, `i1`, `double`, or `void`.
+
 | SIL | LLVM |
 |---|---|
 | `%n = integer_literal $Int, 7` | the operand `7` — no line (given, as the pattern) |
