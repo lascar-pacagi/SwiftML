@@ -242,7 +242,9 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
      result merged through a stack slot (mem2reg promotes it to a phi). *)
   | Ast.Binary ((Ast.And | Ast.Or) as op, l, r, _) ->
       let lv = gen_expr b l in
-      let slot = emit b (Sil.Alloc_stack "land") Types.TBool in
+      (* the slot the two answers meet in — named for the operator it serves, since this arm
+         lowers both. mem2reg turns it into a phi in Phase 4. *)
+      let slot = emit b (Sil.Alloc_stack (if op = Ast.And then "$and" else "$or")) Types.TBool in
       ignore (emit b (Sil.Store (lv, slot)) Types.TVoid);
       let rhs_b = new_block b and merge = new_block b in
       let t_tgt, f_tgt =

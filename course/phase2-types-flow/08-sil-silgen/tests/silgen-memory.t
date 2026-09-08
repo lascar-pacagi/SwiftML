@@ -66,7 +66,7 @@ build for `if`, merging the two answers through a slot.
     %3 = load %1 $Int
     %4 = integer_literal $Int, 1
     %5 = binop ">" %3, %4 $Bool
-    %6 = alloc_stack $Bool  // land
+    %6 = alloc_stack $Bool  // $and
     store %5 to %6
     cond_br %5, bb1, bb2
   bb1:
