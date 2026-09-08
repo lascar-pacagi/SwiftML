@@ -63,7 +63,8 @@ spelling produced by `llty`, such as `i64`, `i1`, `double`, or `void`.
 The asymmetry is `@main`. In SIL it is an ordinary function returning `$()`; in LLVM it is the C
 entry point, whose `i32` result *is* the process's exit code, so a valueless `return` there has to
 become `ret i32 0`. Blocks and their labels carry across unchanged, which is why an `--emit-llvm`
-dump reads like the `--emit-sil` dump of the same program with the words swapped.
+dump closely follows the structure of the `--emit-sil` dump for the same program, even though the
+instructions use LLVM syntax.
 
 One LLVM rule is worth learning right now: **every `alloca` goes at the top of the entry block**
 (the given `gen_allocas` does this for you). An `alloca` reserves stack space that is only returned
