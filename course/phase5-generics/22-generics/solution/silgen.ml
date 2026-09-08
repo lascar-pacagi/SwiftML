@@ -56,6 +56,15 @@ let enter_loop (b : builder) ~(continue_to : int) ~(break_to : int) : unit =
 
 let leave_loop (b : builder) : unit = b.loops <- List.tl b.loops
 
+(* where `break` and `continue` go — the innermost loop's, since `loops` is innermost-first.
+   `None` means "not inside a loop", which sema has already rejected; the arm is the compiler's
+   own safety net, not a case the source can reach. *)
+let break_target (b : builder) : int option =
+  match b.loops with (_, ex) :: _ -> Some ex | [] -> None
+
+let continue_target (b : builder) : int option =
+  match b.loops with (cont, _) :: _ -> Some cont | [] -> None
+
 let result_ty (op : Ast.binop) (operand : Types.ty) : Types.ty =
   match op with
   | Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge | Ast.And | Ast.Or -> Types.TBool
@@ -528,8 +537,8 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       in
       dispatch cases;
       switch_to b merge
-  | Ast.Break _ -> ( match b.loops with (_, ex) :: _ -> terminate b (Sil.Br (ex, [])) | [] -> ())
-  | Ast.Continue _ -> ( match b.loops with (cont, _) :: _ -> terminate b (Sil.Br (cont, [])) | [] -> ())
+  | Ast.Break _ -> ( match break_target b with Some ex -> terminate b (Sil.Br (ex, [])) | None -> ())
+  | Ast.Continue _ -> ( match continue_target b with Some c -> terminate b (Sil.Br (c, [])) | None -> ())
 
 (* --- lowering a function: params get slots; then the body --- *)
 let lower_func structs enums protos methods funcs gfuncs (name : string)

@@ -90,6 +90,18 @@ let enter_loop (b : builder) ~(continue_to : int) ~(break_to : int) : unit =
 
 let leave_loop (b : builder) : unit = b.loops <- List.tl b.loops
 
+(* where `break` and `continue` go — the innermost loop's, since `loops` is innermost-first.
+   `loop_depth` is the scope depth recorded when the loop was entered: leaving it has to release
+   everything opened inside. `None` means "not inside a loop", which sema has already rejected. *)
+let break_target (b : builder) : int option =
+  match b.loops with (_, ex, _) :: _ -> Some ex | [] -> None
+
+let continue_target (b : builder) : int option =
+  match b.loops with (cont, _, _) :: _ -> Some cont | [] -> None
+
+let loop_depth (b : builder) : int option =
+  match b.loops with (_, _, d) :: _ -> Some d | [] -> None
+
 let result_ty (op : Ast.binop) (operand : Types.ty) : Types.ty =
   match op with
   | Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge | Ast.And | Ast.Or -> Types.TBool

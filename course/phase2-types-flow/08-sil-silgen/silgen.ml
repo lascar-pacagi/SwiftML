@@ -72,6 +72,15 @@ let enter_loop (b : builder) ~(continue_to : int) ~(break_to : int) : unit =
 
 let leave_loop (b : builder) : unit = b.loops <- List.tl b.loops
 
+(* where `break` and `continue` go — the innermost loop's, since `loops` is innermost-first.
+   `None` means "not inside a loop", which sema has already rejected; the arm is the compiler's
+   own safety net, not a case the source can reach. *)
+let break_target (b : builder) : int option =
+  match b.loops with (_, ex) :: _ -> Some ex | [] -> None
+
+let continue_target (b : builder) : int option =
+  match b.loops with (cont, _) :: _ -> Some cont | [] -> None
+
 let result_ty (op : Ast.binop) (operand : Types.ty) : Types.ty =
   match op with
   | Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge | Ast.And | Ast.Or -> Types.TBool
@@ -221,11 +230,11 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       ignore (var, lo, hi, body);
       failwith "TODO(08c): lower `for`"
   | Ast.Break _ ->
-      (* TODO(08c): branch to the innermost loop's break target — the top of `b.loops`. *)
+      (* TODO(08c): branch to the innermost loop's break target — `break_target b`. *)
       failwith "TODO(08c): lower `break`"
   | Ast.Continue _ ->
-      (* TODO(08c): branch to the innermost loop's continue target — also the top of the stack,
-         and NOT the same block as break's. *)
+      (* TODO(08c): branch to the innermost loop's continue target — `continue_target b`, which is
+         NOT the same block as break's. *)
       failwith "TODO(08c): lower `continue`"
 
 (* --- lowering a function: params get slots; then the body --- *)
