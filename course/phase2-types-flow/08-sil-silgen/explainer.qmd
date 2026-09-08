@@ -15,8 +15,10 @@ optimization (Phase 4 promotes those slots to SSA). From here the pipeline is th
 
 ```
 Parse → Sema → SILGen → SIL → (Phase-4 passes) → IRGen → LLVM → native
-                  └── you build SILGen here; SIL is what everything downstream works on ──┘
 ```
+
+**SILGen is the box you build here.** Everything to its right consumes the SIL it produces, which
+is why SIL's shape is a contract in `sil.ml` rather than an internal detail of one pass.
 
 The reason SIL has to exist is the thing concepts 06–07 kept pointing at: **the AST is a tree, but a
 program's control flow is a graph.** A loop jumps backward; an `if` merges two paths. A tree can't
