@@ -92,8 +92,17 @@ trap. This is a CLAUDE.md parity gotcha and is *not* in the documented-divergenc
 - *Half fixed (concept-review pass, 8b0a7f5 … 1d53e1f):* the fold comments in 15/17/18/19/20 and
   their explainers now say plainly that there is no trap and that the pass refuses to fold ÷0
   because it has no value to give, not because a trap is waiting; the corpora keep ÷0 out.
-- *Still open:* the runtime behaviour. *Fix:* emit a zero-check + `llvm.trap` before `sdiv`/`srem`
-  (and the `Int.min/-1` check), and add the asterisk to the "byte-for-byte" claims (09 README).
+- *Still open:* the runtime behaviour. *Attempted 2026-09-08 and reverted, with the dead end
+  recorded so it is not repeated:* guarding inline in `gen_binop` (icmp + branch to a trap block,
+  then continue) is correct at `-Onone` but **breaks `-O`** — 8 of the 32 comparison programs
+  differed. Splitting the block leaves IRGen's phi incomings naming the original SIL block, which
+  is no longer the block that branches, so the IR is invalid exactly when mem2reg has introduced
+  block args. *Fix that avoids it:* put the check in a helper defined in the preamble —
+  `%d = call i64 @swiftml.divz(i64 %r)` then `sdiv i64 %l, %d` — so the caller's block is never
+  split and no phi moves. Cost: a preamble edit in 40 `irgen.ml` copies, re-promoting the IR
+  goldens that show a division (`irgen-instrs.t`, `run-arith.t`, `opt-fold.t`, `isel-instrs.t`),
+  and Backend B (33–37) needs its own check or an explicit note. Also still open: `Int.min / -1`,
+  and the asterisk on the "byte-for-byte" claims (09 README).
 
 ### 7. `defer` inside a `do` block doesn't fire on a locally-caught throw  **[FIXED — concept-review pass 29–32]**
 `do { defer { print(2) }; try mayThrow() } catch { print(3) }` printed `3` (swiftml) vs `2`,`3`
