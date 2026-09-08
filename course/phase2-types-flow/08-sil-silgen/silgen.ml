@@ -149,24 +149,24 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       (* TODO(08b): the if-DIAMOND — a block per branch, both ending in a Br to the merge block
          that execution continues from. §2 and its figure draw the shape. *)
       ignore (cond, then_blk, else_blk);
-      failwith "TODO(08-silgen): lower `if`"
+      failwith "TODO(08b): lower `if`"
   | Ast.While { cond; body; _ } ->
       (* TODO(08b): the while LOOP — a header that re-tests the condition, a body whose last
          terminator is the BACK-EDGE to that header, an exit block. Push (header, exit) on
          [b.loops] around the body: that is how break and continue find their targets. §2. *)
       ignore (cond, body);
-      failwith "TODO(08-silgen): lower `while`"
+      failwith "TODO(08b): lower `while`"
   | Ast.For { var; lo; hi; body; _ } ->
       (* TODO(08b): `for v in lo ..< hi` DESUGARS to the counted loop above, over a slot for v.
          Evaluate hi once, before the loop. §2. *)
       ignore (var, lo, hi, body);
-      failwith "TODO(08-silgen): lower `for`"
+      failwith "TODO(08b): lower `for`"
   | Ast.Break _ ->
       (* TODO(08b): branch to the current loop's exit block (the break-target on b.loops). *)
-      failwith "TODO(08-silgen): lower `break`"
+      failwith "TODO(08b): lower `break`"
   | Ast.Continue _ ->
       (* TODO(08b): branch to the current loop's header (the continue-target on b.loops). *)
-      failwith "TODO(08-silgen): lower `continue`"
+      failwith "TODO(08b): lower `continue`"
 
 (* --- lowering a function: params get slots; then the body --- *)
 let lower_func funcs (name : string) (params : (string * Types.ty) list) (ret : Types.ty)
