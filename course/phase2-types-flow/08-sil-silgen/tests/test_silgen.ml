@@ -31,6 +31,25 @@ let is_load = function Sil.Load _ -> true | _ -> false
 let br_target (b : Sil.block) = match b.Sil.term with Sil.Br n -> n | _ -> -1
 
 (* every block whose terminator is an unconditional branch to [n] *)
+(* the blocks reachable from [start] by following terminators. A LATCH is a predecessor of the
+   header that is also reachable FROM the header — that is what makes its branch a BACK edge, and
+   it is what tells it apart from a block that merely runs before the loop and falls into it. *)
+let reachable_from (f : Sil.func) (start : int) : int list =
+  let seen = Hashtbl.create 8 in
+  let rec go n =
+    if not (Hashtbl.mem seen n) then (
+      Hashtbl.replace seen n ();
+      match List.find_opt (fun (b : Sil.block) -> b.Sil.bid = n) f.Sil.blocks with
+      | None -> ()
+      | Some b -> (
+          match b.Sil.term with
+          | Sil.Br t -> go t
+          | Sil.Cond_br (_, t, e) -> go t; go e
+          | _ -> ()))
+  in
+  go start;
+  Hashtbl.fold (fun k () acc -> k :: acc) seen []
+
 let preds_by_br (f : Sil.func) n =
   List.filter (fun (b : Sil.block) -> br_target b = n) f.Sil.blocks |> List.map (fun b -> b.Sil.bid)
 
@@ -162,7 +181,8 @@ let test_for_latch () =
   let latch =
     List.find
       (fun (b : Sil.block) ->
-        b.Sil.bid <> 0 && br_target b = header.Sil.bid
+        List.mem b.Sil.bid (reachable_from main header.Sil.bid)
+        && br_target b = header.Sil.bid
         && List.exists (fun (_, i) -> match i with Sil.Binop (Ast.Add, _, _) -> true | _ -> false) b.Sil.instrs)
       main.Sil.blocks
   in
@@ -203,7 +223,9 @@ let test_continue_latch () =
   let latch =
     List.find
       (fun (b : Sil.block) ->
-        b.Sil.bid <> 0 && br_target b = header.Sil.bid && List.exists (fun (_, i) -> is_store i) b.Sil.instrs)
+        List.mem b.Sil.bid (reachable_from main header.Sil.bid)
+        && br_target b = header.Sil.bid
+        && List.exists (fun (_, i) -> is_store i) b.Sil.instrs)
       main.Sil.blocks
   in
   (* THE bug this pins: continue must reach the latch, or the increment never runs *)
