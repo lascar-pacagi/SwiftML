@@ -1,4 +1,4 @@
-TODO(08) — `continue`, a branch to the enclosing loop's CONTINUE target. Like `break` it needs
+TODO(08b) — `continue`, a branch to the enclosing loop's CONTINUE target. Like `break` it needs
 a loop hole first. The target is the loop's header for a `while`, and the LATCH for a `for` —
 getting that wrong compiles to an infinite loop, and this file is where it shows.
 

@@ -1,4 +1,4 @@
-TODO(08) — the `if` DIAMOND. `--emit-sil` stops right after SILGen and the verifier, so what
+TODO(08b) — the `if` DIAMOND. `--emit-sil` stops right after SILGen and the verifier, so what
 these cases read is exactly the graph you built: a `cond_br` out of the current block, one
 block per branch, and a merge block that execution continues from.
 

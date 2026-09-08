@@ -1,6 +1,8 @@
-(* SILGen — concept 08 (skeleton). The builder API + expression lowering + lower_func/lower
-   are given; you implement the control-flow lowering (the TODO(08) holes in gen_stmt) — the
-   heart of SILGen: turning the AST tree into a basic-block CFG. Reference: solution/silgen.ml.
+(* SILGen — concept 08 (skeleton). The builder API, the arithmetic/call lowering and
+   lower_func/lower are given. You implement two things: the MEMORY MODEL (TODO(08a) — a
+   variable is a stack slot, read with load, written with store) and the CONTROL-FLOW lowering
+   (TODO(08b) in gen_stmt) — the heart of SILGen: turning the AST tree into a basic-block CFG.
+   Reference: solution/silgen.ml.
 
    Each variable becomes an `alloc_stack` slot, read with `load`, written with `store` (no
    SSA — Phase-4 mem2reg does that). Control flow becomes basic blocks: `if`/`while`/`for`
@@ -54,8 +56,10 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       | Some t -> gen_expr_as b e0 t
       | None -> gen_expr b e0)
   | Ast.Var (x, _) ->
-      let addr = Hashtbl.find b.vars x in
-      emit b (Sil.Load addr) (vty b addr) (* the slot's element type *)
+      ignore x;
+      (* TODO(08a): reading a variable is a LOAD from its slot. `b.vars` maps the name to the
+         address `alloc_stack` gave it, and `vty b addr` is that slot's element type. §2. *)
+      failwith "TODO(08a): load a variable from its slot"
   | Ast.Unary (op, e0, _) ->
       let v = gen_expr b e0 in
       emit b (Sil.Unop (op, v)) (vty b v)
@@ -121,12 +125,18 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
         | Some n -> ( match Types.of_name n with Some t -> gen_expr_as b value t | None -> gen_expr b value)
         | None -> gen_expr b value
       in
-      let addr = emit b (Sil.Alloc_stack name) (vty b v) in
-      Hashtbl.replace b.vars name addr;
-      ignore (emit b (Sil.Store (v, addr)) Types.TVoid)
+      ignore name;
+      ignore v;
+      (* TODO(08a): a declaration is a SLOT and a STORE — alloc_stack for `name` at the value's
+         type, recorded in `b.vars` so later reads find it, then the value stored into it.
+         `lower` already does exactly this for each parameter. §2. *)
+      failwith "TODO(08a): give the variable a slot and store into it"
   | Ast.Assign { name; value; _ } ->
       let v = gen_expr b value in
-      ignore (emit b (Sil.Store (v, Hashtbl.find b.vars name)) Types.TVoid)
+      ignore name;
+      ignore v;
+      (* TODO(08a): assignment stores into the slot the name already has — no new slot. *)
+      failwith "TODO(08a): store into the variable's slot"
   | Ast.Expr_stmt (e, _) -> ignore (gen_expr b e)
   | Ast.Return (eo, _) -> (
       match eo with
@@ -134,28 +144,28 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
           let v = gen_expr b e in
           terminate b (Sil.Return (Some v))
       | None -> terminate b (Sil.Return None))
-  (* --- NEW in concept 08: build the control-flow GRAPH (you implement these) --- *)
+  (* --- build the control-flow GRAPH (TODO(08b)) --- *)
   | Ast.If { cond; then_blk; else_blk; _ } ->
-      (* TODO(08): the if-DIAMOND — a block per branch, both ending in a Br to the merge block
+      (* TODO(08b): the if-DIAMOND — a block per branch, both ending in a Br to the merge block
          that execution continues from. §2 and its figure draw the shape. *)
       ignore (cond, then_blk, else_blk);
       failwith "TODO(08-silgen): lower `if`"
   | Ast.While { cond; body; _ } ->
-      (* TODO(08): the while LOOP — a header that re-tests the condition, a body whose last
+      (* TODO(08b): the while LOOP — a header that re-tests the condition, a body whose last
          terminator is the BACK-EDGE to that header, an exit block. Push (header, exit) on
          [b.loops] around the body: that is how break and continue find their targets. §2. *)
       ignore (cond, body);
       failwith "TODO(08-silgen): lower `while`"
   | Ast.For { var; lo; hi; body; _ } ->
-      (* TODO(08): `for v in lo ..< hi` DESUGARS to the counted loop above, over a slot for v.
+      (* TODO(08b): `for v in lo ..< hi` DESUGARS to the counted loop above, over a slot for v.
          Evaluate hi once, before the loop. §2. *)
       ignore (var, lo, hi, body);
       failwith "TODO(08-silgen): lower `for`"
   | Ast.Break _ ->
-      (* TODO(08): branch to the current loop's exit block (the break-target on b.loops). *)
+      (* TODO(08b): branch to the current loop's exit block (the break-target on b.loops). *)
       failwith "TODO(08-silgen): lower `break`"
   | Ast.Continue _ ->
-      (* TODO(08): branch to the current loop's header (the continue-target on b.loops). *)
+      (* TODO(08b): branch to the current loop's header (the continue-target on b.loops). *)
       failwith "TODO(08-silgen): lower `continue`"
 
 (* --- lowering a function: params get slots; then the body --- *)

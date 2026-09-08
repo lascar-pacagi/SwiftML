@@ -208,11 +208,12 @@ let test_continue_verifies () = verifies "var s = 0\nfor i in 0 ..< 3 { for j in
 let () =
   Alcotest.run "silgen"
     [
-      ( "given: memory model + module",
+      ( "given: module shape",
+        [ Alcotest.test_case "top-level becomes @main" `Quick test_main ] );
+      ( "hole: memory model",
         [
-          Alcotest.test_case "top-level becomes @main" `Quick test_main;
-          Alcotest.test_case "a func lowers to a SIL func" `Quick test_func;
           Alcotest.test_case "alloc_stack/load/store" `Quick test_memory_model;
+          Alcotest.test_case "a func lowers to a SIL func" `Quick test_func;
         ] );
       ( "hole: if",
         [

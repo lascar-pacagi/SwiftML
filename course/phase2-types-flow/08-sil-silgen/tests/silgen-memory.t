@@ -1,7 +1,8 @@
-The MEMORY MODEL, which is given — this file is green before you start, and it is the SIL
-vocabulary the control-flow holes have to fit into. Raw SIL keeps every variable in an
-`alloc_stack` slot and touches it only through `load`/`store`; Phase-4's mem2reg is what turns
-that into SSA. Read the output here first: the holes only add blocks and branches to it.
+TODO(08a) — the MEMORY MODEL, and the SIL vocabulary every control-flow hole has to fit into.
+Raw SIL keeps each variable in an `alloc_stack` slot and touches it only through `load` and
+`store`; there is no SSA here, and Phase-4's mem2reg is the pass that later takes it away.
+Nothing in this file branches, so it reports on TODO(08a) alone — it can go green while every
+TODO(08b) in `gen_stmt` still raises.
 
 `let x = 1` becomes an alloc_stack slot, a store, and a load at the use.
 
@@ -42,13 +43,15 @@ Reassignment stores over the same slot instead of allocating a second one.
   $ ./lab.exe --emit-sil var.swift | grep -c "store" || true
   2
 
-A call lowers to a `function_ref` and an `apply`; `print` is the one builtin.
+A call lowers to a `function_ref` and an `apply`, and binding its result goes through a slot
+like any other value; `print` is the one builtin.
 
-  $ printf 'func two() -> Int {\n  return 2\n}\nprint(two())\n' > call.swift
-  $ ./lab.exe --emit-sil call.swift | grep "function_ref\|apply"
+  $ printf 'func two() -> Int {\n  return 2\n}\nlet t = two()\nprint(t)\n' > call.swift
+  $ ./lab.exe --emit-sil call.swift | grep "function_ref\|apply\|alloc_stack"
     %0 = function_ref @two
     %1 = apply %0()
-    %2 = apply @print(%1)
+    %2 = alloc_stack $Int  // t
+    %5 = apply @print(%4)
 
 `&&` already short-circuits: the given gen_expr builds the same diamond you are about to
 build for `if`, merging the two answers through a slot.
