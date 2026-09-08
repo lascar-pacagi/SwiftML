@@ -67,6 +67,38 @@ and it's where you'll learn SSA properly, by watching this exact memory-heavy SI
 Splitting "lower correctly" (here) from "lower *well*" (later) is swiftc's raw-SIL → canonical-SIL
 design, and ours.
 
+### A block is a scope — for the *names*, not the slots
+
+`vars` maps a source name to the address of its slot, and it is a **compile-time** table: it exists
+while SILGen runs and is gone by the time the SIL is printed. Nothing in the SIL itself remembers
+that `x` was called `x`. So the table has to answer the same question the source does — *which `x`
+does this mention refer to?* — and Swift's answer depends on where you are:
+
+```swift
+var x = 1
+if c {
+  var x = 2      // a different variable, a different slot
+  print(x)       // 2
+}
+print(x)         // 1 — the outer one is back
+```
+
+Sema settled that already (concept 06's scope stack), and it rejects the programs where a name is
+not in scope at all. But sema hands SILGen a tree, not a scope: the two `x`s are two `Let` nodes
+with the same string. If lowering just wrote both into `vars`, the inner one would overwrite the
+outer *and never give it back*, so the `print(x)` after the block would load the inner slot and the
+program would print 2. That is not a diagnostic — it is a silently wrong answer, and this compiler
+printed one until recently.
+
+The given `gen_block` therefore treats each block as a scope for names: it copies `vars` on entry
+and restores it on exit (`restore_vars`). The *slots* are untouched by this — `alloc_stack` already
+happened, the memory is real, and mem2reg will deal with it later. What is scoped is only which
+address a name currently means, which is exactly what the source language scopes.
+
+`for i in 0 ..< n` is the same rule seen from the other side: the loop variable is bound for the
+body and gone afterwards, so `i` after the loop is sema's error to report, not a slot SILGen has to
+keep.
+
 ### SILGen is a *builder*
 
 SILGen threads a small **builder**: a current block you append instructions to (`emit`), a way to
