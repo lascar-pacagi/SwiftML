@@ -64,6 +64,11 @@ let switch_to (b : builder) (blk : Sil.block) = b.cur <- blk
 let terminate (b : builder) (t : Sil.term) = if b.cur.Sil.term = Sil.Unreachable then b.cur.Sil.term <- t
 let vty (b : builder) (v : Sil.value) : Types.ty = Hashtbl.find b.val_ty v
 
+(* an instruction with NO RESULT — `store`, `print`, a retain or release later on. `emit` still
+   hands it a number (which is why the printed SIL skips one at a `store`: `%1 = alloc_stack`,
+   `store %0 to %1`, then `%3 = load`), but there is nothing to name, so nothing comes back. *)
+let emit_void (b : builder) (instr : Sil.instr) : unit = ignore (emit b instr Types.TVoid)
+
 (* the same pair for `vars`: where a variable's slot is, and how a name comes to have one.
    `addr_of` is total in practice — sema has already rejected the names that are not in scope. *)
 let addr_of (b : builder) (name : string) : Sil.value = Hashtbl.find b.vars name
@@ -173,7 +178,7 @@ let take_ownership (b : builder) (v : Sil.value) : Sil.value =
 
 (* end of statement: destroy the owned temps nobody consumed *)
 let release_stmt_temps (b : builder) : unit =
-  List.iter (fun v -> ignore (emit b (Sil.Destroy_value v) Types.TVoid)) b.stmt_temps;
+  List.iter (fun v -> emit_void b (Sil.Destroy_value v)) b.stmt_temps;
   List.iter (fun v -> Hashtbl.remove b.owned v) b.stmt_temps;
   b.stmt_temps <- []
 
@@ -183,7 +188,7 @@ let release_scope (b : builder) (slots : Sil.value list) : unit =
   List.iter
     (fun slot ->
       let v = emit b (Sil.Load_take slot) (Hashtbl.find b.val_ty slot) in
-      ignore (emit b (Sil.Destroy_value v) Types.TVoid))
+      emit_void b (Sil.Destroy_value v))
     slots
 
 let push_scope (b : builder) = b.scopes <- ref [] :: b.scopes; b.defers <- [] :: b.defers
@@ -209,7 +214,7 @@ let rt_error_get (b : builder) : Sil.value =
   emit b (Sil.Apply (fr, [])) Types.TInt
 let rt_error_set (b : builder) (ord : Sil.value) : unit =
   let fr = emit b (Sil.Func_ref "rt.error_set") Types.TVoid in
-  ignore (emit b (Sil.Apply (fr, [ ord ])) Types.TVoid)
+  emit_void b (Sil.Apply (fr, [ ord ]))
 
 (* the value a throwing function `return`s on its throw path — never read by the caller (it
    checks the error first), so any well-typed value of the return type does (concept 30 v0:
@@ -309,7 +314,7 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       (* the slot the two answers meet in — named for the operator it serves, since this arm
          lowers both. mem2reg turns it into a phi in Phase 4. *)
       let slot = emit b (Sil.Alloc_stack (if op = Ast.And then "$and" else "$or")) Types.TBool in
-      ignore (emit b (Sil.Store (lv, slot)) Types.TVoid);
+      emit_void b (Sil.Store (lv, slot));
       let rhs_b = new_block b and merge = new_block b in
       let t_tgt, f_tgt =
         if op = Ast.And then (rhs_b.Sil.bid, merge.Sil.bid) else (merge.Sil.bid, rhs_b.Sil.bid)
@@ -317,7 +322,7 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       terminate b (Sil.Cond_br (lv, (t_tgt, []), (f_tgt, [])));
       switch_to b rhs_b;
       let rv = gen_expr b r in
-      ignore (emit b (Sil.Store (rv, slot)) Types.TVoid);
+      emit_void b (Sil.Store (rv, slot));
       terminate b (Sil.Br (merge.Sil.bid, []));
       switch_to b merge;
       emit b (Sil.Load slot) Types.TBool
@@ -369,7 +374,7 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
             let argvs = List.map2 (fun (_, e) pt -> gen_expr_as b e pt) args ptys in
             let selfv = if owner = f then refv else emit b (Sil.Upcast (refv, owner)) (Types.TClass owner) in
             let fr = emit b (Sil.Func_ref (owner ^ ".init")) Types.TVoid in
-            ignore (emit b (Sil.Apply (fr, selfv :: argvs)) Types.TVoid)
+            emit_void b (Sil.Apply (fr, selfv :: argvs))
         | None -> ());
         mark_owned b refv)
       else if Hashtbl.mem b.structs f then (
@@ -507,7 +512,7 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       let xv = gen_expr_as b (snd (List.hd args)) elt in
       let p = emit b (Sil.Load slot) (vty b slot) in
       let uq = emit b (Sil.Apply (emit b (Sil.Func_ref "rt.array_make_unique") (vty b slot), [ p ])) (vty b slot) in
-      ignore (emit b (Sil.Store (uq, slot)) Types.TVoid);
+      emit_void b (Sil.Store (uq, slot));
       let fr = emit b (Sil.Func_ref "rt.array_push") Types.TVoid in
       emit b (Sil.Apply (fr, [ uq; xv ])) Types.TVoid
   | Ast.Method_call (recv, m, args, _) -> (
@@ -639,13 +644,13 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       let optty = Types.TOptional t in
       let slot = emit b (Sil.Alloc_stack "tryopt") optty in
       let some = emit b (Sil.Enum (1, [ r ])) optty in
-      ignore (emit b (Sil.Store (some, slot)) Types.TVoid);
+      emit_void b (Sil.Store (some, slot));
       terminate b (Sil.Br (merge.Sil.bid, []));
       switch_to b none_b;
       let zero = emit b (Sil.Int_lit 0) Types.TInt in
       rt_error_set b zero; (* `try?` swallows the error *)
       let none = emit b (Sil.Enum (0, [])) optty in
-      ignore (emit b (Sil.Store (none, slot)) Types.TVoid);
+      emit_void b (Sil.Store (none, slot));
       terminate b (Sil.Br (merge.Sil.bid, []));
       switch_to b merge;
       emit b (Sil.Load slot) optty
@@ -678,11 +683,11 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
         switch_to b yes;
         let pv = emit b (Sil.Open_existential (ev, sn)) (Types.TStruct sn) in
         let somev = emit b (Sil.Enum (1, [ pv ])) optty in
-        ignore (emit b (Sil.Store (somev, slot)) Types.TVoid);
+        emit_void b (Sil.Store (somev, slot));
         terminate b (Sil.Br (merge.Sil.bid, []));
         switch_to b no;
         let nonev = emit b (Sil.Enum (0, [])) optty in
-        ignore (emit b (Sil.Store (nonev, slot)) Types.TVoid);
+        emit_void b (Sil.Store (nonev, slot));
         terminate b (Sil.Br (merge.Sil.bid, []));
         switch_to b merge;
         emit b (Sil.Load slot) optty)
@@ -703,11 +708,11 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       let tv = gen_expr b te in
       let t = vty b tv in
       let slot = emit b (Sil.Alloc_stack "tern") t in
-      ignore (emit b (Sil.Store (tv, slot)) Types.TVoid);
+      emit_void b (Sil.Store (tv, slot));
       terminate b (Sil.Br (merge.Sil.bid, []));
       switch_to b else_b;
       let ev = gen_expr_as b ee t in
-      ignore (emit b (Sil.Store (ev, slot)) Types.TVoid);
+      emit_void b (Sil.Store (ev, slot));
       terminate b (Sil.Br (merge.Sil.bid, []));
       switch_to b merge;
       emit b (Sil.Load slot) t
@@ -724,11 +729,11 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       terminate b (Sil.Cond_br (c, (some_b.Sil.bid, []), (none_b.Sil.bid, [])));
       switch_to b some_b;
       let pv = emit b (Sil.Enum_payload (av, 0)) t in
-      ignore (emit b (Sil.Store (pv, slot)) Types.TVoid);
+      emit_void b (Sil.Store (pv, slot));
       terminate b (Sil.Br (merge.Sil.bid, []));
       switch_to b none_b;
       let bv = gen_expr_as b bexpr t in
-      ignore (emit b (Sil.Store (bv, slot)) Types.TVoid);
+      emit_void b (Sil.Store (bv, slot));
       terminate b (Sil.Br (merge.Sil.bid, []));
       switch_to b merge;
       emit b (Sil.Load slot) t
@@ -753,7 +758,7 @@ and build_array (b : builder) (et : Types.ty) (vs : Sil.value list) : Sil.value 
   List.iter
     (fun v ->
       let fr = emit b (Sil.Func_ref "rt.array_push") Types.TVoid in
-      ignore (emit b (Sil.Apply (fr, [ arr; v ])) Types.TVoid))
+      emit_void b (Sil.Apply (fr, [ arr; v ])))
     vs;
   arr
 
@@ -769,7 +774,7 @@ and gen_array_hof (b : builder) (src : Sil.value) (el : Types.ty) (m : string)
     (args : (string option * Ast.expr) list) : Sil.value =
   let count = rt_call b "rt.array_count" [ src ] Types.TInt in
   let iaddr = emit b (Sil.Alloc_stack "$i") Types.TInt in
-  ignore (emit b (Sil.Store (emit b (Sil.Int_lit 0) Types.TInt, iaddr)) Types.TVoid);
+  emit_void b (Sil.Store (emit b (Sil.Int_lit 0) Types.TInt, iaddr));
   (* a 4-block counted loop; `body_fill` emits the per-element work given the loaded element *)
   let loop ~(body_fill : Sil.value -> unit) =
     let header = new_block b and body_b = new_block b in
@@ -787,7 +792,7 @@ and gen_array_hof (b : builder) (src : Sil.value) (el : Types.ty) (m : string)
     switch_to b latch;
     let cv = emit b (Sil.Load iaddr) Types.TInt in
     let inc = emit b (Sil.Binop (Ast.Add, cv, emit b (Sil.Int_lit 1) Types.TInt)) Types.TInt in
-    ignore (emit b (Sil.Store (inc, iaddr)) Types.TVoid);
+    emit_void b (Sil.Store (inc, iaddr));
     terminate b (Sil.Br (header.Sil.bid, []));
     switch_to b exit_b
   in
@@ -816,12 +821,12 @@ and gen_array_hof (b : builder) (src : Sil.value) (el : Types.ty) (m : string)
       let init = gen_expr b initexpr in
       let rty = vty b init in
       let acc = emit b (Sil.Alloc_stack "$acc") rty in
-      ignore (emit b (Sil.Store (init, acc)) Types.TVoid);
+      emit_void b (Sil.Store (init, acc));
       let fv = gen_expr b fexpr in
       loop ~body_fill:(fun elt ->
           let a = emit b (Sil.Load acc) rty in
           let next = emit b (Sil.Apply_value (fv, [ a; elt ])) rty in
-          ignore (emit b (Sil.Store (next, acc)) Types.TVoid));
+          emit_void b (Sil.Store (next, acc)));
       emit b (Sil.Load acc) rty
   | _ -> assert false (* sema rejected any other array method *)
 
@@ -936,12 +941,12 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
          copies (CoW). A fresh literal/result is already +1, so only an alias needs the retain. *)
       (match (slot_ty, value) with
       | Types.TArray _, Ast.Var _ ->
-          ignore (emit b (Sil.Apply (emit b (Sil.Func_ref "rt.array_retain") Types.TVoid, [ v ])) Types.TVoid)
+          emit_void b (Sil.Apply (emit b (Sil.Func_ref "rt.array_retain") Types.TVoid, [ v ]))
       | _ -> ());
       let addr = emit b (Sil.Alloc_stack name) slot_ty in
       bind_var b name addr;
       register_local b addr;
-      ignore (emit b (Sil.Store (v, addr)) Types.TVoid)
+      emit_void b (Sil.Store (v, addr))
   | Ast.Assign { name; value; _ } -> (
       match Hashtbl.find_opt b.vars name with
       | Some slot ->
@@ -956,10 +961,10 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
                order (the old object's deinit fires after the new one's init) *)
             let old = emit b (Sil.Load_take slot) (vty b slot) in
             let v = take_ownership b v in
-            ignore (emit b (Sil.Store (v, slot)) Types.TVoid);
-            ignore (emit b (Sil.Destroy_value old) Types.TVoid)
+            emit_void b (Sil.Store (v, slot));
+            emit_void b (Sil.Destroy_value old)
           end
-          else ignore (emit b (Sil.Store (v, slot)) Types.TVoid)
+          else emit_void b (Sil.Store (v, slot))
       | None ->
           (* a bare field write in a CLASS method/init: store through self (concept 25).
              ARC (26): the field takes ownership; outside an init the old value is released
@@ -974,12 +979,12 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
             let v = take_ownership b v in
             if not b.in_init then begin
               let old = emit b (Sil.Load_take fa) ft in
-              ignore (emit b (Sil.Store (v, fa)) Types.TVoid);
-              ignore (emit b (Sil.Destroy_value old) Types.TVoid)
+              emit_void b (Sil.Store (v, fa));
+              emit_void b (Sil.Destroy_value old)
             end
-            else ignore (emit b (Sil.Store (v, fa)) Types.TVoid)
+            else emit_void b (Sil.Store (v, fa))
           end
-          else ignore (emit b (Sil.Store (v, fa)) Types.TVoid))
+          else emit_void b (Sil.Store (v, fa)))
   | Ast.Set_member { obj; field; value; _ } -> (
       let slot = Hashtbl.find b.vars obj in
       match vty b slot with
@@ -996,12 +1001,12 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
             let v = take_ownership b v in
             if not b.in_init then begin
               let old = emit b (Sil.Load_take fa) ft in
-              ignore (emit b (Sil.Store (v, fa)) Types.TVoid);
-              ignore (emit b (Sil.Destroy_value old) Types.TVoid)
+              emit_void b (Sil.Store (v, fa));
+              emit_void b (Sil.Destroy_value old)
             end
-            else ignore (emit b (Sil.Store (v, fa)) Types.TVoid)
+            else emit_void b (Sil.Store (v, fa))
           end
-          else ignore (emit b (Sil.Store (v, fa)) Types.TVoid)
+          else emit_void b (Sil.Store (v, fa))
       | Types.TStruct sn ->
           (* `p.x = e`: take the field's ADDRESS in p's slot, then store — this is what makes a
              struct a value type, since p has its own slot distinct from any copy *)
@@ -1011,7 +1016,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
             emit b (Sil.Struct_element_addr (slot, Option.get (Types.field_index sl field)))
               (Option.get (Types.field_type sl field))
           in
-          ignore (emit b (Sil.Store (v, faddr)) Types.TVoid)
+          emit_void b (Sil.Store (v, faddr))
       | _ -> assert false)
   (* `a[i] = e` — the copy-on-write WRITE path for subscript (concept 31). Same CoW dance as
      `append`: make the buffer unique (copy iff shared), store the fresh pointer back into the
@@ -1023,9 +1028,9 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       let xv = gen_expr_as b value elt in
       let p = emit b (Sil.Load slot) (vty b slot) in
       let uq = emit b (Sil.Apply (emit b (Sil.Func_ref "rt.array_make_unique") (vty b slot), [ p ])) (vty b slot) in
-      ignore (emit b (Sil.Store (uq, slot)) Types.TVoid);
+      emit_void b (Sil.Store (uq, slot));
       let fr = emit b (Sil.Func_ref "rt.array_set") Types.TVoid in
-      ignore (emit b (Sil.Apply (fr, [ uq; iv; xv ])) Types.TVoid)
+      emit_void b (Sil.Apply (fr, [ uq; iv; xv ]))
   (* `Task { … }` — concept 38: spawn a concurrent task. The body becomes a lifted void function
      (a coroutine the executor will run on its own stack); `rt_async_spawn` enqueues it. v0 task
      bodies are capture-free (they call top-level functions), so the context is empty. *)
@@ -1085,7 +1090,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       let pv = emit b (Sil.Enum_payload (ov, 0)) t in
       let addr = emit b (Sil.Alloc_stack name) t in
       bind_var b name addr;
-      ignore (emit b (Sil.Store (pv, addr)) Types.TVoid);
+      emit_void b (Sil.Store (pv, addr));
       gen_block b then_blk;
       terminate b (Sil.Br (merge.Sil.bid, []));
       (match else_blk with
@@ -1110,7 +1115,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       let hiv = gen_expr b hi in
       let addr = emit b (Sil.Alloc_stack var) Types.TInt in
       bind_var b var addr;
-      ignore (emit b (Sil.Store (lov, addr)) Types.TVoid);
+      emit_void b (Sil.Store (lov, addr));
       (* header -> body -> latch (the increment) -> header; continue jumps to the latch so
          it doesn't skip `v = v + 1` (that would loop forever) *)
       let header = new_block b and body_b = new_block b in
@@ -1129,7 +1134,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       let cv = emit b (Sil.Load addr) Types.TInt in
       let one = emit b (Sil.Int_lit 1) Types.TInt in
       let inc = emit b (Sil.Binop (Ast.Add, cv, one)) Types.TInt in
-      ignore (emit b (Sil.Store (inc, addr)) Types.TVoid);
+      emit_void b (Sil.Store (inc, addr));
       terminate b (Sil.Br (header.Sil.bid, []));
       switch_to b exit_b
   (* `for x in arr { body }` — iterate an array by index (concept 31). Desugars to a counted
@@ -1140,11 +1145,11 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       let av = gen_expr b seq in
       let el = (match vty b av with Types.TArray el -> el | _ -> Types.TInt) in
       let seq_slot = emit b (Sil.Alloc_stack "$seq") (vty b av) in
-      ignore (emit b (Sil.Store (av, seq_slot)) Types.TVoid);
+      emit_void b (Sil.Store (av, seq_slot));
       let countv = emit b (Sil.Apply (emit b (Sil.Func_ref "rt.array_count") Types.TInt, [ av ])) Types.TInt in
       let iaddr = emit b (Sil.Alloc_stack "$i") Types.TInt in
       let zero = emit b (Sil.Int_lit 0) Types.TInt in
-      ignore (emit b (Sil.Store (zero, iaddr)) Types.TVoid);
+      emit_void b (Sil.Store (zero, iaddr));
       let xaddr = emit b (Sil.Alloc_stack var) el in
       Hashtbl.replace b.vars var xaddr;
       let header = new_block b and body_b = new_block b in
@@ -1158,7 +1163,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       let arr = emit b (Sil.Load seq_slot) (vty b seq_slot) in
       let iv2 = emit b (Sil.Load iaddr) Types.TInt in
       let xv = emit b (Sil.Apply (emit b (Sil.Func_ref "rt.array_get") el, [ arr; iv2 ])) el in
-      ignore (emit b (Sil.Store (xv, xaddr)) Types.TVoid);
+      emit_void b (Sil.Store (xv, xaddr));
       enter_loop b ~continue_to:latch.Sil.bid ~break_to:exit_b.Sil.bid;
       gen_block b body;
       terminate b (Sil.Br (latch.Sil.bid, []));
@@ -1167,7 +1172,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       let cv = emit b (Sil.Load iaddr) Types.TInt in
       let one = emit b (Sil.Int_lit 1) Types.TInt in
       let inc = emit b (Sil.Binop (Ast.Add, cv, one)) Types.TInt in
-      ignore (emit b (Sil.Store (inc, iaddr)) Types.TVoid);
+      emit_void b (Sil.Store (inc, iaddr));
       terminate b (Sil.Br (header.Sil.bid, []));
       switch_to b exit_b
   | Ast.Switch { subject; cases; default; _ } ->
@@ -1196,7 +1201,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
                     let pv = emit b (Sil.Enum_payload (subj, i)) (List.nth tys i) in
                     let addr = emit b (Sil.Alloc_stack x) (vty b pv) in
                     Hashtbl.replace b.vars x addr;
-                    ignore (emit b (Sil.Store (pv, addr)) Types.TVoid)
+                    emit_void b (Sil.Store (pv, addr))
                 | Ast.Ignore -> ())
               bindings
         | _ -> ()
@@ -1324,7 +1329,7 @@ and lower_func ?(generic = false) ?(init = false) ?(epilogue : (builder -> unit)
       | _ ->
           let addr = emit b (Sil.Alloc_stack pname) pty in
           bind_var b pname addr;
-          ignore (emit b (Sil.Store (pv, addr)) Types.TVoid)
+          emit_void b (Sil.Store (pv, addr))
       end)
     sil_params params;
   (match prologue with Some f -> f b | None -> ());
@@ -1556,7 +1561,7 @@ let lower (prog : Ast.program) : Sil.modul =
                   let selfv = (ignore (Types.TClass c.Ast.cname); self_ref b) in
                   let upv = emit b (Sil.Upcast (selfv, sup)) (Types.TClass sup) in
                   let fr = emit b (Sil.Func_ref (sup ^ ".deinit")) Types.TVoid in
-                  ignore (emit b (Sil.Apply (fr, [ upv ])) Types.TVoid)
+                  emit_void b (Sil.Apply (fr, [ upv ]))
               | None -> ()
             in
             let destroy_epilogue (b : builder) =
@@ -1565,14 +1570,14 @@ let lower (prog : Ast.program) : Sil.modul =
               | Some sup ->
                   let upv = emit b (Sil.Upcast (selfv, sup)) (Types.TClass sup) in
                   let fr = emit b (Sil.Func_ref (sup ^ ".destroy")) Types.TVoid in
-                  ignore (emit b (Sil.Apply (fr, [ upv ])) Types.TVoid)
+                  emit_void b (Sil.Apply (fr, [ upv ]))
               | None -> ());
               List.iteri
                 (fun i (_, ft) ->
                   if i >= inherited && is_class_ty ft then begin
                     let fa = emit b (Sil.Ref_element_addr (selfv, i)) ft in
                     let fv = emit b (Sil.Load_take fa) ft in
-                    ignore (emit b (Sil.Destroy_value fv) Types.TVoid)
+                    emit_void b (Sil.Destroy_value fv)
                   end)
                 cl.Types.cl_fields
             in
@@ -1610,7 +1615,7 @@ let lower (prog : Ast.program) : Sil.modul =
      completion (resuming each at its yields) before the program exits *)
   let async_epilogue (b : builder) =
     let fr = emit b (Sil.Func_ref "rt_async_run") Types.TVoid in
-    ignore (emit b (Sil.Apply (fr, [])) Types.TVoid)
+    emit_void b (Sil.Apply (fr, []))
   in
   let main = lower_func ~epilogue:async_epilogue ~lifted ~throwing ~error_ord structs enums protos methods funcs gfuncs classes "main" [] Types.TVoid main_body in
   let struct_layouts =

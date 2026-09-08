@@ -49,6 +49,11 @@ let switch_to (b : builder) (blk : Sil.block) = b.cur <- blk
 let terminate (b : builder) (t : Sil.term) = if b.cur.Sil.term = Sil.Unreachable then b.cur.Sil.term <- t
 let vty (b : builder) (v : Sil.value) : Types.ty = Hashtbl.find b.val_ty v
 
+(* an instruction with NO RESULT — `store`, `print`, a retain or release later on. `emit` still
+   hands it a number (which is why the printed SIL skips one at a `store`: `%1 = alloc_stack`,
+   `store %0 to %1`, then `%3 = load`), but there is nothing to name, so nothing comes back. *)
+let emit_void (b : builder) (instr : Sil.instr) : unit = ignore (emit b instr Types.TVoid)
+
 (* the same pair for `vars`: where a variable's slot is, and how a name comes to have one.
    `addr_of` is total in practice — sema has already rejected the names that are not in scope. *)
 let addr_of (b : builder) (name : string) : Sil.value = Hashtbl.find b.vars name
@@ -109,7 +114,7 @@ let take_ownership (b : builder) (v : Sil.value) : unit =
 
 (* end of statement: release the owned temps nobody consumed *)
 let release_stmt_temps (b : builder) : unit =
-  List.iter (fun v -> ignore (emit b (Sil.Release v) Types.TVoid)) b.stmt_temps;
+  List.iter (fun v -> emit_void b (Sil.Release v)) b.stmt_temps;
   List.iter (fun v -> Hashtbl.remove b.owned v) b.stmt_temps;
   b.stmt_temps <- []
 
@@ -118,7 +123,7 @@ let release_scope (b : builder) (slots : Sil.value list) : unit =
   List.iter
     (fun slot ->
       let v = emit b (Sil.Load slot) (Hashtbl.find b.val_ty slot) in
-      ignore (emit b (Sil.Release v) Types.TVoid))
+      emit_void b (Sil.Release v))
     slots
 
 let push_scope (b : builder) = b.scopes <- ref [] :: b.scopes
@@ -260,7 +265,7 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       (* the slot the two answers meet in — named for the operator it serves, since this arm
          lowers both. mem2reg turns it into a phi in Phase 4. *)
       let slot = emit b (Sil.Alloc_stack (if op = Ast.And then "$and" else "$or")) Types.TBool in
-      ignore (emit b (Sil.Store (lv, slot)) Types.TVoid);
+      emit_void b (Sil.Store (lv, slot));
       let rhs_b = new_block b and merge = new_block b in
       let t_tgt, f_tgt =
         if op = Ast.And then (rhs_b.Sil.bid, merge.Sil.bid) else (merge.Sil.bid, rhs_b.Sil.bid)
@@ -268,7 +273,7 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       terminate b (Sil.Cond_br (lv, (t_tgt, []), (f_tgt, [])));
       switch_to b rhs_b;
       let rv = gen_expr b r in
-      ignore (emit b (Sil.Store (rv, slot)) Types.TVoid);
+      emit_void b (Sil.Store (rv, slot));
       terminate b (Sil.Br (merge.Sil.bid, []));
       switch_to b merge;
       emit b (Sil.Load slot) Types.TBool
@@ -299,7 +304,7 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
             let argvs = List.map2 (fun (_, e) pt -> gen_expr_as b e pt) args ptys in
             let selfv = if owner = f then refv else emit b (Sil.Upcast (refv, owner)) (Types.TClass owner) in
             let fr = emit b (Sil.Func_ref (owner ^ ".init")) Types.TVoid in
-            ignore (emit b (Sil.Apply (fr, selfv :: argvs)) Types.TVoid)
+            emit_void b (Sil.Apply (fr, selfv :: argvs))
         | None -> ());
         mark_owned b refv)
       else if Hashtbl.mem b.structs f then (
@@ -478,11 +483,11 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
         switch_to b yes;
         let pv = emit b (Sil.Open_existential (ev, sn)) (Types.TStruct sn) in
         let somev = emit b (Sil.Enum (1, [ pv ])) optty in
-        ignore (emit b (Sil.Store (somev, slot)) Types.TVoid);
+        emit_void b (Sil.Store (somev, slot));
         terminate b (Sil.Br (merge.Sil.bid, []));
         switch_to b no;
         let nonev = emit b (Sil.Enum (0, [])) optty in
-        ignore (emit b (Sil.Store (nonev, slot)) Types.TVoid);
+        emit_void b (Sil.Store (nonev, slot));
         terminate b (Sil.Br (merge.Sil.bid, []));
         switch_to b merge;
         emit b (Sil.Load slot) optty)
@@ -503,11 +508,11 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       let tv = gen_expr b te in
       let t = vty b tv in
       let slot = emit b (Sil.Alloc_stack "tern") t in
-      ignore (emit b (Sil.Store (tv, slot)) Types.TVoid);
+      emit_void b (Sil.Store (tv, slot));
       terminate b (Sil.Br (merge.Sil.bid, []));
       switch_to b else_b;
       let ev = gen_expr_as b ee t in
-      ignore (emit b (Sil.Store (ev, slot)) Types.TVoid);
+      emit_void b (Sil.Store (ev, slot));
       terminate b (Sil.Br (merge.Sil.bid, []));
       switch_to b merge;
       emit b (Sil.Load slot) t
@@ -524,11 +529,11 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       terminate b (Sil.Cond_br (c, (some_b.Sil.bid, []), (none_b.Sil.bid, [])));
       switch_to b some_b;
       let pv = emit b (Sil.Enum_payload (av, 0)) t in
-      ignore (emit b (Sil.Store (pv, slot)) Types.TVoid);
+      emit_void b (Sil.Store (pv, slot));
       terminate b (Sil.Br (merge.Sil.bid, []));
       switch_to b none_b;
       let bv = gen_expr_as b bexpr t in
-      ignore (emit b (Sil.Store (bv, slot)) Types.TVoid);
+      emit_void b (Sil.Store (bv, slot));
       terminate b (Sil.Br (merge.Sil.bid, []));
       switch_to b merge;
       emit b (Sil.Load slot) t
@@ -601,7 +606,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       let addr = emit b (Sil.Alloc_stack name) slot_ty in
       bind_var b name addr;
       register_local b addr;
-      ignore (emit b (Sil.Store (v, addr)) Types.TVoid)
+      emit_void b (Sil.Store (v, addr))
   | Ast.Assign { name; value; _ } -> (
       match Hashtbl.find_opt b.vars name with
       | Some slot ->
@@ -615,10 +620,10 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
                observable order (the old object's deinit fires after the new one's init) *)
             let old = emit b (Sil.Load slot) (vty b slot) in
             take_ownership b v;
-            ignore (emit b (Sil.Store (v, slot)) Types.TVoid);
-            ignore (emit b (Sil.Release old) Types.TVoid)
+            emit_void b (Sil.Store (v, slot));
+            emit_void b (Sil.Release old)
           end
-          else ignore (emit b (Sil.Store (v, slot)) Types.TVoid)
+          else emit_void b (Sil.Store (v, slot))
       | None ->
           (* a bare field write in a CLASS method/init: store through self (concept 25).
              ARC (26): the field takes ownership; outside an init the old value is released
@@ -633,12 +638,12 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
             take_ownership b v;
             if not b.in_init then begin
               let old = emit b (Sil.Load fa) ft in
-              ignore (emit b (Sil.Store (v, fa)) Types.TVoid);
-              ignore (emit b (Sil.Release old) Types.TVoid)
+              emit_void b (Sil.Store (v, fa));
+              emit_void b (Sil.Release old)
             end
-            else ignore (emit b (Sil.Store (v, fa)) Types.TVoid)
+            else emit_void b (Sil.Store (v, fa))
           end
-          else ignore (emit b (Sil.Store (v, fa)) Types.TVoid))
+          else emit_void b (Sil.Store (v, fa)))
   | Ast.Set_member { obj; field; value; _ } -> (
       let slot = Hashtbl.find b.vars obj in
       match vty b slot with
@@ -655,12 +660,12 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
             take_ownership b v;
             if not b.in_init then begin
               let old = emit b (Sil.Load fa) ft in
-              ignore (emit b (Sil.Store (v, fa)) Types.TVoid);
-              ignore (emit b (Sil.Release old) Types.TVoid)
+              emit_void b (Sil.Store (v, fa));
+              emit_void b (Sil.Release old)
             end
-            else ignore (emit b (Sil.Store (v, fa)) Types.TVoid)
+            else emit_void b (Sil.Store (v, fa))
           end
-          else ignore (emit b (Sil.Store (v, fa)) Types.TVoid)
+          else emit_void b (Sil.Store (v, fa))
       | Types.TStruct sn ->
           (* `p.x = e`: take the field's ADDRESS in p's slot, then store — this is what makes a
              struct a value type, since p has its own slot distinct from any copy *)
@@ -671,7 +676,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
              be wrapped into the existential, not stored raw *)
           let v = gen_expr_as b value fty in
           let faddr = emit b (Sil.Struct_element_addr (slot, Option.get (Types.field_index sl field))) fty in
-          ignore (emit b (Sil.Store (v, faddr)) Types.TVoid)
+          emit_void b (Sil.Store (v, faddr))
       | _ -> assert false)
   | Ast.Expr_stmt (e, _) -> ignore (gen_expr b e)
   | Ast.Return (eo, _) -> (
@@ -720,7 +725,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       let pv = emit b (Sil.Enum_payload (ov, 0)) t in
       let addr = emit b (Sil.Alloc_stack name) t in
       bind_var b name addr;
-      ignore (emit b (Sil.Store (pv, addr)) Types.TVoid);
+      emit_void b (Sil.Store (pv, addr));
       gen_block b then_blk;
       terminate b (Sil.Br (merge.Sil.bid, []));
       (match else_blk with
@@ -745,7 +750,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       let hiv = gen_expr b hi in
       let addr = emit b (Sil.Alloc_stack var) Types.TInt in
       bind_var b var addr;
-      ignore (emit b (Sil.Store (lov, addr)) Types.TVoid);
+      emit_void b (Sil.Store (lov, addr));
       (* header -> body -> latch (the increment) -> header; continue jumps to the latch so
          it doesn't skip `v = v + 1` (that would loop forever) *)
       let header = new_block b and body_b = new_block b in
@@ -764,7 +769,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       let cv = emit b (Sil.Load addr) Types.TInt in
       let one = emit b (Sil.Int_lit 1) Types.TInt in
       let inc = emit b (Sil.Binop (Ast.Add, cv, one)) Types.TInt in
-      ignore (emit b (Sil.Store (inc, addr)) Types.TVoid);
+      emit_void b (Sil.Store (inc, addr));
       terminate b (Sil.Br (header.Sil.bid, []));
       switch_to b exit_b
   | Ast.Switch { subject; cases; default; _ } ->
@@ -793,7 +798,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
                     let pv = emit b (Sil.Enum_payload (subj, i)) (List.nth tys i) in
                     let addr = emit b (Sil.Alloc_stack x) (vty b pv) in
                     Hashtbl.replace b.vars x addr;
-                    ignore (emit b (Sil.Store (pv, addr)) Types.TVoid)
+                    emit_void b (Sil.Store (pv, addr))
                 | Ast.Ignore -> ())
               bindings
         | _ -> ()
@@ -858,7 +863,7 @@ let lower_func ?(generic = false) ?(init = false) ?(epilogue : (builder -> unit)
     (fun (pv, pty) (pname, _) ->
       let addr = emit b (Sil.Alloc_stack pname) pty in
       bind_var b pname addr;
-      ignore (emit b (Sil.Store (pv, addr)) Types.TVoid))
+      emit_void b (Sil.Store (pv, addr)))
     sil_params params;
   push_scope b;
   gen_stmts b body;
@@ -1057,7 +1062,7 @@ let lower (prog : Ast.program) : Sil.modul =
                   let selfv = emit b (Sil.Load (Hashtbl.find b.vars "self")) (Types.TClass c.Ast.cname) in
                   let upv = emit b (Sil.Upcast (selfv, sup)) (Types.TClass sup) in
                   let fr = emit b (Sil.Func_ref (sup ^ ".deinit")) Types.TVoid in
-                  ignore (emit b (Sil.Apply (fr, [ upv ])) Types.TVoid)
+                  emit_void b (Sil.Apply (fr, [ upv ]))
               | None -> ()
             in
             let destroy_epilogue (b : builder) =

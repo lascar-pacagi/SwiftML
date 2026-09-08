@@ -52,6 +52,11 @@ let switch_to (b : builder) (blk : Sil.block) = b.cur <- blk
 let terminate (b : builder) (t : Sil.term) = if b.cur.Sil.term = Sil.Unreachable then b.cur.Sil.term <- t
 let vty (b : builder) (v : Sil.value) : Types.ty = Hashtbl.find b.val_ty v
 
+(* an instruction with NO RESULT — `store`, `print`, a retain or release later on. `emit` still
+   hands it a number (which is why the printed SIL skips one at a `store`: `%1 = alloc_stack`,
+   `store %0 to %1`, then `%3 = load`), but there is nothing to name, so nothing comes back. *)
+let emit_void (b : builder) (instr : Sil.instr) : unit = ignore (emit b instr Types.TVoid)
+
 (* the same pair for `vars`: where a variable's slot is, and how a name comes to have one.
    `addr_of` is total in practice — sema has already rejected the names that are not in scope. *)
 let addr_of (b : builder) (name : string) : Sil.value = Hashtbl.find b.vars name
@@ -113,7 +118,7 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       (* the slot the two answers meet in — named for the operator it serves, since this arm
          lowers both. mem2reg turns it into a phi in Phase 4. *)
       let slot = emit b (Sil.Alloc_stack (if op = Ast.And then "$and" else "$or")) Types.TBool in
-      ignore (emit b (Sil.Store (lv, slot)) Types.TVoid);
+      emit_void b (Sil.Store (lv, slot));
       let rhs_b = new_block b and merge = new_block b in
       let t_tgt, f_tgt =
         if op = Ast.And then (rhs_b.Sil.bid, merge.Sil.bid) else (merge.Sil.bid, rhs_b.Sil.bid)
@@ -121,7 +126,7 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       terminate b (Sil.Cond_br (lv, t_tgt, f_tgt));
       switch_to b rhs_b;
       let rv = gen_expr b r in
-      ignore (emit b (Sil.Store (rv, slot)) Types.TVoid);
+      emit_void b (Sil.Store (rv, slot));
       terminate b (Sil.Br merge.Sil.bid);
       switch_to b merge;
       emit b (Sil.Load slot) Types.TBool
@@ -246,7 +251,7 @@ let lower_func funcs (name : string) (params : (string * Types.ty) list) (ret : 
     (fun (pv, pty) (pname, _) ->
       let addr = emit b (Sil.Alloc_stack pname) pty in
       bind_var b pname addr;
-      ignore (emit b (Sil.Store (pv, addr)) Types.TVoid))
+      emit_void b (Sil.Store (pv, addr)))
     sil_params params;
   gen_block b body;
   terminate b (if ret = Types.TVoid then Sil.Return None else Sil.Unreachable);
