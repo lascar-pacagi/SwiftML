@@ -8,7 +8,7 @@ mandatory SIL passes, and nothing after. That matters because "missing return" i
 diagnostic (`lib/SILOptimizer/Mandatory/DataflowDiagnostics.cpp`), so `swiftc -typecheck`
 accepts a `-> Int` function that falls off the end and three reject cases would disagree.
 
-swiftc and your `--emit-sil` agree on all 34 corpus programs, twenty accepted and fourteen
+swiftc and your `--emit-sil` agree on all 35 corpus programs, twenty-one accepted and fourteen
 refused. A crash is not a rejection: exit 0 is accept, 1 is reject, anything else is a crash.
 On a disagreement the first line we printed is shown, so a rejection that is really an
 unlowered statement reads as what it is, and the loop stops there:

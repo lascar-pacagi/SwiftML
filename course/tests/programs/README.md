@@ -19,6 +19,7 @@ make oracle F=tests/programs/arith.swift
 | `for.swift` | 2 (08) | `for` desugared: slot, header, body, latch; the bound evaluated once; an empty range |
 | `breakcontinue.swift` | 2 (08) | where each one branches — break to the exit, continue to the header or the LATCH — and which loop it targets in a nest |
 | `shortcircuit.swift` | 2 (08) | `&&`/`||` as control flow: the right operand runs only on the deciding edge |
+| `controlflow.swift` | 2 (08) | the capstone: every construct of the section in one working program — functions, recursion, mutual recursion, if/else-if, while, for, break, continue, nested loops, short-circuit, an early `return`, Double |
 
 ## Reading the SIL
 
