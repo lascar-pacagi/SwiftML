@@ -128,11 +128,32 @@ let test_for_slot () =
     (has_instr main (function Sil.Alloc_stack n -> n = "i" | _ -> false))
 
 let test_for_hi_once () =
-  (* `k + 1` is the bound: it must be computed in the entry block, not on every trip *)
-  let main = main_of "var t = 0\nlet k = 2\nfor i in 0 ..< k + 1 { t = t + i }" in
-  let entry = block main 0 in
-  Alcotest.(check bool) "the bound is computed in bb0" true
-    (List.exists (fun (_, i) -> match i with Sil.Binop (Ast.Add, _, _) -> true | _ -> false) entry.Sil.instrs)
+  (* `k * 3` is the bound, and the body multiplies nothing — so every `Mul` in this function IS
+     the bound. It must be computed ONCE and outside the loop, which is a property of the whole
+     function, not of any one block: setting the loop up in a block of its own is as correct as
+     doing it inline, and this used to fail the second. *)
+  let main = main_of "var t = 0\nlet k = 2\nfor i in 0 ..< k * 3 { t = t + i }" in
+  let is_mul (_, i) = match i with Sil.Binop (Ast.Mul, _, _) -> true | _ -> false in
+  let muls = List.concat_map (fun (b : Sil.block) -> List.filter is_mul b.Sil.instrs) main.Sil.blocks in
+  Alcotest.(check int) "the bound is computed exactly once" 1 (List.length muls);
+  (* and not on the way round: the block holding it is neither the header that re-tests the
+     condition nor anything the back-edge returns to *)
+  let header = the_cond_br main in
+  let holder =
+    List.find (fun (b : Sil.block) -> List.exists is_mul b.Sil.instrs) main.Sil.blocks
+  in
+  Alcotest.(check bool) "the bound is not computed in the loop header" true
+    (holder.Sil.bid <> header.Sil.bid);
+  Alcotest.(check bool) "nothing branches back to the block holding it" true
+    (not
+       (List.exists
+          (fun (b : Sil.block) ->
+            match b.Sil.term with
+            | Sil.Br t -> t = holder.Sil.bid && b.Sil.bid >= holder.Sil.bid
+            | Sil.Cond_br (_, t, e) ->
+                (t = holder.Sil.bid || e = holder.Sil.bid) && b.Sil.bid >= holder.Sil.bid
+            | _ -> false)
+          main.Sil.blocks))
 
 let test_for_latch () =
   let main = main_of "for i in 0 ..< 3 { print(i) }" in
