@@ -245,8 +245,12 @@ everything below produces, and `silgen-memory.t` reports on it alone.
 `new_block` to make blocks, `terminate` to set the current block's branch, `gen_block` to lower a
 list of statements into the current block, and `switch_to` to move the cursor.
 
-A good order to fill them, though only two of the steps are actually forced (§4 says which file
-each turns green):
+**Start with `TODO(08a)`.** That step is forced — not because the control-flow code calls it, but
+because nearly every program in these test files declares a variable, so nothing lowers at all
+until slots do.
+
+Then the control-flow cases, in an order that is only a suggestion apart from the last one (§4
+says which file each turns green):
 
 1. **`if`** — the diamond. The smallest case, and the only one needing no `b.loops`, which is why
    it makes the easiest start. Nothing depends on it, though: `while` will go green with `if`
@@ -257,10 +261,6 @@ each turns green):
    Push `(latch.bid, exit.bid)`, not the header: the latch is what `continue` must reach.
 4. **`break`** and **`continue`** — one line each, reading the top of `b.loops`. **Forced:** they
    cannot be tested before a loop exists, because nothing else pushes that stack.
-
-The other forced step is `TODO(08a)` before any of these — not because the code depends on it, but
-because nearly every program in these test files declares a variable, so nothing lowers at all
-until slots do.
 
 Reference: `solution/silgen.ml`.
 
