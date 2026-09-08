@@ -84,8 +84,8 @@ The two halves:
   deciding edge (the result merges through a stack slot). That's the same diamond you're about to
   build for `if` — read it first as a warm-up. (Lowering `&&` as a plain bitwise op would be a real
   bug: `i < n && a[i]` would evaluate `a[i]` when `i == n` and trap, where swiftc runs clean.)
-- **Statements → CFG.** This is your part. The pattern is always: evaluate, **create the blocks** you
-  need, `terminate` the current block with the branch into them, lower each block's contents, and
+- **Statements → CFG.** The pattern is always: evaluate, **create the blocks** you need,
+  `terminate` the current block with the branch into them, lower each block's contents, and
   `switch_to` wherever control continues.
 
 ### Lowering control flow (your job)
