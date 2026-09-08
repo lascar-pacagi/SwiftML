@@ -9,7 +9,7 @@
   (:standard -warn-error -a)))
 
 (cram
- (deps lab.exe oracle-corpus.txt))
+ (deps lab.exe oracle-corpus.txt %{project_root}/tests/programs/controlflow.swift))
 
 (tests
  (names test_silgen test_canon)
