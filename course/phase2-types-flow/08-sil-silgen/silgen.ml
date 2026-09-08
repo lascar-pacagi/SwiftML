@@ -9,18 +9,31 @@
    build the CFG with `cond_br`/`br`; the AST tree becomes a graph. Each function lowers to
    its own SIL function; top-level statements become `main`. *)
 
+(* The builder — SILGen's entire working state, and the thing to understand before writing any
+   lowering. Generating SIL is a walk over the AST that APPENDS instructions to one block at a
+   time, so most of these fields answer "where am I writing, and what have I written so far".
+   SIL names things positionally — values `%0`, `%1`, … and blocks `bb0`, `bb1`, … numbered per
+   function — which is what the two counters hand out. *)
 type builder = {
-  mutable next_val : int;
-  mutable next_block : int;
-  mutable cur : Sil.block;
-  mutable blocks : Sil.block list; (* all blocks, reverse creation order *)
-  vars : (string, Sil.value) Hashtbl.t; (* variable name -> its alloc_stack address value *)
-  val_ty : (Sil.value, Types.ty) Hashtbl.t;
-  funcs : (string, Types.ty list * Types.ty) Hashtbl.t;
-  mutable loops : (int * int) list; (* stack of (continue-target = header, break-target = exit) *)
+  mutable next_val : int; (* the next %n *)
+  mutable next_block : int; (* the next bbN *)
+  mutable cur : Sil.block; (* THE CURSOR: `emit` appends here, and `switch_to` moves it *)
+  mutable blocks : Sil.block list; (* every block made, newest first; `lower` reverses at the end *)
+  vars : (string, Sil.value) Hashtbl.t; (* variable name -> the ADDRESS of its alloc_stack slot *)
+  val_ty : (Sil.value, Types.ty) Hashtbl.t; (* the type of every value emitted; read with `vty` *)
+  funcs : (string, Types.ty list * Types.ty) Hashtbl.t; (* signatures, so a call knows its result *)
+  mutable loops : (int * int) list; (* innermost first: (where `continue` goes, where `break` goes) *)
 }
 
-(* --- the builder API (given) --- *)
+(* --- the builder API (given) ---
+   `emit` appends an instruction to the CURRENT block, numbers its result, remembers that
+   result's type, and hands the value back — so lowering an expression is a chain of `emit`s
+   whose values feed each other. `new_block` makes a block and registers it, but deliberately
+   does NOT move the cursor: creating a block and starting to write into it are separate
+   decisions, and control flow needs them apart. `switch_to` is the move. `terminate` sets the
+   current block's terminator and only the FIRST one sticks — a `return` inside a branch has
+   already ended that block, so a `br` emitted after it is correctly ignored rather than
+   overwriting the return. `vty` reads a value's type back out. *)
 let emit (b : builder) (instr : Sil.instr) (ty : Types.ty) : Sil.value =
   let v = b.next_val in
   b.next_val <- v + 1;
