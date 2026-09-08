@@ -136,7 +136,8 @@ The two halves:
   increment lives in its own block because `continue` must branch *there* (not to the header), or it
   would skip `v = v + 1` and loop forever. (Evaluate `hi` *once*, before the loop.)
 - **`break`/`continue`** branch out of, or round, the innermost enclosing loop. SILGen keeps a stack
-  of `(continue-target, break-target)` — `b.loops` — pushed on entering a loop body and popped on
+  of `(continue-target, break-target)` — `b.loops`, pushed by `enter_loop` on entering a loop
+  body and popped by `leave_loop` on
   leaving; both statements read its head. The break-target is always the loop's *exit*; the
   continue-target is the *header* for a `while` and the *latch* for a `for`, which is exactly the
   distinction the previous bullet is about.
@@ -293,9 +294,9 @@ says which file each turns green):
    it makes the easiest start. Nothing depends on it, though: `while` will go green with `if`
    still raising.
 2. **`while`** — the same three moves plus the back-edge, and the first push/pop of
-   `(header.bid, exit.bid)` onto `b.loops`.
+   `enter_loop ~continue_to:header.bid ~break_to:exit.bid`.
 3. **`for`** — `while` again over a slot for the counter, with the increment in its own block.
-   Push `(latch.bid, exit.bid)`, not the header: the latch is what `continue` must reach.
+   `enter_loop ~continue_to:latch.bid`, not the header: the latch is what `continue` must reach.
 4. **`break`** and **`continue`** — one line each, reading the top of `b.loops`. **Forced:** they
    cannot be tested before a loop exists, because nothing else pushes that stack.
 

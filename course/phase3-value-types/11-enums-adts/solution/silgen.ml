@@ -42,6 +42,15 @@ let addr_of (b : builder) (name : string) : Sil.value = Hashtbl.find b.vars name
 let bind_var (b : builder) (name : string) (addr : Sil.value) : unit =
   Hashtbl.replace b.vars name addr
 
+(* the loop stack, innermost first. `break` and `continue` read it directly — in some concepts
+   they need more out of the entry than a block id — but pushing and popping go through here, so
+   the two targets are NAMED at the call site. They are not the same block: `continue` on a `for`
+   must reach the latch that steps the counter, not the header that tests it. *)
+let enter_loop (b : builder) ~(continue_to : int) ~(break_to : int) : unit =
+  b.loops <- (continue_to, break_to) :: b.loops
+
+let leave_loop (b : builder) : unit = b.loops <- List.tl b.loops
+
 let result_ty (op : Ast.binop) (operand : Types.ty) : Types.ty =
   match op with
   | Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge | Ast.And | Ast.Or -> Types.TBool
@@ -226,10 +235,10 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       let c = gen_expr b cond in
       terminate b (Sil.Cond_br (c, body_b.Sil.bid, exit_b.Sil.bid));
       switch_to b body_b;
-      b.loops <- (header.Sil.bid, exit_b.Sil.bid) :: b.loops;
+      enter_loop b ~continue_to:header.Sil.bid ~break_to:exit_b.Sil.bid;
       gen_block b body;
       terminate b (Sil.Br header.Sil.bid);
-      b.loops <- List.tl b.loops;
+      leave_loop b;
       switch_to b exit_b
   | Ast.For { var; lo; hi; body; _ } ->
       (* desugar `for v in lo ..< hi { body }` into a counted while loop *)
@@ -248,10 +257,10 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       let c = emit b (Sil.Binop (Ast.Lt, cur_v, hiv)) Types.TBool in
       terminate b (Sil.Cond_br (c, body_b.Sil.bid, exit_b.Sil.bid));
       switch_to b body_b;
-      b.loops <- (latch.Sil.bid, exit_b.Sil.bid) :: b.loops;
+      enter_loop b ~continue_to:latch.Sil.bid ~break_to:exit_b.Sil.bid;
       gen_block b body;
       terminate b (Sil.Br latch.Sil.bid);
-      b.loops <- List.tl b.loops;
+      leave_loop b;
       switch_to b latch;
       let cv = emit b (Sil.Load addr) Types.TInt in
       let one = emit b (Sil.Int_lit 1) Types.TInt in

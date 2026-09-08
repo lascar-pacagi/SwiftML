@@ -58,6 +58,15 @@ let addr_of (b : builder) (name : string) : Sil.value = Hashtbl.find b.vars name
 let bind_var (b : builder) (name : string) (addr : Sil.value) : unit =
   Hashtbl.replace b.vars name addr
 
+(* the loop stack, innermost first. `break` and `continue` read it directly — in some concepts
+   they need more out of the entry than a block id — but pushing and popping go through here, so
+   the two targets are NAMED at the call site. They are not the same block: `continue` on a `for`
+   must reach the latch that steps the counter, not the header that tests it. *)
+let enter_loop (b : builder) ~(continue_to : int) ~(break_to : int) : unit =
+  b.loops <- (continue_to, break_to) :: b.loops
+
+let leave_loop (b : builder) : unit = b.loops <- List.tl b.loops
+
 let result_ty (op : Ast.binop) (operand : Types.ty) : Types.ty =
   match op with
   | Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge | Ast.And | Ast.Or -> Types.TBool
@@ -197,7 +206,8 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
   | Ast.While { cond; body; _ } ->
       (* TODO(08c): the while LOOP — a header that re-tests the condition, a body whose last
          terminator is the BACK-EDGE to that header, an exit block. Push (header, exit) on
-         [b.loops] around the body: that is how break and continue find their targets. §2. *)
+         `enter_loop`/`leave_loop` around the body: that is how break and continue find their
+         targets. §2. *)
       ignore (cond, body);
       failwith "TODO(08c): lower `while`"
   | Ast.For { var; lo; hi; body; _ } ->
@@ -206,10 +216,11 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       ignore (var, lo, hi, body);
       failwith "TODO(08c): lower `for`"
   | Ast.Break _ ->
-      (* TODO(08c): branch to the current loop's exit block (the break-target on b.loops). *)
+      (* TODO(08c): branch to the innermost loop's break target — the top of `b.loops`. *)
       failwith "TODO(08c): lower `break`"
   | Ast.Continue _ ->
-      (* TODO(08c): branch to the current loop's header (the continue-target on b.loops). *)
+      (* TODO(08c): branch to the innermost loop's continue target — also the top of the stack,
+         and NOT the same block as break's. *)
       failwith "TODO(08c): lower `continue`"
 
 (* --- lowering a function: params get slots; then the body --- *)
