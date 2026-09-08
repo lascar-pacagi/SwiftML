@@ -65,7 +65,7 @@ type term =
   | Br of int * value list (* branch to block #n, passing these arguments *)
   | Cond_br of value * (int * value list) * (int * value list) (* cond, (then, args), (else, args) *)
   | Return of value option (* return a value, or Void *)
-  | Unreachable (* a not-yet-filled terminator — the verifier rejects these *)
+  | Unreachable (* control never continues from here; also a block's term until one is set *)
   | Trap of string (* SIGTRAP with a message — concept 13 (force-unwrap of nil; exit 133) *)
   | Abort of string (* SIGABRT with a message — concept 23 (failed `as!`; exit 134, like swiftc) *)
 

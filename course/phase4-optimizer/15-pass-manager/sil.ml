@@ -39,7 +39,7 @@ type term =
   | Br of int (* unconditional branch to block #n *)
   | Cond_br of value * int * int (* branch on a Bool: (cond, then-block, else-block) *)
   | Return of value option (* return a value, or Void *)
-  | Unreachable (* a not-yet-filled terminator — the verifier rejects these *)
+  | Unreachable (* control never continues from here; also a block's term until one is set *)
   | Trap of string (* abort with a message — concept 13 (force-unwrap of nil) *)
 
 type block = {

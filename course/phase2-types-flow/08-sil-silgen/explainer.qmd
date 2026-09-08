@@ -109,10 +109,17 @@ The two halves:
   continue-target is the *header* for a `while` and the *latch* for a `for`, which is exactly the
   distinction the previous bullet is about.
 
-One subtlety the given `gen_block` handles for you: once a statement sets a terminator (a `return`, a
-`break`), the rest of that block is **unreachable**, so it stops lowering there — you never append
-after a terminator, and dead trailing blocks just stay `unreachable` (a valid terminator the verifier
-accepts).
+One subtlety the given `gen_block` handles for you: once a statement sets a terminator (a `return`,
+a `break`), the rest of that block is **unreachable**, so it stops lowering there — you never
+append after a terminator.
+
+`unreachable` is doing two jobs, which is worth separating. It is a *terminator* like the others: a
+block ends in exactly one of them, and this is the one that says control never continues from here
+(swiftc emits it after `fatalError()`, and for blocks it proves dead). It is also the terminator a
+block *starts* with, so "still `unreachable`" doubles as "not terminated yet" — that is the test
+`gen_block` makes to know it should stop. A block may legitimately keep it: after
+`if c { return 1 } else { return 2 }` nothing reaches the merge, so the merge ends `unreachable` and
+the verifier is content — it checks that `br`/`cond_br` name blocks that exist, nothing more.
 
 ### Why SIL at all (instead of AST → LLVM directly)?
 
