@@ -176,6 +176,15 @@ let self_struct (b : builder) : string option =
   | None -> None
 
 (* --- lowering expressions: returns the SIL value holding the result --- *)
+
+(* A block is a SCOPE for names. Without this, an inner `var x` would overwrite the outer `x`
+   in `vars` and never give it back, so every later read of `x` would load the inner slot —
+   `var x = 1; if c { var x = 2 }; print(x)` printing 2. Sema already checked the program under
+   proper scoping; SILGen only has to stop its own table from leaking. *)
+let restore_vars (b : builder) (saved : (string, Sil.value) Hashtbl.t) : unit =
+  Hashtbl.reset b.vars;
+  Hashtbl.iter (fun k v -> Hashtbl.replace b.vars k v) saved
+
 let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
   match e with
   | Ast.Int_lit (n, _) -> emit b (Sil.Int_lit n) Types.TInt
@@ -586,10 +595,12 @@ and gen_expr_as (b : builder) (e : Ast.expr) (expected : Types.ty) : Sil.value =
    is a SCOPE — its class-typed locals are released (newest first) when it falls through.
    Early exits (return/break/continue) emit their own releases before branching. *)
 and gen_block (b : builder) (stmts : Ast.stmt list) : unit =
+  let saved = Hashtbl.copy b.vars in
   push_scope b;
   gen_stmts b stmts;
-  if b.cur.Sil.term = Sil.Unreachable then pop_scope_release b
-  else (match b.scopes with _ :: rest -> b.scopes <- rest | [] -> ())
+  (if b.cur.Sil.term = Sil.Unreachable then pop_scope_release b
+   else match b.scopes with _ :: rest -> b.scopes <- rest | [] -> ());
+  restore_vars b saved
 
 and gen_stmts (b : builder) (stmts : Ast.stmt list) : unit =
   match stmts with
