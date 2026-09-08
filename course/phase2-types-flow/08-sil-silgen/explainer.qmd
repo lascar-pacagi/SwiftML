@@ -385,9 +385,8 @@ with variables in `alloc_stack` slots (raw, memory-based SIL) and `if`/`while`/`
 between blocks. This is the representation the rest of the compiler is built on.
 
 Next, **09-sil-to-llvm** writes **IRGen** (SIL → LLVM IR) and finally **runs** Phase-2 programs:
-`if`/`while`/`for`/functions execute, and the output matches `swiftc` byte-for-byte again — which is
-a much harder oracle than this concept's, and it caught a real bug in the `for` lowering you just
-wrote. Then **Phase 4** turns this raw SIL into fast code — starting with **mem2reg**, where those
+`if`/`while`/`for`/functions execute, and the output matches `swiftc` byte-for-byte again.
+Then **Phase 4** turns this raw SIL into fast code — starting with **mem2reg**, where those
 loads and stores become SSA and you learn SSA for real.
 
 ## 8. Appendix — full solution
