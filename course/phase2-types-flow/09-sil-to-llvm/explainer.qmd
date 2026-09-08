@@ -81,10 +81,11 @@ representation to verify, analyze, and optimize before lowering it to a backend.
 
 ### The one real job: a value map, and *types*
 
-IRGen threads one table: each **SIL value `%n` → an LLVM operand**. A constant maps to itself (`Int_lit 5`
-→ the operand `5`); a `string_literal` maps to a global; every other instruction emits an LLVM line
-and maps the SIL value to a fresh `%tK`. The only subtlety is **types**: LLVM is strongly typed, so an
-`add` on `Int` is `add i64` but on `Double` is `fadd double`, and a comparison is `icmp slt i64`
+IRGen maintains one table. It maps each **SIL value `%n` to an LLVM operand**. A constant maps to
+itself (`Int_lit 5` becomes the operand `5`); a `string_literal` maps to a global; every other
+instruction emits an LLVM line and maps the SIL value to a fresh `%tK`. The subtle part is
+**types**. LLVM is strongly typed, so an `add` on `Int` is `add i64` but on `Double` is
+`fadd double`, and a comparison is `icmp slt i64`
 (integers) vs `fcmp olt double` (floats) — producing an `i1` (LLVM's Bool). The SIL function's
 `val_ty` map gives you each value's type; the given `gen_binop` table picks the right opcode.
 
