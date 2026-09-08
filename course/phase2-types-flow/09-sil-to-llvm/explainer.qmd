@@ -74,9 +74,10 @@ makes the stack frame fixed-size, and it's also what LLVM's own `mem2reg` pass r
 will promote a slot to a register. (Concept 20's benchmark shows exactly how this bites at a few
 million iterations.)
 
-All the *thinking* — turning a tree into a graph, threading `break`/`continue` to the right blocks —
-happened in SILGen. IRGen just walks the finished graph and prints LLVM. That separation is the whole
-reason for having SIL.
+The control-flow work — turning a tree into a graph and threading `break`/`continue` to the right
+blocks — happened in SILGen. IRGen walks that finished graph and translates it to LLVM. This
+separation is one reason for having SIL. SIL also gives later compiler passes a stable, Swift-aware
+representation to verify, analyze, and optimize before lowering it to a backend.
 
 ### The one real job: a value map, and *types*
 
