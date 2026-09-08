@@ -22,9 +22,9 @@ def make_pipeline():
     ax.axis("off")
 
     ax.text(-0.65, 1.98, "From Swift source to a running program",
-            fontsize=17, weight="bold", color=INK, va="center")
+            fontsize=19, weight="bold", color=INK, va="center")
     ax.text(-0.65, 1.58, "PHASE 2   /   CONCEPT 09",
-            fontsize=9, weight="bold", color=MUTED, va="center")
+            fontsize=10.5, weight="bold", color=MUTED, va="center")
 
     # Artifacts sit on the path; each labelled arrow is a compiler stage.
     artifacts = ["Swift\nsource", "Tokens", "AST", "Typed\nAST", "SIL", "LLVM IR", "Native\nexecutable"]
@@ -41,7 +41,7 @@ def make_pipeline():
             linewidth=1.3 if highlighted else 0.8,
             edgecolor=TEAL if highlighted else "#d8e0e8",
             facecolor="#edf8f7" if highlighted else "#f3f6f9"))
-        ax.text(x, y, label, ha="center", va="center", fontsize=11,
+        ax.text(x, y, label, ha="center", va="center", fontsize=12,
                 color=INK, weight="bold")
 
     for i, (name, concept) in enumerate(stages):
@@ -51,15 +51,15 @@ def make_pipeline():
             (2 * i + width / 2 + 0.06, y),
             (2 * (i + 1) - width / 2 - 0.06, y),
             arrowstyle="-|>", mutation_scale=12, linewidth=1.5, color=color))
-        ax.text(x, 1.12, name, ha="center", fontsize=10,
+        ax.text(x, 1.12, name, ha="center", fontsize=11.5,
                 weight="bold", color=color)
-        ax.text(x, -0.23, concept, ha="center", fontsize=8, color=color)
+        ax.text(x, -0.23, concept, ha="center", fontsize=9.5, color=color)
 
     ax.plot([7.4, 10.6], [-0.53, -0.53], color=TEAL, linewidth=2,
             solid_capstyle="round")
     ax.text(9, -0.83, "This lesson: SIL → LLVM IR", ha="center",
-            fontsize=10, weight="bold", color=TEAL)
-    ax.text(12, -0.83, "Run ./a.out", ha="center", fontsize=10, color=INK)
+            fontsize=11.5, weight="bold", color=TEAL)
+    ax.text(12, -0.83, "Run ./a.out", ha="center", fontsize=11.5, color=INK)
 
     fig.subplots_adjust(left=0.025, right=0.975, top=0.97, bottom=0.06)
     out = HERE / "pipeline.png"
