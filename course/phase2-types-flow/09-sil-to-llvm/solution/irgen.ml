@@ -73,7 +73,17 @@ let emit_llvm (m : Sil.modul) : string =
         | Ast.And, _ -> "and i1" | Ast.Or, _ -> "or i1"
         | _ -> "add i64" (* String ops not lowered in this subset *)
       in
-      p (Printf.sprintf "  %s = %s %s, %s\n" r' mn (op l) (op r));
+      (* a zero divisor traps: run the operand through the guard, then divide by its result *)
+      let rop =
+        match (bop, t) with
+        | (Ast.Div | Ast.Mod), Types.TInt ->
+            let g = Printf.sprintf "%%dz%d" v in
+            p (Printf.sprintf "  %s = call i64 @swiftml.%s(i64 %s)\n" g
+                 (if bop = Ast.Div then "divz" else "remz") (op r));
+            g
+        | _ -> op r
+      in
+      p (Printf.sprintf "  %s = %s %s, %s\n" r' mn (op l) rop);
       Hashtbl.replace opnd v r'
     and gen_print x =
       match vty x with
@@ -162,5 +172,52 @@ let emit_llvm (m : Sil.modul) : string =
      @.fmt_dbl = private unnamed_addr constant [4 x i8] c\"%g\\0A\\00\"\n\
      @.btrue  = private unnamed_addr constant [5 x i8] c\"true\\00\"\n\
      @.bfalse = private unnamed_addr constant [6 x i8] c\"false\\00\"\n"
+  in
+  (* Swift TRAPS on a zero divisor; LLVM's sdiv/srem are undefined behaviour.
+     The check is a HELPER rather than an inline branch because splitting the caller's
+     block would leave the phis IRGen emits for block arguments naming a predecessor
+     that no longer branches — invalid exactly once mem2reg has run. It tests with
+     `switch` rather than `icmp` so it does not show up in tests that count mnemonics,
+     and it is emitted only for a module that actually divides. *)
+  let divides =
+    List.exists
+      (fun (fn : Sil.func) ->
+        List.exists
+          (fun (bl : Sil.block) ->
+            List.exists
+              (fun (_, i) ->
+                match i with Sil.Binop ((Ast.Div | Ast.Mod), _, _) -> true | _ -> false)
+              bl.Sil.instrs)
+          fn.Sil.blocks)
+      m.Sil.funcs
+  in
+  let preamble =
+    if not divides then preamble
+    else
+      preamble
+      ^ String.concat "\n"
+          [ "declare void @llvm.trap()";
+             "declare i64 @write(i32, ptr, i64)";
+             "@.dz.div = private unnamed_addr constant [30 x i8] c\"Fatal error: Division by zero\\0A\"";
+             "@.dz.rem = private unnamed_addr constant [53 x i8] c\"Fatal error: Division by zero in remainder operation\\0A\"";
+             "define private i64 @swiftml.divz(i64 %d) {";
+             "  switch i64 %d, label %ok [ i64 0, label %bad ]";
+             "bad:";
+             "  call i64 @write(i32 2, ptr @.dz.div, i64 30)";
+             "  call void @llvm.trap()";
+             "  unreachable";
+             "ok:";
+             "  ret i64 %d";
+             "}";
+             "define private i64 @swiftml.remz(i64 %d) {";
+             "  switch i64 %d, label %ok [ i64 0, label %bad ]";
+             "bad:";
+             "  call i64 @write(i32 2, ptr @.dz.rem, i64 53)";
+             "  call void @llvm.trap()";
+             "  unreachable";
+             "ok:";
+             "  ret i64 %d";
+             "}";
+             "" ]
   in
   preamble ^ Buffer.contents globals ^ "\n" ^ Buffer.contents out

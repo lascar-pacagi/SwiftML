@@ -82,3 +82,35 @@ A program that prints nothing still exits 0 — `@main`'s `ret i32 0` is the exi
   $ printf 'let x = 1\n' > q.swift
   $ ./lab.exe build q.swift -o q && ./q; echo "exit=$?"
   exit=0
+
+Dividing by zero TRAPS rather than producing a number: `sdiv`/`srem` are undefined behaviour in
+LLVM, so IRGen puts the divisor through a guard first. The exit code is 133, SIGTRAP, the same
+one swiftc gives:
+
+  $ printf 'let a = 10\nlet b = 0\nprint(a / b)\n' > dz.swift
+  $ ./lab.exe build dz.swift -o dz >/dev/null 2>&1
+  $ sh -c './dz; echo "exit=$?"' 2>/dev/null
+  exit=133
+
+The message is swiftc's own, on stderr (swiftc prefixes a source location, as it does for every
+trap; the `sed` drops it so the two can be compared):
+
+  $ sh -c './dz 2>dz.err' 2>/dev/null; sed 's/^.*Fatal error/Fatal error/' dz.err
+  Fatal error: Division by zero
+
+Remainder traps too, with the wording swiftc uses for it:
+
+  $ printf 'let a = 10\nlet b = 0\nprint(a %% b)\n' > dr.swift
+  $ ./lab.exe build dr.swift -o dr >/dev/null 2>&1
+  $ sh -c './dr; echo "exit=$?"' 2>/dev/null
+  exit=133
+  $ sh -c './dr 2>dr.err' 2>/dev/null; sed 's/^.*Fatal error/Fatal error/' dr.err
+  Fatal error: Division by zero in remainder operation
+
+A non-zero divisor is untouched by the guard — the ordinary path still divides:
+
+  $ printf 'print(7 / 2)\nprint(7 %% 2)\nprint(-7 / 2)\n' > dok.swift
+  $ ./lab.exe build dok.swift -o dok && ./dok
+  3
+  1
+  -3

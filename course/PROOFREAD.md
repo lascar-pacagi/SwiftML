@@ -83,26 +83,26 @@ green because it only tests `--emit-layout`. Same class as the 30→31 gap.
   14's `lab.ml` widened to swiftml3's full mode set so a cram case can exercise it. Verified:
   `dune exec swiftml3 -- build` on `if let` / `??` / `!` now matches swiftc.
 
-### 6. Integer divide / remainder by zero is UB, not a trap  **[OPEN]** *(phases 3–4 & 2 reviews)*
-IRGen lowers `Div`/`Mod` to bare `sdiv`/`srem` with no zero check; `let b=0; print(a/b)` prints
-garbage and exits 0 where swiftc traps "Fatal error: Division by zero", exit 133. Worse, the
-fold passes' comment ("leave ÷0/%0 for the runtime trap", `phase4-optimizer/15,17/opt.ml`) is a
-**false promise** — there is no runtime trap. `Int.min / -1` is likewise LLVM-poison vs a swiftc
-trap. This is a CLAUDE.md parity gotcha and is *not* in the documented-divergence set.
-- *Half fixed (concept-review pass, 8b0a7f5 … 1d53e1f):* the fold comments in 15/17/18/19/20 and
-  their explainers now say plainly that there is no trap and that the pass refuses to fold ÷0
-  because it has no value to give, not because a trap is waiting; the corpora keep ÷0 out.
-- *Still open:* the runtime behaviour. *Attempted 2026-09-08 and reverted, with the dead end
-  recorded so it is not repeated:* guarding inline in `gen_binop` (icmp + branch to a trap block,
-  then continue) is correct at `-Onone` but **breaks `-O`** — 8 of the 32 comparison programs
-  differed. Splitting the block leaves IRGen's phi incomings naming the original SIL block, which
-  is no longer the block that branches, so the IR is invalid exactly when mem2reg has introduced
-  block args. *Fix that avoids it:* put the check in a helper defined in the preamble —
-  `%d = call i64 @swiftml.divz(i64 %r)` then `sdiv i64 %l, %d` — so the caller's block is never
-  split and no phi moves. Cost: a preamble edit in 40 `irgen.ml` copies, re-promoting the IR
-  goldens that show a division (`irgen-instrs.t`, `run-arith.t`, `opt-fold.t`, `isel-instrs.t`),
-  and Backend B (33–37) needs its own check or an explicit note. Also still open: `Int.min / -1`,
-  and the asterisk on the "byte-for-byte" claims (09 README).
+### 6. Integer divide / remainder by zero is UB, not a trap  **[FIXED — Backend A]**
+IRGen lowered `Div`/`Mod` to bare `sdiv`/`srem` with no zero check; `let b=0; print(a/b)` printed
+garbage and exited 0 where swiftc traps "Fatal error: Division by zero", exit 133. The fold
+passes' comment ("leave ÷0/%0 for the runtime trap") was a **false promise** — no trap existed.
+- *Fixed (2026-09-08), in all 40 `irgen.ml` copies:* the divisor goes through a preamble helper,
+  `%d = call i64 @swiftml.divz(i64 %r)` then `sdiv i64 %l, %d`, which traps on zero with swiftc's
+  own message and exit 133. Both wordings match swiftc (`… by zero` / `… by zero in remainder
+  operation`); as with every other trap here, swiftc's source-location prefix is not reproduced.
+- *Three things the shape is chosen for:* a HELPER rather than an inline branch, because
+  splitting the caller's block leaves IRGen's block-argument phis naming a predecessor that no
+  longer branches — measured, that broke 8 of 32 comparison programs, all at `-O` only; a
+  `switch` rather than an `icmp`, because the IR tests count mnemonics and a preamble `icmp`
+  would read as one the program emitted; and emitted only for a module that actually divides.
+- *Verified:* `comparisons/run.sh` 32/32 at `-Onone` and `-O`; answer keys for 09, 13, 15, 20,
+  26, 31, 33, 37, 40; new cases in 09's `run-arith.t` pin both messages, both exit codes, and
+  that a non-zero divisor still divides.
+- *Still open:* **Backend B (33–37) does not trap** — the ARM64 path lowers `sdiv`/`msub`
+  directly and never sees the guard, so a ÷0 program compiled `--native` is still UB. The A/B
+  agreement tests pass because no corpus program divides by zero. Also still open: `Int.min / -1`
+  is poison in both backends where swiftc traps.
 
 ### 7. `defer` inside a `do` block doesn't fire on a locally-caught throw  **[FIXED — concept-review pass 29–32]**
 `do { defer { print(2) }; try mayThrow() } catch { print(3) }` printed `3` (swiftml) vs `2`,`3`
