@@ -51,6 +51,12 @@ let switch_to (b : builder) (blk : Sil.block) = b.cur <- blk
 let terminate (b : builder) (t : Sil.term) = if b.cur.Sil.term = Sil.Unreachable then b.cur.Sil.term <- t
 let vty (b : builder) (v : Sil.value) : Types.ty = Hashtbl.find b.val_ty v
 
+(* the same pair for `vars`: where a variable's slot is, and how a name comes to have one.
+   `addr_of` is total in practice — sema has already rejected the names that are not in scope. *)
+let addr_of (b : builder) (name : string) : Sil.value = Hashtbl.find b.vars name
+let bind_var (b : builder) (name : string) (addr : Sil.value) : unit =
+  Hashtbl.replace b.vars name addr
+
 let result_ty (op : Ast.binop) (operand : Types.ty) : Types.ty =
   match op with
   | Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge | Ast.And | Ast.Or -> Types.TBool
@@ -79,8 +85,8 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       | None -> gen_expr b e0)
   | Ast.Var (x, _) ->
       ignore x;
-      (* TODO(08a): reading a variable is a LOAD from its slot. `b.vars` maps the name to the
-         address `alloc_stack` gave it, and `vty b addr` is that slot's element type. §2. *)
+      (* TODO(08a): reading a variable is a LOAD from its slot. `addr_of b x` is where that
+         slot is, and `vty b addr` is the type it holds. §2. *)
       failwith "TODO(08a): load a variable from its slot"
   | Ast.Unary (op, e0, _) ->
       let v = gen_expr b e0 in
@@ -155,7 +161,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       ignore name;
       ignore v;
       (* TODO(08a): a declaration is a SLOT and a STORE — alloc_stack for `name` at the value's
-         type, recorded in `b.vars` so later reads find it, then the value stored into it.
+         type, handed to `bind_var` so later reads find it, then the value stored into it.
          `lower` already does exactly this for each parameter. §2. *)
       failwith "TODO(08a): give the variable a slot and store into it"
   | Ast.Assign { name; value; _ } ->
@@ -217,7 +223,7 @@ let lower_func funcs (name : string) (params : (string * Types.ty) list) (ret : 
   List.iter2
     (fun (pv, pty) (pname, _) ->
       let addr = emit b (Sil.Alloc_stack pname) pty in
-      Hashtbl.replace b.vars pname addr;
+      bind_var b pname addr;
       ignore (emit b (Sil.Store (pv, addr)) Types.TVoid))
     sil_params params;
   gen_block b body;

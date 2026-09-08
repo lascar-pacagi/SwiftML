@@ -37,6 +37,12 @@ let switch_to (b : builder) (blk : Sil.block) = b.cur <- blk
 let terminate (b : builder) (t : Sil.term) = if b.cur.Sil.term = Sil.Unreachable then b.cur.Sil.term <- t
 let vty (b : builder) (v : Sil.value) : Types.ty = Hashtbl.find b.val_ty v
 
+(* the same pair for `vars`: where a variable's slot is, and how a name comes to have one.
+   `addr_of` is total in practice — sema has already rejected the names that are not in scope. *)
+let addr_of (b : builder) (name : string) : Sil.value = Hashtbl.find b.vars name
+let bind_var (b : builder) (name : string) (addr : Sil.value) : unit =
+  Hashtbl.replace b.vars name addr
+
 let result_ty (op : Ast.binop) (operand : Types.ty) : Types.ty =
   match op with
   | Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge | Ast.And | Ast.Or -> Types.TBool
@@ -80,7 +86,7 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
      already checks at T, so there is nothing to emit. *)
   | Ast.Ascribe (e0, _, _) -> gen_expr b e0
   | Ast.Var (x, _) ->
-      let addr = Hashtbl.find b.vars x in
+      let addr = addr_of b x in
       emit b (Sil.Load addr) (vty b addr) (* the slot's element type *)
   | Ast.Unary (op, e0, _) ->
       let v = gen_expr b e0 in
@@ -257,7 +263,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
         | None -> let v = gen_expr b value in (v, vty b v)
       in
       let addr = emit b (Sil.Alloc_stack name) slot_ty in
-      Hashtbl.replace b.vars name addr;
+      bind_var b name addr;
       ignore (emit b (Sil.Store (v, addr)) Types.TVoid)
   | Ast.Assign { name; value; _ } ->
       (* wrap to the SLOT's type, not the value's: assigning `7` to an `Int?` var must store
@@ -314,7 +320,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       switch_to b then_b;
       let pv = emit b (Sil.Enum_payload (ov, 0)) t in
       let addr = emit b (Sil.Alloc_stack name) t in
-      Hashtbl.replace b.vars name addr;
+      bind_var b name addr;
       ignore (emit b (Sil.Store (pv, addr)) Types.TVoid);
       gen_block b then_blk;
       terminate b (Sil.Br (merge.Sil.bid, []));
@@ -339,7 +345,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       let lov = gen_expr b lo in
       let hiv = gen_expr b hi in
       let addr = emit b (Sil.Alloc_stack var) Types.TInt in
-      Hashtbl.replace b.vars var addr;
+      bind_var b var addr;
       ignore (emit b (Sil.Store (lov, addr)) Types.TVoid);
       (* header -> body -> latch (the increment) -> header; continue jumps to the latch so
          it doesn't skip `v = v + 1` (that would loop forever) *)
@@ -437,7 +443,7 @@ let lower_func structs enums funcs (name : string) (params : (string * Types.ty)
   List.iter2
     (fun (pv, pty) (pname, _) ->
       let addr = emit b (Sil.Alloc_stack pname) pty in
-      Hashtbl.replace b.vars pname addr;
+      bind_var b pname addr;
       ignore (emit b (Sil.Store (pv, addr)) Types.TVoid))
     sil_params params;
   gen_block b body;

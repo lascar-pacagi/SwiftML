@@ -20,20 +20,20 @@ let fatal_error span = Ast.Expr_stmt (Ast.Call ("fatalError", [], span), span)
 (* expand a macro USED AS AN EXPRESSION — `#line`, `#column` become integer literals. (`args` and
    the already-expanded sub-args are available; v0's expression macros take none.) *)
 let expand_macro_expr (name : string) (_args : Ast.expr list) (span : Token.span) : Ast.expr =
-  ignore (name, span);
-  (* TODO(40a): expand an expression macro into ordinary AST — the magic identifiers become
-       literals of the position they were written at. An unknown macro is LEFT in place, so that
-       sema is the one to reject it. §2. *)
-  failwith "TODO(40a-macros): expand #line / #column to integer literals"
+  match name with
+  | "line" -> int_lit span.Token.lo.Token.line span
+  | "column" -> int_lit span.Token.lo.Token.col span
+  | other ->
+      (* unknown expression macro — leave a marker the type checker will reject *)
+      Ast.MacroExpr (other, [], span)
 
 (* expand a macro USED AS A STATEMENT — `#assert(cond)` becomes `if cond { } else { fatalError() }`.
    Return `None` to fall back to expanding it as an expression statement. *)
 let expand_macro_stmt (name : string) (args : Ast.expr list) (span : Token.span) : Ast.stmt option =
-  ignore (name, args, span);
-  (* TODO(40b): expand a statement macro — `#assert` becomes the `if` that a hand-written
-     assertion would be. None means "not a statement macro", and the caller expands it as an
-     expression instead. §2. *)
-  failwith "TODO(40b-macros): expand #assert(cond) to a conditional fatalError()"
+  match (name, args) with
+  | "assert", [ cond ] ->
+      Some (Ast.If { cond; then_blk = []; else_blk = Some [ fatal_error span ]; span })
+  | _ -> None
 
 (* ===== given: the recursive walk that reaches every macro ===== *)
 

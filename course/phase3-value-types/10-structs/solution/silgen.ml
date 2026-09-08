@@ -35,6 +35,12 @@ let switch_to (b : builder) (blk : Sil.block) = b.cur <- blk
 let terminate (b : builder) (t : Sil.term) = if b.cur.Sil.term = Sil.Unreachable then b.cur.Sil.term <- t
 let vty (b : builder) (v : Sil.value) : Types.ty = Hashtbl.find b.val_ty v
 
+(* the same pair for `vars`: where a variable's slot is, and how a name comes to have one.
+   `addr_of` is total in practice — sema has already rejected the names that are not in scope. *)
+let addr_of (b : builder) (name : string) : Sil.value = Hashtbl.find b.vars name
+let bind_var (b : builder) (name : string) (addr : Sil.value) : unit =
+  Hashtbl.replace b.vars name addr
+
 let result_ty (op : Ast.binop) (operand : Types.ty) : Types.ty =
   match op with
   | Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge | Ast.And | Ast.Or -> Types.TBool
@@ -62,7 +68,7 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       | Some t -> gen_expr_as b e0 t
       | None -> gen_expr b e0)
   | Ast.Var (x, _) ->
-      let addr = Hashtbl.find b.vars x in
+      let addr = addr_of b x in
       emit b (Sil.Load addr) (vty b addr) (* the slot's element type *)
   | Ast.Unary (op, e0, _) ->
       let v = gen_expr b e0 in
@@ -147,11 +153,11 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
         | None -> gen_expr b value
       in
       let addr = emit b (Sil.Alloc_stack name) (vty b v) in
-      Hashtbl.replace b.vars name addr;
+      bind_var b name addr;
       ignore (emit b (Sil.Store (v, addr)) Types.TVoid)
   | Ast.Assign { name; value; _ } ->
       let v = gen_expr b value in
-      ignore (emit b (Sil.Store (v, Hashtbl.find b.vars name)) Types.TVoid)
+      ignore (emit b (Sil.Store (v, addr_of b name)) Types.TVoid)
   | Ast.Set_member { obj; field; value; _ } ->
       (* `p.x = e`: take the field's ADDRESS in p's slot, then store — this is what makes a
          struct a value type, since p has its own slot distinct from any copy *)
@@ -204,7 +210,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       let lov = gen_expr b lo in
       let hiv = gen_expr b hi in
       let addr = emit b (Sil.Alloc_stack var) Types.TInt in
-      Hashtbl.replace b.vars var addr;
+      bind_var b var addr;
       ignore (emit b (Sil.Store (lov, addr)) Types.TVoid);
       (* header -> body -> latch (the increment) -> header; continue jumps to the latch so
          it doesn't skip `v = v + 1` (that would loop forever) *)
@@ -252,7 +258,7 @@ let lower_func structs funcs (name : string) (params : (string * Types.ty) list)
   List.iter2
     (fun (pv, pty) (pname, _) ->
       let addr = emit b (Sil.Alloc_stack pname) pty in
-      Hashtbl.replace b.vars pname addr;
+      bind_var b pname addr;
       ignore (emit b (Sil.Store (pv, addr)) Types.TVoid))
     sil_params params;
   gen_block b body;
