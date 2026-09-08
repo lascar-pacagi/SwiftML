@@ -91,7 +91,7 @@ The two halves:
   "here is where control goes". Then fill each new block, and `switch_to` the one execution
   continues from.
 
-### Lowering control flow (your job)
+### Lowering control flow
 
 - **`if c { A } else { B }`** — a **diamond** (see the figure). Evaluate `c`; make a *then*, an
   *else* (if present), and a *merge* block; `cond_br c` to then/else (or then/merge if no else); lower
@@ -134,9 +134,9 @@ the right IR once, and everything downstream gets easier.
 
 This concept adds no Swift syntax — the grammar is concept 07's, unchanged. What it adds is an
 **IR**, so this is the vocabulary to keep in front of you: every form `--emit-sil` can print, and
-which of them your holes are responsible for. All of it is `<-- new` (SIL starts here); `<-- yours`
-marks what the `TODO(08b)` cases in `gen_stmt` must produce, the slots and their traffic being
-`TODO(08a)` and the rest emitted by the given `gen_expr`, `lower_func` and `lower`.
+which of them your holes are responsible for. All of it is `<-- new` (SIL starts here), and of
+that, `<-- 08a` is the memory model and `<-- 08b` is what the control-flow cases of `gen_stmt`
+must produce. The unmarked rest is emitted by the given `gen_expr`, `lower_func` and `lower`.
 
 A SIL **function** is a header and a list of blocks; a **block** is a label, straight-line
 instructions, and exactly one terminator:
@@ -156,21 +156,21 @@ bb0:                                           <-- new  block label, bb0 is the 
 | `%n = integer_literal $Int, 7` | an `Int` (also `$Bool`, printed `true`/`false`) `<-- new` |
 | `%n = float_literal $Double, 1.5` | a `Double` `<-- new` |
 | `%n = string_literal $String, "hi"` | a `String` `<-- new` |
-| `%n = alloc_stack $T  // x` | a stack slot for `x`; the result is its **address** `<-- new` |
-| `%n = load %a $T` | read the value at address `%a` `<-- new` |
-| `store %v to %a` | write `%v` at address `%a` (no result) `<-- new` |
+| `%n = alloc_stack $T  // x` | a stack slot for `x`; the result is its **address** `<-- 08a` |
+| `%n = load %a $T` | read the value at address `%a` `<-- 08a` |
+| `store %v to %a` | write `%v` at address `%a` (no result) `<-- 08a` |
 | `%n = binop "+" %a, %b $T` | arithmetic and comparison `<-- new` |
 | `%n = unop "-" %a $T` | negation — the only unary operator in the subset `<-- new` |
 | `%n = function_ref @f` | a reference to a SIL function `<-- new` |
 | `%n = apply %f(%a, %b)` | call it `<-- new` |
 | `%n = apply @print(%a)` | the one builtin `<-- new` |
 
-**Terminators** — the edges of the CFG, and where your work shows up:
+**Terminators** — the edges of the CFG, one per block:
 
 | form | meaning |
 |---|---|
-| `br bbN` | jump to `bbN` `<-- yours` (the branch into a loop, the back-edge, both arms of a diamond, `break`, `continue`) |
-| `cond_br %c, bbT, bbF` | branch on a `$Bool` `<-- yours` (`if`, the loop header) |
+| `br bbN` | jump to `bbN` `<-- 08b` (the branch into a loop, the back-edge, both arms of a diamond, `break`, `continue`) |
+| `cond_br %c, bbT, bbF` | branch on a `$Bool` `<-- 08b` (`if`, the loop header) |
 | `return` / `return %v` | leave the function `<-- new` (given: `Return`) |
 | `unreachable` | a block control never enters — a **valid** terminator, and what a block keeps when both arms of an `if` returned `<-- new` |
 
