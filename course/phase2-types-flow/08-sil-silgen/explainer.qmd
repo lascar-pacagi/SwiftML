@@ -318,7 +318,15 @@ way, and the oracle — in the order you fill the holes:
   `store` + `load`, reassignment storing over the same slot, a parameter in a slot of its own, a
   call whose result is bound through one, and the `&&` diamond `gen_expr` already builds. Nothing
   here branches, so it goes green on the memory model alone, with every `TODO(08c)` still raising.
-- `silgen-if.t` — `--emit-sil` on an `if`/`else` (then, merge, else; both arms `br` to the merge;
+The five control-flow files compare against `--emit-sil-canon` rather than `--emit-sil`. Two
+correct lowerings can build the same graph and print it differently — block ids follow the order
+you created the blocks in, and opening a block for a loop's setup shifts every number after it —
+so the canonical form folds a block into its only predecessor, renumbers blocks depth-first from
+the entry, and puts slots and literals at the top of their block before renumbering the values.
+What survives is the graph, which is what these files are about; `silgen-memory.t` still compares
+raw `--emit-sil`, because there the instructions ARE the lesson.
+
+- `silgen-if.t` — `--emit-sil-canon` on an `if`/`else` (then, merge, else; both arms `br` to the merge;
   the next statement lands there), an `if` with no `else` (the false edge *is* the merge), an `if`
   whose arms both `return` (the merge keeps `unreachable`), an `else if` chain, and the verifier.
 - `silgen-while.t` — the entry `br` into the header, the header's `cond_br`, the back-edge, the
