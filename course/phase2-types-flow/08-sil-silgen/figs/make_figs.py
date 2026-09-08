@@ -26,13 +26,13 @@ F = "#b5651d"
 
 def circle(ax, x, y, label, color, r=0.42):
     ax.add_patch(Circle((x, y), r, facecolor=color, edgecolor=EDGE, linewidth=1.3, zorder=3))
-    ax.text(x, y, label, ha="center", va="center", fontsize=11, fontweight="bold", color=TEXT, zorder=4)
+    ax.text(x, y, label, ha="center", va="center", fontsize=12, fontweight="bold", color=TEXT, zorder=4)
 
 
 def blk(ax, x, y, lines, color, w=2.0, h=0.95):
     ax.add_patch(FancyBboxPatch((x - w / 2, y - h / 2), w, h, boxstyle="round,pad=0.03,rounding_size=0.08",
                  linewidth=1.3, edgecolor=EDGE, facecolor=color, zorder=3))
-    ax.text(x, y, "\n".join(lines), ha="center", va="center", fontsize=9, family="monospace", color=TEXT, zorder=4)
+    ax.text(x, y, "\n".join(lines), ha="center", va="center", fontsize=10.5, family="monospace", color=TEXT, zorder=4)
 
 
 def line(ax, p0, p1, color=EDGE):
@@ -43,7 +43,7 @@ def arr(ax, p0, p1, color=EDGE, label=None, lx=0, ly=0):
     ax.add_patch(FancyArrowPatch(p0, p1, arrowstyle="-|>", mutation_scale=13, linewidth=1.5, color=color, zorder=2))
     if label:
         ax.text((p0[0] + p1[0]) / 2 + lx, (p0[1] + p1[1]) / 2 + ly, label, ha="center", color=color,
-                fontsize=9, fontweight="bold", zorder=5)
+                fontsize=10, fontweight="bold", zorder=5)
 
 
 def make_lowering():
@@ -62,13 +62,13 @@ def make_lowering():
     circle(ax, *c, "c", LEAF)
     circle(ax, *th, "A", LEAF)
     circle(ax, *el, "B", LEAF)
-    ax.text(c[0], c[1] - 0.65, "cond", ha="center", fontsize=8, color=TEXT)
-    ax.text(th[0], th[1] - 0.65, "then", ha="center", fontsize=8, color=TEXT)
-    ax.text(el[0], el[1] - 0.65, "else", ha="center", fontsize=8, color=TEXT)
+    ax.text(c[0], c[1] - 0.65, "cond", ha="center", fontsize=9.5, color=TEXT)
+    ax.text(th[0], th[1] - 0.65, "then", ha="center", fontsize=9.5, color=TEXT)
+    ax.text(el[0], el[1] - 0.65, "else", ha="center", fontsize=9.5, color=TEXT)
 
     # ---- middle arrow ----
     arr(ax, (4.6, 3.2), (5.7, 3.2), EDGE)
-    ax.text(5.15, 3.55, "SILGen", ha="center", fontsize=10.5, fontweight="bold", color=TEXT)
+    ax.text(5.15, 3.55, "SILGen", ha="center", fontsize=11.5, fontweight="bold", color=TEXT)
 
     # ---- right: the SIL CFG (a graph) ----
     ax.text(8.9, 5.6, "SIL: a control-flow graph", ha="center", fontsize=12, fontweight="bold", color=TEXT)
