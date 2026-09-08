@@ -141,9 +141,9 @@ the right IR once, and everything downstream gets easier.
 
 This concept adds no Swift syntax — the grammar is concept 07's, unchanged. What it adds is an
 **IR**, so this is the vocabulary to keep in front of you: every form `--emit-sil` can print, and
-which of them your holes are responsible for. All of it is `<-- new` (SIL starts here), and of
-that, `<-- 08a` is the memory model and `<-- 08b` is what the control-flow cases of `gen_stmt`
-must produce. The unmarked rest is emitted by the given `gen_expr`, `lower_func` and `lower`.
+which of them you have to emit. All of it is `<-- new` (SIL starts here); within that, `<-- 08a`
+marks the memory model and `<-- 08b` the control-flow cases of `gen_stmt`. The unmarked rest comes
+from the given `gen_expr`, `lower_func` and `lower`.
 
 A SIL **function** is a header and a list of blocks; a **block** is a label, straight-line
 instructions, and exactly one terminator:
