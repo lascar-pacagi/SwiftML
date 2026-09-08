@@ -50,6 +50,30 @@ let reachable_from (f : Sil.func) (start : int) : int list =
   go start;
   Hashtbl.fold (fun k () acc -> k :: acc) seen []
 
+(* Find the loop's LATCH: the block that carries the back edge to [header] and does the work
+   [what] describes. When there is none, say which half is missing — "no block increments" and
+   "the increment block exists but nothing branches to it" are different bugs, and Not_found
+   tells you neither. *)
+let find_latch (f : Sil.func) (header : Sil.block) ~(what : string) ~(has : Sil.instr -> bool) =
+  let does_work (b : Sil.block) = List.exists (fun (_, i) -> has i) b.Sil.instrs in
+  let back_edge (b : Sil.block) = br_target b = header.Sil.bid in
+  let live = reachable_from f header.Sil.bid in
+  match
+    List.find_opt (fun b -> List.mem b.Sil.bid live && back_edge b && does_work b) f.Sil.blocks
+  with
+  | Some b -> b
+  | None ->
+      let orphan = List.find_opt (fun b -> back_edge b && does_work b) f.Sil.blocks in
+      Alcotest.fail
+        (match orphan with
+        | Some b ->
+            Printf.sprintf
+              "bb%d %s and branches back to the header, but nothing reaches it — the body has to \
+               branch INTO it, or the loop never runs it"
+              b.Sil.bid what
+        | None ->
+            Printf.sprintf "no block both %s and branches back to bb%d" what header.Sil.bid)
+
 let preds_by_br (f : Sil.func) n =
   List.filter (fun (b : Sil.block) -> br_target b = n) f.Sil.blocks |> List.map (fun b -> b.Sil.bid)
 
@@ -179,12 +203,8 @@ let test_for_latch () =
   let header = the_cond_br main in
   (* the increment lives in a block of its own, and that block carries the back-edge *)
   let latch =
-    List.find
-      (fun (b : Sil.block) ->
-        List.mem b.Sil.bid (reachable_from main header.Sil.bid)
-        && br_target b = header.Sil.bid
-        && List.exists (fun (_, i) -> match i with Sil.Binop (Ast.Add, _, _) -> true | _ -> false) b.Sil.instrs)
-      main.Sil.blocks
+    find_latch main header ~what:"increments"
+      ~has:(function Sil.Binop (Ast.Add, _, _) -> true | _ -> false)
   in
   Alcotest.(check bool) "the latch stores i back" true (List.exists (fun (_, i) -> is_store i) latch.Sil.instrs);
   Alcotest.(check bool) "the body is not the latch" true (latch.Sil.bid <> fst (cond_br_of header))
@@ -220,14 +240,7 @@ let test_continue_header () =
 let test_continue_latch () =
   let main = main_of "for i in 0 ..< 5 { if i == 2 { continue }\n print(i) }" in
   let header = the_cond_br main in
-  let latch =
-    List.find
-      (fun (b : Sil.block) ->
-        List.mem b.Sil.bid (reachable_from main header.Sil.bid)
-        && br_target b = header.Sil.bid
-        && List.exists (fun (_, i) -> is_store i) b.Sil.instrs)
-      main.Sil.blocks
-  in
+  let latch = find_latch main header ~what:"stores the counter back" ~has:is_store in
   (* THE bug this pins: continue must reach the latch, or the increment never runs *)
   Alcotest.(check int) "continue and fall-through hit the latch" 2 (List.length (preds_by_br main latch.Sil.bid));
   Alcotest.(check bool) "so it is not the header" true (latch.Sil.bid <> header.Sil.bid)
