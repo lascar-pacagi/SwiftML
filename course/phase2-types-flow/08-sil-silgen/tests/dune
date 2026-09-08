@@ -3,7 +3,7 @@
 ; links the phase's final concept and would not see your work here).
 (executable
  (name lab)
- (modules lab)
+ (modules lab canon)
  (libraries swiftml_sil)
  (flags
   (:standard -warn-error -a)))
@@ -12,8 +12,8 @@
  (deps lab.exe oracle-corpus.txt))
 
 (tests
- (names test_silgen)
- (modules test_silgen)
+ (names test_silgen test_canon)
+ (modules test_silgen test_canon canon)
  (libraries alcotest swiftml_sil)
  (flags
   (:standard -warn-error -a)))
