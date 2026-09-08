@@ -145,6 +145,11 @@ which of them you have to emit. All of it is `<-- new` (SIL starts here); within
 marks the memory model and `<-- 08b` the control-flow cases of `gen_stmt`. The unmarked rest comes
 from the given `gen_expr`, `lower_func` and `lower`.
 
+One notation to read first: a **`$` marks a type**. `$Int`, `$Bool`, `$T` for a type left open —
+swiftc's own SIL writes them the same way (`$Int`, `$Builtin.Int64`, `$Array<Element>`). Real SIL
+also gives an address a type of its own, spelled `$*T`, which we drop: our `alloc_stack $Int` names
+what the slot *holds*, and its result is used as the slot's address.
+
 A SIL **function** is a header and a list of blocks; a **block** is a label, straight-line
 instructions, and exactly one terminator:
 
