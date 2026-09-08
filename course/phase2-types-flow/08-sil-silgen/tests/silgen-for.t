@@ -37,45 +37,23 @@ The induction variable gets a real named slot, like any `var`.
   $ ./lab.exe --emit-sil-canon f.swift | grep "alloc_stack"
     %2 = alloc_stack $Int  // i
 
-`hi` is evaluated ONCE, before the loop: with `0 ..< k + 1` the addition is in the entry
-block, and the header only re-loads `i` to compare against it.
+`hi` is evaluated ONCE, before the loop. The bound here is `k * 2`, and nothing else in the
+program multiplies, so every `binop "*"` in the output IS the bound — there must be exactly one:
 
-  $ printf 'var t = 0\nlet k = 2\nfor i in 0 ..< k + 1 {\n  t = t + i\n}\nprint(t)\n' > fh.swift
-  $ ./lab.exe --emit-sil-canon fh.swift
-  sil @main() -> $() {
-  bb0:
-    %0 = integer_literal $Int, 0
-    %1 = integer_literal $Int, 2
-    %2 = integer_literal $Int, 0
-    %3 = integer_literal $Int, 1
-    %4 = alloc_stack $Int  // t
-    %5 = alloc_stack $Int  // k
-    %6 = alloc_stack $Int  // i
-    store %0 to %4
-    store %1 to %5
-    %9 = load %5 $Int
-    %10 = binop "+" %9, %3 $Int
-    store %2 to %6
-    br bb1
+  $ printf 'var t = 0\nlet k = 2\nfor i in 0 ..< k * 2 {\n  t = t + i\n}\nprint(t)\n' > fh.swift
+  $ ./lab.exe --emit-sil-canon fh.swift | grep -c 'binop "\*"'
+  1
+
+And it is not in the loop. `bb1` is the header — the block the back edge returns to — and all it
+does is re-read `i` and compare it against the bound computed before the loop began. The value
+numbers are blanked, because which `%n` the bound landed on depends on the order you emitted the
+entry block in, and that is not what this case is about:
+
+  $ ./lab.exe --emit-sil-canon fh.swift | sed -n '/^bb1:/,/cond_br/p' | sed 's/%[0-9][0-9]*/%_/g'
   bb1:
-    %12 = load %6 $Int
-    %13 = binop "<" %12, %10 $Bool
-    cond_br %13, bb2, bb3
-  bb2:
-    %14 = integer_literal $Int, 1
-    %15 = load %4 $Int
-    %16 = load %6 $Int
-    %17 = binop "+" %15, %16 $Int
-    store %17 to %4
-    %19 = load %6 $Int
-    %20 = binop "+" %19, %14 $Int
-    store %20 to %6
-    br bb1
-  bb3:
-    %22 = load %4 $Int
-    %23 = apply @print(%22)
-    return
-  }
+    %_ = load %_ $Int
+    %_ = binop "<" %_, %_ $Bool
+    cond_br %_, bb2, bb3
 
 The latch is a separate block, so the body's fall-through and the increment are not the same
 block: the body ends in a `br` to the latch, and the latch carries the back-edge.
