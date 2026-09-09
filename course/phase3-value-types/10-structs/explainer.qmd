@@ -203,7 +203,7 @@ machinery is the natural place to generalize), and `print` of a `Double` goes th
 - **`irgen.ml`, TODO(10i)** — three instructions: `Struct` is a chain of `insertvalue` starting
   from `undef` (each step names the previous register, the last one is the value); `Struct_extract`
   is `extractvalue`; `Struct_element_addr` is `getelementptr <struct ty>, ptr <slot>, i32 0, i32 i`.
-  `llty (vty value)` gives the LLVM type of any value; `fresh ()` creates a register;
+  `llvm_type (value_type value)` gives the LLVM type of any value; `fresh_temp ()` creates a register;
   `lookup_operand` and `bind_operand` read and update the SIL-to-LLVM operand map.
 
 Reference: `solution/` — after you have tried it.
@@ -376,25 +376,28 @@ in `solution/sema.ml`.
 ```ocaml
 (* IRGen — aggregates in LLVM *)
 | Sil.Struct fields ->
-    let struct_type = llty (vty v) in
-    let aggregate = ref "undef" in
+    let struct_type = llvm_type (value_type value) in
+    let aggregate_operand = ref "undef" in
     List.iteri (fun field_index field_value ->
-      let result = fresh () in
-      p (Printf.sprintf "  %s = insertvalue %s %s, %s %s, %d\n"
-           result struct_type !aggregate (llty (vty field_value))
+      let result_operand = fresh_temp () in
+      emit (Printf.sprintf "  %s = insertvalue %s %s, %s %s, %d\n"
+           result_operand struct_type !aggregate_operand
+           (llvm_type (value_type field_value))
            (lookup_operand field_value) field_index);
-      aggregate := result) fields;
-    bind_operand v !aggregate
+      aggregate_operand := result_operand) fields;
+    bind_operand value !aggregate_operand
 | Sil.Struct_extract (aggregate, field_index) ->
-    let result = fresh () in
-    p (Printf.sprintf "  %s = extractvalue %s %s, %d\n"
-         result (llty (vty aggregate)) (lookup_operand aggregate) field_index);
-    bind_operand v result
+    let result_operand = fresh_temp () in
+    emit (Printf.sprintf "  %s = extractvalue %s %s, %d\n"
+         result_operand (llvm_type (value_type aggregate))
+         (lookup_operand aggregate) field_index);
+    bind_operand value result_operand
 | Sil.Struct_element_addr (address, field_index) ->
-    let result = fresh () in
-    p (Printf.sprintf "  %s = getelementptr %s, ptr %s, i32 0, i32 %d\n"
-         result (llty (vty address)) (lookup_operand address) field_index);
-    bind_operand v result
+    let result_operand = fresh_temp () in
+    emit (Printf.sprintf "  %s = getelementptr %s, ptr %s, i32 0, i32 %d\n"
+         result_operand (llvm_type (value_type address))
+         (lookup_operand address) field_index);
+    bind_operand value result_operand
 ```
 
 ## 9. Exercise solutions
