@@ -92,8 +92,8 @@ the rest is given.
 **Instructions** (`gen_instr`). Several emit *no line at all* into the function body — they only
 bind the SIL value to an operand, which is a shape worth expecting before you meet it:
 
-In the table, `$T` stands for a SIL type. `<ty>` and `<ret>` stand for the corresponding LLVM type
-spelling produced by `llvm_type`, such as `i64`, `i1`, `double`, or `void`.
+In the table, `$T` stands for a SIL type. `<ty>`, `<ty-a>`, `<ty-b>`, and `<ret>` stand for the
+corresponding LLVM type spellings produced by `llvm_type`, such as `i64`, `i1`, `double`, or `void`.
 
 | SIL | LLVM |
 |---|---|
@@ -107,7 +107,7 @@ spelling produced by `llvm_type`, such as `i64`, `i1`, `double`, or `void`.
 | `%n = binop "+" %a, %b $Int` | `%tK = add i64 %a, %b` (the given `gen_binop` table) `<-- yours` |
 | `%n = unop "-" %a $Int` | `%tK = sub i64 0, %a` — integers have no negate opcode `<-- yours` |
 | `%n = function_ref @f` | the operand `@f` — no line `<-- yours` |
-| `%n = apply %f(%a)` | `%tK = call <ret> %f(<ty> %a)`, or `call void …` with no result `<-- yours` |
+| `%n = apply %f(%a, %b)` | `%tK = call <ret> %f(<ty-a> %a, <ty-b> %b)`, or `call void …` with no result `<-- yours` |
 | `%n = apply @print(%a)` | a `printf` call (the given `gen_print`) `<-- yours` |
 
 **Terminators** (`gen_term`) — the CFG, and the one asymmetry in the whole pass:

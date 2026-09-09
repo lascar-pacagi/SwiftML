@@ -144,6 +144,12 @@ let test_calls () =
   Alcotest.(check int) "one call line per apply" 2
     (instruction_count src "call void @sink" + instruction_count src "call i64 @add")
 
+let test_print () =
+  instruction_has "print(1)" "@printf(ptr @.fmt_int, i64 1)";
+  instruction_has "print(true)" "select i1 1, ptr @.btrue, ptr @.bfalse";
+  instruction_has "print(1.5)" "@printf(ptr @.fmt_dbl, double";
+  instruction_has "print(\"hi\")" "@printf(ptr @.fmt_str, ptr @.str0)"
+
 (* ---- TODO(09) gen_term ---- *)
 
 let test_br () =
@@ -185,6 +191,7 @@ let () =
           Alcotest.test_case "signed icmp predicates" `Quick test_compare_opcodes;
           Alcotest.test_case "Double picks the f-family" `Quick test_double_opcodes;
           Alcotest.test_case "func_ref + apply = call" `Quick test_calls;
+          Alcotest.test_case "print dispatches by type" `Quick test_print;
         ] );
       ( "hole: gen_term",
         [
