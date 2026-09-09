@@ -2,6 +2,16 @@ Functions EXECUTED: the call ABI (arguments in, result out), recursion, and the 
 shapes. LLVM does the register allocation and the stack frame, so what these check is that each
 `apply` became a `call` of the right type and each `return` a `ret` of the right type.
 
+The shared focused program keeps several signatures, calls between functions, nested calls,
+returned values, and a `Void` call together in one readable file.
+
+  $ P=../../../tests/programs/functions.swift
+  $ ./lab.exe build "$P" -o functions && python3 timeout.py 5 ./functions
+  14
+  20
+  true
+  7
+
 Arguments arrive in order, results come back, and calls nest.
 
   $ cat > a.swift <<'EOF'

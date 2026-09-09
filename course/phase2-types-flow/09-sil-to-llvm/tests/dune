@@ -17,7 +17,7 @@
 (cram
  (applies_to run-arith run-control run-funcs)
  (runtest_alias false)
- (deps lab.exe timeout.py))
+ (deps lab.exe timeout.py %{project_root}/tests/programs/functions.swift))
 
 ; The live swiftc comparison is the longest check.  Keep it out of @runtest so
 ; `make lab` can run it only after both earlier stages are green.
