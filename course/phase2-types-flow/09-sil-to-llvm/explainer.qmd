@@ -16,6 +16,66 @@ byte-for-byte. That's **Milestone M2**, and the end of Phase 2.
   `gen_term`). Everything upstream (front-end, SIL, SILGen) is given and complete.
 - **Outcome:** `swiftml2 build foo.swift -o foo && ./foo` produces the same output as `swiftc`.
 
+Here is a complete example to keep in view while you fill the skeleton. It has one function with
+parameters of two different types, then calls that function from the top level:
+
+```swift
+func choose(_ value: Int, _ addOne: Bool) -> Int {
+  if addOne {
+    return value + 1
+  }
+  return value
+}
+
+print(choose(41, true))
+```
+
+`swiftml2 --emit-llvm` produces this unoptimized LLVM module:
+
+```llvm
+; swiftml Phase-2 LLVM IR
+declare i32 @printf(ptr, ...)
+@.fmt_int = private unnamed_addr constant [6 x i8] c"%lld\0A\00"
+@.fmt_str = private unnamed_addr constant [4 x i8] c"%s\0A\00"
+@.fmt_dbl = private unnamed_addr constant [4 x i8] c"%g\0A\00"
+@.btrue  = private unnamed_addr constant [5 x i8] c"true\00"
+@.bfalse = private unnamed_addr constant [6 x i8] c"false\00"
+
+define i64 @choose(i64 %arg0, i1 %arg1) {
+bb0:
+  %t0 = alloca i64
+  %t1 = alloca i1
+  store i64 %arg0, ptr %t0
+  store i1 %arg1, ptr %t1
+  %t2 = load i1, ptr %t1
+  br i1 %t2, label %bb1, label %bb2
+bb1:
+  %t3 = load i64, ptr %t0
+  %t4 = add i64 %t3, 1
+  ret i64 %t4
+bb2:
+  %t5 = load i64, ptr %t0
+  ret i64 %t5
+}
+
+define i32 @main() {
+bb0:
+  %t0 = call i64 @choose(i64 41, i1 1)
+  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %t0)
+  ret i32 0
+}
+
+```
+
+The declarations and format strings are given scaffolding. `Int` becomes `i64`, while `Bool`
+becomes `i1`, a one-bit integer. `@choose` receives `%arg0` and `%arg1`, stores them in the stack
+slots used by raw SIL, and branches on the loaded `Bool`. Each branch returns an `i64`.
+
+In `@main`, the literals `41` and `true` appear directly as the operands `41` and `1`. The call
+produces `%t0`, which the `printf` call consumes. Temporary numbering restarts in each function,
+which is why both functions can have a `%t0`. The final `ret i32 0` reports successful process
+termination. Compiling and running the module prints `42`.
+
 ## 2. Concepts in depth
 
 ### The easy hop — because SIL did the hard work
@@ -33,7 +93,7 @@ the rest is given.
 bind the SIL value to an operand, which is a shape worth expecting before you meet it:
 
 In the table, `$T` stands for a SIL type. `<ty>` and `<ret>` stand for the corresponding LLVM type
-spelling produced by `llty`, such as `i64`, `i1`, `double`, or `void`.
+spelling produced by `llvm_type`, such as `i64`, `i1`, `double`, or `void`.
 
 | SIL | LLVM |
 |---|---|
@@ -143,19 +203,19 @@ only shows up when something later depends on it.
 ## 3. Build it, step by step
 
 One skeleton, `irgen.ml`, and two holes in it — `gen_instr` and `gen_term`, both inside `gen_func`.
-The plumbing is given: `llty`, the output buffers, `fresh ()`, the `opnd` value map, `gen_binop`'s
-opcode table, `gen_print`, `gen_allocas`, and the loop over blocks. The literal cases of `gen_instr`
-are given too, as the pattern to copy: they call `Hashtbl.replace opnd v <operand>` and emit nothing.
+The plumbing is given: `llvm_type`, the output buffers, `fresh_temp ()`, the `operands` value map,
+`gen_binop`'s opcode table, `gen_print`, `gen_allocas`, and the loop over blocks. The literal cases of
+`gen_instr` are given too, as the pattern to copy: they add an entry to `operands` and emit nothing.
 
 The two holes are **coupled** — a function always ends in a terminator, so `--emit-llvm` prints a
 complete module or nothing at all, and no test can go green until both are done. `gen_instr` is what
 raises first, so:
 
-1. **`gen_instr`**, working down the instruction table in §2. Emit a line with `p "…"`; when the
-   instruction has a result, bind it with `Hashtbl.replace opnd v (fresh ())` so later instructions
-   can name it. Types come from `llty (vty v)`. Not every SIL instruction both emits an LLVM
-   line and produces a result. Literals and `function_ref` only add an entry to `opnd`; they
-   emit no line. A `store` emits a line but adds nothing to `opnd`. A non-void call emits
+1. **`gen_instr`**, working down the instruction table in §2. Emit a line with `emit "…"`; when the
+   instruction has a result, give it a `fresh_temp ()` and add it to `operands` so later instructions
+   can name it. Types come from `llvm_type (value_type value)`. Not every SIL instruction both emits
+   an LLVM line and produces a result. Literals and `function_ref` only add an entry to `operands`;
+   they emit no line. A `store` emits a line but adds nothing to `operands`. A non-void call emits
    `%tK = call …` and records `%tK`, while a void call emits `call void …` without recording
    a result.
 2. **`gen_term`**, the five terminator forms. `is_main` is in scope for the `@main` exception.

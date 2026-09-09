@@ -6,72 +6,75 @@
    Each SIL value maps to an LLVM operand (a constant, a global, or a fresh %tN).
 
    You fill the two TODO(09) holes: gen_instr and gen_term. The shell (gen_binop, gen_print,
-   gen_allocas, the buffers, llty) is given. Reference: solution/irgen.ml. *)
+   gen_allocas, the buffers, llvm_type) is given. Reference: solution/irgen.ml. *)
 
-let llty : Types.ty -> string = function
+let llvm_type : Types.ty -> string = function
   | Types.TInt -> "i64"
   | Types.TBool -> "i1"
   | Types.TDouble -> "double"
   | Types.TString -> "ptr"
   | Types.TVoid -> "void"
 
-let emit_llvm (m : Sil.modul) : string =
-  let globals = Buffer.create 256 in
-  let out = Buffer.create 1024 in
-  let strn = ref 0 in
-  let escape s =
-    let b = Buffer.create (String.length s) in
+let emit_llvm (sil_module : Sil.modul) : string =
+  let global_definitions = Buffer.create 256 in
+  let function_definitions = Buffer.create 1024 in
+  let next_string_id = ref 0 in
+  let escape text =
+    let escaped = Buffer.create (String.length text) in
     String.iter
-      (fun c ->
-        if c = '"' || c = '\\' || Char.code c < 32 || Char.code c > 126 then
-          Buffer.add_string b (Printf.sprintf "\\%02X" (Char.code c))
-        else Buffer.add_char b c)
-      s;
-    Buffer.contents b
+      (fun character ->
+        if character = '"' || character = '\\' || Char.code character < 32
+           || Char.code character > 126
+        then Buffer.add_string escaped (Printf.sprintf "\\%02X" (Char.code character))
+        else Buffer.add_char escaped character)
+      text;
+    Buffer.contents escaped
   in
-  let add_string_const s =
-    let name = Printf.sprintf "@.str%d" !strn in
-    incr strn;
-    Buffer.add_string globals
-      (Printf.sprintf "%s = private unnamed_addr constant [%d x i8] c\"%s\\00\"\n" name
-         (String.length s + 1) (escape s));
-    name
+  let add_string_const text =
+    let global_name = Printf.sprintf "@.str%d" !next_string_id in
+    incr next_string_id;
+    Buffer.add_string global_definitions
+      (Printf.sprintf "%s = private unnamed_addr constant [%d x i8] c\"%s\\00\"\n" global_name
+         (String.length text + 1) (escape text));
+    global_name
   in
-  let gen_func (f : Sil.func) =
+  let gen_func (func : Sil.func) =
     (* The process entry point follows the C ABI and returns an i32 status code, even though
        the source-level main body has no return value. *)
-    let is_main = f.Sil.fname = "main" in
+    let is_main = func.Sil.fname = "main" in
     (* IRGen learns the printed LLVM operand for each SIL value as it walks the function.
        An operand may be an immediate constant, an argument such as %arg0, or a temporary. *)
-    let opnd : (Sil.value, string) Hashtbl.t = Hashtbl.create 64 in
+    let operands : (Sil.value, string) Hashtbl.t = Hashtbl.create 64 in
     (* LLVM temporary names are local to a function, so numbering restarts for every function. *)
-    let nt = ref 0 in
-    let fresh () =
-      let n = !nt in
-      incr nt;
-      Printf.sprintf "%%t%d" n
+    let next_temp_id = ref 0 in
+    let fresh_temp () =
+      let id = !next_temp_id in
+      incr next_temp_id;
+      Printf.sprintf "%%t%d" id
     in
     (* Look up a value's LLVM spelling, or its SIL type when choosing an LLVM type or opcode. *)
-    let op x = Hashtbl.find opnd x in
-    let vty x = Hashtbl.find f.Sil.val_ty x in
+    let operand value = Hashtbl.find operands value in
+    let value_type value = Hashtbl.find func.Sil.val_ty value in
     (* Append emitted LLVM text to the module's function buffer. *)
-    let p s = Buffer.add_string out s in
+    let emit text = Buffer.add_string function_definitions text in
     (* parameters *)
-    let pdecls =
+    let parameter_declarations =
       List.map
-        (fun (v, t) ->
-          let nm = Printf.sprintf "%%arg%d" v in
-          Hashtbl.replace opnd v nm;
-          Printf.sprintf "%s %s" (llty t) nm)
-        f.Sil.params
+        (fun (value, ty) ->
+          let llvm_name = Printf.sprintf "%%arg%d" value in
+          Hashtbl.replace operands value llvm_name;
+          Printf.sprintf "%s %s" (llvm_type ty) llvm_name)
+        func.Sil.params
     in
-    let ret_ll = if is_main then "i32" else llty f.Sil.ret in
-    p (Printf.sprintf "define %s @%s(%s) {\n" ret_ll f.Sil.fname (String.concat ", " pdecls));
-    let gen_binop v bop l r =
-      let t = vty l in
-      let r' = fresh () in
-      let mn =
-        match (bop, t) with
+    let llvm_return_type = if is_main then "i32" else llvm_type func.Sil.ret in
+    emit
+      (Printf.sprintf "define %s @%s(%s) {\n" llvm_return_type func.Sil.fname
+         (String.concat ", " parameter_declarations));
+    let gen_binop result operator left right =
+      let operand_type = value_type left in
+      let result_operand = fresh_temp () in
+      let mnemonic =
+        match (operator, operand_type) with
         | Ast.Add, Types.TInt -> "add i64" | Ast.Sub, Types.TInt -> "sub i64"
         | Ast.Mul, Types.TInt -> "mul i64" | Ast.Div, Types.TInt -> "sdiv i64"
         | Ast.Mod, Types.TInt -> "srem i64"
@@ -83,50 +86,69 @@ let emit_llvm (m : Sil.modul) : string =
         | Ast.Eq, Types.TDouble -> "fcmp oeq double" | Ast.Ne, Types.TDouble -> "fcmp one double"
         | Ast.Lt, Types.TDouble -> "fcmp olt double" | Ast.Le, Types.TDouble -> "fcmp ole double"
         | Ast.Gt, Types.TDouble -> "fcmp ogt double" | Ast.Ge, Types.TDouble -> "fcmp oge double"
-        | (Ast.Eq | Ast.Ne), Types.TBool -> Printf.sprintf "icmp %s i1" (if bop = Ast.Eq then "eq" else "ne")
+        | (Ast.Eq | Ast.Ne), Types.TBool ->
+            Printf.sprintf "icmp %s i1" (if operator = Ast.Eq then "eq" else "ne")
         | Ast.And, _ -> "and i1" | Ast.Or, _ -> "or i1"
         | _ -> "add i64" (* String ops not lowered in this subset *)
       in
       (* a zero divisor traps: run the operand through the guard, then divide by its result *)
-      let rop =
-        match (bop, t) with
+      let right_operand =
+        match (operator, operand_type) with
         | (Ast.Div | Ast.Mod), Types.TInt ->
-            let g = Printf.sprintf "%%dz%d" v in
-            p (Printf.sprintf "  %s = call i64 @swiftml.%s(i64 %s)\n" g
-                 (if bop = Ast.Div then "divz" else "remz") (op r));
-            g
-        | _ -> op r
+            let guarded_right = Printf.sprintf "%%dz%d" result in
+            emit
+              (Printf.sprintf "  %s = call i64 @swiftml.%s(i64 %s)\n" guarded_right
+                 (if operator = Ast.Div then "divz" else "remz") (operand right));
+            guarded_right
+        | _ -> operand right
       in
-      p (Printf.sprintf "  %s = %s %s, %s\n" r' mn (op l) rop);
-      Hashtbl.replace opnd v r'
-    and gen_print x =
-      match vty x with
-      | Types.TInt -> p (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %s)\n" (op x))
+      emit
+        (Printf.sprintf "  %s = %s %s, %s\n" result_operand mnemonic (operand left)
+           right_operand);
+      Hashtbl.replace operands result result_operand
+    and gen_print value =
+      match value_type value with
+      | Types.TInt ->
+          emit
+            (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %s)\n"
+               (operand value))
       | Types.TBool ->
-          let s = fresh () in
-          p (Printf.sprintf "  %s = select i1 %s, ptr @.btrue, ptr @.bfalse\n" s (op x));
-          p (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_str, ptr %s)\n" s)
-      | Types.TString -> p (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_str, ptr %s)\n" (op x))
-      | Types.TDouble -> p (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_dbl, double %s)\n" (op x))
+          let string_operand = fresh_temp () in
+          emit
+            (Printf.sprintf "  %s = select i1 %s, ptr @.btrue, ptr @.bfalse\n"
+               string_operand (operand value));
+          emit
+            (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_str, ptr %s)\n"
+               string_operand)
+      | Types.TString ->
+          emit
+            (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_str, ptr %s)\n"
+               (operand value))
+      | Types.TDouble ->
+          emit
+            (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_dbl, double %s)\n"
+               (operand value))
       | Types.TVoid -> ()
     in
-    let gen_instr (v, i) =
-      match (i : Sil.instr) with
+    let gen_instr (value, instr) =
+      match (instr : Sil.instr) with
       (* given as the pattern: a SIL Int_lit maps a SIL value to a constant operand *)
-      | Sil.Int_lit n -> Hashtbl.replace opnd v (string_of_int n)
-      | Sil.Bool_lit b -> Hashtbl.replace opnd v (if b then "1" else "0")
-      | Sil.Float_lit x -> Hashtbl.replace opnd v (Printf.sprintf "0x%016LX" (Int64.bits_of_float x))
-      | Sil.String_lit s -> Hashtbl.replace opnd v (add_string_const s)
+      | Sil.Int_lit integer -> Hashtbl.replace operands value (string_of_int integer)
+      | Sil.Bool_lit boolean -> Hashtbl.replace operands value (if boolean then "1" else "0")
+      | Sil.Float_lit float ->
+          Hashtbl.replace operands value
+            (Printf.sprintf "0x%016LX" (Int64.bits_of_float float))
+      | Sil.String_lit text -> Hashtbl.replace operands value (add_string_const text)
       | Sil.Alloc_stack _ -> () (* emitted in the entry block by gen_allocas below (no-op here) *)
       (* TODO(09): the remaining instructions. The mapping is near 1:1 — §2 tabulates every SIL
-         instruction against its LLVM line. Emit with [p], and register each result operand
-         with [Hashtbl.replace opnd v (fresh ())] so later instructions can refer to it.
+         instruction against its LLVM line. Emit with [emit], and register each result operand
+         with [Hashtbl.replace operands value (fresh_temp ())] so later instructions can refer to it.
          Watch the ones that emit NO line (a func_ref is just an operand) and the ones that
          produce no result (a void call, a store). *)
       | _ -> ignore gen_binop; ignore gen_print; failwith "TODO(09): lower a SIL instruction"
     in
-    let gen_term (t : Sil.term) =
-      ignore t;
+    let gen_term (terminator : Sil.term) =
+      ignore terminator;
       ignore is_main;
       (* TODO(09): the terminators — br, conditional br, ret, unreachable (§2). The one special
          case: @main returns i32, so a valueless return there is `ret i32 0`. *)
@@ -138,28 +160,30 @@ let emit_llvm (m : Sil.modul) : string =
        entry-block allocas). *)
     let gen_allocas () =
       List.iter
-        (fun (b : Sil.block) ->
+        (fun (block : Sil.block) ->
           List.iter
-            (fun (v, i) ->
-              match (i : Sil.instr) with
+            (fun (value, instr) ->
+              match (instr : Sil.instr) with
               | Sil.Alloc_stack _ ->
-                  let r = fresh () in
-                  p (Printf.sprintf "  %s = alloca %s\n" r (llty (vty v)));
-                  Hashtbl.replace opnd v r
+                  let stack_operand = fresh_temp () in
+                  emit
+                    (Printf.sprintf "  %s = alloca %s\n" stack_operand
+                       (llvm_type (value_type value)));
+                  Hashtbl.replace operands value stack_operand
               | _ -> ())
-            (List.rev b.Sil.instrs))
-        (List.rev f.Sil.blocks)
+            (List.rev block.Sil.instrs))
+        (List.rev func.Sil.blocks)
     in
     List.iteri
-      (fun bi (b : Sil.block) ->
-        p (Printf.sprintf "bb%d:\n" b.Sil.bid);
-        if bi = 0 then gen_allocas ();
-        List.iter gen_instr (List.rev b.Sil.instrs);
-        gen_term b.Sil.term)
-      (List.rev f.Sil.blocks);
-    p "}\n\n"
+      (fun block_index (block : Sil.block) ->
+        emit (Printf.sprintf "bb%d:\n" block.Sil.bid);
+        if block_index = 0 then gen_allocas ();
+        List.iter gen_instr (List.rev block.Sil.instrs);
+        gen_term block.Sil.term)
+      (List.rev func.Sil.blocks);
+    emit "}\n\n"
   in
-  List.iter gen_func m.Sil.funcs;
+  List.iter gen_func sil_module.Sil.funcs;
   (* assemble: preamble + string constants + functions *)
   let preamble =
     "; swiftml Phase-2 LLVM IR\n\
@@ -176,20 +200,22 @@ let emit_llvm (m : Sil.modul) : string =
      that no longer branches — invalid exactly once mem2reg has run. It tests with
      `switch` rather than `icmp` so it does not show up in tests that count mnemonics,
      and it is emitted only for a module that actually divides. *)
-  let divides =
+  let has_division =
     List.exists
-      (fun (fn : Sil.func) ->
+      (fun (func : Sil.func) ->
         List.exists
-          (fun (bl : Sil.block) ->
+          (fun (block : Sil.block) ->
             List.exists
-              (fun (_, i) ->
-                match i with Sil.Binop ((Ast.Div | Ast.Mod), _, _) -> true | _ -> false)
-              bl.Sil.instrs)
-          fn.Sil.blocks)
-      m.Sil.funcs
+              (fun (_, instr) ->
+                match instr with
+                | Sil.Binop ((Ast.Div | Ast.Mod), _, _) -> true
+                | _ -> false)
+              block.Sil.instrs)
+          func.Sil.blocks)
+      sil_module.Sil.funcs
   in
   let preamble =
-    if not divides then preamble
+    if not has_division then preamble
     else
       preamble
       ^ String.concat "\n"
@@ -217,4 +243,4 @@ let emit_llvm (m : Sil.modul) : string =
              "}";
              "" ]
   in
-  preamble ^ Buffer.contents globals ^ "\n" ^ Buffer.contents out
+  preamble ^ Buffer.contents global_definitions ^ "\n" ^ Buffer.contents function_definitions
