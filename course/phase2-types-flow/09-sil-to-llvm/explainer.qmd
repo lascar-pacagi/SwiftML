@@ -207,9 +207,10 @@ only shows up when something later depends on it.
 
 One skeleton, `irgen.ml`, and two holes in it — `gen_instr` and `gen_term`, both inside `gen_func`.
 The plumbing is given: `llvm_type`, the output buffers, `fresh_temp ()`, the `operands` value map,
-`gen_binop`'s opcode table, `gen_print`, `gen_allocas`, and the loop over blocks. `operand value`
-reads a value's LLVM operand, while `bind_operand value llvm_operand` records one. The literal cases
-of `gen_instr` are given too, as the pattern to copy: they bind an operand and emit nothing.
+`gen_binop`'s opcode table, `gen_print`, `gen_allocas`, and the loop over blocks.
+`lookup_operand value` reads a value's LLVM operand, while `bind_operand value llvm_operand` records
+one. The literal cases of `gen_instr` are given too, as the pattern to copy: they bind an operand and
+emit nothing.
 
 The two holes are **coupled** — a function always ends in a terminator, so `--emit-llvm` prints a
 complete module or nothing at all, and no test can go green until both are done. `gen_instr` is what

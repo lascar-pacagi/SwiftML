@@ -53,7 +53,7 @@ let emit_llvm (sil_module : Sil.modul) : string =
       Printf.sprintf "%%t%d" id
     in
     (* Read or record a value's LLVM spelling. Keeping both operations here hides the table. *)
-    let operand value = Hashtbl.find operands value in
+    let lookup_operand value = Hashtbl.find operands value in
     let bind_operand value llvm_operand = Hashtbl.replace operands value llvm_operand in
     (* Look up the SIL type when choosing an LLVM type or opcode. *)
     let value_type value = Hashtbl.find func.Sil.val_ty value in
@@ -100,12 +100,12 @@ let emit_llvm (sil_module : Sil.modul) : string =
             let guarded_right = Printf.sprintf "%%dz%d" result in
             emit
               (Printf.sprintf "  %s = call i64 @swiftml.%s(i64 %s)\n" guarded_right
-                 (if operator = Ast.Div then "divz" else "remz") (operand right));
+                 (if operator = Ast.Div then "divz" else "remz") (lookup_operand right));
             guarded_right
-        | _ -> operand right
+        | _ -> lookup_operand right
       in
       emit
-        (Printf.sprintf "  %s = %s %s, %s\n" result_operand mnemonic (operand left)
+        (Printf.sprintf "  %s = %s %s, %s\n" result_operand mnemonic (lookup_operand left)
            right_operand);
       bind_operand result result_operand
     and gen_print value =
@@ -113,23 +113,23 @@ let emit_llvm (sil_module : Sil.modul) : string =
       | Types.TInt ->
           emit
             (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %s)\n"
-               (operand value))
+               (lookup_operand value))
       | Types.TBool ->
           let string_operand = fresh_temp () in
           emit
             (Printf.sprintf "  %s = select i1 %s, ptr @.btrue, ptr @.bfalse\n"
-               string_operand (operand value));
+               string_operand (lookup_operand value));
           emit
             (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_str, ptr %s)\n"
                string_operand)
       | Types.TString ->
           emit
             (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_str, ptr %s)\n"
-               (operand value))
+               (lookup_operand value))
       | Types.TDouble ->
           emit
             (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_dbl, double %s)\n"
-               (operand value))
+               (lookup_operand value))
       | Types.TVoid -> ()
     in
     let gen_instr (value, instr) =

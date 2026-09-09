@@ -42,7 +42,7 @@ let emit_llvm (m : Sil.modul) : string =
     let opnd : (Sil.value, string) Hashtbl.t = Hashtbl.create 64 in
     let nt = ref 0 in
     let fresh () = let n = !nt in incr nt; Printf.sprintf "%%t%d" n in
-    let op x = Hashtbl.find opnd x in
+    let lookup_operand x = Hashtbl.find opnd x in
     let bind_operand v llvm_operand = Hashtbl.replace opnd v llvm_operand in
     let vty x = Hashtbl.find f.Sil.val_ty x in
     let p s = Buffer.add_string out s in
@@ -83,21 +83,21 @@ let emit_llvm (m : Sil.modul) : string =
         | (Ast.Div | Ast.Mod), Types.TInt ->
             let g = Printf.sprintf "%%dz%d" v in
             p (Printf.sprintf "  %s = call i64 @swiftml.%s(i64 %s)\n" g
-                 (if bop = Ast.Div then "divz" else "remz") (op r));
+                 (if bop = Ast.Div then "divz" else "remz") (lookup_operand r));
             g
-        | _ -> op r
+        | _ -> lookup_operand r
       in
-      p (Printf.sprintf "  %s = %s %s, %s\n" r' mn (op l) rop);
+      p (Printf.sprintf "  %s = %s %s, %s\n" r' mn (lookup_operand l) rop);
       bind_operand v r'
     and gen_print x =
       match vty x with
-      | Types.TInt -> p (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %s)\n" (op x))
+      | Types.TInt -> p (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %s)\n" (lookup_operand x))
       | Types.TBool ->
           let s = fresh () in
-          p (Printf.sprintf "  %s = select i1 %s, ptr @.btrue, ptr @.bfalse\n" s (op x));
+          p (Printf.sprintf "  %s = select i1 %s, ptr @.btrue, ptr @.bfalse\n" s (lookup_operand x));
           p (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_str, ptr %s)\n" s)
-      | Types.TString -> p (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_str, ptr %s)\n" (op x))
-      | Types.TDouble -> p (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_dbl, double %s)\n" (op x))
+      | Types.TString -> p (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_str, ptr %s)\n" (lookup_operand x))
+      | Types.TDouble -> p (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_dbl, double %s)\n" (lookup_operand x))
       | Types.TVoid -> ()
       | t ->
           (* sema rejects printing an aggregate, so reaching here is a compiler bug,
@@ -113,25 +113,25 @@ let emit_llvm (m : Sil.modul) : string =
       | Sil.Alloc_stack _ -> () (* emitted in the entry block by gen_allocas below *)
       | Sil.Load a ->
           let r = fresh () in
-          p (Printf.sprintf "  %s = load %s, ptr %s\n" r (llty (vty v)) (op a));
+          p (Printf.sprintf "  %s = load %s, ptr %s\n" r (llty (vty v)) (lookup_operand a));
           bind_operand v r
-      | Sil.Store (x, a) -> p (Printf.sprintf "  store %s %s, ptr %s\n" (llty (vty x)) (op x) (op a))
+      | Sil.Store (x, a) -> p (Printf.sprintf "  store %s %s, ptr %s\n" (llty (vty x)) (lookup_operand x) (lookup_operand a))
       | Sil.Binop (op0, l, r) -> gen_binop v op0 l r
       | Sil.Unop (Ast.Neg, x) ->
           let r = fresh () in
-          (if vty x = Types.TDouble then p (Printf.sprintf "  %s = fneg double %s\n" r (op x))
-           else p (Printf.sprintf "  %s = sub i64 0, %s\n" r (op x)));
+          (if vty x = Types.TDouble then p (Printf.sprintf "  %s = fneg double %s\n" r (lookup_operand x))
+           else p (Printf.sprintf "  %s = sub i64 0, %s\n" r (lookup_operand x)));
           bind_operand v r
       | Sil.Func_ref name -> bind_operand v ("@" ^ name)
       | Sil.Apply (fr, args) ->
           let argstr =
-            String.concat ", " (List.map (fun a -> Printf.sprintf "%s %s" (llty (vty a)) (op a)) args)
+            String.concat ", " (List.map (fun a -> Printf.sprintf "%s %s" (llty (vty a)) (lookup_operand a)) args)
           in
           let rt = vty v in
-          if rt = Types.TVoid then p (Printf.sprintf "  call void %s(%s)\n" (op fr) argstr)
+          if rt = Types.TVoid then p (Printf.sprintf "  call void %s(%s)\n" (lookup_operand fr) argstr)
           else (
             let r = fresh () in
-            p (Printf.sprintf "  %s = call %s %s(%s)\n" r (llty rt) (op fr) argstr);
+            p (Printf.sprintf "  %s = call %s %s(%s)\n" r (llty rt) (lookup_operand fr) argstr);
             bind_operand v r)
       | Sil.Print x -> gen_print x
       (* structs — concept 10 *)
@@ -142,17 +142,17 @@ let emit_llvm (m : Sil.modul) : string =
           List.iteri
             (fun idx fv ->
               let r = fresh () in
-              p (Printf.sprintf "  %s = insertvalue %s %s, %s %s, %d\n" r sty !acc (llty (vty fv)) (op fv) idx);
+              p (Printf.sprintf "  %s = insertvalue %s %s, %s %s, %d\n" r sty !acc (llty (vty fv)) (lookup_operand fv) idx);
               acc := r)
             fields;
           bind_operand v !acc
       | Sil.Struct_extract (a, idx) ->
           let r = fresh () in
-          p (Printf.sprintf "  %s = extractvalue %s %s, %d\n" r (llty (vty a)) (op a) idx);
+          p (Printf.sprintf "  %s = extractvalue %s %s, %d\n" r (llty (vty a)) (lookup_operand a) idx);
           bind_operand v r
       | Sil.Struct_element_addr (a, idx) ->
           let r = fresh () in
-          p (Printf.sprintf "  %s = getelementptr %s, ptr %s, i32 0, i32 %d\n" r (llty (vty a)) (op a) idx);
+          p (Printf.sprintf "  %s = getelementptr %s, ptr %s, i32 0, i32 %d\n" r (llty (vty a)) (lookup_operand a) idx);
           bind_operand v r
       (* enums — concept 11: a tagged union { tag at #0, payload at #1.. } *)
       | Sil.Enum _ | Sil.Enum_tag _ ->
@@ -164,9 +164,9 @@ let emit_llvm (m : Sil.modul) : string =
     let gen_term (t : Sil.term) =
       match t with
       | Sil.Br n -> p (Printf.sprintf "  br label %%bb%d\n" n)
-      | Sil.Cond_br (c, th, el) -> p (Printf.sprintf "  br i1 %s, label %%bb%d, label %%bb%d\n" (op c) th el)
+      | Sil.Cond_br (c, th, el) -> p (Printf.sprintf "  br i1 %s, label %%bb%d, label %%bb%d\n" (lookup_operand c) th el)
       | Sil.Return None -> p (if is_main then "  ret i32 0\n" else "  ret void\n")
-      | Sil.Return (Some v) -> p (Printf.sprintf "  ret %s %s\n" (llty f.Sil.ret) (op v))
+      | Sil.Return (Some v) -> p (Printf.sprintf "  ret %s %s\n" (llty f.Sil.ret) (lookup_operand v))
       | Sil.Unreachable -> p "  unreachable\n"
     in
     (* every alloca goes at the top of the ENTRY block: alloca'd stack space is only returned
