@@ -21,25 +21,25 @@ let string_of_ty : ty -> string = function
   | TDouble -> "Double"
   | TString -> "String"
   | TVoid -> "()"
-  | TStruct n -> n
+  | TStruct name -> name
 
-let equal (a : ty) (b : ty) : bool = a = b
+let equal (left : ty) (right : ty) : bool = left = right
 
 let is_numeric : ty -> bool = function
   | TInt | TDouble -> true
   | TBool | TString | TVoid | TStruct _ -> false
 
 (* field lookups on a layout *)
-let field_index (sl : struct_layout) (f : string) : int option =
-  let rec go i = function
-    | (n, _) :: _ when n = f -> Some i
-    | _ :: tl -> go (i + 1) tl
+let field_index (layout : struct_layout) (field_name : string) : int option =
+  let rec search index = function
+    | (name, _) :: _ when name = field_name -> Some index
+    | _ :: remaining_fields -> search (index + 1) remaining_fields
     | [] -> None
   in
-  go 0 sl.sl_fields
+  search 0 layout.sl_fields
 
-let field_type (sl : struct_layout) (f : string) : ty option =
-  List.assoc_opt f sl.sl_fields
+let field_type (layout : struct_layout) (field_name : string) : ty option =
+  List.assoc_opt field_name layout.sl_fields
 
 let of_name : string -> ty option = function
   | "Int" -> Some TInt

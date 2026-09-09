@@ -14,322 +14,333 @@
      - functions are self-contained (params + the function table only — no top-level capture)
      - print and Void functions yield () (Types.TVoid) *)
 
-let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
-  let env : (string * (Types.ty * bool)) list ref = ref [] in
+let check (program : Ast.program) (diagnostics : Diagnostics.sink) : unit =
+  let environment : (string * (Types.ty * bool)) list ref = ref [] in
   let loop_depth = ref 0 in
-  let current_ret : Types.ty option ref = ref None in
-  let funcs : (string, Types.ty list * Types.ty) Hashtbl.t = Hashtbl.create 16 in
-  let structs : (string, Types.struct_layout) Hashtbl.t = Hashtbl.create 16 in
-  let let_fields : (string * string, unit) Hashtbl.t = Hashtbl.create 16 in (* (struct, `let` field) *)
-  let err span msg = Diagnostics.error diags span msg in
-  let lookup x = List.assoc_opt x !env in
-  let bind name v = env := (name, v) :: !env in
-  let in_scope (f : unit -> unit) = let saved = !env in f (); env := saved in
-  (* resolve a written type name: a builtin (Int/Bool/…) or a declared struct *)
-  let resolve_opt name =
-    match Types.of_name name with
-    | Some t -> Some t
-    | None -> if Hashtbl.mem structs name then Some (Types.TStruct name) else None
+  let current_return_type : Types.ty option ref = ref None in
+  let functions : (string, Types.ty list * Types.ty) Hashtbl.t = Hashtbl.create 16 in
+  let struct_layouts : (string, Types.struct_layout) Hashtbl.t = Hashtbl.create 16 in
+  let immutable_fields : (string * string, unit) Hashtbl.t = Hashtbl.create 16 in (* (struct, `let` field) *)
+  let report_error span message = Diagnostics.error diagnostics span message in
+  let lookup_binding name = List.assoc_opt name !environment in
+  let bind_name name binding = environment := (name, binding) :: !environment in
+  let within_scope (action : unit -> unit) =
+    let saved_environment = !environment in
+    action ();
+    environment := saved_environment
   in
-  let resolve_silent name = Option.value (resolve_opt name) ~default:Types.TInt in
-  let resolve_ty span name =
-    match resolve_opt name with
-    | Some t -> t
+  (* resolve a written type name: a builtin (Int/Bool/…) or a declared struct *)
+  let resolve_type_opt name =
+    match Types.of_name name with
+    | Some resolved_type -> Some resolved_type
+    | None -> if Hashtbl.mem struct_layouts name then Some (Types.TStruct name) else None
+  in
+  let resolve_type_silently name = Option.value (resolve_type_opt name) ~default:Types.TInt in
+  let resolve_type span name =
+    match resolve_type_opt name with
+    | Some resolved_type -> resolved_type
     | None ->
-        err span (Printf.sprintf "cannot find type '%s' in scope" name);
+        report_error span (Printf.sprintf "cannot find type '%s' in scope" name);
         Types.TInt
   in
 
   let rec is_int_literal = function
     | Ast.Int_lit _ -> true
-    | Ast.Unary (Ast.Neg, e, _) -> is_int_literal e
-    | Ast.Binary ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod), a, b, _) ->
-        is_int_literal a && is_int_literal b
+    | Ast.Unary (Ast.Neg, expression, _) -> is_int_literal expression
+    | Ast.Binary ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod), left, right, _) ->
+        is_int_literal left && is_int_literal right
     | _ -> false
   in
-  let unify l tl r tr : Types.ty option =
-    if Types.equal tl tr then Some tl
-    else if is_int_literal l && tr = Types.TDouble then Some Types.TDouble
-    else if is_int_literal r && tl = Types.TDouble then Some Types.TDouble
+  let common_operand_type left_expression left_type right_expression right_type : Types.ty option =
+    if Types.equal left_type right_type then Some left_type
+    else if is_int_literal left_expression && right_type = Types.TDouble then Some Types.TDouble
+    else if is_int_literal right_expression && left_type = Types.TDouble then Some Types.TDouble
     else None
   in
-  let rec infer (e : Ast.expr) : Types.ty =
-    match e with
+  let rec infer_expression (expression : Ast.expr) : Types.ty =
+    match expression with
     | Ast.Int_lit _ -> Types.TInt
     | Ast.Double_lit _ -> Types.TDouble
     | Ast.Bool_lit _ -> Types.TBool
     | Ast.String_lit _ -> Types.TString
-    | Ast.Var (x, span) -> (
-        match lookup x with
-        | Some (t, _) -> t
+    | Ast.Var (variable_name, span) -> (
+        match lookup_binding variable_name with
+        | Some (variable_type, _) -> variable_type
         | None ->
-            err span (Printf.sprintf "cannot find '%s' in scope" x);
+            report_error span (Printf.sprintf "cannot find '%s' in scope" variable_name);
             Types.TInt)
-    | Ast.Unary (Ast.Neg, e0, span) ->
-        let t = infer e0 in
-        if Types.is_numeric t then t
+    | Ast.Unary (Ast.Neg, operand_expression, span) ->
+        let operand_type = infer_expression operand_expression in
+        if Types.is_numeric operand_type then operand_type
         else (
-          err span
+          report_error span
             (Printf.sprintf "unary operator '-' cannot be applied to an operand of type '%s'"
-               (Types.string_of_ty t));
-          t)
-    | Ast.Binary (op, l, r, span) -> infer_binary op l r span
-    | Ast.Call (f, args, span) -> infer_call f args span
-    (* `e as T`: the type is written, so there is nothing to synthesise — CHECK the
-       operand against it. The one arm where `infer` calls `check_expr`. *)
-    | Ast.Ascribe (e0, tyname, span) -> (
-        match Types.of_name tyname with
-        | Some t ->
-            check_expr e0 t;
-            t
+               (Types.string_of_ty operand_type));
+          operand_type)
+    | Ast.Binary (operator, left_expression, right_expression, span) -> infer_binary operator left_expression right_expression span
+    | Ast.Call (function_name, arguments, span) -> infer_call function_name arguments span
+    (* `expression as T`: the type is written, so there is nothing to synthesise — CHECK the
+       operand against it. The one arm where `infer_expression` calls `check_expr`. *)
+    | Ast.Ascribe (operand_expression, type_name, span) -> (
+        match Types.of_name type_name with
+        | Some resolved_type ->
+            check_expr operand_expression resolved_type;
+            resolved_type
         | None ->
-            err span (Printf.sprintf "cannot find type '%s' in scope" tyname);
-            infer e0)
-    | Ast.Member (e0, fld, span) -> (
-        match infer e0 with
-        | Types.TStruct sn -> (
-            match Hashtbl.find_opt structs sn with
-            | Some sl -> (
-                match Types.field_type sl fld with
-                | Some ft -> ft
+            report_error span (Printf.sprintf "cannot find type '%s' in scope" type_name);
+            infer_expression operand_expression)
+    | Ast.Member (operand_expression, field_name, span) -> (
+        match infer_expression operand_expression with
+        | Types.TStruct struct_name -> (
+            match Hashtbl.find_opt struct_layouts struct_name with
+            | Some layout -> (
+                match Types.field_type layout field_name with
+                | Some field_type -> field_type
                 | None ->
-                    err span (Printf.sprintf "value of type '%s' has no member '%s'" sn fld);
+                    report_error span (Printf.sprintf "value of type '%s' has no member '%s'" struct_name field_name);
                     Types.TInt)
             | None -> Types.TInt)
-        | t ->
-            err span (Printf.sprintf "value of type '%s' has no member '%s'" (Types.string_of_ty t) fld);
+        | base_type ->
+            report_error span (Printf.sprintf "value of type '%s' has no member '%s'" (Types.string_of_ty base_type) field_name);
             Types.TInt)
-  and infer_binary op l r span : Types.ty =
-    let tl = infer l and tr = infer r in
-    let bad () =
+  and infer_binary operator left_expression right_expression span : Types.ty =
+    let left_type = infer_expression left_expression and right_type = infer_expression right_expression in
+    let report_invalid_operands () =
       (* swiftc has two wordings and picks by whether the operands agree:
            1 < "a"      -> cannot be applied to operands of type 'Int' and 'String'
            true < false -> cannot be applied to two 'Bool' operands *)
-      err span
-        (if tl = tr then
+      report_error span
+        (if left_type = right_type then
            Printf.sprintf "binary operator '%s' cannot be applied to two '%s' operands"
-             (Ast.string_of_binop op) (Types.string_of_ty tl)
+             (Ast.string_of_binop operator) (Types.string_of_ty left_type)
          else
            Printf.sprintf "binary operator '%s' cannot be applied to operands of type '%s' and '%s'"
-             (Ast.string_of_binop op) (Types.string_of_ty tl) (Types.string_of_ty tr));
+             (Ast.string_of_binop operator) (Types.string_of_ty left_type) (Types.string_of_ty right_type));
       Types.TInt
     in
-    match op with
+    match operator with
     | Ast.Add -> (
-        match unify l tl r tr with
-        | Some ((Types.TInt | Types.TDouble) as t) -> t
+        match common_operand_type left_expression left_type right_expression right_type with
+        | Some ((Types.TInt | Types.TDouble) as common_type) -> common_type
         | Some Types.TString -> Types.TString
-        | _ -> bad ())
+        | _ -> report_invalid_operands ())
     | Ast.Sub | Ast.Mul | Ast.Div -> (
-        match unify l tl r tr with Some ((Types.TInt | Types.TDouble) as t) -> t | _ -> bad ())
-    | Ast.Mod -> ( match unify l tl r tr with Some Types.TInt -> Types.TInt | _ -> bad ())
+        match common_operand_type left_expression left_type right_expression right_type with Some ((Types.TInt | Types.TDouble) as common_type) -> common_type | _ -> report_invalid_operands ())
+    | Ast.Mod -> ( match common_operand_type left_expression left_type right_expression right_type with Some Types.TInt -> Types.TInt | _ -> report_invalid_operands ())
     | Ast.Eq | Ast.Ne -> (
         (* `==` on a struct needs an Equatable conformance (Exercise 3); swiftc rejects it with
            the two-operands wording, and so do we — the back end has no aggregate compare *)
-        match unify l tl r tr with
+        match common_operand_type left_expression left_type right_expression right_type with
         | Some (Types.TInt | Types.TDouble | Types.TBool | Types.TString) -> Types.TBool
-        | _ -> ignore (bad ()); Types.TBool)
+        | _ -> ignore (report_invalid_operands ()); Types.TBool)
     | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge -> (
-        match unify l tl r tr with
+        match common_operand_type left_expression left_type right_expression right_type with
         | Some (Types.TInt | Types.TDouble | Types.TString) -> Types.TBool
-        | _ -> ignore (bad ()); Types.TBool)
+        | _ -> ignore (report_invalid_operands ()); Types.TBool)
     | Ast.And | Ast.Or ->
-        if tl = Types.TBool && tr = Types.TBool then Types.TBool else (ignore (bad ()); Types.TBool)
-  and infer_call f args span : Types.ty =
-    match Hashtbl.find_opt structs f with
-    | Some sl -> infer_init f sl args span (* `Point(x: 1, y: 2)` — memberwise initializer *)
+        if left_type = Types.TBool && right_type = Types.TBool then Types.TBool else (ignore (report_invalid_operands ()); Types.TBool)
+  and infer_call function_name arguments span : Types.ty =
+    match Hashtbl.find_opt struct_layouts function_name with
+    | Some layout -> infer_initializer function_name layout arguments span (* `Point(x: 1, y: 2)` — memberwise initializer *)
     | None -> (
-        let exprs = List.map snd args in
-        match Hashtbl.find_opt funcs f with
-        | Some (ptypes, ret) ->
-            let np = List.length ptypes and na = List.length exprs in
-            if np <> na then
-              err span (Printf.sprintf "function '%s' expects %d argument(s) but %d given" f np na)
-            else List.iter2 (fun a t -> check_expr a t) exprs ptypes;
-            ret
+        let argument_expressions = List.map snd arguments in
+        match Hashtbl.find_opt functions function_name with
+        | Some (parameter_types, return_type) ->
+            let expected_count = List.length parameter_types and actual_count = List.length argument_expressions in
+            if expected_count <> actual_count then
+              report_error span (Printf.sprintf "function '%s' expects %d argument(s) but %d given" function_name expected_count actual_count)
+            else List.iter2 (fun argument parameter_type -> check_expr argument parameter_type) argument_expressions parameter_types;
+            return_type
         | None ->
-            if f = "print" then (
-              (match exprs with
-              | [ a ] -> (
+            if function_name = "print" then (
+              (match argument_expressions with
+              | [ printed_expression ] -> (
                   (* IRGen prints the scalar types only; swiftc would print `Point(x: 1, y: 2)` *)
-                  match infer a with
+                  match infer_expression printed_expression with
                   | Types.TInt | Types.TDouble | Types.TBool | Types.TString -> ()
-                  | t ->
-                      err (Ast.expr_span a)
+                  | unsupported_type ->
+                      report_error (Ast.expr_span printed_expression)
                         (Printf.sprintf "cannot print a value of type '%s' (only Int, Double, Bool and String)"
-                           (Types.string_of_ty t)))
+                           (Types.string_of_ty unsupported_type)))
               | _ ->
-                  err span "print(_:) expects exactly one argument";
-                  List.iter (fun a -> ignore (infer a)) exprs);
+                  report_error span "print(_:) expects exactly one argument";
+                  List.iter (fun argument -> ignore (infer_expression argument)) argument_expressions);
               Types.TVoid)
             else (
-              err span (Printf.sprintf "cannot find '%s' in scope" f);
-              List.iter (fun a -> ignore (infer a)) exprs;
+              report_error span (Printf.sprintf "cannot find '%s' in scope" function_name);
+              List.iter (fun argument -> ignore (infer_expression argument)) argument_expressions;
               Types.TInt))
   (* the memberwise initializer: one labeled argument per stored property, in order *)
-  and infer_init sn (sl : Types.struct_layout) (args : Ast.arg list) span : Types.ty =
-    let fields = sl.Types.sl_fields in
-    if List.length args <> List.length fields then
-      err span
-        (Printf.sprintf "'%s' initializer expects %d argument(s) but %d given" sn (List.length fields)
-           (List.length args))
+  and infer_initializer struct_name (layout : Types.struct_layout) (arguments : Ast.arg list) span : Types.ty =
+    let fields = layout.Types.sl_fields in
+    if List.length arguments <> List.length fields then
+      report_error span
+        (Printf.sprintf "'%s' initializer expects %d argument(s) but %d given" struct_name (List.length fields)
+           (List.length arguments))
     else
       List.iter2
-        (fun (label, value) (fname, ftype) ->
+        (fun (label, value) (field_name, field_type) ->
           (match label with
-          | Some l when l <> fname ->
-              err (Ast.expr_span value)
-                (Printf.sprintf "incorrect argument label in call (have '%s:', expected '%s:')" l fname)
-          | None -> err (Ast.expr_span value) (Printf.sprintf "missing argument label '%s:' in call" fname)
+          | Some supplied_label when supplied_label <> field_name ->
+              report_error (Ast.expr_span value)
+                (Printf.sprintf "incorrect argument label in call (have '%s:', expected '%s:')" supplied_label field_name)
+          | None -> report_error (Ast.expr_span value) (Printf.sprintf "missing argument label '%s:' in call" field_name)
           | _ -> ());
-          check_expr value ftype)
-        args fields;
-    Types.TStruct sn
-  and check_expr (e : Ast.expr) (expected : Types.ty) : unit =
-    match e with
+          check_expr value field_type)
+        arguments fields;
+    Types.TStruct struct_name
+  and check_expr (expression : Ast.expr) (expected : Types.ty) : unit =
+    match expression with
     | Ast.Int_lit _ ->
         if expected = Types.TInt || expected = Types.TDouble then ()
         else
-          err (Ast.expr_span e)
+          report_error (Ast.expr_span expression)
             (Printf.sprintf "cannot convert value of type 'Int' to specified type '%s'"
                (Types.string_of_ty expected))
-    | Ast.Binary ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div), l, r, _) when Types.is_numeric expected ->
-        check_expr l expected;
-        check_expr r expected
-    | Ast.Binary (Ast.Mod, l, r, _) when expected = Types.TInt ->
-        check_expr l Types.TInt;
-        check_expr r Types.TInt
-    | Ast.Unary (Ast.Neg, e0, _) when Types.is_numeric expected -> check_expr e0 expected
+    | Ast.Binary ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div), left_expression, right_expression, _) when Types.is_numeric expected ->
+        check_expr left_expression expected;
+        check_expr right_expression expected
+    | Ast.Binary (Ast.Mod, left_expression, right_expression, _) when expected = Types.TInt ->
+        check_expr left_expression Types.TInt;
+        check_expr right_expression Types.TInt
+    | Ast.Unary (Ast.Neg, operand_expression, _) when Types.is_numeric expected -> check_expr operand_expression expected
     | _ ->
-        let t = infer e in
-        if not (Types.equal t expected) then
-          err (Ast.expr_span e)
+        let actual_type = infer_expression expression in
+        if not (Types.equal actual_type expected) then
+          report_error (Ast.expr_span expression)
             (Printf.sprintf "cannot convert value of type '%s' to specified type '%s'"
-               (Types.string_of_ty t) (Types.string_of_ty expected))
+               (Types.string_of_ty actual_type) (Types.string_of_ty expected))
   in
   (* does a block definitely return on every path? (the "missing return" check) *)
-  let rec stmt_returns = function
+  let rec statement_returns = function
     | Ast.Return _ -> true
-    | Ast.If { then_blk; else_blk = Some e; _ } -> block_returns then_blk && block_returns e
+    | Ast.If { then_blk; else_blk = Some expression; _ } -> block_returns then_blk && block_returns expression
     | _ -> false
-  and block_returns stmts = List.exists stmt_returns stmts (* the rest is unreachable *) in
-  let rec check_stmt (s : Ast.stmt) : unit =
-    match s with
+  and block_returns statements = List.exists statement_returns statements (* the rest is unreachable *) in
+  let rec check_statement (statement : Ast.stmt) : unit =
+    match statement with
     | Ast.Let { name; is_var; annot; value; span } ->
-        let t =
+        let binding_type =
           match annot with
-          | None -> infer value
-          | Some tyname -> (
-              match resolve_opt tyname with
-              | Some t -> check_expr value t; t
-              | None -> err span (Printf.sprintf "cannot find type '%s' in scope" tyname); infer value)
+          | None -> infer_expression value
+          | Some type_name -> (
+              match resolve_type_opt type_name with
+              | Some resolved_type -> check_expr value resolved_type; resolved_type
+              | None -> report_error span (Printf.sprintf "cannot find type '%s' in scope" type_name); infer_expression value)
         in
-        bind name (t, is_var)
+        bind_name name (binding_type, is_var)
     | Ast.Assign { name; value; span } -> (
-        match lookup name with
-        | None -> err span (Printf.sprintf "cannot find '%s' in scope" name); ignore (infer value)
-        | Some (t, is_var) ->
+        match lookup_binding name with
+        | None -> report_error span (Printf.sprintf "cannot find '%s' in scope" name); ignore (infer_expression value)
+        | Some (binding_type, is_var) ->
             if not is_var then
-              err span (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" name);
-            check_expr value t)
-    | Ast.Set_member { obj; field; value; span } -> (
-        match lookup obj with
-        | None -> err span (Printf.sprintf "cannot find '%s' in scope" obj); ignore (infer value)
-        | Some (Types.TStruct sn, is_var) -> (
-            match Option.bind (Hashtbl.find_opt structs sn) (fun sl -> Types.field_type sl field) with
-            | Some ft ->
+              report_error span (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" name);
+            check_expr value binding_type)
+    | Ast.Set_member { obj = object_name; field = field_name; value; span } -> (
+        match lookup_binding object_name with
+        | None -> report_error span (Printf.sprintf "cannot find '%s' in scope" object_name); ignore (infer_expression value)
+        | Some (Types.TStruct struct_name, is_var) -> (
+            match Option.bind (Hashtbl.find_opt struct_layouts struct_name) (fun layout -> Types.field_type layout field_name) with
+            | Some field_type ->
                 (* swiftc's `diag::assignment_lhs_is_immutable_property`: the binding first, then
                    the field — a `let` field is immutable through every binding *)
-                if not is_var then err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" obj)
-                else if Hashtbl.mem let_fields (sn, field) then
-                  err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" field);
-                check_expr value ft
+                if not is_var then report_error span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" object_name)
+                else if Hashtbl.mem immutable_fields (struct_name, field_name) then
+                  report_error span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" field_name);
+                check_expr value field_type
             | None ->
-                err span (Printf.sprintf "value of type '%s' has no member '%s'" sn field);
-                ignore (infer value))
-        | Some (t, _) ->
-            err span (Printf.sprintf "value of type '%s' has no member '%s'" (Types.string_of_ty t) field);
-            ignore (infer value))
-    | Ast.Expr_stmt (e, _) -> ignore (infer e)
-    | Ast.If { cond; then_blk; else_blk; _ } ->
-        check_expr cond Types.TBool;
-        check_block then_blk;
-        Option.iter check_block else_blk
-    | Ast.While { cond; body; _ } ->
-        check_expr cond Types.TBool;
+                report_error span (Printf.sprintf "value of type '%s' has no member '%s'" struct_name field_name);
+                ignore (infer_expression value))
+        | Some (base_type, _) ->
+            report_error span (Printf.sprintf "value of type '%s' has no member '%s'" (Types.string_of_ty base_type) field_name);
+            ignore (infer_expression value))
+    | Ast.Expr_stmt (expression, _) -> ignore (infer_expression expression)
+    | Ast.If { cond = condition; then_blk = then_block; else_blk = else_block; _ } ->
+        check_expr condition Types.TBool;
+        check_block then_block;
+        Option.iter check_block else_block
+    | Ast.While { cond = condition; body; _ } ->
+        check_expr condition Types.TBool;
         incr loop_depth; check_block body; decr loop_depth
-    | Ast.For { var; lo; hi; body; _ } ->
-        check_expr lo Types.TInt;
-        check_expr hi Types.TInt;
+    | Ast.For { var = loop_variable; lo = lower_bound; hi = upper_bound; body; _ } ->
+        check_expr lower_bound Types.TInt;
+        check_expr upper_bound Types.TInt;
         incr loop_depth;
-        in_scope (fun () -> bind var (Types.TInt, false); List.iter check_stmt body);
+        within_scope (fun () -> bind_name loop_variable (Types.TInt, false); List.iter check_statement body);
         decr loop_depth
-    | Ast.Break span -> if !loop_depth = 0 then err span "'break' is only allowed inside a loop"
-    | Ast.Continue span -> if !loop_depth = 0 then err span "'continue' is only allowed inside a loop"
-    | Ast.Return (eo, span) -> (
-        match !current_ret with
-        | None -> err span "return invalid outside of a func"
-        | Some rt -> (
-            match eo with
-            | Some e ->
-                if rt = Types.TVoid then
-                  err span "unexpected non-void return value in void function"
-                else check_expr e rt
+    | Ast.Break span -> if !loop_depth = 0 then report_error span "'break' is only allowed inside a loop"
+    | Ast.Continue span -> if !loop_depth = 0 then report_error span "'continue' is only allowed inside a loop"
+    | Ast.Return (returned_expression, span) -> (
+        match !current_return_type with
+        | None -> report_error span "return invalid outside of a func"
+        | Some return_type -> (
+            match returned_expression with
+            | Some expression ->
+                if return_type = Types.TVoid then
+                  report_error span "unexpected non-void return value in void function"
+                else check_expr expression return_type
             | None ->
-                if rt <> Types.TVoid then err span "non-void function should return a value"))
-  and check_block (stmts : Ast.stmt list) : unit = in_scope (fun () -> List.iter check_stmt stmts) in
+                if return_type <> Types.TVoid then report_error span "non-void function should return a value"))
+  and check_block (statements : Ast.stmt list) : unit = within_scope (fun () -> List.iter check_statement statements) in
 
   (* check one function body: a fresh scope with the parameters; then "missing return" *)
-  let check_func (f : Ast.func_decl) : unit =
-    let ret = match f.Ast.ret with None -> Types.TVoid | Some n -> resolve_ty f.Ast.fspan n in
-    let saved_env = !env and saved_ret = !current_ret in
-    env := [];
-    current_ret := Some ret;
+  let check_function (function_decl : Ast.func_decl) : unit =
+    let return_type =
+      match function_decl.Ast.ret with
+      | None -> Types.TVoid
+      | Some written_return_type -> resolve_type function_decl.Ast.fspan written_return_type
+    in
+    let saved_environment = !environment and saved_return_type = !current_return_type in
+    environment := [];
+    current_return_type := Some return_type;
     List.iter
-      (fun (pr : Ast.param) -> bind pr.Ast.pname (resolve_ty f.Ast.fspan pr.Ast.ptype, false))
-      f.Ast.params;
-    List.iter check_stmt f.Ast.body;
-    env := saved_env;
-    current_ret := saved_ret;
-    if ret <> Types.TVoid && not (block_returns f.Ast.body) then
-      err f.Ast.fspan
-        (Printf.sprintf "missing return in %s expected to return '%s'" "global function" (Types.string_of_ty ret))
+      (fun (parameter : Ast.param) -> bind_name parameter.Ast.pname (resolve_type function_decl.Ast.fspan parameter.Ast.ptype, false))
+      function_decl.Ast.params;
+    List.iter check_statement function_decl.Ast.body;
+    environment := saved_environment;
+    current_return_type := saved_return_type;
+    if return_type <> Types.TVoid && not (block_returns function_decl.Ast.body) then
+      report_error function_decl.Ast.fspan
+        (Printf.sprintf "missing return in %s expected to return '%s'" "global function" (Types.string_of_ty return_type))
   in
 
   (* PASS 0: register struct names (so a field can reference another struct), then fill the
      layouts. Now any type name resolves and struct types are known to passes 1 and 2. *)
   List.iter
     (function
-      | Ast.IStruct s ->
-          if Hashtbl.mem structs s.Ast.sname then
-            err s.Ast.sspan (Printf.sprintf "invalid redeclaration of '%s'" s.Ast.sname);
-          Hashtbl.replace structs s.Ast.sname { Types.sl_name = s.Ast.sname; sl_fields = [] }
+      | Ast.IStruct struct_decl ->
+          if Hashtbl.mem struct_layouts struct_decl.Ast.sname then
+            report_error struct_decl.Ast.sspan (Printf.sprintf "invalid redeclaration of '%s'" struct_decl.Ast.sname);
+          Hashtbl.replace struct_layouts struct_decl.Ast.sname { Types.sl_name = struct_decl.Ast.sname; sl_fields = [] }
       | _ -> ())
-    prog.Ast.items;
+    program.Ast.items;
   List.iter
     (function
-      | Ast.IStruct s ->
+      | Ast.IStruct struct_decl ->
           let fields =
-            List.map (fun (fl : Ast.field) -> (fl.Ast.fld_name, resolve_ty s.Ast.sspan fl.Ast.fld_ty)) s.Ast.sfields
+            List.map (fun (field : Ast.field) -> (field.Ast.fld_name, resolve_type struct_decl.Ast.sspan field.Ast.fld_ty)) struct_decl.Ast.sfields
           in
           List.iter
-            (fun (fl : Ast.field) -> if not fl.Ast.fld_var then Hashtbl.replace let_fields (s.Ast.sname, fl.Ast.fld_name) ())
-            s.Ast.sfields;
-          Hashtbl.replace structs s.Ast.sname { Types.sl_name = s.Ast.sname; sl_fields = fields }
+            (fun (field : Ast.field) -> if not field.Ast.fld_var then Hashtbl.replace immutable_fields (struct_decl.Ast.sname, field.Ast.fld_name) ())
+            struct_decl.Ast.sfields;
+          Hashtbl.replace struct_layouts struct_decl.Ast.sname { Types.sl_name = struct_decl.Ast.sname; sl_fields = fields }
       | _ -> ())
-    prog.Ast.items;
+    program.Ast.items;
   (* PASS 1: collect signatures so calls/recursion/forward-references resolve. *)
   List.iter
     (function
-      | Ast.IFunc f ->
-          if Hashtbl.mem funcs f.Ast.fname then
-            err f.Ast.fspan (Printf.sprintf "invalid redeclaration of '%s'" f.Ast.fname);
-          let ptypes = List.map (fun (pr : Ast.param) -> resolve_silent pr.Ast.ptype) f.Ast.params in
-          let ret = match f.Ast.ret with None -> Types.TVoid | Some n -> resolve_silent n in
-          Hashtbl.replace funcs f.Ast.fname (ptypes, ret)
+      | Ast.IFunc function_decl ->
+          if Hashtbl.mem functions function_decl.Ast.fname then
+            report_error function_decl.Ast.fspan (Printf.sprintf "invalid redeclaration of '%s'" function_decl.Ast.fname);
+          let parameter_types = List.map (fun (parameter : Ast.param) -> resolve_type_silently parameter.Ast.ptype) function_decl.Ast.params in
+          let return_type = match function_decl.Ast.ret with None -> Types.TVoid | Some type_name -> resolve_type_silently type_name in
+          Hashtbl.replace functions function_decl.Ast.fname (parameter_types, return_type)
       | _ -> ())
-    prog.Ast.items;
+    program.Ast.items;
   (* PASS 2: check bodies and top-level statements, in order. *)
   List.iter
-    (function Ast.IFunc f -> check_func f | Ast.IStmt s -> check_stmt s | Ast.IStruct _ -> ())
-    prog.Ast.items
+    (function
+      | Ast.IFunc function_decl -> check_function function_decl
+      | Ast.IStmt statement -> check_statement statement
+      | Ast.IStruct _ -> ())
+    program.Ast.items

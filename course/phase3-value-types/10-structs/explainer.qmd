@@ -140,7 +140,7 @@ arg         ::= [ ident ":" ] expr                                 <-- new (argu
 
 Three things to notice. A `struct` declaration is an **item**, not a statement — like `func`, it is
 legal only at top level, so `parse_program` dispatches on `Kw_struct` and everything else still
-goes to `parse_stmt`. The member *write* is a **statement production**, not an assignment to an
+goes to `parse_statement`. The member *write* is a **statement production**, not an assignment to an
 arbitrary expression: the parser commits to it on a four-token lookahead (`ident` `.` `ident` `=`),
 which is why `l.b.x = 1` — two levels deep — is not in this subset. And a call argument may now
 carry a **label**; the parser records it for every call, sema *checks* it only for a memberwise
@@ -193,11 +193,12 @@ machinery is the natural place to generalize), and `print` of a `Double` goes th
   the corresponding field. The expression's result is `TStruct name`.
 - **`sema.ml`, TODO(10f)** — resolve the base binding and the field for a write. A write needs both
   a `var` binding and a `var` field, and its right-hand side must check against the field type.
-- **`silgen.ml`, TODO(10g–h)** — in `gen_expr`, the `Member (e0, fld, _)` case is a **read**: lower
-  `e0` to a struct *value*, ask its type (`vty`) which struct it is, and turn the field *name* into an
-  *index* and a *type* through the layout in `b.structs` (`Types.field_index`, `Types.field_type`);
+- **`silgen.ml`, TODO(10g–h)** — in `gen_expr`, the `Member (operand_expression, field_name, _)`
+  case is a **read**: lower `operand_expression` to a struct *value*, ask `value_type` which struct
+  it is, and turn the field *name* into an *index* and a *type* through the layout in
+  `builder.struct_layouts` (`Types.field_index`, `Types.field_type`);
   the result is one `Sil.Struct_extract`. In `gen_stmt`, the `Set_member { obj; field; value }` case
-  is a **write**: the variable's own slot is in `b.vars`, and its type names the struct; take the
+  is a **write**: the variable's own slot is in `builder.variables`, and its type names the struct; take the
   field's address with `Sil.Struct_element_addr` and `Sil.Store` the value through it. Generate the
   value first — that is the order swiftc uses, and the tests print the SIL.
 - **`irgen.ml`, TODO(10i)** — three instructions: `Struct` is a chain of `insertvalue` starting
@@ -291,34 +292,34 @@ The complete files are in `solution/`. These are the new cases, in pipeline orde
 | "struct" -> Kw_struct
 
 | '.' ->
-    ignore (bump lx);
-    if peek_char lx = '.' && peek2 lx = '<' then (
-      ignore (bump lx); ignore (bump lx);
-      make lo lx Token.DotDotLt)
-    else make lo lx Token.Dot
-| ';' -> ignore (bump lx); make lo lx Token.Newline
+    ignore (advance_char lexer);
+    if peek_char lexer = '.' && peek_next_char lexer = '<' then (
+      ignore (advance_char lexer); ignore (advance_char lexer);
+      make_token start_position lexer Token.DotDotLt)
+    else make_token start_position lexer Token.Dot
+| ';' -> ignore (advance_char lexer); make_token start_position lexer Token.Newline
 ```
 
 ```ocaml
 (* parser.ml — postfix reads and optional argument labels *)
-and parse_postfix p e =
-  if peek_kind p = Token.Dot then (
-    ignore (advance p);
-    match peek_kind p with
-    | Token.Ident field ->
-        let field_token = advance p in
-        parse_postfix p
-          (Ast.Member (e, field,
-             span_between (Ast.expr_span e) field_token.Token.span))
+and parse_postfix parser expression =
+  if peek_kind parser = Token.Dot then (
+    ignore (advance parser);
+    match peek_kind parser with
+    | Token.Ident field_name ->
+        let field_token = advance parser in
+        parse_postfix parser
+          (Ast.Member (expression, field_name,
+             span_between (Ast.expr_span expression) field_token.Token.span))
     | _ ->
-        Diagnostics.error p.diags (peek p).Token.span "expected a member name";
-        e)
-  else e
+        Diagnostics.error parser.diagnostics (peek parser).Token.span "expected a member name";
+        expression)
+  else expression
 
 let label =
-  match peek_kind p with
-  | Token.Ident name when peek_kind_at p 1 = Token.Colon ->
-      ignore (advance p); ignore (advance p); Some name
+  match peek_kind parser with
+  | Token.Ident name when peek_kind_at parser 1 = Token.Colon ->
+      ignore (advance parser); ignore (advance parser); Some name
   | _ -> None
 ```
 
@@ -330,47 +331,64 @@ fallback.
 ```ocaml
 (* sema.ml — the registry is deliberately two-pass *)
 List.iter (function
-  | Ast.IStruct s ->
-      if Hashtbl.mem structs s.Ast.sname then
-        err s.Ast.sspan (Printf.sprintf "invalid redeclaration of '%s'" s.Ast.sname);
-      Hashtbl.replace structs s.Ast.sname
-        { Types.sl_name = s.Ast.sname; sl_fields = [] }
-  | _ -> ()) prog.Ast.items;
+  | Ast.IStruct struct_decl ->
+      if Hashtbl.mem struct_layouts struct_decl.Ast.sname then
+        report_error struct_decl.Ast.sspan
+          (Printf.sprintf "invalid redeclaration of '%s'" struct_decl.Ast.sname);
+      Hashtbl.replace struct_layouts struct_decl.Ast.sname
+        { Types.sl_name = struct_decl.Ast.sname; sl_fields = [] }
+  | _ -> ()) program.Ast.items;
 
 List.iter (function
-  | Ast.IStruct s ->
+  | Ast.IStruct struct_decl ->
       let fields = List.map (fun (field : Ast.field) ->
-        (field.Ast.fld_name, resolve_ty s.Ast.sspan field.Ast.fld_ty)) s.Ast.sfields in
+        (field.Ast.fld_name,
+         resolve_type struct_decl.Ast.sspan field.Ast.fld_ty)) struct_decl.Ast.sfields in
       List.iter (fun (field : Ast.field) ->
         if not field.Ast.fld_var then
-          Hashtbl.replace let_fields (s.Ast.sname, field.Ast.fld_name) ()) s.Ast.sfields;
-      Hashtbl.replace structs s.Ast.sname
-        { Types.sl_name = s.Ast.sname; sl_fields = fields }
-  | _ -> ()) prog.Ast.items
+          Hashtbl.replace immutable_fields
+            (struct_decl.Ast.sname, field.Ast.fld_name) ()) struct_decl.Ast.sfields;
+      Hashtbl.replace struct_layouts struct_decl.Ast.sname
+        { Types.sl_name = struct_decl.Ast.sname; sl_fields = fields }
+  | _ -> ()) program.Ast.items
 ```
 
-Member reads look up `field_type` after `infer` returns `TStruct name`. Initializers compare the
+Member reads look up `field_type` after `infer_expression` returns `TStruct name`. Initializers compare the
 argument list with `sl_fields` in order. Member writes use the binding's `is_var` bit and the
-`let_fields` table before calling `check_expr value field_type`; the complete diagnostic branches are
+`immutable_fields` table before calling `check_expr value field_type`; the complete diagnostic branches are
 in `solution/sema.ml`.
 
 ```ocaml
 (* SILGen — member read is a value; member write is an address *)
-| Ast.Member (e0, fld, _) ->
-    let sv = gen_expr b e0 in
-    let sn = match vty b sv with Types.TStruct sn -> sn | _ -> assert false in
-    let sl = Hashtbl.find b.structs sn in
-    emit b (Sil.Struct_extract (sv, Option.get (Types.field_index sl fld)))
-      (Option.get (Types.field_type sl fld))
+| Ast.Member (operand_expression, field_name, _) ->
+    let struct_value = gen_expr builder operand_expression in
+    let struct_name =
+      match value_type builder struct_value with
+      | Types.TStruct struct_name -> struct_name
+      | _ -> assert false
+    in
+    let layout = Hashtbl.find builder.struct_layouts struct_name in
+    emit builder
+      (Sil.Struct_extract
+         (struct_value, Option.get (Types.field_index layout field_name)))
+      (Option.get (Types.field_type layout field_name))
 
-| Ast.Set_member { obj; field; value; _ } ->
-    let v = gen_expr b value in
-    let slot = Hashtbl.find b.vars obj in                 (* p's OWN slot — value semantics *)
-    let sn = match vty b slot with Types.TStruct sn -> sn | _ -> assert false in
-    let sl = Hashtbl.find b.structs sn in
-    let faddr = emit b (Sil.Struct_element_addr (slot, Option.get (Types.field_index sl field)))
-                  (Option.get (Types.field_type sl field)) in
-    ignore (emit b (Sil.Store (v, faddr)) Types.TVoid)
+| Ast.Set_member { obj = object_name; field = field_name; value; _ } ->
+    let value = gen_expr builder value in
+    let object_address = Hashtbl.find builder.variables object_name in
+    let struct_name =
+      match value_type builder object_address with
+      | Types.TStruct struct_name -> struct_name
+      | _ -> assert false
+    in
+    let layout = Hashtbl.find builder.struct_layouts struct_name in
+    let field_address =
+      emit builder
+        (Sil.Struct_element_addr
+           (object_address, Option.get (Types.field_index layout field_name)))
+        (Option.get (Types.field_type layout field_name))
+    in
+    emit_void builder (Sil.Store (value, field_address))
 ```
 
 ```ocaml

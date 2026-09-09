@@ -101,8 +101,8 @@ let string_of_kind = function
   | Newline -> "newline"
   | Eof -> "eof"
 
-let keyword_or_ident (s : string) : kind =
-  match s with
+let keyword_or_ident (text : string) : kind =
+  match text with
   | "let" -> Kw_let
   | "var" -> Kw_var
   | "true" -> Kw_true
@@ -119,4 +119,4 @@ let keyword_or_ident (s : string) : kind =
   | "return" -> Kw_return
   (* TODO(10a): classify `struct` as its keyword token (§2). Until then it follows the
      ordinary-identifier path below. *)
-  | _ -> Ident s
+  | _ -> Ident text

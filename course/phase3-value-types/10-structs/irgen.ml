@@ -39,9 +39,9 @@ let emit_llvm (sil_module : Sil.modul) : string =
          global_name (String.length text + 1) (escape text));
     global_name
   in
-  let gen_func (func : Sil.func) =
+  let gen_function (function_definition : Sil.func) =
     (* LLVM gives the process entry point a C-compatible signature. *)
-    let is_main = func.Sil.fname = "main" in
+    let is_main = function_definition.Sil.fname = "main" in
     (* A SIL value number names different things in LLVM: a literal, an argument,
        a global string, a stack slot, or an SSA temporary. Record that mapping here. *)
     let operands : (Sil.value, string) Hashtbl.t = Hashtbl.create 64 in
@@ -58,20 +58,20 @@ let emit_llvm (sil_module : Sil.modul) : string =
       Hashtbl.replace operands value llvm_operand
     in
     (* SILGen already computed every value's type. IRGen only translates it. *)
-    let value_type value = Hashtbl.find func.Sil.val_ty value in
+    let value_type value = Hashtbl.find function_definition.Sil.val_ty value in
     (* Accumulate the function text; global strings use the other buffer above. *)
     let emit text = Buffer.add_string function_definitions text in
     let parameter_declarations =
       List.map
-        (fun (value, ty) ->
+        (fun (value, parameter_type) ->
           let llvm_name = Printf.sprintf "%%arg%d" value in
           bind_operand value llvm_name;
-          Printf.sprintf "%s %s" (llvm_type ty) llvm_name)
-        func.Sil.params
+          Printf.sprintf "%s %s" (llvm_type parameter_type) llvm_name)
+        function_definition.Sil.params
     in
-    let llvm_return_type = if is_main then "i32" else llvm_type func.Sil.ret in
+    let llvm_return_type = if is_main then "i32" else llvm_type function_definition.Sil.ret in
     emit
-      (Printf.sprintf "define %s @%s(%s) {\n" llvm_return_type func.Sil.fname
+      (Printf.sprintf "define %s @%s(%s) {\n" llvm_return_type function_definition.Sil.fname
          (String.concat ", " parameter_declarations));
     let gen_binop result operator left right =
       let operand_type = value_type left in
@@ -140,8 +140,8 @@ let emit_llvm (sil_module : Sil.modul) : string =
             (Printf.sprintf "IRGen: print of unsupported type %s"
                (Types.string_of_ty unsupported_type))
     in
-    let gen_instr (value, instr) =
-      match (instr : Sil.instr) with
+    let gen_instruction (value, instruction) =
+      match (instruction : Sil.instr) with
       | Sil.Int_lit integer -> bind_operand value (string_of_int integer)
       | Sil.Bool_lit boolean -> bind_operand value (if boolean then "1" else "0")
       | Sil.Float_lit float ->
@@ -197,7 +197,7 @@ let emit_llvm (sil_module : Sil.modul) : string =
       | Sil.Struct _ | Sil.Struct_extract _ | Sil.Struct_element_addr _ ->
           (* TODO(10i): the three struct instructions — build an aggregate, read a field out of a
              VALUE, take the address of a field in a SLOT. §2 gives the LLVM for each. *)
-          ignore (value, instr);
+          ignore (value, instruction);
           failwith "TODO(10i): lower the struct instruction (insertvalue/extractvalue/getelementptr)"
     in
     let gen_term (terminator : Sil.term) =
@@ -210,7 +210,7 @@ let emit_llvm (sil_module : Sil.modul) : string =
       | Sil.Return None -> emit (if is_main then "  ret i32 0\n" else "  ret void\n")
       | Sil.Return (Some return_value) ->
           emit
-            (Printf.sprintf "  ret %s %s\n" (llvm_type func.Sil.ret)
+            (Printf.sprintf "  ret %s %s\n" (llvm_type function_definition.Sil.ret)
                (lookup_operand return_value))
       | Sil.Unreachable -> emit "  unreachable\n"
     in
@@ -222,8 +222,8 @@ let emit_llvm (sil_module : Sil.modul) : string =
       List.iter
         (fun (block : Sil.block) ->
           List.iter
-            (fun (value, instr) ->
-              match (instr : Sil.instr) with
+            (fun (value, instruction) ->
+              match (instruction : Sil.instr) with
               | Sil.Alloc_stack _ ->
                   let stack_operand = fresh_temp () in
                   emit
@@ -232,18 +232,18 @@ let emit_llvm (sil_module : Sil.modul) : string =
                   bind_operand value stack_operand
               | _ -> ())
             (List.rev block.Sil.instrs))
-        (List.rev func.Sil.blocks)
+        (List.rev function_definition.Sil.blocks)
     in
     List.iteri
       (fun block_index (block : Sil.block) ->
         emit (Printf.sprintf "bb%d:\n" block.Sil.bid);
         if block_index = 0 then gen_allocas ();
-        List.iter gen_instr (List.rev block.Sil.instrs);
+        List.iter gen_instruction (List.rev block.Sil.instrs);
         gen_term block.Sil.term)
-      (List.rev func.Sil.blocks);
+      (List.rev function_definition.Sil.blocks);
     emit "}\n\n"
   in
-  List.iter gen_func sil_module.Sil.funcs;
+  List.iter gen_function sil_module.Sil.funcs;
   (* LLVM named type for each struct: `%Point = type { i64, i64 }` (concept 10) *)
   let struct_definitions =
     List.map
