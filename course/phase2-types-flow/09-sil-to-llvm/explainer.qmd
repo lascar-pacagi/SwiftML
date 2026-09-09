@@ -95,18 +95,16 @@ point: `return` → `ret i32 0`), while other functions return their declared LL
 
 ![The complete Phase-2 pipeline: source → tokens → AST → typed AST → SIL → LLVM IR → native. IRGen (concept 09) is the last hop; then `clang` links it and the program runs.](figs/pipeline.png)
 
-### Running reveals bugs that `--emit-sil` cannot
+### Running checks what structure alone cannot
 
-Concept 08 could *emit* SIL but not run it, so a whole class of bug was invisible — and one was
-hiding. The `for` loop's `continue` branched straight to the loop header, **skipping the `v = v + 1`
-increment**, so `for i in 0..<10 { if i == 2 { continue } }` *looped forever*. The `--emit-sil`
-output looked plausible; the structural tests passed; only **running it** (and the program hanging)
-exposed it. The fix is a separate **latch** block that owns the increment, which `continue` targets.
+Concept 08 could *emit* SIL but not run it. Concept 09 adds Phase 2's end-to-end semantic check.
+Consider a plausible IRGen mistake: lowering SIL `sub %a, %b` as LLVM `sub i64 %b, %a`. The LLVM is
+well formed, and a structural test that only looks for `sub i64` passes, but `print(9 - 4)` prints
+`-5` instead of `5`. Building and running the program exposes the reversed operands.
 
-This is the lesson behind the whole project's testing strategy: structural checks (FileCheck on the
-IR shape) catch *shape* bugs, but only **behavioral parity against `swiftc`** — compile both, run
-both, diff the output — catches *semantic* ones. It's why the cram test here doesn't just inspect the
-LLVM; it **builds the program and runs it**.
+This is the lesson behind the whole project's testing strategy: structural checks catch mistakes in
+the IR's shape, while **behavioral parity against `swiftc`** catches well-formed IR with the wrong
+meaning. That is why the cram tests here inspect the LLVM and also **build and run the programs**.
 
 ### Handing off to LLVM (and what we're not doing yet)
 

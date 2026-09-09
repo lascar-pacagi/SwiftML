@@ -60,8 +60,8 @@ the branch really goes to the exit block.
   $ ./lab.exe build b.swift -o b && ./b
   4
 
-`continue` in a `for` must reach the LATCH, not the header — this program is the one that
-caught the real bug: sending it to the header skipped `i = i + 1` and it looped forever.
+`continue` in a `for` must reach the LATCH, not the header. Sending it to the header skips
+`i = i + 1`, so this program would loop forever.
 
   $ cat > c.swift <<'EOF'
   > var s = 0
