@@ -265,6 +265,16 @@ That result does not establish general performance parity. `-Ounchecked` changes
 semantics, and our subset omits most of Swift's language and runtime. The benchmark isolates one
 small program and one major source of overhead.
 
+With richer Swift constructs, SIL optimization can produce faster code than a basic translation
+straight to LLVM. Reference counting, protocol and class dispatch, generic calls, closure captures,
+and `Array` checks still have explicit Swift meaning in SIL. SIL passes can remove redundant
+retain/release operations, replace dynamic dispatch with direct calls, specialize generic code, and
+eliminate or move collection checks out of loops. A basic lowering turns many of these operations
+into pointer loads, stores, and opaque runtime calls; LLVM can no longer recover all the Swift
+semantics needed to prove the same transformations. LLVM then optimizes the lower-level result, so
+the SIL and LLVM optimizers complement each other. This division is described in
+`swift/docs/OptimizerDesign.md` and `swift/docs/HighLevelSILOptimizations.rst`.
+
 ## 6. Exercises
 
 1. **Definite initialization.** Add uninitialized `var x: Int` (a `var` with a type annotation and no
