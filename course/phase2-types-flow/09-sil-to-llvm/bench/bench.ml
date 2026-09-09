@@ -1,4 +1,4 @@
-(* Concept 09 runtime baseline: raw SIL -> raw LLVM vs swiftc -O.
+(* Concept 09 runtime baseline: our LLVM with clang default/-O2 vs swiftc -Onone/-O.
 
    The benchmark checks correctness before timing. Timings are the best of five runs after
    one warm-up, which reduces process-startup and scheduler noise.
@@ -24,9 +24,22 @@ let run_quiet prog argv =
   Unix.close null;
   status
 
-let compile_swiftc out =
-  let argv = [| "/usr/bin/swiftc"; "-O"; source; "-o"; out |] in
-  require_success "swiftc -O" (run_quiet "/usr/bin/swiftc" argv)
+let compile_swiftc flag out =
+  let argv = [| "/usr/bin/swiftc"; flag; source; "-o"; out |] in
+  require_success ("swiftc " ^ flag) (run_quiet "/usr/bin/swiftc" argv)
+
+let write_file path contents =
+  let oc = open_out_bin path in
+  Fun.protect ~finally:(fun () -> close_out oc) (fun () -> output_string oc contents)
+
+let compile_swiftml_o2 ll_path out =
+  let src = Driver.read_file source in
+  let llvm = Driver.to_llvm src (Diagnostics.create ()) in
+  write_file ll_path llvm;
+  let argv =
+    [| "clang"; "-Wno-override-module"; "-O2"; ll_path; "-o"; out |]
+  in
+  require_success "clang -O2" (run_quiet "clang" argv)
 
 let capture exe =
   let rd, wr = Unix.pipe () in
@@ -74,25 +87,40 @@ let make_temp_dir () =
 
 let () =
   let tmp = make_temp_dir () in
-  let ml = Filename.concat tmp "swiftml" in
-  let sc = Filename.concat tmp "swiftc" in
+  let ll = Filename.concat tmp "swiftml.ll" in
+  let ml0 = Filename.concat tmp "swiftml-o0" in
+  let ml2 = Filename.concat tmp "swiftml-o2" in
+  let sc0 = Filename.concat tmp "swiftc-onone" in
+  let sco = Filename.concat tmp "swiftc-o" in
   Fun.protect
     ~finally:(fun () ->
-      List.iter (fun path -> if Sys.file_exists path then Sys.remove path) [ ml; sc ];
+      List.iter
+        (fun path -> if Sys.file_exists path then Sys.remove path)
+        [ ll; ml0; ml2; sc0; sco ];
       Unix.rmdir tmp)
     (fun () ->
-      Driver.compile_file ~out:ml ~src_path:source ~emit:Driver.Exe ();
-      compile_swiftc sc;
-      let ml_output = capture ml in
-      let sc_output = capture sc in
-      if ml_output <> sc_output then
-        failwith
-          (Printf.sprintf "output mismatch: swiftml=%S swiftc=%S" ml_output sc_output);
+      Driver.compile_file ~out:ml0 ~src_path:source ~emit:Driver.Exe ();
+      compile_swiftml_o2 ll ml2;
+      compile_swiftc "-Onone" sc0;
+      compile_swiftc "-O" sco;
+      let reference = capture sco in
+      List.iter
+        (fun (name, exe) ->
+          let output = capture exe in
+          if output <> reference then
+            failwith
+              (Printf.sprintf "output mismatch: %s=%S swiftc=%S" name output reference))
+        [ ("swiftml", ml0); ("swiftml + clang -O2", ml2); ("swiftc -Onone", sc0) ];
       Printf.printf "IRGen runtime benchmark -- Collatz for starts 1..<500000\n";
-      Printf.printf "  output: %s (swiftml == swiftc)\n" (String.trim ml_output);
+      Printf.printf "  output: %s (all four binaries agree)\n" (String.trim reference);
       Printf.printf "  native runtime, best of %d after one warm-up:\n" runs;
-      let ml_time = time_best ml in
-      let sc_time = time_best sc in
-      Printf.printf "    swiftml       %.3f s\n" ml_time;
-      Printf.printf "    swiftc -O     %.3f s\n" sc_time;
-      Printf.printf "    ratio         %.2fx swiftc -O\n" (ml_time /. sc_time))
+      let ml0_time = time_best ml0 in
+      let ml2_time = time_best ml2 in
+      let sc0_time = time_best sc0 in
+      let sco_time = time_best sco in
+      Printf.printf "    swiftml (clang default)  %.3f s\n" ml0_time;
+      Printf.printf "    swiftml + clang -O2      %.3f s\n" ml2_time;
+      Printf.printf "    swiftc -Onone            %.3f s\n" sc0_time;
+      Printf.printf "    swiftc -O                %.3f s\n" sco_time;
+      Printf.printf "  clang -O2 speedup: %.2fx\n" (ml0_time /. ml2_time);
+      Printf.printf "  swiftc -O speedup: %.2fx\n" (sc0_time /. sco_time))

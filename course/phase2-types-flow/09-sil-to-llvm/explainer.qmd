@@ -226,21 +226,37 @@ Run it from `course/` after completing both holes:
 ```console
 $ make bench C=phase2-types-flow/09-sil-to-llvm
 IRGen runtime benchmark -- Collatz for starts 1..<500000
-  output: 62134644 (swiftml == swiftc)
+  output: 62134644 (all four binaries agree)
   native runtime, best of 5 after one warm-up:
-    swiftml       0.208 s
-    swiftc -O     0.069 s
-    ratio         3.03x swiftc -O
+    swiftml (clang default)  0.202 s
+    swiftml + clang -O2      0.044 s
+    swiftc -Onone            0.663 s
+    swiftc -O                0.070 s
+  clang -O2 speedup: 4.65x
+  swiftc -O speedup: 9.50x
 ```
 
 These are measured reference-solution results; timings vary by machine. The runner first requires
-byte-identical output, then reports the best of five executions after one warm-up. It has no speed
-gate because this concept deliberately emits unoptimized code.
+byte-identical output from all four binaries, then reports the best of five executions after one
+warm-up. It has no speed gate because this concept deliberately emits unoptimized code.
 
-The result shows the baseline Phase 4 will improve. Raw SIL became raw LLVM, still full of
-`alloca`, `load`, and `store`, and clang receives no optimization flag. Phase 4 starts with
-**mem2reg**, which promotes those slots to SSA values, then adds constant folding, CSE, and
-inlining before finally handing the result to clang with optimization enabled.
+The flags select the optimization level. With no flag, clang uses `-O0`: it preserves the raw
+`alloca`, `load`, and `store` heavy shape closely. `clang -O2` enables LLVM's standard optimizations
+for speed. `swiftc -Onone` compiles without optimization, while `swiftc -O` compiles with
+optimizations for speed.
+
+The `clang -O2` row is useful: without changing our SIL, LLVM removes much of the raw memory traffic
+and makes the program about 4.65 times faster. For this small scalar subset, we could defer much of
+the optimization work to LLVM. That shows IRGen already produces optimization-friendly LLVM IR.
+
+It does not make a SIL optimizer redundant. Swift-specific passes can reason about ownership,
+dynamic dispatch, and generics before those ideas disappear into lower-level IR. Optimized SIL can
+also feed a backend that does not use LLVM. Phase 4 builds that target-independent layer, starting
+with **mem2reg**, then constant folding, CSE, and inlining.
+
+Do not read `0.044 s` versus `0.070 s` as proof that swiftml is faster than Swift. Our
+current subset omits Swift's checked-overflow machinery and most of its runtime. This benchmark
+isolates the cost of the generated code for one small program.
 
 ## 6. Exercises
 
