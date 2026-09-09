@@ -20,6 +20,22 @@ Arguments arrive in order, results come back, and calls nest.
   -1
   10
 
+Each call argument keeps its own LLVM type; here the first is `i1` and the second is `i64`.
+
+  $ cat > mixed.swift <<'EOF'
+  > func report(_ ok: Bool, _ n: Int) {
+  >   print(ok)
+  >   print(n)
+  > }
+  > report(true, 7)
+  > report(false, -2)
+  > EOF
+  $ ./lab.exe build mixed.swift -o mixed && python3 timeout.py 5 ./mixed
+  true
+  7
+  false
+  -2
+
 Recursion works because nothing is shared: each call gets its own allocas.
 
   $ cat > f.swift <<'EOF'

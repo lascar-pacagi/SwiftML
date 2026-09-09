@@ -3,11 +3,12 @@ THE HEADLINE TEST, and Milestone M2: every program in `oracle-corpus.txt` is com
 The other files in this directory hold numbers a human wrote down once; this one asks swiftc
 on every run, so they can never drift from what Swift actually prints.
 
-27 programs, covering everything Phase 2 can express: arithmetic and the sign rules, `Bool`
-and short-circuiting, `if`/`else if`, `while`, `for`, `break`, `continue`, nests, functions,
-recursion, mutual recursion, `Void` returns, and two real algorithms. It stays inside what both
-compilers mean the same — no `Double` printing (Swift's float formatting is not matched in this
-subset), no `print(a, b)`, and nothing above 2^62 - 1, where our lexer's OCaml `int` gives out.
+29 programs, covering everything Phase 2 can express: arithmetic and the sign rules, `Bool`
+and short-circuiting, Double comparisons including NaN, `if`/`else if`, `while`, `for`, `break`,
+`continue`, nests, functions, recursion, mutual recursion, `Void` returns, and two real algorithms.
+It stays inside what both compilers mean the same — no `Double` printing (Swift's float formatting
+is not matched in this subset), no `print(a, b)`, and nothing above 2^62 - 1, where our lexer's
+OCaml `int` gives out.
 
 A program either compiler refuses to build is reported as such, never counted as agreement; if
 our refusal comes from an unfinished hole the loop stops there, so the file reads as not-started

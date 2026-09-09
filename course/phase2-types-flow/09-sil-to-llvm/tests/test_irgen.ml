@@ -98,6 +98,11 @@ let test_memory () =
   instruction_has "let x = 1\nx" "store i64 1, ptr";
   instruction_has "let x = 1\nx" "= load i64, ptr"
 
+let test_double_memory () =
+  instruction_has "let x = 1.5\nx" "= alloca double";
+  instruction_has "let x = 1.5\nx" "store double 0x";
+  instruction_has "let x = 1.5\nx" "= load double, ptr"
+
 let test_literals_are_operands () =
   (* a literal is an operand, not an instruction: nothing in the module defines it *)
   instruction_hasnt "let x = 1" "integer_literal";
@@ -123,23 +128,37 @@ let test_compare_opcodes () =
 let test_double_opcodes () =
   (* the operand type picks the mnemonic: Double arithmetic is the f-prefixed family *)
   instruction_has "let a = 1.5\na + 2.5" "fadd double";
+  instruction_has "let a = 1.5\na - 2.5" "fsub double";
   instruction_has "let a = 1.5\na * 2.5" "fmul double";
-  instruction_has "let a = 1.5\na < 2.5" "fcmp olt double"
+  instruction_has "let a = 1.5\na / 2.5" "fdiv double";
+  instruction_has "let a = 1.5\n-a" "fneg double";
+  instruction_has "let a = 1.5\na == 2.5" "fcmp oeq double";
+  instruction_has "let a = 1.5\na != 2.5" "fcmp une double";
+  instruction_has "let a = 1.5\na < 2.5" "fcmp olt double";
+  instruction_has "let a = 1.5\na <= 2.5" "fcmp ole double";
+  instruction_has "let a = 1.5\na > 2.5" "fcmp ogt double";
+  instruction_has "let a = 1.5\na >= 2.5" "fcmp oge double"
 
 let test_calls () =
   let src =
     "func add(_ a: Int, _ b: Int) -> Int { return a + b }\n\
+     func choose(_ flag: Bool, _ n: Int) -> Int {\n\
+       if flag { return n } else { return 0 }\n\
+     }\n\
      func sink(_ n: Int) {}\n\
-     sink(add(1, 2))"
+     add(1, 2)\n\
+     choose(true, 4)\n\
+     sink(3)"
   in
   instruction_has src "define i64 @add(i64 ";
   instruction_has src "define void @sink(i64 ";
   instruction_has src "= call i64 @add(i64 1, i64 2)";
+  instruction_has src "= call i64 @choose(i1 1, i64 4)";
   instruction_has src "call void @sink(i64 ";
   instruction_hasnt src "= call void";
   (* a function_ref is an operand too — it emits no line of its own *)
-  Alcotest.(check int) "one call line per apply" 2
-    (instruction_count src "call void @sink" + instruction_count src "call i64 @add")
+  Alcotest.(check int) "one call line per apply" 3
+    (instruction_count src "call ")
 
 let test_print () =
   instruction_has "print(1)" "@printf(ptr @.fmt_int, i64 1)";
@@ -211,6 +230,7 @@ let () =
       ( "hole: gen_instr",
         [
           Alcotest.test_case "alloca / load / store" `Quick test_memory;
+          Alcotest.test_case "Double memory stays typed" `Quick test_double_memory;
           Alcotest.test_case "literals are operands" `Quick test_literals_are_operands;
           Alcotest.test_case "Int arithmetic mnemonics" `Quick test_int_opcodes;
           Alcotest.test_case "signed icmp predicates" `Quick test_compare_opcodes;

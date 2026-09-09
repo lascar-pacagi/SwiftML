@@ -79,6 +79,11 @@ let time_best exe =
   done;
   !best
 
+let time_and_report label exe =
+  let elapsed = time_best exe in
+  Printf.printf "    %-27s %.3f s\n%!" label elapsed;
+  elapsed
+
 let make_temp_dir () =
   let path = Filename.temp_file "swiftml-bench09-" "" in
   Sys.remove path;
@@ -100,6 +105,8 @@ let () =
         [ ll; ml0; ml2; sc0; sco; scu ];
       Unix.rmdir tmp)
     (fun () ->
+      Printf.printf "IRGen runtime benchmark -- Collatz for starts 1..<500000\n%!";
+      Printf.printf "  compiling and checking five binaries...%!";
       Driver.compile_file ~out:ml0 ~src_path:source ~emit:Driver.Exe ();
       compile_swiftml_o2 ll ml2;
       compile_swiftc "-Onone" sc0;
@@ -114,19 +121,14 @@ let () =
               (Printf.sprintf "output mismatch: %s=%S swiftc=%S" name output reference))
         [ ("swiftml", ml0); ("swiftml + clang -O2", ml2); ("swiftc -Onone", sc0);
           ("swiftc -Ounchecked", scu) ];
-      Printf.printf "IRGen runtime benchmark -- Collatz for starts 1..<500000\n";
-      Printf.printf "  output: %s (all five binaries agree)\n" (String.trim reference);
-      Printf.printf "  native runtime, best of %d after one warm-up:\n" runs;
-      let ml0_time = time_best ml0 in
-      let ml2_time = time_best ml2 in
-      let sc0_time = time_best sc0 in
-      let sco_time = time_best sco in
-      let scu_time = time_best scu in
-      Printf.printf "    swiftml (clang default)  %.3f s\n" ml0_time;
-      Printf.printf "    swiftml + clang -O2      %.3f s\n" ml2_time;
-      Printf.printf "    swiftc -Onone            %.3f s\n" sc0_time;
-      Printf.printf "    swiftc -O                %.3f s\n" sco_time;
-      Printf.printf "    swiftc -Ounchecked       %.3f s\n" scu_time;
+      Printf.printf " done\n%!";
+      Printf.printf "  output: %s (all five binaries agree)\n%!" (String.trim reference);
+      Printf.printf "  native runtime, best of %d after one warm-up:\n%!" runs;
+      let ml0_time = time_and_report "swiftml (clang default)" ml0 in
+      let ml2_time = time_and_report "swiftml + clang -O2" ml2 in
+      let sc0_time = time_and_report "swiftc -Onone" sc0 in
+      let sco_time = time_and_report "swiftc -O" sco in
+      let scu_time = time_and_report "swiftc -Ounchecked" scu in
       Printf.printf "  clang -O2 speedup: %.2fx\n" (ml0_time /. ml2_time);
       Printf.printf "  swiftc -O speedup: %.2fx\n" (sc0_time /. sco_time);
       Printf.printf "  unchecked gap: %.2fx (swiftc / swiftml)\n" (scu_time /. ml2_time))

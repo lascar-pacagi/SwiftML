@@ -59,6 +59,22 @@ string constants in the preamble, so it comes out as Swift spells it.
   true
   false
 
+Floating-point `!=` is true when either operand is NaN; LLVM therefore needs the unordered
+predicate `une`, while the other comparisons here remain ordered.
+
+  $ cat > nan.swift <<'EOF'
+  > let nan = 0.0 / 0.0
+  > print(nan == nan)
+  > print(nan != nan)
+  > print(nan < 1.0)
+  > print(nan >= 1.0)
+  > EOF
+  $ ./lab.exe build nan.swift -o nan && python3 timeout.py 5 ./nan
+  false
+  true
+  false
+  false
+
 Both `&&` and `||` short-circuit, which is a CFG property, not a bitwise one: the right operand
 is only evaluated on the deciding edge.
 

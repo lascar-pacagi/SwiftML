@@ -73,13 +73,62 @@ Unary minus has no LLVM opcode of its own on integers: it is a subtraction from 
   $ ./lab.exe --emit-llvm-instrs neg.swift | grep "sub i64"
     %t2 = sub i64 0, %t1
 
-A `function_ref` emits no line either — it names the callee — and the `apply` becomes the
-`call`, typed by the function's return type; a `Void` function is called as `call void`.
+Double stack slots, stores, and loads keep their `double` type.
 
-  $ printf 'func add(_ a: Int, _ b: Int) -> Int {\n  return a + b\n}\nfunc sink(_ n: Int) {}\nsink(add(1, 2))\n' > call.swift
+  $ printf 'let d = 1.5\nd\n' > dmem.swift
+  $ ./lab.exe --emit-llvm-instrs dmem.swift | grep -E 'alloca double|store double|load double'
+    %t0 = alloca double
+    store double 0x3FF8000000000000, ptr %t0
+    %t1 = load double, ptr %t0
+
+Double arithmetic, negation, and comparisons use LLVM's floating-point instruction families.
+
+  $ cat > dbl.swift <<'EOF'
+  > let a = 9.0
+  > let b = 4.0
+  > -a
+  > a + b
+  > a - b
+  > a * b
+  > a / b
+  > a == b
+  > a != b
+  > a < b
+  > a <= b
+  > a > b
+  > a >= b
+  > EOF
+  $ ./lab.exe --emit-llvm-instrs dbl.swift | \
+  > grep -oE 'fneg double|f(add|sub|mul|div) double|fcmp [a-z]+ double'
+  fneg double
+  fadd double
+  fsub double
+  fmul double
+  fdiv double
+  fcmp oeq double
+  fcmp une double
+  fcmp olt double
+  fcmp ole double
+  fcmp ogt double
+  fcmp oge double
+
+A `function_ref` emits no line either — it names the callee — and the `apply` becomes the
+`call`. Every argument keeps its own type, and a `Void` function is called as `call void`.
+
+  $ cat > call.swift <<'EOF'
+  > func add(_ a: Int, _ b: Int) -> Int { return a + b }
+  > func choose(_ flag: Bool, _ n: Int) -> Int {
+  >   if flag { return n } else { return 0 }
+  > }
+  > func sink(_ n: Int) {}
+  > add(1, 2)
+  > choose(true, 4)
+  > sink(3)
+  > EOF
   $ ./lab.exe --emit-llvm-instrs call.swift | grep -E "call (void|i64) @"
     %t0 = call i64 @add(i64 1, i64 2)
-    call void @sink(i64 %t0)
+    %t1 = call i64 @choose(i1 1, i64 4)
+    call void @sink(i64 3)
 
 `print` is the one builtin, and it lowers by type: an `Int` goes to printf directly, a `Bool`
 first `select`s between the two string constants in the preamble.
