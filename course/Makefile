@@ -54,6 +54,7 @@ lab:
 	  echo "   eg: make lab C=phase2-types-flow/05-types-inference T=lexer"; \
 	  echo "       (whole tree: make test)"; exit 2; fi
 	@out=$$(mktemp); \
+	echo "Running $(C)$(if $(T),/tests/$(T).t,) — results appear when the suite finishes."; \
 	$(DUNE) build @$(C)/$(if $(T),tests/$(T),runtest) --force >$$out 2>&1; rc=$$?; \
 	ex=_build/default/$(C)/tests/test_exercises.exe; \
 	if [ -z "$(T)" ] && [ -x "$$ex" ]; then "$$ex" >>$$out 2>&1 || true; fi; \

@@ -27,6 +27,7 @@ rather than as a wall of diffs:
   >   python3 timeout.py 5 ./ml$n > ml$n.out 2>&1; mlrc=$?
   >   if [ $swrc -ne $mlrc ] || ! cmp -s sw$n.out ml$n.out; then
   >     printf 'DIVERGE (swiftc exit=%s ours exit=%s): %s\n' "$swrc" "$mlrc" "$prog"; diff sw$n.out ml$n.out
+  >     if [ $swrc -eq 124 ] || [ $mlrc -eq 124 ]; then echo "(stopping after timeout)"; break; fi
   >   fi
   > done < oracle-corpus.txt
   $ echo done
