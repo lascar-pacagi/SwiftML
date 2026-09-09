@@ -130,9 +130,12 @@ One LLVM rule is worth learning right now: **every `alloca` goes at the top of t
 (the given `gen_allocas` does this for you). An `alloca` reserves stack space that is only returned
 when the *function exits* — not at the end of a scope — so an `alloca` emitted inside a loop body
 would grow the stack on every iteration until it overflowed. Hoisting them all to the entry block
-makes the stack frame fixed-size, and it's also what LLVM's own `mem2reg` pass requires before it
-will promote a slot to a register. (Concept 20's benchmark shows exactly how this bites at a few
-million iterations.)
+makes the stack frame fixed-size. It cannot create a name collision: SILGen gives every value in a
+function a unique `%n`, so every allocation has a distinct key in `operands`. `gen_allocas` assigns
+those allocations LLVM names using `fresh_temp`; ordinary instruction lowering uses the same
+counter afterward, so it cannot reuse any of their `%tN` names. Entry-block allocation is also what
+LLVM's own `mem2reg` pass requires before it will promote a slot to a register. (Concept 20's
+benchmark shows exactly how this bites at a few million iterations.)
 
 The control-flow work — turning a tree into a graph and threading `break`/`continue` to the right
 blocks — happened in SILGen. IRGen walks that finished graph and translates it to LLVM. This
