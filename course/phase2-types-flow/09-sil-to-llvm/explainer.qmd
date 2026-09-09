@@ -226,24 +226,27 @@ Run it from `course/` after completing both holes:
 ```console
 $ make bench C=phase2-types-flow/09-sil-to-llvm
 IRGen runtime benchmark -- Collatz for starts 1..<500000
-  output: 62134644 (all four binaries agree)
+  output: 62134644 (all five binaries agree)
   native runtime, best of 5 after one warm-up:
-    swiftml (clang default)  0.202 s
-    swiftml + clang -O2      0.044 s
-    swiftc -Onone            0.663 s
+    swiftml (clang default)  0.209 s
+    swiftml + clang -O2      0.045 s
+    swiftc -Onone            0.670 s
     swiftc -O                0.070 s
-  clang -O2 speedup: 4.65x
-  swiftc -O speedup: 9.50x
+    swiftc -Ounchecked       0.046 s
+  clang -O2 speedup: 4.69x
+  swiftc -O speedup: 9.61x
+  unchecked gap: 1.02x (swiftc / swiftml)
 ```
 
 These are measured reference-solution results; timings vary by machine. The runner first requires
-byte-identical output from all four binaries, then reports the best of five executions after one
+byte-identical output from all five binaries, then reports the best of five executions after one
 warm-up. It has no speed gate because this concept deliberately emits unoptimized code.
 
 The flags select the optimization level. With no flag, clang uses `-O0`: it preserves the raw
 `alloca`, `load`, and `store` heavy shape closely. `clang -O2` enables LLVM's standard optimizations
 for speed. `swiftc -Onone` compiles without optimization, while `swiftc -O` compiles with
-optimizations for speed.
+optimizations for speed. `swiftc -Ounchecked` also optimizes, but removes runtime safety checks such
+as integer-overflow checks.
 
 The `clang -O2` row is useful: without changing our SIL, LLVM removes much of the raw memory traffic
 and makes the program about 4.65 times faster. For this small scalar subset, we could defer much of
@@ -254,9 +257,13 @@ dynamic dispatch, and generics before those ideas disappear into lower-level IR.
 also feed a backend that does not use LLVM. Phase 4 builds that target-independent layer, starting
 with **mem2reg**, then constant folding, CSE, and inlining.
 
-Do not read `0.044 s` versus `0.070 s` as proof that swiftml is faster than Swift. Our
-current subset omits Swift's checked-overflow machinery and most of its runtime. This benchmark
-isolates the cost of the generated code for one small program.
+The `-Ounchecked` result makes the comparison clearer. Once swiftc removes its safety checks, its
+`0.046 s` is effectively the same as our `0.045 s`. For this non-overflowing scalar workload, both
+pipelines therefore hand LLVM code it can optimize to the same performance class.
+
+That result does not establish general performance parity. `-Ounchecked` changes Swift's safety
+semantics, and our subset omits most of Swift's language and runtime. The benchmark isolates one
+small program and one major source of overhead.
 
 ## 6. Exercises
 
