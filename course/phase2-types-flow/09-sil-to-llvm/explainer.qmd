@@ -207,18 +207,19 @@ only shows up when something later depends on it.
 
 One skeleton, `irgen.ml`, and two holes in it — `gen_instr` and `gen_term`, both inside `gen_func`.
 The plumbing is given: `llvm_type`, the output buffers, `fresh_temp ()`, the `operands` value map,
-`gen_binop`'s opcode table, `gen_print`, `gen_allocas`, and the loop over blocks. The literal cases of
-`gen_instr` are given too, as the pattern to copy: they add an entry to `operands` and emit nothing.
+`gen_binop`'s opcode table, `gen_print`, `gen_allocas`, and the loop over blocks. `operand value`
+reads a value's LLVM operand, while `bind_operand value llvm_operand` records one. The literal cases
+of `gen_instr` are given too, as the pattern to copy: they bind an operand and emit nothing.
 
 The two holes are **coupled** — a function always ends in a terminator, so `--emit-llvm` prints a
 complete module or nothing at all, and no test can go green until both are done. `gen_instr` is what
 raises first, so:
 
 1. **`gen_instr`**, working down the instruction table in §2. Emit a line with `emit "…"`; when the
-   instruction has a result, give it a `fresh_temp ()` and add it to `operands` so later instructions
-   can name it. Types come from `llvm_type (value_type value)`. Not every SIL instruction both emits
-   an LLVM line and produces a result. Literals and `function_ref` only add an entry to `operands`;
-   they emit no line. A `store` emits a line but adds nothing to `operands`. A non-void call emits
+   instruction has a result, give it a `fresh_temp ()` and record it with `bind_operand` so later
+   instructions can name it. Types come from `llvm_type (value_type value)`. Not every SIL
+   instruction both emits an LLVM line and produces a result. Literals and `function_ref` only bind
+   an operand; they emit no line. A `store` emits a line but binds nothing. A non-void call emits
    `%tK = call …` and records `%tK`, while a void call emits `call void …` without recording
    a result.
 2. **`gen_term`**, the five terminator forms. `is_main` is in scope for the `@main` exception.

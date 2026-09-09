@@ -43,6 +43,7 @@ let emit_llvm (m : Sil.modul) : string =
     let nt = ref 0 in
     let fresh () = let n = !nt in incr nt; Printf.sprintf "%%t%d" n in
     let op x = Hashtbl.find opnd x in
+    let bind_operand v llvm_operand = Hashtbl.replace opnd v llvm_operand in
     let vty x = Hashtbl.find f.Sil.val_ty x in
     let p s = Buffer.add_string out s in
     (* parameters *)
@@ -50,7 +51,7 @@ let emit_llvm (m : Sil.modul) : string =
       List.map
         (fun (v, t) ->
           let nm = Printf.sprintf "%%arg%d" v in
-          Hashtbl.replace opnd v nm;
+          bind_operand v nm;
           Printf.sprintf "%s %s" (llty t) nm)
         f.Sil.params
     in
@@ -87,7 +88,7 @@ let emit_llvm (m : Sil.modul) : string =
         | _ -> op r
       in
       p (Printf.sprintf "  %s = %s %s, %s\n" r' mn (op l) rop);
-      Hashtbl.replace opnd v r'
+      bind_operand v r'
     and gen_print x =
       match vty x with
       | Types.TInt -> p (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %s)\n" (op x))
@@ -105,23 +106,23 @@ let emit_llvm (m : Sil.modul) : string =
     in
     let gen_instr (v, i) =
       match (i : Sil.instr) with
-      | Sil.Int_lit n -> Hashtbl.replace opnd v (string_of_int n)
-      | Sil.Bool_lit b -> Hashtbl.replace opnd v (if b then "1" else "0")
-      | Sil.Float_lit x -> Hashtbl.replace opnd v (Printf.sprintf "0x%016LX" (Int64.bits_of_float x))
-      | Sil.String_lit s -> Hashtbl.replace opnd v (add_string_const s)
+      | Sil.Int_lit n -> bind_operand v (string_of_int n)
+      | Sil.Bool_lit b -> bind_operand v (if b then "1" else "0")
+      | Sil.Float_lit x -> bind_operand v (Printf.sprintf "0x%016LX" (Int64.bits_of_float x))
+      | Sil.String_lit s -> bind_operand v (add_string_const s)
       | Sil.Alloc_stack _ -> () (* emitted in the entry block by gen_allocas below *)
       | Sil.Load a ->
           let r = fresh () in
           p (Printf.sprintf "  %s = load %s, ptr %s\n" r (llty (vty v)) (op a));
-          Hashtbl.replace opnd v r
+          bind_operand v r
       | Sil.Store (x, a) -> p (Printf.sprintf "  store %s %s, ptr %s\n" (llty (vty x)) (op x) (op a))
       | Sil.Binop (op0, l, r) -> gen_binop v op0 l r
       | Sil.Unop (Ast.Neg, x) ->
           let r = fresh () in
           (if vty x = Types.TDouble then p (Printf.sprintf "  %s = fneg double %s\n" r (op x))
            else p (Printf.sprintf "  %s = sub i64 0, %s\n" r (op x)));
-          Hashtbl.replace opnd v r
-      | Sil.Func_ref name -> Hashtbl.replace opnd v ("@" ^ name)
+          bind_operand v r
+      | Sil.Func_ref name -> bind_operand v ("@" ^ name)
       | Sil.Apply (fr, args) ->
           let argstr =
             String.concat ", " (List.map (fun a -> Printf.sprintf "%s %s" (llty (vty a)) (op a)) args)
@@ -131,7 +132,7 @@ let emit_llvm (m : Sil.modul) : string =
           else (
             let r = fresh () in
             p (Printf.sprintf "  %s = call %s %s(%s)\n" r (llty rt) (op fr) argstr);
-            Hashtbl.replace opnd v r)
+            bind_operand v r)
       | Sil.Print x -> gen_print x
       (* structs — concept 10 *)
       | Sil.Struct fields ->
@@ -144,15 +145,15 @@ let emit_llvm (m : Sil.modul) : string =
               p (Printf.sprintf "  %s = insertvalue %s %s, %s %s, %d\n" r sty !acc (llty (vty fv)) (op fv) idx);
               acc := r)
             fields;
-          Hashtbl.replace opnd v !acc
+          bind_operand v !acc
       | Sil.Struct_extract (a, idx) ->
           let r = fresh () in
           p (Printf.sprintf "  %s = extractvalue %s %s, %d\n" r (llty (vty a)) (op a) idx);
-          Hashtbl.replace opnd v r
+          bind_operand v r
       | Sil.Struct_element_addr (a, idx) ->
           let r = fresh () in
           p (Printf.sprintf "  %s = getelementptr %s, ptr %s, i32 0, i32 %d\n" r (llty (vty a)) (op a) idx);
-          Hashtbl.replace opnd v r
+          bind_operand v r
       (* enums — concept 11: a tagged union { tag at #0, payload at #1.. } *)
       | Sil.Enum (tag, payload) ->
           let ety = llty (vty v) in
@@ -165,16 +166,16 @@ let emit_llvm (m : Sil.modul) : string =
               p (Printf.sprintf "  %s = insertvalue %s %s, %s %s, %d\n" r ety !acc (llty (vty fv)) (op fv) (idx + 1));
               acc := r)
             payload;
-          Hashtbl.replace opnd v !acc
+          bind_operand v !acc
       | Sil.Enum_tag a ->
           let r = fresh () in
           p (Printf.sprintf "  %s = extractvalue %s %s, 0\n" r (llty (vty a)) (op a));
-          Hashtbl.replace opnd v r
+          bind_operand v r
       | Sil.Enum_payload (a, idx) ->
           (* payload slot #i lives at aggregate field #(i+1) — field #0 is the tag *)
           let r = fresh () in
           p (Printf.sprintf "  %s = extractvalue %s %s, %d\n" r (llty (vty a)) (op a) (idx + 1));
-          Hashtbl.replace opnd v r
+          bind_operand v r
     in
     let gen_term (t : Sil.term) =
       match t with
@@ -203,7 +204,7 @@ let emit_llvm (m : Sil.modul) : string =
               | Sil.Alloc_stack _ ->
                   let r = fresh () in
                   p (Printf.sprintf "  %s = alloca %s\n" r (llty (vty v)));
-                  Hashtbl.replace opnd v r
+                  bind_operand v r
               | _ -> ())
             (List.rev b.Sil.instrs))
         (List.rev f.Sil.blocks)

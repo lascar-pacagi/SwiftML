@@ -71,6 +71,7 @@ let emit_llvm (m : Sil.modul) : string =
     let nt = ref 0 in
     let fresh () = let n = !nt in incr nt; Printf.sprintf "%%t%d" n in
     let op x = Hashtbl.find opnd x in
+    let bind_operand v llvm_operand = Hashtbl.replace opnd v llvm_operand in
     let vty x = Hashtbl.find f.Sil.val_ty x in
     let p s = Buffer.add_string out s in
     (* PRE-PASS: assign a stable LLVM operand to every SIL value, so a phi can name an incoming
@@ -79,17 +80,17 @@ let emit_llvm (m : Sil.modul) : string =
     let name v = Printf.sprintf "%%v%d" v in
     let assign (v, instr) =
       match (instr : Sil.instr) with
-      | Sil.Int_lit n -> Hashtbl.replace opnd v (string_of_int n)
-      | Sil.Bool_lit b -> Hashtbl.replace opnd v (if b then "1" else "0")
-      | Sil.Float_lit x -> Hashtbl.replace opnd v (Printf.sprintf "0x%016LX" (Int64.bits_of_float x))
-      | Sil.String_lit s -> Hashtbl.replace opnd v (add_string_const s)
-      | Sil.Func_ref nm -> Hashtbl.replace opnd v ("@" ^ nm)
-      | _ -> Hashtbl.replace opnd v (name v)
+      | Sil.Int_lit n -> bind_operand v (string_of_int n)
+      | Sil.Bool_lit b -> bind_operand v (if b then "1" else "0")
+      | Sil.Float_lit x -> bind_operand v (Printf.sprintf "0x%016LX" (Int64.bits_of_float x))
+      | Sil.String_lit s -> bind_operand v (add_string_const s)
+      | Sil.Func_ref nm -> bind_operand v ("@" ^ nm)
+      | _ -> bind_operand v (name v)
     in
-    List.iter (fun (v, _) -> Hashtbl.replace opnd v (name v)) f.Sil.params;
+    List.iter (fun (v, _) -> bind_operand v (name v)) f.Sil.params;
     List.iter
       (fun (b : Sil.block) ->
-        List.iter (fun (v, _) -> Hashtbl.replace opnd v (name v)) b.Sil.args;
+        List.iter (fun (v, _) -> bind_operand v (name v)) b.Sil.args;
         List.iter assign b.Sil.instrs)
       f.Sil.blocks;
     (* who branches into each block, and with which arguments (for phi nodes) *)
@@ -138,7 +139,7 @@ let emit_llvm (m : Sil.modul) : string =
         | _ -> op r
       in
       p (Printf.sprintf "  %s = %s %s, %s\n" r' mn (op l) rop);
-      Hashtbl.replace opnd v r'
+      bind_operand v r'
     and gen_print x =
       match vty x with
       | Types.TInt -> p (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %s)\n" (op x))

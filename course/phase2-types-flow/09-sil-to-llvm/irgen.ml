@@ -52,8 +52,10 @@ let emit_llvm (sil_module : Sil.modul) : string =
       incr next_temp_id;
       Printf.sprintf "%%t%d" id
     in
-    (* Look up a value's LLVM spelling, or its SIL type when choosing an LLVM type or opcode. *)
+    (* Read or record a value's LLVM spelling. Keeping both operations here hides the table. *)
     let operand value = Hashtbl.find operands value in
+    let bind_operand value llvm_operand = Hashtbl.replace operands value llvm_operand in
+    (* Look up the SIL type when choosing an LLVM type or opcode. *)
     let value_type value = Hashtbl.find func.Sil.val_ty value in
     (* Append emitted LLVM text to the module's function buffer. *)
     let emit text = Buffer.add_string function_definitions text in
@@ -62,7 +64,7 @@ let emit_llvm (sil_module : Sil.modul) : string =
       List.map
         (fun (value, ty) ->
           let llvm_name = Printf.sprintf "%%arg%d" value in
-          Hashtbl.replace operands value llvm_name;
+          bind_operand value llvm_name;
           Printf.sprintf "%s %s" (llvm_type ty) llvm_name)
         func.Sil.params
     in
@@ -105,7 +107,7 @@ let emit_llvm (sil_module : Sil.modul) : string =
       emit
         (Printf.sprintf "  %s = %s %s, %s\n" result_operand mnemonic (operand left)
            right_operand);
-      Hashtbl.replace operands result result_operand
+      bind_operand result result_operand
     and gen_print value =
       match value_type value with
       | Types.TInt ->
@@ -133,16 +135,15 @@ let emit_llvm (sil_module : Sil.modul) : string =
     let gen_instr (value, instr) =
       match (instr : Sil.instr) with
       (* given as the pattern: a SIL Int_lit maps a SIL value to a constant operand *)
-      | Sil.Int_lit integer -> Hashtbl.replace operands value (string_of_int integer)
-      | Sil.Bool_lit boolean -> Hashtbl.replace operands value (if boolean then "1" else "0")
+      | Sil.Int_lit integer -> bind_operand value (string_of_int integer)
+      | Sil.Bool_lit boolean -> bind_operand value (if boolean then "1" else "0")
       | Sil.Float_lit float ->
-          Hashtbl.replace operands value
-            (Printf.sprintf "0x%016LX" (Int64.bits_of_float float))
-      | Sil.String_lit text -> Hashtbl.replace operands value (add_string_const text)
+          bind_operand value (Printf.sprintf "0x%016LX" (Int64.bits_of_float float))
+      | Sil.String_lit text -> bind_operand value (add_string_const text)
       | Sil.Alloc_stack _ -> () (* emitted in the entry block by gen_allocas below (no-op here) *)
       (* TODO(09): the remaining instructions. The mapping is near 1:1 — §2 tabulates every SIL
          instruction against its LLVM line. Emit with [emit], and register each result operand
-         with [Hashtbl.replace operands value (fresh_temp ())] so later instructions can refer to it.
+         with [bind_operand value (fresh_temp ())] so later instructions can refer to it.
          Watch the ones that emit NO line (a func_ref is just an operand) and the ones that
          produce no result (a void call, a store). *)
       | _ -> ignore gen_binop; ignore gen_print; failwith "TODO(09): lower a SIL instruction"
@@ -169,7 +170,7 @@ let emit_llvm (sil_module : Sil.modul) : string =
                   emit
                     (Printf.sprintf "  %s = alloca %s\n" stack_operand
                        (llvm_type (value_type value)));
-                  Hashtbl.replace operands value stack_operand
+                  bind_operand value stack_operand
               | _ -> ())
             (List.rev block.Sil.instrs))
         (List.rev func.Sil.blocks)
