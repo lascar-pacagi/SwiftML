@@ -1,4 +1,4 @@
-The second silgen hole, TODO(10): a member WRITE `p.x = e` takes the field's ADDRESS inside
+TODO(10h): a member WRITE `p.x = e` takes the field's ADDRESS inside
 p's own slot (`struct_element_addr`) and stores through it. `--emit-sil` stops after SILGen.
 No program here reads a field (that is the first hole), so this file can go green on its own.
 

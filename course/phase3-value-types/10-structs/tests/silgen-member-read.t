@@ -1,4 +1,4 @@
-The first silgen hole, TODO(10): a member READ `p.x` lowers to `struct_extract` on a struct
+TODO(10g): a member READ `p.x` lowers to `struct_extract` on a struct
 VALUE. `--emit-sil` stops after SILGen, so this file needs no IRGen; it uses no field writes
 (the second hole). Construction (`struct (…)`) and the load of a variable are given.
 

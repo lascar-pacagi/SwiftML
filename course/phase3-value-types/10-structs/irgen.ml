@@ -1,5 +1,5 @@
 (* IRGen — concept 10 (skeleton). Carries Phase-2 IRGen complete; you add the STRUCT
-   instructions (the TODO(10) hole). Lower a SIL module to LLVM IR text.
+   instructions in TODO(10i). Lower a SIL module to LLVM IR text.
 
    The mapping is almost one-to-one because raw SIL is already memory-based with basic
    blocks, just like LLVM: alloc_stack -> alloca, load/store -> load/store, a SIL block ->
@@ -69,7 +69,7 @@ let emit_llvm (m : Sil.modul) : string =
         | Ast.Eq, Types.TInt -> "icmp eq i64" | Ast.Ne, Types.TInt -> "icmp ne i64"
         | Ast.Lt, Types.TInt -> "icmp slt i64" | Ast.Le, Types.TInt -> "icmp sle i64"
         | Ast.Gt, Types.TInt -> "icmp sgt i64" | Ast.Ge, Types.TInt -> "icmp sge i64"
-        | Ast.Eq, Types.TDouble -> "fcmp oeq double" | Ast.Ne, Types.TDouble -> "fcmp one double"
+        | Ast.Eq, Types.TDouble -> "fcmp oeq double" | Ast.Ne, Types.TDouble -> "fcmp une double"
         | Ast.Lt, Types.TDouble -> "fcmp olt double" | Ast.Le, Types.TDouble -> "fcmp ole double"
         | Ast.Gt, Types.TDouble -> "fcmp ogt double" | Ast.Ge, Types.TDouble -> "fcmp oge double"
         | (Ast.Eq | Ast.Ne), Types.TBool -> Printf.sprintf "icmp %s i1" (if bop = Ast.Eq then "eq" else "ne")
@@ -135,10 +135,10 @@ let emit_llvm (m : Sil.modul) : string =
       | Sil.Print x -> gen_print x
       (* structs — concept 10 *)
       | Sil.Struct _ | Sil.Struct_extract _ | Sil.Struct_element_addr _ ->
-          (* TODO(10-irgen): the three struct instructions — build an aggregate, read a field out of a
+          (* TODO(10i): the three struct instructions — build an aggregate, read a field out of a
              VALUE, take the address of a field in a SLOT. §2 gives the LLVM for each. *)
           ignore (v, i);
-          failwith "TODO(10-irgen): lower the struct instruction (insertvalue/extractvalue/getelementptr)"
+          failwith "TODO(10i): lower the struct instruction (insertvalue/extractvalue/getelementptr)"
     in
     let gen_term (t : Sil.term) =
       match t with

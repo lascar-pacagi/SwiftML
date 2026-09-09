@@ -1,6 +1,5 @@
-(* Parser — concept 10 skeleton. Carries the Phase-2 recursive-descent/Pratt parser.
-   TODO(10b) parses struct declarations; TODO(10c) parses labeled initializer arguments
-   and member reads/writes. The new AST nodes are given in ast.ml. *)
+(* ANSWER KEY — concept 10 parser.  Carries the Phase-2 recursive-descent/Pratt parser and
+   adds struct declarations, labeled initializer arguments, and member reads/writes. *)
 
 type t = { toks : Token.t array; mutable pos : int; diags : Diagnostics.sink }
 
@@ -123,20 +122,32 @@ let rec parse_expr_bp (p : t) (min_bp : int) : Ast.expr =
   in
   loop lhs
 
-(* TODO(10c): consume a repeated `.field` suffix and wrap [e] in Ast.Member nodes. Postfix
-   syntax binds tighter than every infix operator because this runs before [loop] above. *)
+(* postfix `.field` member access (chained): binds tighter than any infix operator — concept 10 *)
 and parse_postfix (p : t) (e : Ast.expr) : Ast.expr =
-  ignore p;
-  e
+  if peek_kind p = Token.Dot then (
+    ignore (advance p);
+    match peek_kind p with
+    | Token.Ident fld ->
+        let ft = advance p in
+        parse_postfix p (Ast.Member (e, fld, span_between (Ast.expr_span e) ft.Token.span))
+    | _ ->
+        Diagnostics.error p.diags (peek p).Token.span "expected a member name";
+        e)
+  else e
 
 (* call/init arguments: each is `[label:] expr` (the label is an Ident followed by ':') *)
 and parse_call_args (p : t) : Ast.arg list =
   if peek_kind p = Token.RParen then []
   else
     let rec loop acc =
-      (* TODO(10c): if the next two tokens are `Ident` `Colon`, consume them and keep the
-         identifier as [Some label]. Ordinary function arguments remain [None]. *)
-      let label = None in
+      let label =
+        match peek_kind p with
+        | Token.Ident l when peek_kind_at p 1 = Token.Colon ->
+            ignore (advance p (* label *));
+            ignore (advance p (* ':' *));
+            Some l
+        | _ -> None
+      in
       let e = parse_expr_bp p 0 in
       let arg = (label, e) in
       if peek_kind p = Token.Comma then (ignore (advance p); loop (arg :: acc)) else List.rev (arg :: acc)
@@ -244,8 +255,14 @@ and parse_stmt (p : t) : Ast.stmt =
       ignore (advance p);
       let value = parse_expr p in
       Ast.Assign { name; value; span = span_between id.Token.span (Ast.expr_span value) }
-  (* TODO(10c): before the fallback below, recognize `Ident Dot Ident Eq` as the one-level
-     member assignment [Ast.Set_member]. *)
+  (* `p.x = e` — a member assignment (concept 10); v0 handles one level (var.field) *)
+  | Token.Ident obj when peek_kind_at p 1 = Token.Dot && peek_kind_at p 3 = Token.Eq ->
+      let id = advance p (* obj *) in
+      ignore (advance p (* . *));
+      let field, _ = parse_ident p "a member name" in
+      ignore (advance p (* = *));
+      let value = parse_expr p in
+      Ast.Set_member { obj; field; value; span = span_between id.Token.span (Ast.expr_span value) }
   | _ ->
       let e = parse_expr p in
       Ast.Expr_stmt (e, Ast.expr_span e)
@@ -286,10 +303,34 @@ let parse_func (p : t) : Ast.func_decl =
 
 (* `struct Name { (var|let) name: Type … }` — stored properties in order (concept 10) *)
 let parse_struct (p : t) : Ast.struct_decl =
-  ignore p;
-  (* TODO(10b): parse the name, brace-delimited stored properties, their written types,
-     declaration order, and whether each property used [var] or [let] (§2). *)
-  failwith "TODO(10b): parse a struct declaration"
+  let kw = advance p (* struct *) in
+  let sname, _ = parse_ident p "a struct name" in
+  ignore (expect p Token.LBrace "'{'");
+  let rec loop acc =
+    while peek_kind p = Token.Newline do ignore (advance p) done;
+    match peek_kind p with
+    | Token.RBrace -> ignore (advance p); List.rev acc
+    | Token.Eof -> ignore (expect p Token.RBrace "'}'"); List.rev acc
+    | Token.Kw_let | Token.Kw_var ->
+        let fld_var = (advance p).Token.kind = Token.Kw_var in
+        let fld_name, _ = parse_ident p "a property name" in
+        ignore (expect p Token.Colon "':'");
+        let fld_ty, _ = parse_ident p "a property type" in
+        (* a declaration ends at a newline or at the body's `}` — `{ var x: Int var y: Int }`
+           is an error here as in Swift (`consecutive declarations on a line …`) *)
+        (match peek_kind p with
+        | Token.Newline -> ignore (advance p)
+        | Token.RBrace | Token.Eof -> ()
+        | _ -> Diagnostics.error p.diags (peek p).Token.span "expected newline or end of declaration");
+        loop ({ Ast.fld_name; fld_ty; fld_var } :: acc)
+    | _ ->
+        let t = peek p in
+        Diagnostics.error p.diags t.Token.span "expected a stored property: 'var name: Type'";
+        ignore (advance p);
+        loop acc
+  in
+  let sfields = loop [] in
+  { Ast.sname; sfields; sspan = kw.Token.span }
 
 (* A program is a sequence of top-level items: function declarations and statements. *)
 let parse_program (p : t) : Ast.program =

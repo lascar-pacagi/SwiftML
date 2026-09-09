@@ -1,6 +1,6 @@
-(* Sema — concept 10 skeleton: concepts 05–07 are complete; you add structs.
+(* ANSWER KEY — concept 10 Sema: concepts 05–07 plus structs.
 
-   New vs 07: a struct registry, member typing, the memberwise initializer's
+   New vs 07: a struct registry (PASS 0), member typing, the memberwise initializer's
    label/arity/type checks, member assignment (`p.x = e` needs a `var` binding AND a `var`
    field), and two guards for what the back end can lower: `==` is only defined on the scalar
    types, and `print` only takes them (swiftc prints any value — an honest divergence, §2).
@@ -85,11 +85,20 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         | None ->
             err span (Printf.sprintf "cannot find type '%s' in scope" tyname);
             infer e0)
-    | Ast.Member (e0, fld, span) ->
-        ignore (e0, fld, span);
-        (* TODO(10e): infer the base, require a struct, and look up the field type in its
-           registered layout. Diagnose both an unknown field and a scalar base (§2). *)
-        failwith "TODO(10e): type-check a member read"
+    | Ast.Member (e0, fld, span) -> (
+        match infer e0 with
+        | Types.TStruct sn -> (
+            match Hashtbl.find_opt structs sn with
+            | Some sl -> (
+                match Types.field_type sl fld with
+                | Some ft -> ft
+                | None ->
+                    err span (Printf.sprintf "value of type '%s' has no member '%s'" sn fld);
+                    Types.TInt)
+            | None -> Types.TInt)
+        | t ->
+            err span (Printf.sprintf "value of type '%s' has no member '%s'" (Types.string_of_ty t) fld);
+            Types.TInt)
   and infer_binary op l r span : Types.ty =
     let tl = infer l and tr = infer r in
     let bad () =
@@ -159,10 +168,23 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
               Types.TInt))
   (* the memberwise initializer: one labeled argument per stored property, in order *)
   and infer_init sn (sl : Types.struct_layout) (args : Ast.arg list) span : Types.ty =
-    ignore (sl, args, span);
-    (* TODO(10e): check arity, then each label and value type against the corresponding
-       stored property. A successful initializer has type [TStruct sn]. *)
-    failwith ("TODO(10e): type-check memberwise initialization of " ^ sn)
+    let fields = sl.Types.sl_fields in
+    if List.length args <> List.length fields then
+      err span
+        (Printf.sprintf "'%s' initializer expects %d argument(s) but %d given" sn (List.length fields)
+           (List.length args))
+    else
+      List.iter2
+        (fun (label, value) (fname, ftype) ->
+          (match label with
+          | Some l when l <> fname ->
+              err (Ast.expr_span value)
+                (Printf.sprintf "incorrect argument label in call (have '%s:', expected '%s:')" l fname)
+          | None -> err (Ast.expr_span value) (Printf.sprintf "missing argument label '%s:' in call" fname)
+          | _ -> ());
+          check_expr value ftype)
+        args fields;
+    Types.TStruct sn
   and check_expr (e : Ast.expr) (expected : Types.ty) : unit =
     match e with
     | Ast.Int_lit _ ->
@@ -210,11 +232,24 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             if not is_var then
               err span (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" name);
             check_expr value t)
-    | Ast.Set_member { obj; field; value; span } ->
-        ignore (obj, field, value, span);
-        (* TODO(10f): resolve the binding and field, reject a [let] binding or [let] field,
-           and check the assigned value against the field type (§2). *)
-        failwith "TODO(10f): type-check a member write"
+    | Ast.Set_member { obj; field; value; span } -> (
+        match lookup obj with
+        | None -> err span (Printf.sprintf "cannot find '%s' in scope" obj); ignore (infer value)
+        | Some (Types.TStruct sn, is_var) -> (
+            match Option.bind (Hashtbl.find_opt structs sn) (fun sl -> Types.field_type sl field) with
+            | Some ft ->
+                (* swiftc's `diag::assignment_lhs_is_immutable_property`: the binding first, then
+                   the field — a `let` field is immutable through every binding *)
+                if not is_var then err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" obj)
+                else if Hashtbl.mem let_fields (sn, field) then
+                  err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" field);
+                check_expr value ft
+            | None ->
+                err span (Printf.sprintf "value of type '%s' has no member '%s'" sn field);
+                ignore (infer value))
+        | Some (t, _) ->
+            err span (Printf.sprintf "value of type '%s' has no member '%s'" (Types.string_of_ty t) field);
+            ignore (infer value))
     | Ast.Expr_stmt (e, _) -> ignore (infer e)
     | Ast.If { cond; then_blk; else_blk; _ } ->
         check_expr cond Types.TBool;
@@ -261,14 +296,28 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         (Printf.sprintf "missing return in %s expected to return '%s'" "global function" (Types.string_of_ty ret))
   in
 
-  (* TODO(10d): register every struct name first, then resolve and install its ordered field
-     layout. The two passes allow a field to name a struct declared later. Record [let]
-     fields in [let_fields], and diagnose duplicate struct names (§2). *)
-  let register_structs () =
-    if List.exists (function Ast.IStruct _ -> true | _ -> false) prog.Ast.items then
-      failwith "TODO(10d): register struct layouts"
-  in
-  register_structs ();
+  (* PASS 0: register struct names (so a field can reference another struct), then fill the
+     layouts. Now any type name resolves and struct types are known to passes 1 and 2. *)
+  List.iter
+    (function
+      | Ast.IStruct s ->
+          if Hashtbl.mem structs s.Ast.sname then
+            err s.Ast.sspan (Printf.sprintf "invalid redeclaration of '%s'" s.Ast.sname);
+          Hashtbl.replace structs s.Ast.sname { Types.sl_name = s.Ast.sname; sl_fields = [] }
+      | _ -> ())
+    prog.Ast.items;
+  List.iter
+    (function
+      | Ast.IStruct s ->
+          let fields =
+            List.map (fun (fl : Ast.field) -> (fl.Ast.fld_name, resolve_ty s.Ast.sspan fl.Ast.fld_ty)) s.Ast.sfields
+          in
+          List.iter
+            (fun (fl : Ast.field) -> if not fl.Ast.fld_var then Hashtbl.replace let_fields (s.Ast.sname, fl.Ast.fld_name) ())
+            s.Ast.sfields;
+          Hashtbl.replace structs s.Ast.sname { Types.sl_name = s.Ast.sname; sl_fields = fields }
+      | _ -> ())
+    prog.Ast.items;
   (* PASS 1: collect signatures so calls/recursion/forward-references resolve. *)
   List.iter
     (function

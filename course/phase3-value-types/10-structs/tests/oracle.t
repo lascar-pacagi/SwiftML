@@ -20,10 +20,11 @@ a documented divergence, not a struct question.)
   >     if grep -q 'TODO(' err.txt; then echo "(stopping: the hole above is not started)"; break; fi
   >     continue
   >   fi
-  >   ./sw$n > sw$n.out 2>&1; swrc=$?
-  >   ./ml$n > ml$n.out 2>&1; mlrc=$?
+  >   python3 timeout.py 5 ./sw$n > sw$n.out 2>&1; swrc=$?
+  >   python3 timeout.py 5 ./ml$n > ml$n.out 2>&1; mlrc=$?
   >   if [ $swrc -ne $mlrc ] || ! cmp -s sw$n.out ml$n.out; then
   >     printf 'DIVERGE (swiftc exit=%s ours exit=%s): %s\n' "$swrc" "$mlrc" "$prog"; diff sw$n.out ml$n.out
+  >     if [ $swrc -eq 124 ] || [ $mlrc -eq 124 ]; then echo "(stopping after timeout)"; break; fi
   >   fi
   > done < oracle-corpus.txt
   $ echo done
@@ -32,7 +33,7 @@ a documented divergence, not a struct question.)
 The front-end half: on the 20 programs of `typecheck-corpus.txt` — six well-formed, fourteen
 the struct rules must refuse — `swiftc -typecheck` and `./lab.exe --typecheck` must reach the
 same verdict. Running programs can only exercise what we accept; this half pins what we refuse,
-and it needs no lowering, so it is green from the skeleton. A crash is not a rejection: exit 0
+and it needs no lowering, so it becomes green after TODO(10a–f). A crash is not a rejection: exit 0
 is accept, 1 is reject, anything else is a crash. (`print(p)` of a whole struct stays out — we
 refuse it and swiftc prints `Point(x: 1, y: 2)`, the documented divergence of §2.)
 

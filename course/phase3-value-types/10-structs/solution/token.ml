@@ -1,5 +1,5 @@
-(* Tokens for concept 10. The token variants and their printed spellings are given contracts;
-   TODO(10a) adds `struct` to the keyword table. *)
+(* ANSWER KEY — concept 10 tokens.  The variants and printed spellings are contracts; this
+   concept adds the `struct` keyword plus Dot for member access. *)
 
 type pos = { line : int; col : int; offset : int }
 type span = { lo : pos; hi : pos }
@@ -117,6 +117,5 @@ let keyword_or_ident (s : string) : kind =
   | "continue" -> Kw_continue
   | "func" -> Kw_func
   | "return" -> Kw_return
-  (* TODO(10a): classify `struct` as its keyword token (§2). Until then it follows the
-     ordinary-identifier path below. *)
+  | "struct" -> Kw_struct
   | _ -> Ident s

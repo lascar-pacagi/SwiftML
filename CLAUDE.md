@@ -325,10 +325,9 @@ checkpoint each step.
   (verified: arithmetic, if/else, while/for, break/continue, nested loops, recursion fib, bool).
   Skeleton `TODO(09)` holes = gen_instr + gen_term (the SIL→LLVM mapping); plumbing given. Runtime
   corpus is Int/Bool/control-flow/functions; Double-print & String runtime & definite-init are
-  documented simplifications / exercises. **A real runtime bug was caught by running**: the `for`
-  loop's `continue` skipped the increment (infinite loop) — fixed with a **latch** block in SILGen
-  (08+09); the lesson (behavioral parity catches what structural tests miss) is in the 09 explainer.
-  Tests green RED→solution (cram **builds+runs** programs + 5 alcotests). Deep explainer + full-pipeline
+  documented simplifications / exercises. Runtime parity complements the structural IR checks:
+  it catches malformed or behaviorally wrong LLVM that a text assertion cannot. Tests green
+  RED→solution (cram **builds+runs** programs + focused alcotests). Deep explainer + full-pipeline
   figure.
 - **PHASE 3 STARTED. Concept 10 (`phase3-value-types/10-structs`) is complete and verified.** Library
   `swiftml_structs`; binary **`swiftml3`** (phase3-value-types/bin). Adds **`struct`** — Swift's value
@@ -338,9 +337,10 @@ checkpoint each step.
   args, `p.x=e`), sema (struct registry PASS 0, member typing, init label/type checks, member assign +
   let-field rejection), silgen + irgen. **Struct programs RUN and match swiftc** incl. **value
   semantics** (`var q=p; q.x=99` leaves `p.x`=1), structs-by-value to functions, nested structs.
-  Skeleton `TODO(10)` = the value-type *lowering* (silgen member read=struct_extract/write=struct_
-  element_addr; irgen insertvalue/extractvalue/getelementptr); front-end given. Tests green RED→solution
-  (cram **builds+runs** struct programs + 4 alcotests). Deep explainer + value-semantics figure. v0 =
+  Skeleton `TODO(10a–i)` threads structs through the whole compiler: lexer, parser, sema, SILGen
+  member read/write, and IRGen insertvalue/extractvalue/getelementptr. Contracts and repetitive
+  construction plumbing are given. Tests green RED→solution (focused Cram files for every hole,
+  **builds+runs** struct programs, and matching alcotests). Deep explainer + value-semantics figure. v0 =
   stored properties+init+access+value semantics; **methods/mutating/computed are v1/exercises**.
 - **Concept 11 (`phase3-value-types/11-enums-adts`) is complete and verified.** Library `swiftml_enums`
   (bin repointed). Adds **`enum`** — Swift's sum type / tagged union — through every stage: contracts

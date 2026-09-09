@@ -1,7 +1,18 @@
-(* Alcotest unit tests for concept 10, one group per stage so a hole shows on its own:
-   sema (given: member typing, init, value-type rules), the two silgen holes (read =
-   struct_extract, write = struct_element_addr) checked on the SIL text, and the irgen hole
-   (aggregate types + insertvalue/extractvalue/getelementptr) on the LLVM text. *)
+(* Alcotest unit tests for concept 10, one group per TODO.  The early groups stop at their
+   own compiler stage: a learner can finish and test lexing before parsing works, and finish
+   parsing before Sema works.  The lowering groups inspect SIL or LLVM text in process. *)
+
+let lex_kinds (src : string) : string list =
+  let diagnostics = Diagnostics.create () in
+  Lexer.tokenize (Lexer.create src diagnostics)
+  |> List.map (fun (token : Token.t) -> Token.string_of_kind token.Token.kind)
+
+let parse (src : string) : Ast.program =
+  let diagnostics = Diagnostics.create () in
+  Parser.parse_program
+    (Parser.create (Lexer.tokenize (Lexer.create src diagnostics)) diagnostics)
+
+let ast (src : string) : string = Ast.dump_program (parse src)
 
 let front (src : string) : Ast.program * Diagnostics.sink =
   let d = Diagnostics.create () in
@@ -42,13 +53,44 @@ let sil_has src needle = Alcotest.(check bool) (Printf.sprintf "sil has %S" need
 let sil_lacks src needle = Alcotest.(check bool) (Printf.sprintf "sil lacks %S" needle) false (contains (sil src) needle)
 let ir_has src needle = Alcotest.(check bool) (Printf.sprintf "ir has %S" needle) true (contains (llvm src) needle)
 
-(* --- sema (given) --- *)
+(* --- TODO(10a): tokens --- *)
+
+let test_struct_tokens () =
+  Alcotest.(check (list string)) "struct, dot, semicolon, and range"
+    [ "struct"; "ident(P)"; "{"; "}"; "newline"; "ident(p)"; "."; "ident(x)";
+      "newline"; "int(0)"; "..<"; "int(1)"; "eof" ]
+    (lex_kinds "struct P {}; p.x\n0..<1")
+
+(* --- TODO(10b): declarations --- *)
+
+let test_parse_struct_decl () =
+  Alcotest.(check string) "ordered fields retain var/let and written types"
+    "(struct Box (value:Point let visible:Bool))"
+    (ast "struct Box { var value: Point; let visible: Bool }")
+
+(* --- TODO(10c): uses --- *)
+
+let test_parse_struct_uses () =
+  Alcotest.(check string) "labels, chained reads, and a one-level write"
+    "(let p (Point x:1 y:2))\n(print (. (. line b) x))\n(.= p x (+ (. p x) 1))"
+    (ast "let p = Point(x: 1, y: 2)\nprint(line.b.x)\np.x = p.x + 1")
+
+(* --- TODO(10d): registry and layouts --- *)
+
+let test_struct_registry () =
+  accepted
+    "func identity(_ box: Box) -> Box { return box }\n\
+     struct Box { var value: Point }\nstruct Point { var x: Int }";
+  has_error "struct Bad { var value: Missing }"
+    "cannot find type 'Missing' in scope";
+  has_error "struct A {}\nstruct A {}" "invalid redeclaration of 'A'"
+
+(* --- TODO(10e): initialization and reads --- *)
 let test_accept () =
   accepted (point ^ "let p = Point(x: 3, y: 4)\nprint(p.x)");
-  accepted (point ^ "var p = Point(x: 1, y: 2)\np.x = 9\nprint(p.x)");
   accepted (point ^ "func sum(_ p: Point) -> Int { return p.x + p.y }\nprint(sum(Point(x: 1, y: 2)))");
   accepted (line ^ "let l = Line(a: Point(x: 0, y: 0), b: Point(x: 7, y: 9))\nprint(l.b.x)");
-  accepted ("struct S {\n  let x: Int\n  var y: Int\n}\nvar s = S(x: 1, y: 2)\ns.y = 3\nprint(s.x)")
+  accepted ("struct S {\n  let x: Int\n  var y: Int\n}\nlet s = S(x: 1, y: 2)\nprint(s.x)")
 
 let test_init_rules () =
   has_error (point ^ "let p = Point(x: \"s\", y: 2)") "cannot convert value of type 'String' to specified type 'Int'";
@@ -59,12 +101,7 @@ let test_init_rules () =
 
 let test_member_rules () =
   has_error (point ^ "let p = Point(x: 1, y: 2)\nprint(p.z)") "value of type 'Point' has no member 'z'";
-  has_error "let n = 3\nprint(n.x)" "value of type 'Int' has no member 'x'";
-  (* value semantics is enforced through `let`: a let-bound struct's fields can't be assigned *)
-  has_error (point ^ "let p = Point(x: 1, y: 2)\np.x = 5") "cannot assign to property: 'p' is a 'let' constant";
-  (* and a `let` FIELD is immutable through any binding, `var` included *)
-  has_error "struct S {\n  let x: Int\n  var y: Int\n}\nvar s = S(x: 1, y: 2)\ns.x = 2"
-    "cannot assign to property: 'x' is a 'let' constant"
+  has_error "let n = 3\nprint(n.x)" "value of type 'Int' has no member 'x'"
 
 let test_backend_guards () =
   (* two programs swiftc treats differently from us, refused in sema so the back end never
@@ -72,7 +109,19 @@ let test_backend_guards () =
   has_error (point ^ "let p = Point(x: 1, y: 2)\nprint(p == p)") "binary operator '==' cannot be applied to two 'Point' operands";
   has_error (point ^ "let p = Point(x: 1, y: 2)\nprint(p)") "cannot print a value of type 'Point' (only Int, Double, Bool and String)"
 
-(* --- silgen: TODO(10) member read --- *)
+(* --- TODO(10f): member writes --- *)
+
+let test_member_write_rules () =
+  accepted (point ^ "var p = Point(x: 1, y: 2)\np.x = 5");
+  (* value semantics is enforced through `let`: a let-bound struct's fields can't be assigned *)
+  has_error (point ^ "let p = Point(x: 1, y: 2)\np.x = 5") "cannot assign to property: 'p' is a 'let' constant";
+  (* and a `let` FIELD is immutable through any binding, `var` included *)
+  has_error "struct S {\n  let x: Int\n  var y: Int\n}\nvar s = S(x: 1, y: 2)\ns.x = 2"
+    "cannot assign to property: 'x' is a 'let' constant";
+  has_error (point ^ "var p = Point(x: 1, y: 2)\np.x = \"bad\"")
+    "cannot convert value of type 'String' to specified type 'Int'"
+
+(* --- TODO(10g): SIL member read --- *)
 let test_read_sil () =
   let src = point ^ "let p = Point(x: 3, y: 4)\nprint(p.y)" in
   sil_has src "struct_extract";
@@ -84,7 +133,7 @@ let test_read_nested_sil () =
   Alcotest.(check int) "two extracts for l.b.x" 2 (count s "struct_extract");
   Alcotest.(check bool) "inner Point first (#1 $Point)" true (contains s ", #1 $Point")
 
-(* --- silgen: TODO(10) member write --- *)
+(* --- TODO(10h): SIL member write --- *)
 let test_write_sil () =
   let src = point ^ "var p = Point(x: 1, y: 2)\np.x = 9" in
   sil_has src "struct_element_addr %3, #0";
@@ -97,7 +146,7 @@ let test_write_own_slot () =
   Alcotest.(check int) "one field address taken" 1 (count s "struct_element_addr");
   Alcotest.(check bool) "it is q's slot (%6), not p's (%3)" true (contains s "struct_element_addr %6, #0")
 
-(* --- irgen: TODO(10) aggregates --- *)
+(* --- TODO(10i): LLVM aggregates --- *)
 let test_llvm_shape () =
   ir_has (point ^ "let p = Point(x: 1, y: 2)") "%Point = type { i64, i64 }";
   ir_has (point ^ "let p = Point(x: 1, y: 2)") "insertvalue %Point undef, i64";
@@ -108,13 +157,23 @@ let test_llvm_shape () =
 let () =
   Alcotest.run "structs"
     [
-      ( "sema-structs",
+      ( "lexer-structs",
+        [ Alcotest.test_case "struct, dot, semicolon" `Quick test_struct_tokens ] );
+      ( "parser-struct-decls",
+        [ Alcotest.test_case "stored properties in source order" `Quick test_parse_struct_decl ] );
+      ( "parser-struct-uses",
+        [ Alcotest.test_case "labels, chained reads, member write" `Quick test_parse_struct_uses ] );
+      ( "sema-struct-decls",
+        [ Alcotest.test_case "names first, then field layouts" `Quick test_struct_registry ] );
+      ( "sema-struct-exprs",
         [
           Alcotest.test_case "well-typed struct programs" `Quick test_accept;
           Alcotest.test_case "memberwise init rules" `Quick test_init_rules;
-          Alcotest.test_case "member access + let rules" `Quick test_member_rules;
+          Alcotest.test_case "member access rules" `Quick test_member_rules;
           Alcotest.test_case "== and print refused up front" `Quick test_backend_guards;
         ] );
+      ( "sema-member-write",
+        [ Alcotest.test_case "binding, field, and value checks" `Quick test_member_write_rules ] );
       ( "silgen-member-read",
         [
           Alcotest.test_case "p.y is struct_extract #1" `Quick test_read_sil;

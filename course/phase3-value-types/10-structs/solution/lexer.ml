@@ -1,5 +1,5 @@
-(* Lexer — concept 10 skeleton. Carries the Phase-2 scanner; TODO(10a) adds the punctuation
-   used by structs. The `struct` keyword itself belongs in token.ml's keyword table. *)
+(* ANSWER KEY — concept 10 lexer.  Carries the Phase-2 scanner and adds the punctuation
+   used by structs: member access `.` and `;` as a statement separator. *)
 
 type t = {
   src : string;
@@ -146,13 +146,9 @@ let rec next (lx : t) : Token.t =
             ignore (bump lx);
             ignore (bump lx);
             make lo lx Token.DotDotLt)
-          else (
-            (* TODO(10a): a lone dot is member access; preserve the existing `..<` case. *)
-            error lx lo "unexpected character '.'";
-            next lx)
+          else make lo lx Token.Dot (* member access — concept 10 *)
       | '\n' -> ignore (bump lx); make lo lx Token.Newline
-      (* TODO(10a): Swift also accepts `;` as a statement separator. Return the same token as
-         a physical newline so the parser needs no second separator grammar. *)
+      | ';' -> ignore (bump lx); make lo lx Token.Newline (* `;` is a statement separator in Swift *)
       | _ ->
           (* swiftc's `diag::lex_invalid_character`; drop the byte and lex on *)
           ignore (bump lx);

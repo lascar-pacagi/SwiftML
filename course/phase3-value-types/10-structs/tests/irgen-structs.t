@@ -1,4 +1,4 @@
-The irgen hole, TODO(10): the three struct instructions become LLVM aggregate operations —
+TODO(10i): the three struct instructions become LLVM aggregate operations —
 `struct` an `insertvalue` chain from `undef`, `struct_extract` an `extractvalue`,
 `struct_element_addr` a `getelementptr`. The first case needs only construction (given in
 SILGen); the rest need both silgen holes too, and from "runs" on they BUILD and RUN.
@@ -80,7 +80,7 @@ A write `p.x = 9` is `getelementptr %Point, ptr %slot, i32 0, i32 0` then a `sto
 
 Runs: `read.swift` above prints 4, and a program reading both fields prints 3 then 4:
 
-  $ ./lab.exe build read.swift -o read && ./read
+  $ ./lab.exe build read.swift -o read && python3 timeout.py 5 ./read
   4
   $ cat > both.swift <<'EOF'
   > struct Point {
@@ -91,7 +91,7 @@ Runs: `read.swift` above prints 4, and a program reading both fields prints 3 th
   > print(p.x)
   > print(p.y)
   > EOF
-  $ ./lab.exe build both.swift -o both && ./both
+  $ ./lab.exe build both.swift -o both && python3 timeout.py 5 ./both
   3
   4
 
@@ -108,7 +108,7 @@ Runs, value semantics: `var q = p; q.x = 99` leaves `p.x` at 1 — the copy is i
   > print(p.x)
   > print(q.x)
   > EOF
-  $ ./lab.exe build copy.swift -o copy && ./copy
+  $ ./lab.exe build copy.swift -o copy && python3 timeout.py 5 ./copy
   1
   99
 
@@ -126,7 +126,7 @@ Runs: a struct goes to a function BY VALUE, and a nested read `l.b.x` finds 7:
   > func mx(_ l: Line) -> Int { return l.b.x }
   > print(mx(Line(a: Point(x: 0, y: 0), b: Point(x: 7, y: 9))))
   > EOF
-  $ ./lab.exe build byval.swift -o byval && ./byval
+  $ ./lab.exe build byval.swift -o byval && python3 timeout.py 5 ./byval
   7
 
 Runs: a function returning a struct, whose result is read and stored — `a` keeps 1, `b` is 2:
@@ -142,7 +142,7 @@ Runs: a function returning a struct, whose result is read and stored — `a` kee
   > print(a.x)
   > print(b.x)
   > EOF
-  $ ./lab.exe build ret.swift -o ret && ./ret
+  $ ./lab.exe build ret.swift -o ret && python3 timeout.py 5 ./ret
   1
   2
 
@@ -163,7 +163,7 @@ Runs: field writes in a loop accumulate in the SAME slot — 0+1+2+3+4 = 10, 5 �
   > print(p.x)
   > print(p.y)
   > EOF
-  $ ./lab.exe build loop.swift -o loop && ./loop
+  $ ./lab.exe build loop.swift -o loop && python3 timeout.py 5 ./loop
   10
   10
 
@@ -179,6 +179,6 @@ Runs: `m.d * 2` with a Double field — the literal is generated AT Double, or c
   > print(m.d * 2)
   > print(m.ok)
   > EOF
-  $ ./lab.exe build dbl.swift -o dbl && ./dbl
+  $ ./lab.exe build dbl.swift -o dbl && python3 timeout.py 5 ./dbl
   3
   true

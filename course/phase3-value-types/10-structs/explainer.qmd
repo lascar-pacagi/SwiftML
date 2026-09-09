@@ -14,8 +14,9 @@ assigning a struct **copies** it, so changing the copy never affects the origina
 `Double`, `Array`, `String`, `Dictionary` — almost everything in Swift is a value type. This is the
 single biggest design difference from most languages, and you're about to make it real.
 
-- **You implement:** the value-type *lowering* — member **read** (`p.x`) and **write** (`p.x = e`)
-  in SILGen, and the struct instructions in IRGen. The front end (parser, sema) is given.
+- **You implement:** the new syntax through the compiler: lexing, parsing, struct registration and
+  type checking, then member **read** and **write** in SILGen and the struct instructions in IRGen.
+  The AST/type/SIL contracts and the repetitive construction plumbing are given.
 - **Outcome:** struct programs **run and match swiftc**, value semantics included — the oracle
   test compiles a 16-program corpus with both compilers and compares every byte of output.
 
@@ -65,8 +66,9 @@ draws, made concrete.
 `Point(x: 1, y: 2)` is the initializer Swift synthesizes from the stored properties — one labelled
 argument per field, **in declaration order, labels required** (sema checks the labels and types; a
 missing or wrong label is an error, just like swiftc). It lowers to a **`struct`** instruction that
-builds the aggregate value from its fields (LLVM `insertvalue` from `undef`). Construction is given;
-you build the access.
+builds the aggregate value from its fields (LLVM `insertvalue` from `undef`). The SILGen construction
+plumbing is given; you still recognize and check the source syntax, then lower the SIL instruction to
+LLVM.
 
 ### The three new SIL instructions (swiftc's exact names)
 
@@ -144,10 +146,10 @@ which is why `l.b.x = 1` — two levels deep — is not in this subset. And a ca
 carry a **label**; the parser records it for every call, sema *checks* it only for a memberwise
 initializer (a `func` still takes its arguments positionally, concept 07's simplification).
 
-### The diagnostics sema owes you (given)
+### The diagnostics Sema owes you
 
-You write no diagnostics in this concept — sema is given — but the lowering may assume every rule
-below has already fired, and `sema-structs.t` keeps them on record. Wording follows `swiftc
+You implement these checks in TODO(10d–f). Once they pass, lowering may assume every rule below has
+already fired. The three focused Sema tests keep them on record. Wording follows `swiftc
 -typecheck` where the subset lets it (`swift/include/swift/AST/DiagnosticsSema.def`, line numbers
 from the pinned snapshot); the differences are stated, not hidden.
 
@@ -174,21 +176,35 @@ machinery is the natural place to generalize), and `print` of a `Double` goes th
 
 ## 3. Build it, step by step
 
-The front end is given — parser and sema already accept and check structs. You write the two
-stages under them.
-
-- **`silgen.ml`** — two holes. In `gen_expr`, the `Member (e0, fld, _)` case is a **read**: lower
+- **`token.ml` + `lexer.ml`, TODO(10a)** — add `struct` to `keyword_or_ident`. In the lexer, keep
+  `..<` as the longest token beginning with `.`, otherwise emit `Dot`; turn `;` into `Newline` so
+  all later separator logic stays shared.
+- **`parser.ml`, TODO(10b)** — consume `struct Name { ... }`, accumulating stored properties in
+  source order. Each field records its name, written type, and whether its introducer was `var`.
+  Newlines and semicolons are already the same token by this point.
+- **`parser.ml`, TODO(10c)** — after a primary, repeatedly consume `.field`; before parsing a call
+  argument, recognize the two-token `label:` prefix; and recognize `name.field = expr` before the
+  ordinary expression-statement fallback.
+- **`sema.ml`, TODO(10d)** — make two passes over struct declarations: register every name with an
+  empty layout, then resolve field types and install the ordered layouts. The first pass permits a
+  field to use a struct declared later. Record `let` fields separately for assignment checking.
+- **`sema.ml`, TODO(10e)** — infer a member read from the base struct's layout. For a memberwise
+  initializer, check arity first, then compare each argument's optional label and value type with
+  the corresponding field. The expression's result is `TStruct name`.
+- **`sema.ml`, TODO(10f)** — resolve the base binding and the field for a write. A write needs both
+  a `var` binding and a `var` field, and its right-hand side must check against the field type.
+- **`silgen.ml`, TODO(10g–h)** — in `gen_expr`, the `Member (e0, fld, _)` case is a **read**: lower
   `e0` to a struct *value*, ask its type (`vty`) which struct it is, and turn the field *name* into an
   *index* and a *type* through the layout in `b.structs` (`Types.field_index`, `Types.field_type`);
   the result is one `Sil.Struct_extract`. In `gen_stmt`, the `Set_member { obj; field; value }` case
   is a **write**: the variable's own slot is in `b.vars`, and its type names the struct; take the
   field's address with `Sil.Struct_element_addr` and `Sil.Store` the value through it. Generate the
   value first — that is the order swiftc uses, and the tests print the SIL.
-- **`irgen.ml`** — one hole, three instructions: `Struct` is a chain of `insertvalue` starting
+- **`irgen.ml`, TODO(10i)** — three instructions: `Struct` is a chain of `insertvalue` starting
   from `undef` (each step names the previous register, the last one is the value); `Struct_extract`
   is `extractvalue`; `Struct_element_addr` is `getelementptr <struct ty>, ptr <slot>, i32 0, i32 i`.
-  `llty (vty v)` gives the LLVM type of any value; `fresh ()` a register; `opnd` maps a SIL value to
-  its LLVM operand.
+  `llty (vty value)` gives the LLVM type of any value; `fresh ()` creates a register;
+  `lookup_operand` and `bind_operand` read and update the SIL-to-LLVM operand map.
 
 Reference: `solution/` — after you have tried it.
 
@@ -201,8 +217,14 @@ make lab C=phase3-value-types/10-structs
 Every `.t` file calls `./lab.exe`, built from **this directory's** library, so the report is about
 your code here. In the order you fill the holes:
 
-- `sema-structs.t` — `--typecheck`: the given rules from the table above, green from the start.
-  It is the contract the lowering may rely on (no `p.x` on a non-struct reaches SILGen).
+- `lexer-structs.t` — `--emit-tokens`: `struct`, a lone `.`, the existing `..<`, and `;`.
+- `parser-struct-decls.t` — `--emit-ast`: ordered `var`/`let` stored properties and written types.
+- `parser-struct-uses.t` — `--emit-ast`: initializer labels, chained reads, and one-level writes.
+- `sema-struct-decls.t` — `--typecheck`: the two-pass registry, forward types, unknown types, and
+  duplicate names.
+- `sema-struct-exprs.t` — `--typecheck`: initialization, reads, label/arity/type errors, and the two
+  explicit backend guards.
+- `sema-member-write.t` — `--typecheck`: binding mutability, field mutability, and assigned type.
 - `silgen-member-read.t` — `--emit-sil`: `p.x` is a `load` then `struct_extract … #0`; `p.y` is
   `#1` with its type; a field of a fresh `Point(…)` or of a call result extracts with no load; a
   nested `l.b.x` is two extracts; a read inside a function goes through the parameter's slot. No
@@ -215,9 +237,8 @@ your code here. In the order you fill the holes:
   first case needs no silgen hole), nested and mixed-type aggregates, `extractvalue`,
   `getelementptr`; then programs **run**: 3/4, the value-semantics `1`/`99`, by-value argument,
   struct result, field writes in a loop, and the `Double`-field case that pins a miscompile.
-- `test_structs.ml` (alcotest `structs`) — the same four groups in-process: `sema-structs`
-  (given — its four cases pass on the skeleton), `silgen-member-read`, `silgen-member-write`,
-  `irgen-structs`.
+- `test_structs.ml` (Alcotest `structs`) — the same nine TODO groups in process. Its lexer and parser
+  groups stop before Sema, so early work remains testable while later holes are unfinished.
 - `oracle.t` — **the headline**, in two halves. The runtime half compiles the 16 programs of
   `oracle-corpus.txt` (value semantics, copies of nested structs, structs into and out of
   functions, field writes in loops, Bool fields) with `swiftc -Onone` and with `./lab.exe build`,
@@ -225,13 +246,12 @@ your code here. In the order you fill the holes:
   `TODO(` the loop stops, so it stays red until the last hole is filled. The front-end half asks
   `swiftc -typecheck` and `./lab.exe --typecheck` for a verdict on the 20 programs of
   `typecheck-corpus.txt` — six well-formed, fourteen the struct rules must refuse — and they must
-  agree; that half needs no lowering, so it is green from the start.
+  agree; that half becomes green after the frontend holes and needs no lowering.
 
 A hole you have not started shows as `TODO` with the list of what it will check; a hole in
 progress shows `FAIL` with, under each failing case, what the test wants and what your code
-printed. On the untouched skeleton the two silgen files and `irgen-structs.t` are `TODO`,
-`sema-structs.t` is `PASS`, `oracle.t` is `FAIL` with its front-end half already `OK`, and the
-alcotest is `FAIL` with its four sema cases `OK`.
+printed. On the untouched skeleton, TODO(10a) is the first red stage. Each focused Cram file can be
+run alone with `T=<filename>` as you move through 10a–10i.
 
 ## 5. Benchmark it
 
@@ -262,9 +282,77 @@ algebraic data types. Where a struct is "all of these fields at once" (a product
 one of these cases" (a sum), laid out as a **tag + payload**. Then **12-pattern-matching** gives you
 `switch` to take them apart — and **13-optionals** reveals that `Optional` was just an enum all along.
 
-## 8. Appendix — full solution
+## 8. Appendix — solution
 
-From `solution/silgen.ml` (the access) and `solution/irgen.ml` (the LLVM):
+The complete files are in `solution/`. These are the new cases, in pipeline order:
+
+```ocaml
+(* token.ml + lexer.ml *)
+| "struct" -> Kw_struct
+
+| '.' ->
+    ignore (bump lx);
+    if peek_char lx = '.' && peek2 lx = '<' then (
+      ignore (bump lx); ignore (bump lx);
+      make lo lx Token.DotDotLt)
+    else make lo lx Token.Dot
+| ';' -> ignore (bump lx); make lo lx Token.Newline
+```
+
+```ocaml
+(* parser.ml — postfix reads and optional argument labels *)
+and parse_postfix p e =
+  if peek_kind p = Token.Dot then (
+    ignore (advance p);
+    match peek_kind p with
+    | Token.Ident field ->
+        let field_token = advance p in
+        parse_postfix p
+          (Ast.Member (e, field,
+             span_between (Ast.expr_span e) field_token.Token.span))
+    | _ ->
+        Diagnostics.error p.diags (peek p).Token.span "expected a member name";
+        e)
+  else e
+
+let label =
+  match peek_kind p with
+  | Token.Ident name when peek_kind_at p 1 = Token.Colon ->
+      ignore (advance p); ignore (advance p); Some name
+  | _ -> None
+```
+
+`parse_struct` follows the grammar directly: consume the keyword, name, and `{`; skip separators;
+for every `var` or `let`, parse `name : Type`, append an `Ast.field`, and stop at `}`. The member-write
+arm uses the four-token lookahead from §2 and constructs `Ast.Set_member` before the expression
+fallback.
+
+```ocaml
+(* sema.ml — the registry is deliberately two-pass *)
+List.iter (function
+  | Ast.IStruct s ->
+      if Hashtbl.mem structs s.Ast.sname then
+        err s.Ast.sspan (Printf.sprintf "invalid redeclaration of '%s'" s.Ast.sname);
+      Hashtbl.replace structs s.Ast.sname
+        { Types.sl_name = s.Ast.sname; sl_fields = [] }
+  | _ -> ()) prog.Ast.items;
+
+List.iter (function
+  | Ast.IStruct s ->
+      let fields = List.map (fun (field : Ast.field) ->
+        (field.Ast.fld_name, resolve_ty s.Ast.sspan field.Ast.fld_ty)) s.Ast.sfields in
+      List.iter (fun (field : Ast.field) ->
+        if not field.Ast.fld_var then
+          Hashtbl.replace let_fields (s.Ast.sname, field.Ast.fld_name) ()) s.Ast.sfields;
+      Hashtbl.replace structs s.Ast.sname
+        { Types.sl_name = s.Ast.sname; sl_fields = fields }
+  | _ -> ()) prog.Ast.items
+```
+
+Member reads look up `field_type` after `infer` returns `TStruct name`. Initializers compare the
+argument list with `sl_fields` in order. Member writes use the binding's `is_var` bit and the
+`let_fields` table before calling `check_expr value field_type`; the complete diagnostic branches are
+in `solution/sema.ml`.
 
 ```ocaml
 (* SILGen — member read is a value; member write is an address *)
@@ -288,21 +376,25 @@ From `solution/silgen.ml` (the access) and `solution/irgen.ml` (the LLVM):
 ```ocaml
 (* IRGen — aggregates in LLVM *)
 | Sil.Struct fields ->
-    let sty = llty (vty v) in
-    let acc = ref "undef" in
-    List.iteri (fun idx fv ->
-      let r = fresh () in
-      p (Printf.sprintf "  %s = insertvalue %s %s, %s %s, %d\n" r sty !acc (llty (vty fv)) (op fv) idx);
-      acc := r) fields;
-    Hashtbl.replace opnd v !acc
-| Sil.Struct_extract (a, idx) ->
-    let r = fresh () in
-    p (Printf.sprintf "  %s = extractvalue %s %s, %d\n" r (llty (vty a)) (op a) idx);
-    Hashtbl.replace opnd v r
-| Sil.Struct_element_addr (a, idx) ->
-    let r = fresh () in
-    p (Printf.sprintf "  %s = getelementptr %s, ptr %s, i32 0, i32 %d\n" r (llty (vty a)) (op a) idx);
-    Hashtbl.replace opnd v r
+    let struct_type = llty (vty v) in
+    let aggregate = ref "undef" in
+    List.iteri (fun field_index field_value ->
+      let result = fresh () in
+      p (Printf.sprintf "  %s = insertvalue %s %s, %s %s, %d\n"
+           result struct_type !aggregate (llty (vty field_value))
+           (lookup_operand field_value) field_index);
+      aggregate := result) fields;
+    bind_operand v !aggregate
+| Sil.Struct_extract (aggregate, field_index) ->
+    let result = fresh () in
+    p (Printf.sprintf "  %s = extractvalue %s %s, %d\n"
+         result (llty (vty aggregate)) (lookup_operand aggregate) field_index);
+    bind_operand v result
+| Sil.Struct_element_addr (address, field_index) ->
+    let result = fresh () in
+    p (Printf.sprintf "  %s = getelementptr %s, ptr %s, i32 0, i32 %d\n"
+         result (llty (vty address)) (lookup_operand address) field_index);
+    bind_operand v result
 ```
 
 ## 9. Exercise solutions

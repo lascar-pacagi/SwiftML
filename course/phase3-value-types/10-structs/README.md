@@ -8,17 +8,21 @@ it, so mutating the copy never touches the original.
 **Prerequisites:** the complete Phase-2 compiler (01–09), given and working. This is the first
 Phase-3 concept and the first time we add a whole new **type kind**.
 
-**You edit (the value-type *lowering* — the heart of the concept):**
+**You edit:**
 
-- `silgen.ml` — `TODO(10)`: **member read** (`p.x` → `struct_extract` from a struct value) and
+- `token.ml` and `lexer.ml` — `TODO(10a)`: recognize `struct`, `.`, and `;`.
+- `parser.ml` — `TODO(10b–c)`: parse stored-property declarations, labeled initializer
+  arguments, member reads, and one-level member writes.
+- `sema.ml` — `TODO(10d–f)`: build the struct registry, check memberwise initialization and
+  reads, then enforce both levels of mutability on writes.
+- `silgen.ml` — `TODO(10g–h)`: **member read** (`p.x` → `struct_extract` from a struct value) and
   **member write** (`p.x = e` → `struct_element_addr` into `p`'s own slot, then `store`). Construction
   (`Struct`) is given.
-- `irgen.ml` — `TODO(10)`: the three struct instructions → LLVM (`insertvalue` builds the aggregate,
+- `irgen.ml` — `TODO(10i)`: the three struct instructions → LLVM (`insertvalue` builds the aggregate,
   `extractvalue` reads a field, `getelementptr` addresses a field).
 
-Given and complete: the contracts (`types`/`ast`/`sil` gain struct nodes), the lexer (`.` and `;`),
-the parser (struct decls, member access, labeled init args), and sema (struct registry, member
-typing, memberwise-init checking, member assignment).
+Given and complete: the contracts (`types`/`ast`/`sil` gain struct nodes), parser plumbing shared
+with older constructs, struct construction in SILGen, and the Phase-2 compiler carried underneath.
 
 **Design oracle:** `../../../swift/lib/SILGen/SILGenConstructor.cpp` (memberwise init), the SIL
 `struct`/`struct_extract`/`struct_element_addr` instructions in `swift/docs/SIL.rst`.
@@ -42,8 +46,7 @@ typing, memberwise-init checking, member assignment).
 
 ## Done when
 
-`make lab C=phase3-value-types/10-structs` is green: one cram file per hole
-(`silgen-member-read.t`, `silgen-member-write.t`, `irgen-structs.t`, each `TODO` until you start
-it), the alcotest's four groups, and `oracle.t` — every program in `oracle-corpus.txt` compiled by
+`make lab C=phase3-value-types/10-structs` is green: one focused Cram file per hole, matching
+Alcotest groups, and `oracle.t` — every program in `oracle-corpus.txt` compiled by
 `swiftc` and by `./lab.exe build`, run, and compared byte for byte (value semantics: `q.x = 99`
 leaves `p.x` unchanged; structs into and out of functions; nested structs; writes in loops).

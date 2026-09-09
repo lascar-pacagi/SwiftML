@@ -1,5 +1,5 @@
 (* SILGen — concept 10 (skeleton). Carries Phase-2 SILGen complete; you add the STRUCT
-   lowering (the TODO(10) holes: member read/write). Lower the (checked) AST to memory-based SIL.
+   lowering (TODO(10g) member read, TODO(10h) member write). Lower the checked AST to SIL.
 
    Each variable becomes an `alloc_stack` slot, read with `load`, written with `store` (no
    SSA — Phase-4 mem2reg does that). Control flow becomes basic blocks: `if`/`while`/`for`
@@ -138,10 +138,10 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
         emit b (Sil.Apply (fr, argvs)) ret)
       else emit b (Sil.Print (List.hd argvs)) Types.TVoid
   | Ast.Member (e0, fld, _) ->
-      (* TODO(10): read a field out of a struct VALUE — the layout in [b.structs] turns the field
+      (* TODO(10g): read a field out of a struct VALUE — the layout in [b.structs] turns the field
          NAME into an index. §2. *)
       ignore (e0, fld);
-      failwith "TODO(10-silgen): lower member read (struct_extract)"
+      failwith "TODO(10g): lower member read (struct_extract)"
 
 (* Generate [e] AT an expected type. The only coercion this early is the integer literal that
    checks at Double: it must be BORN a Double, or the slot receives an i64 bit-pattern and
@@ -186,11 +186,11 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       let v = gen_expr b value in
       emit_void b (Sil.Store (v, addr_of b name))
   | Ast.Set_member { obj; field; value; _ } ->
-      (* TODO(10): `p.x = e` — where VALUE SEMANTICS lives. Write THROUGH p's own slot (address of
+      (* TODO(10h): `p.x = e` — where VALUE SEMANTICS lives. Write THROUGH p's own slot (address of
          the field, then store), which is why assigning to p.x can never be observed through a
          copy q. §2. *)
       ignore (obj, field, value);
-      failwith "TODO(10-silgen): lower member write (struct_element_addr + store)"
+      failwith "TODO(10h): lower member write (struct_element_addr + store)"
   | Ast.Expr_stmt (e, _) -> ignore (gen_expr b e)
   | Ast.Return (eo, _) -> (
       match eo with
