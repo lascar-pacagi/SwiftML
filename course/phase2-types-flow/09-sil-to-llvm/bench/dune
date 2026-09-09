@@ -1,0 +1,7 @@
+; Runtime baseline for Milestone M2. It compiles one program with this concept's compiler and
+; with swiftc -O, checks their output, then times both native executables.
+(executable
+ (name bench)
+ (libraries swiftml_llvm unix)
+ (flags
+  (:standard -warn-error -a)))

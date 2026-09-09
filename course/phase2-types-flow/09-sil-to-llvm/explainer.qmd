@@ -203,10 +203,44 @@ the printed output side by side while the mapping is still wrong.
 
 ## 5. Benchmark it
 
-Run a tight integer loop compiled by `swiftml2 build` and by `swiftc -O` and compare. Ours will be
-**slower** — the raw SIL became raw LLVM, full of `alloca`/`load`/`store`, and we ran no SIL passes.
-That gap is exactly what **Phase 4** closes: **mem2reg** promotes those slots to registers (SSA),
-then constant folding, CSE, and inlining take it the rest of the way toward `swiftc -O`.
+The benchmark runs this Collatz workload for every starting value below 500,000:
+
+```swift
+var total = 0
+for start in 1 ..< 500000 {
+  var n = start
+  while n != 1 {
+    if n % 2 == 0 {
+      n = n / 2
+    } else {
+      n = 3 * n + 1
+    }
+    total = total + 1
+  }
+}
+print(total)
+```
+
+Run it from `course/` after completing both holes:
+
+```console
+$ make bench C=phase2-types-flow/09-sil-to-llvm
+IRGen runtime benchmark -- Collatz for starts 1..<500000
+  output: 62134644 (swiftml == swiftc)
+  native runtime, best of 5 after one warm-up:
+    swiftml       0.208 s
+    swiftc -O     0.069 s
+    ratio         3.03x swiftc -O
+```
+
+These are measured reference-solution results; timings vary by machine. The runner first requires
+byte-identical output, then reports the best of five executions after one warm-up. It has no speed
+gate because this concept deliberately emits unoptimized code.
+
+The result shows the baseline Phase 4 will improve. Raw SIL became raw LLVM, still full of
+`alloca`, `load`, and `store`, and clang receives no optimization flag. Phase 4 starts with
+**mem2reg**, which promotes those slots to SSA values, then adds constant folding, CSE, and
+inlining before finally handing the result to clang with optimization enabled.
 
 ## 6. Exercises
 
@@ -215,8 +249,9 @@ then constant folding, CSE, and inlining take it the rest of the way toward `swi
    Then write a **forward dataflow pass on the SIL CFG**: a slot is "initialized on entry to a block"
    iff it's initialized on exit of *all* predecessors; a `load` from an uninitialized slot is
    "variable '…' used before being initialized." Match `swiftc`.
-2. **`Double` output parity.** Implement Swift's shortest-round-trip `Double` formatting (the Ryū /
-   Grisu algorithm, or shell out) so `print(0.1 + 0.2)` matches `swiftc`.
+2. **`Double` output parity.** Print just enough decimal digits to preserve the exact `Double`
+   value when the text is parsed again. Use the Ryū or Grisu algorithm, or shell out, and make
+   `print(0.1 + 0.2)` match `swiftc`.
 3. **A tiny runtime.** Add a `runtime.c` (compiled and linked by the driver) with `swiftml_print_int`
    etc., instead of inlining `printf` calls — the seed of a real standard library (Phase 7).
 
