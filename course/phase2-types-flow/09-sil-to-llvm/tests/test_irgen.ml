@@ -3,29 +3,23 @@
    cram side; these read the text, so a case can count lines and look at where in the module
    something landed — which is how the entry-block alloca rule gets pinned. *)
 
-let llvm_module ?(include_terminators = true) sil_module =
-  Irgen.emit_llvm ~include_terminators sil_module
+let llvm_module ?(should_emit_terminator = fun _ -> true) sil_module =
+  Irgen.emit_llvm ~should_emit_terminator sil_module
 
-let llvm ?(include_terminators = true) (src : string) : string =
+let llvm ?(should_emit_terminator = fun _ -> true) (src : string) : string =
   let d = Diagnostics.create () in
   let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
   Sema.check p d;
-  llvm_module ~include_terminators (Silgen.lower p)
+  llvm_module ~should_emit_terminator (Silgen.lower p)
 
-let instruction_llvm = llvm ~include_terminators:false
+let instruction_llvm = llvm ~should_emit_terminator:(fun _ -> false)
+
+let terminator_llvm should_emit_terminator = llvm ~should_emit_terminator
 
 let contains hay needle =
   let n = String.length hay and m = String.length needle in
   let rec go i = i + m <= n && (String.sub hay i m = needle || go (i + 1)) in
   m = 0 || go 0
-
-let lines src = String.split_on_char '\n' (llvm src)
-let has src needle = Alcotest.(check bool) (Printf.sprintf "%S has %S" src needle) true (contains (llvm src) needle)
-
-let hasnt src needle =
-  Alcotest.(check bool) (Printf.sprintf "%S lacks %S" src needle) false (contains (llvm src) needle)
-
-let count src needle = List.length (List.filter (fun l -> contains l needle) (lines src))
 
 let instruction_has src needle =
   Alcotest.(check bool)
@@ -81,7 +75,9 @@ let test_allocas_in_entry () =
       val_ty = value_types;
     }
   in
-  let emitted = llvm_module ~include_terminators:false { Sil.funcs = [ func ] } in
+  let emitted =
+    llvm_module ~should_emit_terminator:(fun _ -> false) { Sil.funcs = [ func ] }
+  in
   let body = String.split_on_char '\n' emitted |> main_body_lines in
   let rec before_bb1 = function
     | [] -> []
@@ -155,25 +151,53 @@ let test_print () =
 let test_br () =
   (* the loop's entry edge and its back-edge are both plain branches to the header *)
   let src = "var n = 0\nwhile n < 3 { n = n + 1 }\nprint(n)" in
-  has src "br label %bb1";
-  Alcotest.(check int) "two edges into the header" 2 (count src "br label %bb1")
+  let emitted = terminator_llvm (function Sil.Br _ -> true | _ -> false) src in
+  Alcotest.(check bool) "has br label %bb1" true (contains emitted "br label %bb1");
+  Alcotest.(check int) "two edges into the header" 2
+    (String.split_on_char '\n' emitted
+    |> List.filter (fun line -> contains line "br label %bb1")
+    |> List.length)
 
 let test_cond_br () =
-  has "let x = 1\nif x < 0 { print(0) } else { print(1) }" "br i1 ";
-  has "let x = 1\nif x < 0 { print(0) } else { print(1) }" ", label %bb"
+  let src = "let x = 1\nif x < 0 { print(0) } else { print(1) }" in
+  let emitted = terminator_llvm (function Sil.Cond_br _ -> true | _ -> false) src in
+  Alcotest.(check bool) "has br i1" true (contains emitted "br i1 ");
+  Alcotest.(check bool) "has typed block labels" true (contains emitted ", label %bb")
 
 let test_ret_typed () =
-  has "func id(_ x: Int) -> Int { return x }\nprint(id(1))" "  ret i64 ";
-  has "func yes() -> Bool { return true }\nprint(yes())" "  ret i1 ";
-  has "func shout(_ n: Int) { print(n) }\nshout(1)" "  ret void"
+  let emit_returns =
+    terminator_llvm (function Sil.Return (Some _) -> true | _ -> false)
+  in
+  let has_return src expected =
+    Alcotest.(check bool) expected true (contains (emit_returns src) expected)
+  in
+  has_return "func id(_ x: Int) -> Int { return x }\nprint(id(1))" "ret i64 ";
+  has_return "func yes() -> Bool { return true }\nprint(yes())" "ret i1 "
+
+let test_ret_void () =
+  let emitted =
+    terminator_llvm (function Sil.Return None -> true | _ -> false)
+      "func shout(_ n: Int) { print(n) }\nshout(1)"
+  in
+  Alcotest.(check bool) "has ret void" true (contains emitted "ret void")
 
 let test_main_returns_i32 () =
   (* @main is the C entry point: SIL returns $() but LLVM must return the exit code *)
-  has "print(1)" "  ret i32 0";
-  hasnt "print(1)" "define void @main"
+  let emitted =
+    terminator_llvm (function Sil.Return None -> true | _ -> false) "print(1)"
+  in
+  Alcotest.(check bool) "main has ret i32 0" true (contains emitted "ret i32 0");
+  Alcotest.(check bool) "main is not void" false (contains emitted "define void @main")
 
 let test_unreachable () =
-  has "func pick(_ c: Bool) -> Int { if c { return 1 } else { return 2 } }\nprint(pick(true))" "  unreachable"
+  let src =
+    "func pick(_ c: Bool) -> Int { if c { return 1 } else { return 2 } }\n\
+     print(pick(true))"
+  in
+  let emitted =
+    terminator_llvm (function Sil.Unreachable -> true | _ -> false) src
+  in
+  Alcotest.(check bool) "has unreachable" true (contains emitted "unreachable")
 
 let () =
   Alcotest.run "irgen"
@@ -198,6 +222,7 @@ let () =
           Alcotest.test_case "br label" `Quick test_br;
           Alcotest.test_case "cond_br is br i1" `Quick test_cond_br;
           Alcotest.test_case "ret takes the ret type" `Quick test_ret_typed;
+          Alcotest.test_case "bare return is ret void" `Quick test_ret_void;
           Alcotest.test_case "@main returns i32 0" `Quick test_main_returns_i32;
           Alcotest.test_case "unreachable survives" `Quick test_unreachable;
         ] );

@@ -3,12 +3,15 @@
    not see your work in this directory):
      ./lab.exe build <file.swift> [-o <out>]
      ./lab.exe --emit-tokens|--emit-ast|--typecheck|--emit-sil|--emit-llvm <file.swift>
-     ./lab.exe --emit-llvm-instrs <file.swift>  (test gen_instr before gen_term) *)
+     ./lab.exe --emit-llvm-instrs <file.swift>  (test gen_instr before gen_term)
+     ./lab.exe --emit-llvm-terms <kind> <file.swift>  (test one terminator kind) *)
 
 let usage () =
   prerr_endline "usage: lab build <file.swift> [-o <out>]";
   prerr_endline "       lab --emit-tokens|--emit-ast|--typecheck|--emit-sil|--emit-llvm <file.swift>";
   prerr_endline "       lab --emit-llvm-instrs <file.swift>";
+  prerr_endline
+    "       lab --emit-llvm-terms <br|cond-br|return-value|return-none|unreachable> <file.swift>";
   exit 2
 
 let emit_of_flag : string -> Driver.emit option = function
@@ -32,7 +35,21 @@ let () =
   | _ :: "--emit-llvm-instrs" :: [ file ] ->
       let source = Driver.read_file file in
       let diagnostics = Diagnostics.create () in
-      print_string (Driver.to_llvm ~include_terminators:false source diagnostics)
+      print_string
+        (Driver.to_llvm ~should_emit_terminator:(fun _ -> false) source diagnostics)
+  | _ :: "--emit-llvm-terms" :: kind :: [ file ] ->
+      let should_emit_terminator =
+        match kind with
+        | "br" -> (function Sil.Br _ -> true | _ -> false)
+        | "cond-br" -> (function Sil.Cond_br _ -> true | _ -> false)
+        | "return-value" -> (function Sil.Return (Some _) -> true | _ -> false)
+        | "return-none" -> (function Sil.Return None -> true | _ -> false)
+        | "unreachable" -> (function Sil.Unreachable -> true | _ -> false)
+        | _ -> usage ()
+      in
+      let source = Driver.read_file file in
+      let diagnostics = Diagnostics.create () in
+      print_string (Driver.to_llvm ~should_emit_terminator source diagnostics)
   | _ :: flag :: [ file ] when emit_of_flag flag <> None ->
       Driver.compile_file ~src_path:file ~emit:(Option.get (emit_of_flag flag)) ()
   | _ -> usage ()

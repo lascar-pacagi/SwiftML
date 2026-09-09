@@ -270,6 +270,10 @@ The `gen_instr` cases can pass before `gen_term` is started. The terminator and 
 red until the emitted module is complete. A failing case shows the wanted and printed output side by
 side.
 
+The terminator tests use `--emit-llvm-terms <kind>` to select `br`, `cond-br`, `return-value`,
+`return-none`, or `unreachable`. An unfinished terminator form therefore cannot hide the result of
+a completed one.
+
 While working on the first hole, run only its focused file:
 
 ```bash

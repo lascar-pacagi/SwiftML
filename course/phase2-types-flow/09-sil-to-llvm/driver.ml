@@ -26,7 +26,8 @@ let bail_on_errors (diags : Diagnostics.sink) : unit =
     exit 1)
 
 (* source -> verified SIL -> LLVM IR text *)
-let to_llvm ?(include_terminators = true) (src : string) (diags : Diagnostics.sink) : string =
+let to_llvm ?(should_emit_terminator = fun _ -> true) (src : string)
+    (diags : Diagnostics.sink) : string =
   let prog = frontend src diags in
   bail_on_errors diags;
   let m = Silgen.lower prog in
@@ -35,7 +36,7 @@ let to_llvm ?(include_terminators = true) (src : string) (diags : Diagnostics.si
   | errs ->
       List.iter (fun e -> prerr_endline ("SIL verification error: " ^ e)) errs;
       exit 1);
-  Irgen.emit_llvm ~include_terminators m
+  Irgen.emit_llvm ~should_emit_terminator m
 
 let run_clang ~(ll_path : string) ~(out : string) : unit =
   let cmd = Printf.sprintf "clang -Wno-override-module %s -o %s" (Filename.quote ll_path) (Filename.quote out) in

@@ -15,7 +15,7 @@ let llvm_type : Types.ty -> string = function
   | Types.TString -> "ptr"
   | Types.TVoid -> "void"
 
-let emit_llvm ?(include_terminators = true) (sil_module : Sil.modul) : string =
+let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul) : string =
   let global_definitions = Buffer.create 256 in
   let function_definitions = Buffer.create 1024 in
   let next_string_id = ref 0 in
@@ -180,7 +180,7 @@ let emit_llvm ?(include_terminators = true) (sil_module : Sil.modul) : string =
         emit (Printf.sprintf "bb%d:\n" block.Sil.bid);
         if block_index = 0 then gen_allocas ();
         List.iter gen_instr (List.rev block.Sil.instrs);
-        if include_terminators then gen_term block.Sil.term)
+        if should_emit_terminator block.Sil.term then gen_term block.Sil.term)
       (List.rev func.Sil.blocks);
     emit "}\n\n"
   in
