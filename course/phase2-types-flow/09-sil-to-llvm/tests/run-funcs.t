@@ -15,7 +15,7 @@ Arguments arrive in order, results come back, and calls nest.
   > print(sub(3, 4))
   > print(add(add(1, 2), sub(10, 3)))
   > EOF
-  $ ./lab.exe build a.swift -o a && ./a
+  $ ./lab.exe build a.swift -o a && python3 timeout.py 5 ./a
   7
   -1
   10
@@ -30,7 +30,7 @@ Recursion works because nothing is shared: each call gets its own allocas.
   > print(fib(10))
   > print(fib(20))
   > EOF
-  $ ./lab.exe build f.swift -o f && ./f
+  $ ./lab.exe build f.swift -o f && python3 timeout.py 5 ./f
   55
   6765
 
@@ -48,7 +48,7 @@ Mutual recursion works too — SILGen collected both signatures before lowering 
   > print(isEven(10))
   > print(isEven(7))
   > EOF
-  $ ./lab.exe build m.swift -o m && ./m
+  $ ./lab.exe build m.swift -o m && python3 timeout.py 5 ./m
   true
   false
 
@@ -62,7 +62,7 @@ A `Void` function returns `ret void`, and an early bare `return` leaves it.
   > early(0)
   > early(7)
   > EOF
-  $ ./lab.exe build v.swift -o v && ./v
+  $ ./lab.exe build v.swift -o v && python3 timeout.py 5 ./v
   7
 
 Loops inside functions: the counter's slot is local to the call, so `sum(0)` is 0 and `sum(10)`
@@ -78,7 +78,7 @@ is 45.
   > print(sum(0))
   > print(sum(sum(4)))
   > EOF
-  $ ./lab.exe build s.swift -o s && ./s
+  $ ./lab.exe build s.swift -o s && python3 timeout.py 5 ./s
   45
   0
   15
@@ -108,6 +108,6 @@ Two real algorithms, as a smoke test for the whole phase.
   > print(gcd(48, 18))
   > print(collatz(27))
   > EOF
-  $ ./lab.exe build g.swift -o g && ./g
+  $ ./lab.exe build g.swift -o g && python3 timeout.py 5 ./g
   6
   111

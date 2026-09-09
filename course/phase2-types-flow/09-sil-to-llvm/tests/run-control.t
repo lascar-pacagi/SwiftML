@@ -13,7 +13,7 @@ a program that never stops.
   > if m == 0 { m = m + 5 }
   > print(m)
   > EOF
-  $ ./lab.exe build i.swift -o i && ./i
+  $ ./lab.exe build i.swift -o i && python3 timeout.py 5 ./i
   1
   2
   5
@@ -27,7 +27,7 @@ A `while` runs its body until the condition fails, and `while false` never enter
   > while false { print(1) }
   > print(0)
   > EOF
-  $ ./lab.exe build w.swift -o w && ./w
+  $ ./lab.exe build w.swift -o w && python3 timeout.py 5 ./w
   5
   0
 
@@ -40,7 +40,7 @@ A `for` runs `hi - lo` times, and an empty range never enters the body at all.
   > for i in 0 ..< 3 { print(i) }
   > for i in 3 ..< 3 { print(99) }
   > EOF
-  $ ./lab.exe build f.swift -o f && ./f
+  $ ./lab.exe build f.swift -o f && python3 timeout.py 5 ./f
   10
   0
   1
@@ -57,7 +57,7 @@ the branch really goes to the exit block.
   > }
   > print(n)
   > EOF
-  $ ./lab.exe build b.swift -o b && ./b
+  $ ./lab.exe build b.swift -o b && python3 timeout.py 5 ./b
   4
 
 `continue` in a `for` must reach the LATCH, not the header. Sending it to the header skips
@@ -71,7 +71,7 @@ the branch really goes to the exit block.
   > }
   > print(s)
   > EOF
-  $ ./lab.exe build c.swift -o c && ./c
+  $ ./lab.exe build c.swift -o c && python3 timeout.py 5 ./c
   7
 
 Nested loops, with `break` and `continue` each addressing the inner one only.
@@ -98,6 +98,6 @@ Nested loops, with `break` and `continue` each addressing the inner one only.
   > }
   > print(t)
   > EOF
-  $ ./lab.exe build n.swift -o n && ./n
+  $ ./lab.exe build n.swift -o n && python3 timeout.py 5 ./n
   6
   4

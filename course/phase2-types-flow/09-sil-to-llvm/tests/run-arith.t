@@ -15,7 +15,7 @@ toward zero and the remainder takes the sign of the left operand.
   > print(-7 % 3)
   > print(7 % -3)
   > EOF
-  $ ./lab.exe build a.swift -o a && ./a
+  $ ./lab.exe build a.swift -o a && python3 timeout.py 5 ./a
   2
   9
   3
@@ -33,7 +33,7 @@ Unary minus, and a `let`/`var` round trip through its stack slot.
   > print(-c)
   > print(-(2 - 5) * -2)
   > EOF
-  $ ./lab.exe build v.swift -o v && ./v
+  $ ./lab.exe build v.swift -o v && python3 timeout.py 5 ./v
   -26
   -6
 
@@ -50,7 +50,7 @@ string constants in the preamble, so it comes out as Swift spells it.
   > print(1 == 1)
   > print(2 >= 3)
   > EOF
-  $ ./lab.exe build b.swift -o b && ./b
+  $ ./lab.exe build b.swift -o b && python3 timeout.py 5 ./b
   true
   false
   true
@@ -74,13 +74,13 @@ is only evaluated on the deciding edge.
   >   print(8)
   > }
   > EOF
-  $ ./lab.exe build sc.swift -o sc && ./sc
+  $ ./lab.exe build sc.swift -o sc && python3 timeout.py 5 ./sc
   8
 
 A program that prints nothing still exits 0 — `@main`'s `ret i32 0` is the exit code.
 
   $ printf 'let x = 1\n' > q.swift
-  $ ./lab.exe build q.swift -o q && ./q; echo "exit=$?"
+  $ ./lab.exe build q.swift -o q && python3 timeout.py 5 ./q; echo "exit=$?"
   exit=0
 
 Dividing by zero TRAPS rather than producing a number: `sdiv`/`srem` are undefined behaviour in
@@ -89,28 +89,28 @@ one swiftc gives:
 
   $ printf 'let a = 10\nlet b = 0\nprint(a / b)\n' > dz.swift
   $ ./lab.exe build dz.swift -o dz >/dev/null 2>&1
-  $ sh -c './dz; echo "exit=$?"' 2>/dev/null
+  $ sh -c 'python3 timeout.py 5 ./dz; echo "exit=$?"' 2>/dev/null
   exit=133
 
 The message is swiftc's own, on stderr (swiftc prefixes a source location, as it does for every
 trap; the `sed` drops it so the two can be compared):
 
-  $ sh -c './dz 2>dz.err' 2>/dev/null; sed 's/^.*Fatal error/Fatal error/' dz.err
+  $ sh -c 'python3 timeout.py 5 ./dz 2>dz.err' 2>/dev/null; sed 's/^.*Fatal error/Fatal error/' dz.err
   Fatal error: Division by zero
 
 Remainder traps too, with the wording swiftc uses for it:
 
   $ printf 'let a = 10\nlet b = 0\nprint(a %% b)\n' > dr.swift
   $ ./lab.exe build dr.swift -o dr >/dev/null 2>&1
-  $ sh -c './dr; echo "exit=$?"' 2>/dev/null
+  $ sh -c 'python3 timeout.py 5 ./dr; echo "exit=$?"' 2>/dev/null
   exit=133
-  $ sh -c './dr 2>dr.err' 2>/dev/null; sed 's/^.*Fatal error/Fatal error/' dr.err
+  $ sh -c 'python3 timeout.py 5 ./dr 2>dr.err' 2>/dev/null; sed 's/^.*Fatal error/Fatal error/' dr.err
   Fatal error: Division by zero in remainder operation
 
 A non-zero divisor is untouched by the guard — the ordinary path still divides:
 
   $ printf 'print(7 / 2)\nprint(7 %% 2)\nprint(-7 / 2)\n' > dok.swift
-  $ ./lab.exe build dok.swift -o dok && ./dok
+  $ ./lab.exe build dok.swift -o dok && python3 timeout.py 5 ./dok
   3
   1
   -3

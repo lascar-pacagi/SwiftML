@@ -270,6 +270,9 @@ The `gen_instr` cases can pass before `gen_term` is started. The terminator and 
 red until the emitted module is complete. A failing case shows the wanted and printed output side by
 side.
 
+Every generated executable runs through a five-second test deadline. A mistaken back-edge therefore
+fails with exit `124` instead of leaving `make lab` stuck in an infinite loop.
+
 The terminator tests use `--emit-llvm-terms <kind>` to select `br`, `cond-br`, `return-value`,
 `return-none`, or `unreachable`. An unfinished terminator form therefore cannot hide the result of
 a completed one.

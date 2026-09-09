@@ -22,8 +22,8 @@ rather than as a wall of diffs:
   >     if grep -q 'TODO(' err.txt; then echo "(stopping: the hole above is not started)"; break; fi
   >     continue
   >   fi
-  >   ./sw$n > sw$n.out 2>&1; swrc=$?
-  >   ./ml$n > ml$n.out 2>&1; mlrc=$?
+  >   python3 timeout.py 5 ./sw$n > sw$n.out 2>&1; swrc=$?
+  >   python3 timeout.py 5 ./ml$n > ml$n.out 2>&1; mlrc=$?
   >   if [ $swrc -ne $mlrc ] || ! cmp -s sw$n.out ml$n.out; then
   >     printf 'DIVERGE (swiftc exit=%s ours exit=%s): %s\n' "$swrc" "$mlrc" "$prog"; diff sw$n.out ml$n.out
   >   fi

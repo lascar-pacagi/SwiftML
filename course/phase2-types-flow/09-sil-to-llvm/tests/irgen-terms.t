@@ -51,5 +51,5 @@ merge block of an `if` whose arms both returned is where it shows up.
 
 The IR has to be well-formed, not merely printable: `clang` is the judge, and `build` runs it.
 
-  $ ./lab.exe build p.swift -o p && ./p
+  $ ./lab.exe build p.swift -o p && python3 timeout.py 5 ./p
   1

@@ -136,6 +136,7 @@ let test_calls () =
   instruction_has src "define void @sink(i64 ";
   instruction_has src "= call i64 @add(i64 1, i64 2)";
   instruction_has src "call void @sink(i64 ";
+  instruction_hasnt src "= call void";
   (* a function_ref is an operand too — it emits no line of its own *)
   Alcotest.(check int) "one call line per apply" 2
     (instruction_count src "call void @sink" + instruction_count src "call i64 @add")
