@@ -31,17 +31,10 @@ done
 [ -n "$FILES" ] || { echo "$C: solution/ has no counterpart in the concept dir"; exit 0; }
 echo "check-solution: swapped$FILES"
 
-out="$(mktemp)"
-opam exec -- dune build "@$C/runtest" --force >"$out" 2>&1
+# Use the same runner as the learner.  Besides keeping the report identical, this
+# preserves any staged test order declared by the concept.
+make -s lab C="$C"
 rc=$?
-ex="_build/default/$C/tests/test_exercises.exe"
-[ -x "$ex" ] && "$ex" >>"$out" 2>&1 || true
-if [ -t 1 ]; then col=1; else col=0; fi
-cts=$(cd "$C" && ls tests/*.t 2>/dev/null | tr '\n' ' ')
-ats=$(sed -n 's/.*Alcotest\.run "\([^"]*\)".*/\1/p' "$C"/tests/*.ml 2>/dev/null | tr '\n' '|')
-awk -v color=$col -v prefix="$C/" -v cram_files="$cts" -v alcotest_suites="$ats" \
-    -f tooling/labfmt.awk "$out"
-rm -f "$out"
 
 if [ $rc -eq 0 ]; then echo; echo "ANSWER KEY OK — $C passes its own tests"
 else echo; echo "ANSWER KEY BROKEN — $C does not pass its own tests (exit $rc)"; fi

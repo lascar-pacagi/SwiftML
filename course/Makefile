@@ -32,11 +32,19 @@ run:
 # ALL concept tests (cram + alcotest, every phase). On the shipped tree this is RED by design —
 # the skeletons' TODO holes fail their own tests. Use `make lab C=<concept>` while working.
 test:
-	$(DUNE) build @runtest
+	$(DUNE) build @runtest \
+	  @phase2-types-flow/09-sil-to-llvm/tests/run-arith \
+	  @phase2-types-flow/09-sil-to-llvm/tests/run-control \
+	  @phase2-types-flow/09-sil-to-llvm/tests/run-funcs \
+	  @phase2-types-flow/09-sil-to-llvm/tests/oracle
 
 # Build everything, then run all tests.
 test-all:
-	$(DUNE) build @all @runtest
+	$(DUNE) build @all @runtest \
+	  @phase2-types-flow/09-sil-to-llvm/tests/run-arith \
+	  @phase2-types-flow/09-sil-to-llvm/tests/run-control \
+	  @phase2-types-flow/09-sil-to-llvm/tests/run-funcs \
+	  @phase2-types-flow/09-sil-to-llvm/tests/oracle
 
 # Run just one concept's tests against your in-progress code in that directory:
 #   make lab C=phase1-minimal/01-lexer
@@ -53,9 +61,31 @@ lab:
 	  echo "usage: make lab C=<concept dir> [T=<cram file, without .t>]"; \
 	  echo "   eg: make lab C=phase2-types-flow/05-types-inference T=lexer"; \
 	  echo "       (whole tree: make test)"; exit 2; fi
-	@out=$$(mktemp); \
+	@out=$$(mktemp); skipped=""; stages="$(C)/tests/lab-stages"; \
 	echo "Running $(C)$(if $(T),/tests/$(T).t,) — results appear when the suite finishes."; \
 	$(DUNE) build @$(C)/$(if $(T),tests/$(T),runtest) --force >$$out 2>&1; rc=$$?; \
+	if [ -z "$(T)" ] && [ -f "$$stages" ]; then \
+	  if [ $$rc -eq 0 ]; then \
+	    while read -r alias files; do \
+	      case "$$alias" in \#*|"") continue;; esac; \
+	      echo "Earlier checks passed; running $$alias tests."; \
+	      targets=""; for f in $$files; do targets="$$targets @$(C)/tests/$$f"; done; \
+	      $(DUNE) build $$targets --force >>$$out 2>&1; stage_rc=$$?; \
+	      if [ $$stage_rc -ne 0 ]; then rc=$$stage_rc; \
+	        rest=0; while read -r later_alias later_files; do \
+	          case "$$later_alias" in \#*|"") continue;; esac; \
+	          if [ "$$rest" -eq 1 ]; then for f in $$later_files; do skipped="$$skipped tests/$$f.t"; done; fi; \
+	          [ "$$later_alias" = "$$alias" ] && rest=1; \
+	        done < "$$stages"; \
+	        break; \
+	      fi; \
+	    done < "$$stages"; \
+	  else \
+	    while read -r alias files; do case "$$alias" in \#*|"") continue;; esac; \
+	      for f in $$files; do skipped="$$skipped tests/$$f.t"; done; \
+	    done < "$$stages"; \
+	  fi; \
+	fi; \
 	ex=_build/default/$(C)/tests/test_exercises.exe; \
 	if [ -z "$(T)" ] && [ -x "$$ex" ]; then "$$ex" >>$$out 2>&1 || true; fi; \
 	if [ -t 1 ]; then col=1; else col=0; fi; \
@@ -63,7 +93,7 @@ lab:
 	else cts=$$(cd $(C) && ls tests/*.t 2>/dev/null | tr '\n' ' '); fi; \
 	ats=$$(sed -n 's/.*Alcotest\.run "\([^"]*\)".*/\1/p' $(C)/tests/*.ml 2>/dev/null | tr '\n' '|'); \
 	if [ -n "$(T)" ]; then ats=""; fi; \
-	if [ -n "$(RAW)" ]; then cat $$out; else awk -v color=$$col -v prefix="$(C)/" -v cram_files="$$cts" -v alcotest_suites="$$ats" -v detail_all="$(DETAIL)" -f tooling/labfmt.awk $$out; fi; \
+	if [ -n "$(RAW)" ]; then cat $$out; else awk -v color=$$col -v prefix="$(C)/" -v cram_files="$$cts" -v alcotest_suites="$$ats" -v skipped_cram="$$skipped" -v detail_all="$(DETAIL)" -f tooling/labfmt.awk $$out; fi; \
 	rm -f $$out; exit $$rc
 
 # Build a concept against its ANSWER KEY and run its tests — the only thing that compiles

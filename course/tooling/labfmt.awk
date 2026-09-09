@@ -18,6 +18,8 @@
 
 BEGIN {
   if (color) { B = "\033[1m"; R = "\033[31m"; G = "\033[32m"; C = "\033[36m"; D = "\033[2m"; Y = "\033[33m"; Z = "\033[0m" }
+  ns = split(skipped_cram, sf, " ")
+  for (i = 1; i <= ns; i++) if (sf[i] != "") explicitly_skipped[sf[i]] = 1
 }
 
 { clean = $0; gsub(/\033\[[0-9;]*m/, "", clean) }   # ANSI-free copy, for the matchers below
@@ -272,7 +274,10 @@ END {
         if (failing && kind == "cram") unstarted = (nblk[tf] > 0 && nfailing(si, tf) == nblk[tf])
         else if (failing) unstarted = (nbad[si] > 0 && nok[si] == 0)
         total++
-        if (optional) {
+        if (kind == "cram" && part[2] in explicitly_skipped && !si) {
+          out = out sprintf("%sSKIP%s %s (%s) — an earlier stage failed\n", D, Z, part[2], kind)
+          nskip++; continue
+        } else if (optional) {
           out = out sprintf("%s%sTODO%s %s%s%s (%s) — optional\n", B, Y, Z, B, part[2], Z, kind)
           nopts++
         } else if (unstarted && !detail_all) {

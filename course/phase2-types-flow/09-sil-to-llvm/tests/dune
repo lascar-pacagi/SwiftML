@@ -9,6 +9,21 @@
   (:standard -warn-error -a)))
 
 (cram
+ (applies_to irgen-instrs irgen-terms)
+ (deps lab.exe timeout.py))
+
+; Compiling and linking programs costs more than inspecting emitted IR.  `make lab`
+; reaches this alias only after the instruction and terminator checks pass.
+(cram
+ (applies_to run-arith run-control run-funcs)
+ (runtest_alias false)
+ (deps lab.exe timeout.py))
+
+; The live swiftc comparison is the longest check.  Keep it out of @runtest so
+; `make lab` can run it only after both earlier stages are green.
+(cram
+ (applies_to oracle)
+ (runtest_alias false)
  (deps lab.exe oracle-corpus.txt timeout.py))
 
 (tests
