@@ -38,12 +38,23 @@ let emit_llvm (m : Sil.modul) : string =
     name
   in
   let gen_func (f : Sil.func) =
+    (* The process entry point follows the C ABI and returns an i32 status code, even though
+       the source-level main body has no return value. *)
     let is_main = f.Sil.fname = "main" in
+    (* IRGen learns the printed LLVM operand for each SIL value as it walks the function.
+       An operand may be an immediate constant, an argument such as %arg0, or a temporary. *)
     let opnd : (Sil.value, string) Hashtbl.t = Hashtbl.create 64 in
+    (* LLVM temporary names are local to a function, so numbering restarts for every function. *)
     let nt = ref 0 in
-    let fresh () = let n = !nt in incr nt; Printf.sprintf "%%t%d" n in
+    let fresh () =
+      let n = !nt in
+      incr nt;
+      Printf.sprintf "%%t%d" n
+    in
+    (* Look up a value's LLVM spelling, or its SIL type when choosing an LLVM type or opcode. *)
     let op x = Hashtbl.find opnd x in
     let vty x = Hashtbl.find f.Sil.val_ty x in
+    (* Append emitted LLVM text to the module's function buffer. *)
     let p s = Buffer.add_string out s in
     (* parameters *)
     let pdecls =
