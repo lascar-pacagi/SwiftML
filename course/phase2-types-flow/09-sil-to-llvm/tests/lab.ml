@@ -2,11 +2,13 @@
    directory exercise YOUR code here (the phase binary links the phase's FINAL concept and would
    not see your work in this directory):
      ./lab.exe build <file.swift> [-o <out>]
-     ./lab.exe --emit-tokens|--emit-ast|--typecheck|--emit-sil|--emit-llvm <file.swift> *)
+     ./lab.exe --emit-tokens|--emit-ast|--typecheck|--emit-sil|--emit-llvm <file.swift>
+     ./lab.exe --emit-llvm-instrs <file.swift>  (test gen_instr before gen_term) *)
 
 let usage () =
   prerr_endline "usage: lab build <file.swift> [-o <out>]";
   prerr_endline "       lab --emit-tokens|--emit-ast|--typecheck|--emit-sil|--emit-llvm <file.swift>";
+  prerr_endline "       lab --emit-llvm-instrs <file.swift>";
   exit 2
 
 let emit_of_flag : string -> Driver.emit option = function
@@ -27,6 +29,10 @@ let () =
         | _ -> usage ()
       in
       Driver.compile_file ~out ~src_path:file ~emit:Driver.Exe ()
+  | _ :: "--emit-llvm-instrs" :: [ file ] ->
+      let source = Driver.read_file file in
+      let diagnostics = Diagnostics.create () in
+      print_string (Driver.to_llvm ~include_terminators:false source diagnostics)
   | _ :: flag :: [ file ] when emit_of_flag flag <> None ->
       Driver.compile_file ~src_path:file ~emit:(Option.get (emit_of_flag flag)) ()
   | _ -> usage ()

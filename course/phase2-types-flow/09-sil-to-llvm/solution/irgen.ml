@@ -12,7 +12,7 @@ let llty : Types.ty -> string = function
   | Types.TString -> "ptr"
   | Types.TVoid -> "void"
 
-let emit_llvm (m : Sil.modul) : string =
+let emit_llvm ?(include_terminators = true) (m : Sil.modul) : string =
   let globals = Buffer.create 256 in
   let out = Buffer.create 1024 in
   let strn = ref 0 in
@@ -158,7 +158,7 @@ let emit_llvm (m : Sil.modul) : string =
         p (Printf.sprintf "bb%d:\n" b.Sil.bid);
         if bi = 0 then gen_allocas ();
         List.iter gen_instr (List.rev b.Sil.instrs);
-        gen_term b.Sil.term)
+        if include_terminators then gen_term b.Sil.term)
       (List.rev f.Sil.blocks);
     p "}\n\n"
   in

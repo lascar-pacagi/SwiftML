@@ -3,11 +3,16 @@
    cram side; these read the text, so a case can count lines and look at where in the module
    something landed — which is how the entry-block alloca rule gets pinned. *)
 
-let llvm (src : string) : string =
+let llvm_module ?(include_terminators = true) sil_module =
+  Irgen.emit_llvm ~include_terminators sil_module
+
+let llvm ?(include_terminators = true) (src : string) : string =
   let d = Diagnostics.create () in
   let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
   Sema.check p d;
-  Irgen.emit_llvm (Silgen.lower p)
+  llvm_module ~include_terminators (Silgen.lower p)
+
+let instruction_llvm = llvm ~include_terminators:false
 
 let contains hay needle =
   let n = String.length hay and m = String.length needle in
@@ -22,27 +27,62 @@ let hasnt src needle =
 
 let count src needle = List.length (List.filter (fun l -> contains l needle) (lines src))
 
+let instruction_has src needle =
+  Alcotest.(check bool)
+    (Printf.sprintf "%S has %S" src needle)
+    true (contains (instruction_llvm src) needle)
+
+let instruction_hasnt src needle =
+  Alcotest.(check bool)
+    (Printf.sprintf "%S lacks %S" src needle)
+    false (contains (instruction_llvm src) needle)
+
+let instruction_count src needle =
+  String.split_on_char '\n' (instruction_llvm src)
+  |> List.filter (fun line -> contains line needle)
+  |> List.length
+
 (* the lines of @main's body, in order, from `define … @main` to its closing brace *)
-let main_body src =
+let main_body_lines module_lines =
   let rec after = function
     | [] -> []
     | l :: rest -> if contains l "@main(" then rest else after rest
   in
   let rec upto = function [] -> [] | l :: rest -> if l = "}" then [] else l :: upto rest in
-  upto (after (lines src))
+  upto (after module_lines)
 
 (* ---- given: the module preamble and the alloca-hoisting rule ---- *)
 
 let test_preamble () =
-  has "print(1)" "declare i32 @printf(ptr, ...)";
-  has "print(1)" "define i32 @main()";
-  has "print(1)" "@.fmt_int = private unnamed_addr constant"
+  instruction_has "" "declare i32 @printf(ptr, ...)";
+  instruction_has "" "define i32 @main()";
+  instruction_has "" "@.fmt_int = private unnamed_addr constant"
 
 let test_allocas_in_entry () =
-  (* a `let` inside a loop body must still alloca in the ENTRY block: an alloca in the loop
-     would grow the stack every trip, and only entry-block allocas are promoted by mem2reg *)
-  let src = "var s = 0\nfor i in 0 ..< 3 { let d = i * 2\n s = s + d }\nprint(s)" in
-  let body = main_body src in
+  (* Use only the given Alloc_stack case, so this given-code check passes before gen_instr. *)
+  let value_types = Hashtbl.create 3 in
+  List.iter (fun value -> Hashtbl.add value_types value Types.TInt) [ 0; 1; 2 ];
+  let entry = { Sil.bid = 0; instrs = []; term = Sil.Return None } in
+  let loop_body =
+    {
+      Sil.bid = 1;
+      instrs =
+        [ (2, Sil.Alloc_stack "third"); (1, Sil.Alloc_stack "second");
+          (0, Sil.Alloc_stack "first") ];
+      term = Sil.Return None;
+    }
+  in
+  let func =
+    {
+      Sil.fname = "main";
+      params = [];
+      ret = Types.TVoid;
+      blocks = [ loop_body; entry ];
+      val_ty = value_types;
+    }
+  in
+  let emitted = llvm_module ~include_terminators:false { Sil.funcs = [ func ] } in
+  let body = String.split_on_char '\n' emitted |> main_body_lines in
   let rec before_bb1 = function
     | [] -> []
     | l :: rest -> if l = "bb1:" then [] else l :: before_bb1 rest
@@ -50,51 +90,59 @@ let test_allocas_in_entry () =
   let entry = before_bb1 body in
   Alcotest.(check int) "three allocas, all in bb0" 3
     (List.length (List.filter (fun l -> contains l "alloca") entry));
-  Alcotest.(check int) "and none anywhere else" 3 (count src "alloca")
+  Alcotest.(check int) "and none anywhere else" 3
+    (List.length
+       (List.filter (fun line -> contains line "alloca")
+          (String.split_on_char '\n' emitted)))
 
 (* ---- TODO(09) gen_instr ---- *)
 
 let test_memory () =
-  has "let x = 1\nprint(x)" "= alloca i64";
-  has "let x = 1\nprint(x)" "store i64 1, ptr";
-  has "let x = 1\nprint(x)" "= load i64, ptr"
+  instruction_has "let x = 1\nx" "= alloca i64";
+  instruction_has "let x = 1\nx" "store i64 1, ptr";
+  instruction_has "let x = 1\nx" "= load i64, ptr"
 
 let test_literals_are_operands () =
   (* a literal is an operand, not an instruction: nothing in the module defines it *)
-  hasnt "print(1)" "integer_literal";
-  has "print(1)" "@printf(ptr @.fmt_int, i64 1)";
-  has "print(true)" "select i1 1, ptr @.btrue, ptr @.bfalse"
+  instruction_hasnt "let x = 1" "integer_literal";
+  instruction_has "let x = 1" "store i64 1, ptr";
+  instruction_has "let b = true" "store i1 1, ptr"
 
 let test_int_opcodes () =
-  has "print(1 + 2)" "add i64";
-  has "print(7 - 3)" "sub i64";
-  has "print(2 * 3)" "mul i64";
-  has "print(9 / 3)" "sdiv i64";
-  has "print(9 % 4)" "srem i64";
-  has "let n = 7\nprint(-n)" "sub i64 0,"
+  instruction_has "1 + 2" "add i64";
+  instruction_has "7 - 3" "sub i64";
+  instruction_has "2 * 3" "mul i64";
+  instruction_has "9 / 3" "sdiv i64";
+  instruction_has "9 % 4" "srem i64";
+  instruction_has "let n = 7\n-n" "sub i64 0,"
 
 let test_compare_opcodes () =
-  has "print(1 < 2)" "icmp slt i64";
-  has "print(1 <= 2)" "icmp sle i64";
-  has "print(2 > 1)" "icmp sgt i64";
-  has "print(2 >= 1)" "icmp sge i64";
-  has "print(1 == 1)" "icmp eq i64";
-  has "print(1 != 2)" "icmp ne i64"
+  instruction_has "1 < 2" "icmp slt i64";
+  instruction_has "1 <= 2" "icmp sle i64";
+  instruction_has "2 > 1" "icmp sgt i64";
+  instruction_has "2 >= 1" "icmp sge i64";
+  instruction_has "1 == 1" "icmp eq i64";
+  instruction_has "1 != 2" "icmp ne i64"
 
 let test_double_opcodes () =
   (* the operand type picks the mnemonic: Double arithmetic is the f-prefixed family *)
-  has "let a = 1.5\nlet b = a + 2.5\nprint(b > a)" "fadd double";
-  has "let a = 1.5\nlet b = a * 2.5\nprint(b > a)" "fmul double";
-  has "let a = 1.5\nprint(a < 2.5)" "fcmp olt double"
+  instruction_has "let a = 1.5\na + 2.5" "fadd double";
+  instruction_has "let a = 1.5\na * 2.5" "fmul double";
+  instruction_has "let a = 1.5\na < 2.5" "fcmp olt double"
 
 let test_calls () =
-  let src = "func add(_ a: Int, _ b: Int) -> Int { return a + b }\nfunc shout(_ n: Int) { print(n) }\nshout(add(1, 2))" in
-  has src "define i64 @add(i64 ";
-  has src "define void @shout(i64 ";
-  has src "= call i64 @add(i64 1, i64 2)";
-  has src "call void @shout(i64 ";
+  let src =
+    "func add(_ a: Int, _ b: Int) -> Int { return a + b }\n\
+     func sink(_ n: Int) {}\n\
+     sink(add(1, 2))"
+  in
+  instruction_has src "define i64 @add(i64 ";
+  instruction_has src "define void @sink(i64 ";
+  instruction_has src "= call i64 @add(i64 1, i64 2)";
+  instruction_has src "call void @sink(i64 ";
   (* a function_ref is an operand too — it emits no line of its own *)
-  Alcotest.(check int) "one call line per apply" 2 (count src "call void @shout" + count src "call i64 @add")
+  Alcotest.(check int) "one call line per apply" 2
+    (instruction_count src "call void @sink" + instruction_count src "call i64 @add")
 
 (* ---- TODO(09) gen_term ---- *)
 

@@ -212,9 +212,11 @@ The plumbing is given: `llvm_type`, the output buffers, `fresh_temp ()`, the `op
 one. The literal cases of `gen_instr` are given too, as the pattern to copy: they bind an operand and
 emit nothing.
 
-The two holes are **coupled** — a function always ends in a terminator, so `--emit-llvm` prints a
-complete module or nothing at all, and no test can go green until both are done. `gen_instr` is what
-raises first, so:
+The normal `--emit-llvm` path needs both holes because every function ends in a terminator. The lab
+also has a test-only `--emit-llvm-instrs` mode. It omits block terminators, producing deliberately
+incomplete IR that is useful only for inspecting `gen_instr`. This lets its cases turn green before
+you start `gen_term`. Keep the final catch-all `failwith` while adding instruction cases above it;
+the OCaml file must still type-check before any test can run.
 
 1. **`gen_instr`**, working down the instruction table in §2. Emit a line with `emit "…"`; when the
    instruction has a result, give it a `fresh_temp ()` and record it with `bind_operand` so later
@@ -240,7 +242,8 @@ Five cram files (`make lab C=… T=run-control` runs one), a unit suite grouped 
 oracle. The first two read the IR; the rest **build the program and run it**, which is the point of
 this concept:
 
-- `irgen-instrs.t` — `--emit-llvm` down the instruction table: literals as operands, the
+- `irgen-instrs.t` — test-only `--emit-llvm-instrs` down the instruction table: literals as
+  operands,
   `alloca`/`load`/`store` model, the entry-block alloca rule (a `let` inside a loop still allocas
   in `bb0`), the typed arithmetic mnemonics, the signed `icmp` predicates, `sub i64 0, x` for
   unary minus, `function_ref` + `apply` becoming one `call`, and `print`'s two shapes.
@@ -263,8 +266,15 @@ this concept:
   exit code must be identical. The numbers in the other files were written down once; this one
   asks swiftc on every run.
 
-Every file reads `TODO` until both holes are done — see §3 — and then `FAIL` with the wanted and
-the printed output side by side while the mapping is still wrong.
+The `gen_instr` cases can pass before `gen_term` is started. The terminator and execution files stay
+red until the emitted module is complete. A failing case shows the wanted and printed output side by
+side.
+
+While working on the first hole, run only its focused file:
+
+```bash
+make lab C=phase2-types-flow/09-sil-to-llvm T=irgen-instrs
+```
 
 ## 5. Benchmark it
 
