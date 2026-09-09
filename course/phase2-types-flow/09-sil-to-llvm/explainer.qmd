@@ -113,9 +113,10 @@ and backend — so even our naive, load/store-heavy IR comes out as decent nativ
 same handoff, but only after its **own** SIL optimizer runs first (that's Phase 4 for us). Two things
 we deliberately scope out, all documented:
 
-- **`Double` printing** isn't matched to swiftc (Swift prints the shortest round-tripping decimal;
-  C's `%g` doesn't), and **`String`** concatenation/comparison need a runtime we haven't built — so
-  the parity corpus is `Int`/`Bool`/control-flow/functions.
+- **`Double` printing** isn't matched to swiftc. Swift prints just enough decimal digits to
+  preserve the exact `Double` value when the text is parsed again; C's `%g` does not.
+  **`String`** concatenation and comparison need a runtime we haven't built. The parity corpus
+  therefore covers `Int`, `Bool`, control flow, and functions.
 - **Definite initialization** — Swift's mandatory "variable used before being initialized" pass on
   the SIL CFG — is *vacuous* for us, because every `let`/`var` is initialized at its declaration.
   Adding uninitialized `var x: Int` and a DI dataflow pass (Exercise 1) is the genuine version, and a
