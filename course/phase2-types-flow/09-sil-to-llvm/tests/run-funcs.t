@@ -12,6 +12,17 @@ returned values, and a `Void` call together in one readable file.
   true
   7
 
+Function declarations may also appear between top-level instructions. The declarations become
+separate LLVM functions; all surrounding instructions stay in `main` and execute in source order.
+
+  $ P=../../../tests/programs/if.swift
+  $ ./lab.exe build "$P" -o interleaved && python3 timeout.py 5 ./interleaved
+  2
+  3
+  11
+  -1
+  1
+
 Arguments arrive in order, results come back, and calls nest.
 
   $ cat > a.swift <<'EOF'

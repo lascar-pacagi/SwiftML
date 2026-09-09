@@ -36,3 +36,18 @@ looks like from here:
 
   $ grep -c 'unreachable' sil.txt
   2
+
+Function declarations may be interleaved with top-level instructions. They become separate SIL
+functions, while the instructions on both sides remain in `main`. In `if.swift`, the call to
+`seven` comes before the declaration of `sign`, and the two calls to `sign` come after it.
+
+  $ P=../../../tests/programs/if.swift
+  $ ./lab.exe --emit-sil "$P" > interleaved.sil
+  $ grep '^sil @' interleaved.sil | sed 's/(.*//'
+  sil @seven
+  sil @sign
+  sil @main
+  $ sed -n '/^sil @main/,/^}/p' interleaved.sil | grep -c 'function_ref @seven'
+  1
+  $ sed -n '/^sil @main/,/^}/p' interleaved.sil | grep -c 'function_ref @sign'
+  2
