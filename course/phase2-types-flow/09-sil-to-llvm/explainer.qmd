@@ -153,9 +153,11 @@ raises first, so:
 
 1. **`gen_instr`**, working down the instruction table in §2. Emit a line with `p "…"`; when the
    instruction has a result, bind it with `Hashtbl.replace opnd v (fresh ())` so later instructions
-   can name it. Types come from `llty (vty v)`. Three traps: an instruction that binds an operand
-   but emits no line, a `store` that emits a line but binds nothing, and a `void` call, which is
-   both a line and no result.
+   can name it. Types come from `llty (vty v)`. Not every SIL instruction both emits an LLVM
+   line and produces a result. Literals and `function_ref` only add an entry to `opnd`; they
+   emit no line. A `store` emits a line but adds nothing to `opnd`. A non-void call emits
+   `%tK = call …` and records `%tK`, while a void call emits `call void …` without recording
+   a result.
 2. **`gen_term`**, the five terminator forms. `is_main` is in scope for the `@main` exception.
 
 Then `./lab.exe build p.swift -o p && ./p` on anything from §4 — clang will tell you at once if the
