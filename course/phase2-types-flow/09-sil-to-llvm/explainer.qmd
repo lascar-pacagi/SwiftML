@@ -397,48 +397,61 @@ Mirrors `solution/irgen.ml`. The shape: a constant maps a SIL value to an LLVM o
 emits a line and maps its result to a fresh `%tK`; types come from the function's `val_ty`.
 
 ```ocaml
-let gen_instr (v, i) =
-  match (i : Sil.instr) with
-  | Sil.Int_lit n -> Hashtbl.replace opnd v (string_of_int n)
-  | Sil.Bool_lit b -> Hashtbl.replace opnd v (if b then "1" else "0")
-  | Sil.Float_lit x ->
-      Hashtbl.replace opnd v (Printf.sprintf "0x%016LX" (Int64.bits_of_float x))
-  | Sil.String_lit s -> Hashtbl.replace opnd v (add_string_const s)
+let gen_instr (value, instruction) =
+  match (instruction : Sil.instr) with
+  | Sil.Int_lit integer -> bind_operand value (string_of_int integer)
+  | Sil.Bool_lit boolean -> bind_operand value (if boolean then "1" else "0")
+  | Sil.Float_lit number ->
+      bind_operand value (Printf.sprintf "0x%016LX" (Int64.bits_of_float number))
+  | Sil.String_lit text -> bind_operand value (add_string_const text)
   (* emitted in the entry block by the given gen_allocas — see §2 *)
   | Sil.Alloc_stack _ -> ()
-  | Sil.Load a ->
-      let r = fresh () in
-      p (Printf.sprintf "  %s = load %s, ptr %s\n" r (llty (vty v)) (op a));
-      Hashtbl.replace opnd v r
-  | Sil.Store (x, a) ->
-      p (Printf.sprintf "  store %s %s, ptr %s\n" (llty (vty x)) (op x) (op a))
-  | Sil.Binop (op0, l, r) -> gen_binop v op0 l r
-  | Sil.Unop (Ast.Neg, x) -> let r = fresh () in
-      (if vty x = Types.TDouble then p (Printf.sprintf "  %s = fneg double %s\n" r (op x))
-       else p (Printf.sprintf "  %s = sub i64 0, %s\n" r (op x)));
-      Hashtbl.replace opnd v r
-  | Sil.Func_ref name -> Hashtbl.replace opnd v ("@" ^ name)
-  | Sil.Apply (fr, args) ->
-      let argstr =
+  | Sil.Load address ->
+      let result_operand = fresh_temp () in
+      emit (Printf.sprintf "  %s = load %s, ptr %s\n" result_operand
+              (llvm_type (value_type value)) (lookup_operand address));
+      bind_operand value result_operand
+  | Sil.Store (stored_value, address) ->
+      emit (Printf.sprintf "  store %s %s, ptr %s\n"
+              (llvm_type (value_type stored_value)) (lookup_operand stored_value)
+              (lookup_operand address))
+  | Sil.Binop (operator, left, right) -> gen_binop value operator left right
+  | Sil.Unop (Ast.Neg, operand) ->
+      let result_operand = fresh_temp () in
+      (if value_type operand = Types.TDouble then
+         emit (Printf.sprintf "  %s = fneg double %s\n" result_operand (lookup_operand operand))
+       else emit (Printf.sprintf "  %s = sub i64 0, %s\n" result_operand (lookup_operand operand)));
+      bind_operand value result_operand
+  | Sil.Func_ref name -> bind_operand value ("@" ^ name)
+  | Sil.Apply (function_operand, arguments) ->
+      let argument_list =
         String.concat ", "
-          (List.map (fun a -> Printf.sprintf "%s %s" (llty (vty a)) (op a)) args)
+          (List.map (fun argument ->
+             Printf.sprintf "%s %s" (llvm_type (value_type argument))
+               (lookup_operand argument)) arguments)
       in
-      let rt = vty v in
-      if rt = Types.TVoid then p (Printf.sprintf "  call void %s(%s)\n" (op fr) argstr)
+      let return_type = value_type value in
+      if return_type = Types.TVoid then
+        emit (Printf.sprintf "  call void %s(%s)\n"
+                (lookup_operand function_operand) argument_list)
       else (
-        let r = fresh () in
-        p (Printf.sprintf "  %s = call %s %s(%s)\n" r (llty rt) (op fr) argstr);
-        Hashtbl.replace opnd v r)
-  | Sil.Print x -> gen_print x
+        let result_operand = fresh_temp () in
+        emit (Printf.sprintf "  %s = call %s %s(%s)\n" result_operand
+                (llvm_type return_type) (lookup_operand function_operand) argument_list);
+        bind_operand value result_operand)
+  | Sil.Print printed_value -> gen_print printed_value
 
-let gen_term (t : Sil.term) =
-  match t with
-  | Sil.Br n -> p (Printf.sprintf "  br label %%bb%d\n" n)
-  | Sil.Cond_br (c, th, el) ->
-      p (Printf.sprintf "  br i1 %s, label %%bb%d, label %%bb%d\n" (op c) th el)
-  | Sil.Return None -> p (if is_main then "  ret i32 0\n" else "  ret void\n")
-  | Sil.Return (Some v) -> p (Printf.sprintf "  ret %s %s\n" (llty f.Sil.ret) (op v))
-  | Sil.Unreachable -> p "  unreachable\n"
+let gen_term (terminator : Sil.term) =
+  match terminator with
+  | Sil.Br target -> emit (Printf.sprintf "  br label %%bb%d\n" target)
+  | Sil.Cond_br (condition, then_block, else_block) ->
+      emit (Printf.sprintf "  br i1 %s, label %%bb%d, label %%bb%d\n"
+              (lookup_operand condition) then_block else_block)
+  | Sil.Return None -> emit (if is_main then "  ret i32 0\n" else "  ret void\n")
+  | Sil.Return (Some return_value) ->
+      emit (Printf.sprintf "  ret %s %s\n"
+              (llvm_type function_definition.Sil.ret) (lookup_operand return_value))
+  | Sil.Unreachable -> emit "  unreachable\n"
 ```
 
 ## 9. Exercise solutions
