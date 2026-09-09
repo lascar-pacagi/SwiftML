@@ -290,10 +290,12 @@ the SIL and LLVM optimizers complement each other. This division is described in
 
 ## 7. Recap & what's next — **Milestone M2**
 
-Phase 2 is complete. You turned a type checker into a **compiler**: bidirectional types (05), control
-flow (06), functions (07), the **SIL** middle (08), and now **IRGen** (09) lowering it to LLVM and
-running it. The pipeline is swiftc's: `Parse → Sema → SILGen → SIL → IRGen → LLVM → native`, and on
-the `Int`/`Bool`/control-flow/functions corpus the output matches `swiftc` byte-for-byte (`Double`
+Phase 2 is complete. In 05–07, you extended every front-end layer — the lexer, parser, AST, and Sema
+— to support types, control flow, and functions. This included bidirectional type checking and the
+semantic rules that make those constructs sound. SILGen then added the **SIL** middle (08), and
+**IRGen** now lowers SIL to LLVM and runs the result (09). The core pipeline follows swiftc's:
+`Parse → Sema → SILGen → SIL → IRGen → LLVM → native`. On the
+`Int`/`Bool`/control-flow/functions corpus, the output matches `swiftc` byte-for-byte (`Double`
 printing and `String` are the documented gaps of §2).
 
 Two directions open up. **Phase 3** grows the *language* — `struct`, `enum` (ADTs), pattern matching,
