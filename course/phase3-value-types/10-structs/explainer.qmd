@@ -203,15 +203,16 @@ concept's contract:
 | `struct P var x: Int }` | `expected '{'` |
 | `struct P { x: Int }` | `expected a stored property: 'var name: Type'` |
 | `struct P { var : Int }` | `expected a property name` |
+| `struct P { var x Int }` | `expected ':'` |
 | `struct P { var x: }` | `expected a property type` |
 | `struct P { var x: Int var y: Int }` | `expected newline or end of declaration` |
 | end of input before the closing `}` | `expected '}'` |
 | `p.` with no identifier after the dot | `expected a member name` |
 
-`parse_ident` and the given `expect` helper produce the short “expected …” cases. `parse_struct`
-adds the two declaration-specific recovery messages. After an error it keeps walking, so later
-diagnostics can still be reported; the focused parser tests inspect only the parser and do not
-depend on Sema or lowering.
+`parse_struct` can produce all eight declaration errors above. Six come from its calls to
+`parse_ident` and the given `expect` helper. It emits the stored-property and declaration-separator
+messages directly. When it encounters an unexpected field introducer, it consumes that token and
+continues looking for the next property or the closing brace.
 
 ### The diagnostics Sema owes you
 

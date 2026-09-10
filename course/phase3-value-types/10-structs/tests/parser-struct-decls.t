@@ -45,6 +45,15 @@ A stored property needs a name and a written type.
   $ printf 'struct P { var : Int }\n' > bad-property-name.swift
   $ ./lab.exe --emit-ast bad-property-name.swift 2>&1 | head -1
   1:16: error: expected a property name
+
+A stored property needs a colon between its name and type.
+
+  $ printf 'struct P { var x Int }\n' > bad-property-colon.swift
+  $ ./lab.exe --emit-ast bad-property-colon.swift 2>&1 | head -1
+  1:18: error: expected ':'
+
+A stored property needs a written type after its colon.
+
   $ printf 'struct P { var x: }\n' > bad-property-type.swift
   $ ./lab.exe --emit-ast bad-property-type.swift 2>&1 | head -1
   1:19: error: expected a property type
