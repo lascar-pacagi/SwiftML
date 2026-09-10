@@ -47,7 +47,8 @@ implement here.)
 
 ### Reading vs. writing a field — value vs. address
 
-The two halves of member access are deliberately asymmetric, and the reason is lvalues:
+The two halves of member access are deliberately asymmetric. An **lvalue** identifies a storage
+location that can be written; an **rvalue** produces a value that can be read or copied:
 
 - **Read `p.x`** wants a *value*. Lower `p` to a struct **value** (a `load`) and pull field `i` out
   with **`struct_extract`** (LLVM `extractvalue`). This works on *any* struct expression — a variable,
@@ -58,17 +59,18 @@ The two halves of member access are deliberately asymmetric, and the reason is l
   variable with a slot — which is exactly why `let`-bound structs reject field assignment, and why
   writing `q.x` can't possibly disturb `p`.
 
-That read-uses-a-value / write-uses-an-address split is the lvalue/rvalue distinction every compiler
-draws, made concrete.
+That read-uses-a-value / write-uses-an-address split makes the distinction concrete.
 
 ### The memberwise initializer
 
 `Point(x: 1, y: 2)` is the initializer Swift synthesizes from the stored properties — one labelled
 argument per field, **in declaration order, labels required** (sema checks the labels and types; a
 missing or wrong label is an error, just like swiftc). It lowers to a **`struct`** instruction that
-builds the aggregate value from its fields (LLVM `insertvalue` from `undef`). The SILGen construction
-plumbing is given; you still recognize and check the source syntax, then lower the SIL instruction to
-LLVM.
+builds the aggregate value from its fields. LLVM has no single struct-construction instruction:
+IRGen starts with `undef`, an aggregate whose fields have no specified values, then each
+`insertvalue` produces a new aggregate with one field filled. After every field has been inserted,
+the final aggregate is the complete `Point`. The SILGen construction plumbing is given; you still
+recognize and check the source syntax, then lower the SIL instruction to LLVM.
 
 ### The three new SIL instructions (swiftc's exact names)
 
@@ -146,6 +148,73 @@ which is why `l.b.x = 1` — two levels deep — is not in this subset. And a ca
 carry a **label**; the parser records it for every call, sema *checks* it only for a memberwise
 initializer (a `func` still takes its arguments positionally, concept 07's simplification).
 
+### The new AST contract
+
+The parser records each new distinction explicitly; later stages do not reconstruct it from source
+text:
+
+```ocaml
+type arg = string option * expr
+
+type expr =
+  | (* earlier cases *)
+  | Call of string * arg list * Token.span
+  | Member of expr * string * Token.span
+
+type stmt =
+  | (* earlier cases *)
+  | Set_member of {
+      obj : string;
+      field : string;
+      value : expr;
+      span : Token.span;
+    }
+
+type field = {
+  fld_name : string;
+  fld_ty : string;
+  fld_var : bool;
+}
+
+type struct_decl = {
+  sname : string;
+  sfields : field list;
+  sspan : Token.span;
+}
+
+type item =
+  | (* earlier cases *)
+  | IStruct of struct_decl
+```
+
+In a `Call`, `Some "x"` preserves the label in `Point(x: 1)`, while `None` represents the
+positional argument in `add(1)`. `Member (base, "x", span)` can nest, so `line.b.x` becomes a
+`Member` whose base is another `Member`. `Set_member` deliberately stores `obj` as a name rather
+than an arbitrary expression because this first version accepts only one-level writes such as
+`p.x = value`. A field keeps its written type name for Sema to resolve and `fld_var` distinguishes
+`var` from `let` stored properties.
+
+### The parser diagnostics added here
+
+The parser reports the first missing piece at the token it found. These messages form part of the
+concept's contract:
+
+| source shape | message |
+|---|---|
+| `struct { }` | `expected a struct name` |
+| `struct P var x: Int }` | `expected '{'` |
+| `struct P { x: Int }` | `expected a stored property: 'var name: Type'` |
+| `struct P { var : Int }` | `expected a property name` |
+| `struct P { var x: }` | `expected a property type` |
+| `struct P { var x: Int var y: Int }` | `expected newline or end of declaration` |
+| end of input before the closing `}` | `expected '}'` |
+| `p.` with no identifier after the dot | `expected a member name` |
+
+`parse_ident` and the given `expect` helper produce the short “expected …” cases. `parse_struct`
+adds the two declaration-specific recovery messages. After an error it keeps walking, so later
+diagnostics can still be reported; the focused parser tests inspect only the parser and do not
+depend on Sema or lowering.
+
 ### The diagnostics Sema owes you
 
 You implement these checks in TODO(10d–f). Once they pass, lowering may assume every rule below has
@@ -202,7 +271,7 @@ machinery is the natural place to generalize), and `print` of a `Double` goes th
   field's address with `Sil.Struct_element_addr` and `Sil.Store` the value through it. Generate the
   value first — that is the order swiftc uses, and the tests print the SIL.
 - **`irgen.ml`, TODO(10i)** — three instructions: `Struct` is a chain of `insertvalue` starting
-  from `undef` (each step names the previous register, the last one is the value); `Struct_extract`
+  from the unspecified aggregate `undef` (each step names the previous register, the last one is the complete value); `Struct_extract`
   is `extractvalue`; `Struct_element_addr` is `getelementptr <struct ty>, ptr <slot>, i32 0, i32 i`.
   `llvm_type (value_type value)` gives the LLVM type of any value; `fresh_temp ()` creates a register;
   `lookup_operand` and `bind_operand` read and update the SIL-to-LLVM operand map.
@@ -219,8 +288,10 @@ Every `.t` file calls `./lab.exe`, built from **this directory's** library, so t
 your code here. In the order you fill the holes:
 
 - `lexer-structs.t` — `--emit-tokens`: `struct`, a lone `.`, the existing `..<`, and `;`.
-- `parser-struct-decls.t` — `--emit-ast`: ordered `var`/`let` stored properties and written types.
-- `parser-struct-uses.t` — `--emit-ast`: initializer labels, chained reads, and one-level writes.
+- `parser-struct-decls.t` — `--emit-ast`: ordered `var`/`let` stored properties and written types,
+  plus each declaration-specific parser diagnostic listed in §2.
+- `parser-struct-uses.t` — `--emit-ast`: initializer labels, chained reads, one-level writes, and a
+  missing member name after `.`.
 - `sema-struct-decls.t` — `--typecheck`: the two-pass registry, forward types, unknown types, and
   duplicate names.
 - `sema-struct-exprs.t` — `--typecheck`: initialization, reads, label/arity/type errors, and the two

@@ -21,3 +21,9 @@ normal expression that may read a member.
   $ printf 'p.x = p.x + 1\n' > write.swift
   $ ./lab.exe --emit-ast write.swift
   (.= p x (+ (. p x) 1))
+
+A dot without a following identifier reports that a member name is missing.
+
+  $ printf 'p.\n' > bad-member.swift
+  $ ./lab.exe --emit-ast bad-member.swift 2>&1 | head -1
+  1:3: error: expected a member name
