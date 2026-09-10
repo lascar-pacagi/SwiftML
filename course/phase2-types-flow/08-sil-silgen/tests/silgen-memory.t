@@ -2,7 +2,7 @@ TODO(08a) — the MEMORY MODEL, and the SIL vocabulary every control-flow hole h
 Raw SIL keeps each variable in an `alloc_stack` slot and touches it only through `load` and
 `store`; there is no SSA here, and Phase-4's mem2reg is the pass that later takes it away.
 Nothing in this file branches, so it reports on TODO(08a) alone — it can go green while every
-TODO(08c) in `gen_stmt` still raises.
+TODO(08c) in `gen_statement` still raises.
 
 `let x = 1` becomes an alloc_stack slot, a store, and a load at the use.
 
@@ -53,7 +53,7 @@ like any other value; `print` is the one builtin.
     %2 = alloc_stack $Int  // t
     %5 = apply @print(%4)
 
-`&&` already short-circuits: the given gen_expr builds the same diamond you are about to
+`&&` already short-circuits: the given gen_expression builds the same diamond you are about to
 build for `if`, merging the two answers through a slot.
 
   $ printf 'let n = 3\nlet b = n > 1 && n < 5\nprint(b)\n' > and.swift

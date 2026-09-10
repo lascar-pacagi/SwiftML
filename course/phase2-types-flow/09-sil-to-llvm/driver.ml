@@ -11,66 +11,77 @@ type emit =
   | Exe (* + clang: a native executable *)
 
 let read_file (path : string) : string =
-  let ic = open_in_bin path in
-  Fun.protect ~finally:(fun () -> close_in ic) (fun () -> really_input_string ic (in_channel_length ic))
+  let input_channel = open_in_bin path in
+  Fun.protect ~finally:(fun () -> close_in input_channel) (fun () ->
+      really_input_string input_channel (in_channel_length input_channel))
 
-let frontend (src : string) (diags : Diagnostics.sink) : Ast.program =
-  let toks = Lexer.tokenize (Lexer.create src diags) in
-  let prog = Parser.parse_program (Parser.create toks diags) in
-  Sema.check prog diags;
-  prog
+let frontend (source : string) (diagnostics : Diagnostics.sink) : Ast.program =
+  let tokens = Lexer.tokenize (Lexer.create source diagnostics) in
+  let program = Parser.parse_program (Parser.create tokens diagnostics) in
+  Sema.check program diagnostics;
+  program
 
-let bail_on_errors (diags : Diagnostics.sink) : unit =
-  if Diagnostics.has_errors diags then (
-    Diagnostics.print diags;
+let bail_on_errors (diagnostics : Diagnostics.sink) : unit =
+  if Diagnostics.has_errors diagnostics then (
+    Diagnostics.print diagnostics;
     exit 1)
 
 (* source -> verified SIL -> LLVM IR text *)
-let to_llvm ?(should_emit_terminator = fun _ -> true) (src : string)
-    (diags : Diagnostics.sink) : string =
-  let prog = frontend src diags in
-  bail_on_errors diags;
-  let m = Silgen.lower prog in
-  (match Sil.verify m with
+let to_llvm ?(should_emit_terminator = fun _ -> true) (source : string)
+    (diagnostics : Diagnostics.sink) : string =
+  let program = frontend source diagnostics in
+  bail_on_errors diagnostics;
+  let sil_module = Silgen.lower program in
+  (match Sil.verify sil_module with
   | [] -> ()
-  | errs ->
-      List.iter (fun e -> prerr_endline ("SIL verification error: " ^ e)) errs;
+  | errors ->
+      List.iter
+        (fun message -> prerr_endline ("SIL verification error: " ^ message))
+        errors;
       exit 1);
-  Irgen.emit_llvm ~should_emit_terminator m
+  Irgen.emit_llvm ~should_emit_terminator sil_module
 
 let run_clang ~(ll_path : string) ~(out : string) : unit =
-  let cmd = Printf.sprintf "clang -Wno-override-module %s -o %s" (Filename.quote ll_path) (Filename.quote out) in
-  if Sys.command cmd <> 0 then failwith (Printf.sprintf "clang failed on %s" ll_path)
+  let command =
+    Printf.sprintf "clang -Wno-override-module %s -o %s" (Filename.quote ll_path)
+      (Filename.quote out)
+  in
+  if Sys.command command <> 0 then failwith (Printf.sprintf "clang failed on %s" ll_path)
 
 let compile_file ?(out = "a.out") ~(src_path : string) ~(emit : emit) () : unit =
-  let src = read_file src_path in
-  let diags = Diagnostics.create () in
+  let source = read_file src_path in
+  let diagnostics = Diagnostics.create () in
   match emit with
   | Tokens ->
-      let toks = Lexer.tokenize (Lexer.create src diags) in
-      bail_on_errors diags;
-      List.iter (fun (t : Token.t) -> print_endline (Token.string_of_kind t.Token.kind)) toks
+      let tokens = Lexer.tokenize (Lexer.create source diagnostics) in
+      bail_on_errors diagnostics;
+      List.iter
+        (fun (token : Token.t) -> print_endline (Token.string_of_kind token.Token.kind))
+        tokens
   | Ast ->
-      let prog = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src diags)) diags) in
-      bail_on_errors diags;
-      print_endline (Ast.dump_program prog)
+      let program =
+        Parser.parse_program
+          (Parser.create (Lexer.tokenize (Lexer.create source diagnostics)) diagnostics)
+      in
+      bail_on_errors diagnostics;
+      print_endline (Ast.dump_program program)
   | Check ->
-      let (_ : Ast.program) = frontend src diags in
-      bail_on_errors diags
+      let (_ : Ast.program) = frontend source diagnostics in
+      bail_on_errors diagnostics
   | Sil ->
-      let prog = frontend src diags in
-      bail_on_errors diags;
-      let m = Silgen.lower prog in
-      bail_on_errors diags;
-      print_endline (Sil.string_of_module m)
-  | Llvm -> print_string (to_llvm src diags)
+      let program = frontend source diagnostics in
+      bail_on_errors diagnostics;
+      let sil_module = Silgen.lower program in
+      bail_on_errors diagnostics;
+      print_endline (Sil.string_of_module sil_module)
+  | Llvm -> print_string (to_llvm source diagnostics)
   | Exe ->
-      let ll = to_llvm src diags in
+      let llvm_ir = to_llvm source diagnostics in
       let ll_path = Filename.temp_file "swiftml2" ".ll" in
       Fun.protect
         ~finally:(fun () -> try Sys.remove ll_path with _ -> ())
         (fun () ->
-          let oc = open_out ll_path in
-          output_string oc ll;
-          close_out oc;
+          let output_channel = open_out ll_path in
+          output_string output_channel llvm_ir;
+          close_out output_channel;
           run_clang ~ll_path ~out)

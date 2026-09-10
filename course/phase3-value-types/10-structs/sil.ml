@@ -55,77 +55,116 @@ type modul = { funcs : func list; structs : Types.struct_layout list (* concept 
 
 (* ---- printer: `swiftml2 --emit-sil` ------------------------------------------------- *)
 
-let tystr t = "$" ^ Types.string_of_ty t
+let sil_type type_ = "$" ^ Types.string_of_ty type_
 
-let string_of_instr (f : func) ((v, i) : value * instr) : string =
-  let r = Printf.sprintf "%%%d" v in
-  let ty () = try tystr (Hashtbl.find f.val_ty v) with Not_found -> "$?" in
-  match i with
-  | Int_lit n -> Printf.sprintf "%s = integer_literal $Int, %d" r n
-  | Float_lit x -> Printf.sprintf "%s = float_literal $Double, %g" r x
-  | Bool_lit b -> Printf.sprintf "%s = integer_literal $Bool, %b" r b
-  | String_lit s -> Printf.sprintf "%s = string_literal $String, %S" r s
-  | Alloc_stack name -> Printf.sprintf "%s = alloc_stack %s  // %s" r (ty ()) name
-  | Load a -> Printf.sprintf "%s = load %%%d %s" r a (ty ())
-  | Store (x, a) -> Printf.sprintf "store %%%d to %%%d" x a
-  | Binop (op, a, b) ->
-      Printf.sprintf "%s = binop \"%s\" %%%d, %%%d %s" r (Ast.string_of_binop op) a b (ty ())
-  | Unop (op, a) -> Printf.sprintf "%s = unop \"%s\" %%%d %s" r (Ast.string_of_unop op) a (ty ())
-  | Func_ref name -> Printf.sprintf "%s = function_ref @%s" r name
-  | Apply (g, args) ->
-      Printf.sprintf "%s = apply %%%d(%s)" r g
-        (String.concat ", " (List.map (Printf.sprintf "%%%d") args))
-  | Print a -> Printf.sprintf "%s = apply @print(%%%d)" r a
+let string_of_instr (function_definition : func)
+    ((value, instruction) : value * instr) : string =
+  let result_name = Printf.sprintf "%%%d" value in
+  let result_type () =
+    try sil_type (Hashtbl.find function_definition.val_ty value) with Not_found -> "$?"
+  in
+  match instruction with
+  | Int_lit integer -> Printf.sprintf "%s = integer_literal $Int, %d" result_name integer
+  | Float_lit number -> Printf.sprintf "%s = float_literal $Double, %g" result_name number
+  | Bool_lit boolean -> Printf.sprintf "%s = integer_literal $Bool, %b" result_name boolean
+  | String_lit text -> Printf.sprintf "%s = string_literal $String, %S" result_name text
+  | Alloc_stack name ->
+      Printf.sprintf "%s = alloc_stack %s  // %s" result_name (result_type ()) name
+  | Load address -> Printf.sprintf "%s = load %%%d %s" result_name address (result_type ())
+  | Store (stored_value, address) -> Printf.sprintf "store %%%d to %%%d" stored_value address
+  | Binop (operator, left, right) ->
+      Printf.sprintf "%s = binop \"%s\" %%%d, %%%d %s" result_name
+        (Ast.string_of_binop operator) left right (result_type ())
+  | Unop (operator, operand) ->
+      Printf.sprintf "%s = unop \"%s\" %%%d %s" result_name
+        (Ast.string_of_unop operator) operand (result_type ())
+  | Func_ref name -> Printf.sprintf "%s = function_ref @%s" result_name name
+  | Apply (callee, arguments) ->
+      Printf.sprintf "%s = apply %%%d(%s)" result_name callee
+        (String.concat ", " (List.map (Printf.sprintf "%%%d") arguments))
+  | Print operand -> Printf.sprintf "%s = apply @print(%%%d)" result_name operand
   | Struct fields ->
-      Printf.sprintf "%s = struct (%s) %s" r
+      Printf.sprintf "%s = struct (%s) %s" result_name
         (String.concat ", " (List.map (Printf.sprintf "%%%d") fields))
-        (ty ())
-  | Struct_extract (a, i) -> Printf.sprintf "%s = struct_extract %%%d, #%d %s" r a i (ty ())
-  | Struct_element_addr (a, i) -> Printf.sprintf "%s = struct_element_addr %%%d, #%d" r a i
+        (result_type ())
+  | Struct_extract (aggregate, field_index) ->
+      Printf.sprintf "%s = struct_extract %%%d, #%d %s" result_name aggregate field_index
+        (result_type ())
+  | Struct_element_addr (address, field_index) ->
+      Printf.sprintf "%s = struct_element_addr %%%d, #%d" result_name address field_index
 
 let string_of_term : term -> string = function
-  | Br n -> Printf.sprintf "br bb%d" n
-  | Cond_br (c, t, e) -> Printf.sprintf "cond_br %%%d, bb%d, bb%d" c t e
+  | Br target -> Printf.sprintf "br bb%d" target
+  | Cond_br (condition, then_target, else_target) ->
+      Printf.sprintf "cond_br %%%d, bb%d, bb%d" condition then_target else_target
   | Return None -> "return"
-  | Return (Some v) -> Printf.sprintf "return %%%d" v
+  | Return (Some value) -> Printf.sprintf "return %%%d" value
   | Unreachable -> "unreachable" (* a genuinely-unreachable block (e.g. after both if-branches return) *)
 
-let string_of_block (f : func) (b : block) : string =
-  let body = List.map (fun i -> "  " ^ string_of_instr f i) (List.rev b.instrs) in
-  let lines = (Printf.sprintf "bb%d:" b.bid :: body) @ [ "  " ^ string_of_term b.term ] in
+let string_of_block (function_definition : func) (block : block) : string =
+  let instruction_lines =
+    List.map
+      (fun instruction -> "  " ^ string_of_instr function_definition instruction)
+      (List.rev block.instrs)
+  in
+  let lines =
+    (Printf.sprintf "bb%d:" block.bid :: instruction_lines)
+    @ [ "  " ^ string_of_term block.term ]
+  in
   String.concat "\n" lines
 
-let string_of_func (f : func) : string =
-  let ps = List.map (fun (v, t) -> Printf.sprintf "%%%d : %s" v (tystr t)) f.params in
-  let header = Printf.sprintf "sil @%s(%s) -> %s {" f.fname (String.concat ", " ps) (tystr f.ret) in
-  let blocks = List.map (string_of_block f) (List.rev f.blocks) in
+let string_of_func (function_definition : func) : string =
+  let parameters =
+    List.map
+      (fun (value, parameter_type) ->
+        Printf.sprintf "%%%d : %s" value (sil_type parameter_type))
+      function_definition.params
+  in
+  let header =
+    Printf.sprintf "sil @%s(%s) -> %s {" function_definition.fname
+      (String.concat ", " parameters)
+      (sil_type function_definition.ret)
+  in
+  let blocks =
+    List.map (string_of_block function_definition) (List.rev function_definition.blocks)
+  in
   String.concat "\n" ((header :: blocks) @ [ "}" ])
 
-let string_of_struct (sl : Types.struct_layout) : string =
-  let fld (n, t) = Printf.sprintf "%s: %s" n (Types.string_of_ty t) in
-  Printf.sprintf "struct %s { %s }" sl.Types.sl_name (String.concat "; " (List.map fld sl.Types.sl_fields))
+let string_of_struct (layout : Types.struct_layout) : string =
+  let string_of_field (name, field_type) =
+    Printf.sprintf "%s: %s" name (Types.string_of_ty field_type)
+  in
+  Printf.sprintf "struct %s { %s }" layout.Types.sl_name
+    (String.concat "; " (List.map string_of_field layout.Types.sl_fields))
 
-let string_of_module (m : modul) : string =
-  String.concat "\n\n" (List.map string_of_struct m.structs @ List.map string_of_func m.funcs)
+let string_of_module (sil_module : modul) : string =
+  String.concat "\n\n"
+    (List.map string_of_struct sil_module.structs @ List.map string_of_func sil_module.funcs)
 
 (* ---- a small verifier: every block has a real terminator and valid branch targets ---- *)
 
-let verify (m : modul) : string list =
-  let errs = ref [] in
-  let add s = errs := s :: !errs in
+let verify (sil_module : modul) : string list =
+  let errors = ref [] in
+  let report message = errors := message :: !errors in
   List.iter
-    (fun (f : func) ->
-      let ids = List.map (fun b -> b.bid) f.blocks in
-      let exists n = List.mem n ids in
-      if f.blocks = [] then add (Printf.sprintf "function '%s' has no blocks" f.fname);
+    (fun (function_definition : func) ->
+      let block_ids = List.map (fun block -> block.bid) function_definition.blocks in
+      let block_exists block_id = List.mem block_id block_ids in
+      if function_definition.blocks = [] then
+        report (Printf.sprintf "function '%s' has no blocks" function_definition.fname);
       List.iter
-        (fun b ->
-          match b.term with
-          | Br n when not (exists n) ->
-              add (Printf.sprintf "@%s bb%d: branch to nonexistent bb%d" f.fname b.bid n)
-          | Cond_br (_, t, e) when (not (exists t)) || not (exists e) ->
-              add (Printf.sprintf "@%s bb%d: cond_br to a nonexistent block" f.fname b.bid)
+        (fun block ->
+          match block.term with
+          | Br target when not (block_exists target) ->
+              report
+                (Printf.sprintf "@%s bb%d: branch to nonexistent bb%d"
+                   function_definition.fname block.bid target)
+          | Cond_br (_, then_target, else_target)
+            when (not (block_exists then_target)) || not (block_exists else_target) ->
+              report
+                (Printf.sprintf "@%s bb%d: cond_br to a nonexistent block"
+                   function_definition.fname block.bid)
           | _ -> ())
-        f.blocks)
-    m.funcs;
-  List.rev !errs
+        function_definition.blocks)
+    sil_module.funcs;
+  List.rev !errors

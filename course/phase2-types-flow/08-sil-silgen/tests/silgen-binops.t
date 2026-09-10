@@ -1,5 +1,5 @@
 TODO(08c) — the ordinary binary operator, through `--emit-sil`. `&&` and `||` are not here: they
-short-circuit, so the given `gen_expr` lowers them as a branch diamond and `silgen-if.t` is where
+short-circuit, so the given `gen_expression` lowers them as a branch diamond and `silgen-if.t` is where
 that shape is checked. Everything else is one `binop` instruction, and the interest is in the two
 types it carries — the type the operation happens AT, and the type of its result.
 
@@ -21,7 +21,7 @@ Arithmetic on `Double` is the same instruction carrying a different type:
     %2 = binop "*" %0, %1 $Double
 
 A comparison is where the two types come apart: it compares `Int`s and produces a `$Bool`, which
-is what `result_ty` is for:
+is what `result_type` is for:
 
   $ printf 'print(3 < 4)\n' > a3.swift
   $ ./lab.exe --emit-sil a3.swift | grep binop

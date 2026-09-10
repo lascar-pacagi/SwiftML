@@ -9,10 +9,10 @@ graph, and every variable become an `alloc_stack` slot touched by `load`/`store`
 **Prerequisites:** the Phase-2 front-end (05–07), which is **given and complete** here — your new
 work is SILGen.
 
-**You edit:** `silgen.ml` — the **control-flow lowering** (the `TODO(08)` holes in `gen_stmt`):
+**You edit:** `silgen.ml` — the **control-flow lowering** (the `TODO(08)` holes in `gen_statement`):
 `if` → a `cond_br` diamond, `while`/`for` → a loop with a header and a back-edge, `break`/`continue`
 → branches to the loop's exit/header. The builder API (`emit`/`new_block`/`switch_to`/`terminate`),
-the expression lowering (`gen_expr`), and the module driver (`lower_func`/`lower`) are given.
+the expression lowering (`gen_expression`), and the module driver (`lower_func`/`lower`) are given.
 
 **Design oracle:** `../../../swift/lib/SILGen/` (`SILGenStmt.cpp` builds the CFG; `SILGenExpr.cpp`),
 `../../../swift/lib/SIL/`, and `../../../swift/docs/SIL.rst`.

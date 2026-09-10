@@ -150,9 +150,6 @@ initializer (a `func` still takes its arguments positionally, concept 07's simpl
 
 ### The new AST contract
 
-The parser records each new distinction explicitly; later stages do not reconstruct it from source
-text:
-
 ```ocaml
 type arg = string option * expr
 
@@ -191,8 +188,9 @@ In a `Call`, `Some "x"` preserves the label in `Point(x: 1)`, while `None` repre
 positional argument in `add(1)`. `Member (base, "x", span)` can nest, so `line.b.x` becomes a
 `Member` whose base is another `Member`. `Set_member` deliberately stores `obj` as a name rather
 than an arbitrary expression because this first version accepts only one-level writes such as
-`p.x = value`. A field keeps its written type name for Sema to resolve and `fld_var` distinguishes
-`var` from `let` stored properties.
+`p.x = value`. A field keeps its written type name for Sema to resolve. Its `fld_var` Boolean is
+`true` when the declaration begins with `var` and `false` when it begins with `let`; Sema uses it
+to decide whether an assignment such as `p.x = 3` is allowed.
 
 ### The parser diagnostics added here
 

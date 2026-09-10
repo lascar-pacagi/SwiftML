@@ -43,7 +43,7 @@ for a `while` loop in concept 06, now made real.
 
 SILGen's whole job is to walk the AST tree and *build that graph*:
 
-![SILGen lowers the AST tree into a SIL control-flow graph: an `if`/`else` becomes a `cond_br` diamond — entry branches to a then-block and an else-block, which both branch to a merge.](figs/lowering.png)
+![SILGen lowers the AST tree into a SIL control-flow graph: an `if`/`else` becomes a `cond_br` diamond — entry branches to a then-block and an else-block, which both branch to a merge_block.](figs/lowering.png)
 
 ### Raw, memory-based SIL — and why we *want* the loads and stores
 
@@ -69,7 +69,7 @@ design, and ours.
 
 ### A block is a scope — for the *names*, not the slots
 
-`vars` maps a source name to the address of its slot, and it is a **compile-time** table: it exists
+`variables` maps a source name to the address of its slot, and it is a **compile-time** table: it exists
 while SILGen runs and is gone by the time the SIL is printed. Nothing in the SIL itself remembers
 that `x` was called `x`. So the table has to answer the same question the source does — *which `x`
 does this mention refer to?* — and Swift's answer depends on where you are:
@@ -85,13 +85,13 @@ print(x)         // 1 — the outer one is back
 
 Sema settled that already (concept 06's scope stack), and it rejects the programs where a name is
 not in scope at all. But sema hands SILGen a tree, not a scope: the two `x`s are two `Let` nodes
-with the same string. If lowering just wrote both into `vars`, the inner one would overwrite the
+with the same string. If lowering just wrote both into `variables`, the inner one would overwrite the
 outer *and never give it back*, so the `print(x)` after the block would load the inner slot and the
 program would print 2. That is not a diagnostic — it is a silently wrong answer, and this compiler
 printed one until recently.
 
-The given `gen_block` therefore treats each block as a scope for names: it copies `vars` on entry
-and restores it on exit (`restore_vars`). The *slots* are untouched by this — `alloc_stack` already
+The given `gen_block` therefore treats each block as a scope for names: it copies `variables` on entry
+and restores it on exit (`restore_variables`). The *slots* are untouched by this — `alloc_stack` already
 happened, the memory is real, and mem2reg will deal with it later. What is scoped is only which
 address a name currently means, which is exactly what the source language scopes.
 
@@ -112,22 +112,22 @@ The two halves:
 - **Expressions → values (mostly straight-line).** A literal emits a literal; a `Var` emits a `load`
   of its slot; a binary op lowers both sides then emits the op; a call lowers its arguments, emits a
   `function_ref`, then `apply`. The one exception is `&&`/`||`: they **short-circuit**, so the given
-  `gen_expr` lowers them as a small `cond_br` diamond that evaluates the right operand only on the
+  `gen_expression` lowers them as a small `cond_br` diamond that evaluates the right operand only on the
   deciding edge (the result merges through a stack slot). That's the same diamond you're about to
   build for `if` — read it first as a warm-up. (Lowering `&&` as a plain bitwise op would be a real
   bug: `i < n && a[i]` would evaluate `a[i]` when `i == n` and trap, where swiftc runs clean.)
 - **Statements → CFG.** Four moves, always in this order. Lower the operands (a condition, a
   bound) into values. `new_block` for each block the statement needs. **End the block you are
   standing in**: every block finishes with exactly one branch, and that branch is what names the
-  new blocks — `terminate b (Cond_br (c, then_id, else_id))` is both "this block is done" and
+  new blocks — `terminate builder (Cond_br (c, then_id, else_id))` is both "this block is done" and
   "here is where control goes". Then fill each new block, and `switch_to` the one execution
   continues from.
 
 ### Lowering control flow
 
 - **`if c { A } else { B }`** — a **diamond** (see the figure). Evaluate `c`; make a *then*, an
-  *else* (if present), and a *merge* block; `cond_br c` to then/else (or then/merge if no else); lower
-  `A` in the then-block and `B` in the else-block, each ending `br merge`; continue in *merge*.
+  *else* (if present), and a *merge_block* block; `cond_br c` to then/else (or then/merge_block if no else); lower
+  `A` in the then-block and `B` in the else-block, each ending `br merge_block`; continue in *merge_block*.
 - **`while c { body }`** — a **header** block evaluates `c` and `cond_br`s to a *body* or an *exit*;
   the body ends with `br header` — the **back-edge** that makes it a loop; control continues in
   *exit*. The block before the loop must `br header` to get in.
@@ -136,7 +136,7 @@ The two halves:
   increment lives in its own block because `continue` must branch *there* (not to the header), or it
   would skip `v = v + 1` and loop forever. (Evaluate `hi` *once*, before the loop.)
 - **`break`/`continue`** branch out of, or round, the innermost enclosing loop. SILGen keeps a stack
-  of `(continue-target, break-target)` — `b.loops`, pushed by `enter_loop` on entering a loop
+  of `(continue-target, break-target)` — `builder.loops`, pushed by `enter_loop` on entering a loop
   body and popped by `leave_loop` on
   leaving; both statements read its head. The break-target is always the loop's *exit*; the
   continue-target is the *header* for a `while` and the *latch* for a `for`, which is exactly the
@@ -151,7 +151,7 @@ block ends in exactly one of them, and this is the one that says control never c
 (swiftc emits it after `fatalError()`, and for blocks it proves dead). It is also the terminator a
 block *starts* with, so "still `unreachable`" doubles as "not terminated yet" — that is the test
 `gen_block` makes to know it should stop. A block may legitimately keep it: after
-`if c { return 1 } else { return 2 }` nothing reaches the merge, so the merge ends `unreachable` and
+`if c { return 1 } else { return 2 }` nothing reaches the merge_block, so the merge_block ends `unreachable` and
 the verifier is content — it checks that `br`/`cond_br` name blocks that exist, nothing more.
 
 ### Why SIL at all (instead of AST → LLVM directly)?
@@ -166,7 +166,7 @@ than optimizations: definite initialization, and the "missing return" check you 
 concept 07 — which is why the oracle in §4 has to ask swiftc for SIL, not just a type-check. Build
 the right IR once, and everything downstream gets easier.
 
-> Oracle: `swift/lib/SILGen/SILGenStmt.cpp` is the direct analogue of your `gen_stmt` — `visitIfStmt`,
+> Oracle: `swift/lib/SILGen/SILGenStmt.cpp` is the direct analogue of your `gen_statement` — `visitIfStmt`,
 > `visitWhileStmt`, etc., each create blocks and emit `cond_br`/`br`. `swift/docs/SIL.rst` documents
 > the IR; our version drops the verbose `$*T` address types, `@convention`, and name mangling.
 
@@ -175,8 +175,8 @@ the right IR once, and everything downstream gets easier.
 This concept adds no Swift syntax — the grammar is concept 07's, unchanged. What it adds is an
 **IR**, so this is the vocabulary to keep in front of you: every form `--emit-sil` can print, and
 which of them you have to emit. All of it is `<-- new` (SIL starts here); within that, `<-- 08a`
-marks the memory model and `<-- 08b` the control-flow cases of `gen_stmt`. The unmarked rest comes
-from the given `gen_expr`, `lower_func` and `lower`.
+marks the memory model and `<-- 08b` the control-flow cases of `gen_statement`. The unmarked rest comes
+from the given `gen_expression`, `lower_func` and `lower`.
 
 One notation to read first: a **`$` marks a type**. `$Int`, `$Bool`, `$T` for a type left open —
 swiftc's own SIL writes them the same way (`$Int`, `$Builtin.Int64`, `$Array<Element>`). Real SIL
@@ -248,7 +248,7 @@ exactly like yours: `bb0`, straight-line instructions, one terminator.
 ### The diagnostics you emit
 
 **None — and that is the point of this concept.** SILGen runs on a program sema has already
-accepted, so a lowering hole has no user-facing error to report: if `gen_stmt` cannot cope, that is
+accepted, so a lowering hole has no user-facing error to report: if `gen_statement` cannot cope, that is
 a compiler bug, not a source bug. What `--emit-sil` prints is either SIL or a diagnostic that the
 *front end* (05–07) produced, because the driver runs lex → parse → sema and bails on errors before
 SILGen is called. So the wording table for this concept is concept 07's, unchanged, and the oracle
@@ -259,13 +259,13 @@ the blocks after you build them and reports a lowering that does not hold togeth
 block you never created, a function with no blocks — as `SIL verification error: …` on stderr, exit
 1. swiftc has the same idea in `lib/SIL/Verifier/SILVerifier.cpp`, where it is an *assertion*: a
 failing verification aborts the compiler with a stack trace, because it can only mean swiftc itself
-is wrong. Ours prints and exits so a cram case can read it; treat a hit as a bug in your `gen_stmt`,
+is wrong. Ours prints and exits so a cram case can read it; treat a hit as a bug in your `gen_statement`,
 never as something a Swift program should be able to cause.
 
 ## 3. Build it, step by step
 
 One skeleton, `silgen.ml`, with holes of two kinds. The builder
-(`emit`/`new_block`/`switch_to`/`terminate`), the arithmetic and call lowering in `gen_expr`,
+(`emit`/`new_block`/`switch_to`/`terminate`), the arithmetic and call lowering in `gen_expression`,
 `Expr_stmt`/`Return`, and `lower_func`/`lower` are given.
 
 **`TODO(08a)` — the memory model**, three arms and about six lines. A variable is an
@@ -276,10 +276,10 @@ everything below produces, and `silgen-memory.t` reports on it alone.
 
 **`TODO(08b)` — the ordinary binary operator**, one `emit`, but two types that are not always the
 same: the one the operation happens AT (either side a `Double` makes it Double arithmetic) and the
-one it produces, which `result_ty` gives you — a comparison is a `Bool` whatever it compared.
-`&&` and `||` are not yours: they short-circuit, so the given `gen_expr` lowers them as a diamond.
+one it produces, which `result_type` gives you — a comparison is a `Bool` whatever it compared.
+`&&` and `||` are not yours: they short-circuit, so the given `gen_expression` lowers them as a diamond.
 
-**`TODO(08c)` — the control flow**, the five cases of `gen_stmt` described one by one above. Use
+**`TODO(08c)` — the control flow**, the five cases of `gen_statement` described one by one above. Use
 `new_block` to make blocks, `terminate` to set the current block's branch, `gen_block` to lower a
 list of statements into the current block, and `switch_to` to move the cursor.
 
@@ -290,14 +290,14 @@ until slots do.
 Then the control-flow cases, in an order that is only a suggestion apart from the last one (§4
 says which file each turns green):
 
-1. **`if`** — the diamond. The smallest case, and the only one needing no `b.loops`, which is why
+1. **`if`** — the diamond. The smallest case, and the only one needing no `builder.loops`, which is why
    it makes the easiest start. Nothing depends on it, though: `while` will go green with `if`
    still raising.
 2. **`while`** — the same three moves plus the back-edge, and the first push/pop of
    `enter_loop ~continue_to:header.bid ~break_to:exit.bid`.
 3. **`for`** — `while` again over a slot for the counter, with the increment in its own block.
    `enter_loop ~continue_to:latch.bid`, not the header: the latch is what `continue` must reach.
-4. **`break`** and **`continue`** — one line each, reading the top of `b.loops`. **Forced:** they
+4. **`break`** and **`continue`** — one line each, reading the top of `builder.loops`. **Forced:** they
    cannot be tested before a loop exists, because nothing else pushes that stack.
 
 Reference: `solution/silgen.ml`.
@@ -316,7 +316,7 @@ way, and the oracle — in the order you fill the holes:
   branches or names a variable, so it reports on that hole alone.
 - `silgen-memory.t` — `TODO(08a)`, and the file to start with: `let`/`var` as `alloc_stack` +
   `store` + `load`, reassignment storing over the same slot, a parameter in a slot of its own, a
-  call whose result is bound through one, and the `&&` diamond `gen_expr` already builds. Nothing
+  call whose result is bound through one, and the `&&` diamond `gen_expression` already builds. Nothing
   here branches, so it goes green on the memory model alone, with every `TODO(08c)` still raising.
 The five control-flow files compare against `--emit-sil-canon` rather than `--emit-sil`. Two
 correct lowerings can build the same graph and print it differently — block ids follow the order
@@ -326,9 +326,9 @@ the entry, and puts slots and literals at the top of their block before renumber
 What survives is the graph, which is what these files are about; `silgen-memory.t` still compares
 raw `--emit-sil`, because there the instructions ARE the lesson.
 
-- `silgen-if.t` — `--emit-sil-canon` on an `if`/`else` (then, merge, else; both arms `br` to the merge;
-  the next statement lands there), an `if` with no `else` (the false edge *is* the merge), an `if`
-  whose arms both `return` (the merge keeps `unreachable`), an `else if` chain, and the verifier.
+- `silgen-if.t` — `--emit-sil-canon` on an `if`/`else` (then, merge_block, else; both arms `br` to the merge_block;
+  the next statement lands there), an `if` with no `else` (the false edge *is* the merge_block), an `if`
+  whose arms both `return` (the merge_block keeps `unreachable`), an `else if` chain, and the verifier.
 - `silgen-while.t` — the entry `br` into the header, the header's `cond_br`, the back-edge, the
   two edges that name the header, `while false` (still three blocks — folding is Phase 4), and a
   nest.
@@ -369,8 +369,8 @@ thing Phase 4 makes faster.
 1. **The `guard cond else { … }` statement.** `guard` is an early-exit: if the condition is *false*
    run the else block, which must leave the scope (`return`/`break`/`continue`). Lower it as an
    inverted `if` whose false edge runs the else block and whose true edge simply continues — there is
-   no merge, because the else block never falls through. (The value-diamond for `&&`/`||` is already
-   shipped in `gen_expr` — study it first; swiftc is your oracle.)
+   no merge_block, because the else block never falls through. (The value-diamond for `&&`/`||` is already
+   shipped in `gen_expression` — study it first; swiftc is your oracle.)
 2. **A textual SIL parser.** Write a reader for your `--emit-sil` syntax so SIL can round-trip
    (emit → parse → emit). This is what makes a `--sil-opt` workflow possible in Phase 4 (run a pass on
    a `.sil` file).
@@ -393,65 +393,65 @@ loads and stores become SSA and you learn SSA for real.
 
 Mirrors `solution/silgen.ml` (the control-flow lowering). The shape to notice: each case
 **creates blocks**, **terminates** the current block with a branch, lowers the branch contents, and
-**switches** to where control continues; loops push/pop `b.loops` and add the back-edge.
+**switches** to where control continues; loops push/pop `builder.loops` and add the back-edge.
 
 ```ocaml
 | Ast.If { cond; then_blk; else_blk; _ } ->
-    let c = gen_expr b cond in
-    let then_b = new_block b in
-    let merge = new_block b in
-    let else_b = match else_blk with Some _ -> new_block b | None -> merge in
-    terminate b (Sil.Cond_br (c, then_b.Sil.bid, else_b.Sil.bid));
-    switch_to b then_b; gen_block b then_blk; terminate b (Sil.Br merge.Sil.bid);
+    let c = gen_expression builder cond in
+    let then_block = new_block builder in
+    let merge_block = new_block builder in
+    let else_block = match else_blk with Some _ -> new_block builder | None -> merge_block in
+    terminate builder (Sil.Cond_br (c, then_block.Sil.bid, else_block.Sil.bid));
+    switch_to builder then_block; gen_block builder then_blk; terminate builder (Sil.Br merge_block.Sil.bid);
     (match else_blk with
-     | Some e -> switch_to b else_b; gen_block b e; terminate b (Sil.Br merge.Sil.bid)
+     | Some e -> switch_to builder else_block; gen_block builder e; terminate builder (Sil.Br merge_block.Sil.bid)
      | None -> ());
-    switch_to b merge
+    switch_to builder merge_block
 | Ast.While { cond; body; _ } ->
-    let header = new_block b and body_b = new_block b and exit_b = new_block b in
-    terminate b (Sil.Br header.Sil.bid);                     (* enter the loop *)
-    switch_to b header;
-    let c = gen_expr b cond in
-    terminate b (Sil.Cond_br (c, body_b.Sil.bid, exit_b.Sil.bid));
-    switch_to b body_b;
-    b.loops <- (header.Sil.bid, exit_b.Sil.bid) :: b.loops;  (* break/continue targets *)
-    gen_block b body;
-    terminate b (Sil.Br header.Sil.bid);                     (* the back-edge *)
-    b.loops <- List.tl b.loops;
-    switch_to b exit_b
+    let header = new_block builder and body_block = new_block builder and exit_block = new_block builder in
+    terminate builder (Sil.Br header.Sil.bid);                     (* enter the loop *)
+    switch_to builder header;
+    let c = gen_expression builder cond in
+    terminate builder (Sil.Cond_br (c, body_block.Sil.bid, exit_block.Sil.bid));
+    switch_to builder body_block;
+    builder.loops <- (header.Sil.bid, exit_block.Sil.bid) :: builder.loops;  (* break/continue targets *)
+    gen_block builder body;
+    terminate builder (Sil.Br header.Sil.bid);                     (* the back-edge *)
+    builder.loops <- List.tl builder.loops;
+    switch_to builder exit_block
 | Ast.For { var; lo; hi; body; _ } ->
-    let lov = gen_expr b lo in
-    let hiv = gen_expr b hi in                               (* evaluate hi ONCE *)
-    let addr = emit b (Sil.Alloc_stack var) Types.TInt in
-    Hashtbl.replace b.vars var addr;
-    ignore (emit b (Sil.Store (lov, addr)) Types.TVoid);
+    let lower_value = gen_expression builder lo in
+    let upper_value = gen_expression builder hi in                               (* evaluate hi ONCE *)
+    let address = emit builder (Sil.Alloc_stack var) Types.TInt in
+    Hashtbl.replace builder.variables var address;
+    ignore (emit builder (Sil.Store (lower_value, address)) Types.TVoid);
     (* header -> body -> latch (v = v + 1) -> header.  The increment lives in its OWN
        block (the latch), and `continue` targets the latch — not the header — so it can't
        skip the increment and loop forever. *)
-    let header = new_block b and body_b = new_block b in
-    let latch = new_block b and exit_b = new_block b in
-    terminate b (Sil.Br header.Sil.bid);
-    switch_to b header;
-    let cur_v = emit b (Sil.Load addr) Types.TInt in
-    let c = emit b (Sil.Binop (Ast.Lt, cur_v, hiv)) Types.TBool in
-    terminate b (Sil.Cond_br (c, body_b.Sil.bid, exit_b.Sil.bid));
-    switch_to b body_b;
+    let header = new_block builder and body_block = new_block builder in
+    let latch = new_block builder and exit_block = new_block builder in
+    terminate builder (Sil.Br header.Sil.bid);
+    switch_to builder header;
+    let current_value = emit builder (Sil.Load address) Types.TInt in
+    let c = emit builder (Sil.Binop (Ast.Lt, current_value, upper_value)) Types.TBool in
+    terminate builder (Sil.Cond_br (c, body_block.Sil.bid, exit_block.Sil.bid));
+    switch_to builder body_block;
     (* continue -> latch, break -> exit *)
-    b.loops <- (latch.Sil.bid, exit_b.Sil.bid) :: b.loops;
-    gen_block b body;
-    terminate b (Sil.Br latch.Sil.bid);
-    b.loops <- List.tl b.loops;
-    switch_to b latch;
-    let cv = emit b (Sil.Load addr) Types.TInt in            (* v = v + 1 *)
-    let one = emit b (Sil.Int_lit 1) Types.TInt in
-    let inc = emit b (Sil.Binop (Ast.Add, cv, one)) Types.TInt in
-    ignore (emit b (Sil.Store (inc, addr)) Types.TVoid);
-    terminate b (Sil.Br header.Sil.bid);
-    switch_to b exit_b
+    builder.loops <- (latch.Sil.bid, exit_block.Sil.bid) :: builder.loops;
+    gen_block builder body;
+    terminate builder (Sil.Br latch.Sil.bid);
+    builder.loops <- List.tl builder.loops;
+    switch_to builder latch;
+    let current_value = emit builder (Sil.Load address) Types.TInt in            (* v = v + 1 *)
+    let one = emit builder (Sil.Int_lit 1) Types.TInt in
+    let incremented_value = emit builder (Sil.Binop (Ast.Add, current_value, one)) Types.TInt in
+    ignore (emit builder (Sil.Store (incremented_value, address)) Types.TVoid);
+    terminate builder (Sil.Br header.Sil.bid);
+    switch_to builder exit_block
 | Ast.Break _ ->
-    (match b.loops with (_, ex) :: _ -> terminate b (Sil.Br ex) | [] -> ())
+    (match builder.loops with (_, exit_target) :: _ -> terminate builder (Sil.Br exit_target) | [] -> ())
 | Ast.Continue _ ->
-    (match b.loops with (cont, _) :: _ -> terminate b (Sil.Br cont) | [] -> ())
+    (match builder.loops with (continue_target_id, _) :: _ -> terminate builder (Sil.Br continue_target_id) | [] -> ())
 ```
 
 ## 9. Exercise solutions
@@ -461,8 +461,8 @@ Mirrors `solution/silgen.ml` (the control-flow lowering). The shape to notice: e
 `guard cond else { stmts }` is an *inverted* `if` with no fall-through on the false edge. Lower it:
 evaluate `cond`; `cond_br` to a *continue* block (the rest of the enclosing block) and an *else*
 block; lower `stmts` into the else block — they end in `return`/`break`/`continue`, so the else
-block terminates itself and there is **no merge**. Contrast this with the value-diamond used for
-`&&`/`||` (already in `gen_expr`), which *does* merge because both arms produce a value; `guard`'s
+block terminates itself and there is **no merge_block**. Contrast this with the value-diamond used for
+`&&`/`||` (already in `gen_expression`), which *does* merge because both arms produce a value; `guard`'s
 else arm produces nothing and leaves the scope. swiftc is the oracle for the control flow.
 
 ### 2 — a textual SIL reader

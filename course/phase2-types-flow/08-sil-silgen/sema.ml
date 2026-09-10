@@ -1,4 +1,5 @@
-(* FROZEN SOLUTION — concept 07 sema: concepts 05–06 + functions.
+(* Inherited semantic analysis — the completed concept-07 type and flow checker,
+   given in concept 08.
 
    New vs 06:
      - a function-signature table built in a FIRST PASS (so calls, recursion, and forward
@@ -9,27 +10,45 @@
      - functions are self-contained (params + the function table only — no top-level capture)
      - print and Void functions yield () (Types.TVoid) *)
 
-let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
-  let env : (string * (Types.ty * bool)) list ref = ref [] in
+(* Does a block definitely return on every path? — the "missing return" analysis. Pure functions
+   of the AST, so they live at module level and can be tested on their own. *)
+let rec stmt_returns = function
+  | Ast.Return _ -> true
+  | Ast.If { then_blk; else_blk = Some expression; _ } -> block_returns then_blk && block_returns expression
+  | _ -> false
+
+and block_returns statements = List.exists stmt_returns statements (* the rest is unreachable *)
+
+let check (program : Ast.program) (diagnostics : Diagnostics.sink) : unit =
+  let environment : (string * (Types.ty * bool)) list ref = ref [] in
   let loop_depth = ref 0 in
-  let current_ret : Types.ty option ref = ref None in
-  let funcs : (string, Types.ty list * Types.ty) Hashtbl.t = Hashtbl.create 16 in
-  let err span msg = Diagnostics.error diags span msg in
-  let lookup x = List.assoc_opt x !env in
-  let bind name v = env := (name, v) :: !env in
-  let in_scope (f : unit -> unit) = let saved = !env in f (); env := saved in
+  (* The state the function rules read. Each answers TWO questions, which is why it has the type
+     it has:
+       `current_return_type` — `None` means "not inside a function", `Some t` means "inside one, and it
+         returns t". A `return` needs both halves: the first decides whether it is legal at all,
+         the second what its value is checked against.
+       `functions` — every function's signature, keyed by name: (parameter types, return type). It is
+         filled by pass 1 and read by pass 2, which is what lets a call resolve whether the callee
+         is declared above it or below. A Hashtbl, not the `environment` list, because a function is not a
+         variable: it is not scoped, not shadowed, and not bound by `let`. *)
+  let current_return_type : Types.ty option ref = ref None in
+  let functions : (string, Types.ty list * Types.ty) Hashtbl.t = Hashtbl.create 16 in
+  let report_error span msg = Diagnostics.error diagnostics span msg in
+  let lookup x = List.assoc_opt x !environment in
+  let bind name v = environment := (name, v) :: !environment in
+  let in_scope (f : unit -> unit) = let saved = !environment in f (); environment := saved in
   let resolve_silent name = Option.value (Types.of_name name) ~default:Types.TInt in
   let resolve_ty span name =
     match Types.of_name name with
     | Some t -> t
     | None ->
-        err span (Printf.sprintf "cannot find type '%s' in scope" name);
+        report_error span (Printf.sprintf "cannot find type '%s' in scope" name);
         Types.TInt
   in
 
   let rec is_int_literal = function
     | Ast.Int_lit _ -> true
-    | Ast.Unary (Ast.Neg, e, _) -> is_int_literal e
+    | Ast.Unary (Ast.Neg, expression, _) -> is_int_literal expression
     | Ast.Binary ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod), a, b, _) ->
         is_int_literal a && is_int_literal b
     | _ -> false
@@ -40,8 +59,8 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
     else if is_int_literal r && tl = Types.TDouble then Some Types.TDouble
     else None
   in
-  let rec infer (e : Ast.expr) : Types.ty =
-    match e with
+  let rec infer (expression : Ast.expr) : Types.ty =
+    match expression with
     | Ast.Int_lit _ -> Types.TInt
     | Ast.Double_lit _ -> Types.TDouble
     | Ast.Bool_lit _ -> Types.TBool
@@ -50,19 +69,19 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         match lookup x with
         | Some (t, _) -> t
         | None ->
-            err span (Printf.sprintf "cannot find '%s' in scope" x);
+            report_error span (Printf.sprintf "cannot find '%s' in scope" x);
             Types.TInt)
     | Ast.Unary (Ast.Neg, e0, span) ->
         let t = infer e0 in
         if Types.is_numeric t then t
         else (
-          err span
+          report_error span
             (Printf.sprintf "unary operator '-' cannot be applied to an operand of type '%s'"
                (Types.string_of_ty t));
           t)
     | Ast.Binary (op, l, r, span) -> infer_binary op l r span
     | Ast.Call (f, args, span) -> infer_call f args span
-    (* `e as T`: the type is written, so there is nothing to synthesise — CHECK the
+    (* `expression as T`: the type is written, so there is nothing to synthesise — CHECK the
        operand against it. The one arm where `infer` calls `check_expr`. *)
     | Ast.Ascribe (e0, tyname, span) -> (
         match Types.of_name tyname with
@@ -70,7 +89,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             check_expr e0 t;
             t
         | None ->
-            err span (Printf.sprintf "cannot find type '%s' in scope" tyname);
+            report_error span (Printf.sprintf "cannot find type '%s' in scope" tyname);
             infer e0)
   and infer_binary op l r span : Types.ty =
     let tl = infer l and tr = infer r in
@@ -78,7 +97,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
       (* swiftc has two wordings and picks by whether the operands agree:
            1 < "a"      -> cannot be applied to operands of type 'Int' and 'String'
            true < false -> cannot be applied to two 'Bool' operands *)
-      err span
+      report_error span
         (if tl = tr then
            Printf.sprintf "binary operator '%s' cannot be applied to two '%s' operands"
              (Ast.string_of_binop op) (Types.string_of_ty tl)
@@ -105,11 +124,11 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
     | Ast.And | Ast.Or ->
         if tl = Types.TBool && tr = Types.TBool then Types.TBool else (ignore (bad ()); Types.TBool)
   and infer_call f args span : Types.ty =
-    match Hashtbl.find_opt funcs f with
+    match Hashtbl.find_opt functions f with
     | Some (ptypes, ret) ->
         let np = List.length ptypes and na = List.length args in
         if np <> na then
-          err span (Printf.sprintf "function '%s' expects %d argument(s) but %d given" f np na)
+          report_error span (Printf.sprintf "function '%s' expects %d argument(s) but %d given" f np na)
         else List.iter2 (fun a t -> check_expr a t) args ptypes;
         ret
     | None ->
@@ -117,19 +136,19 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
           (match args with
           | [ a ] -> ignore (infer a)
           | _ ->
-              err span "print(_:) expects exactly one argument";
+              report_error span "print(_:) expects exactly one argument";
               List.iter (fun a -> ignore (infer a)) args);
           Types.TVoid)
         else (
-          err span (Printf.sprintf "cannot find '%s' in scope" f);
+          report_error span (Printf.sprintf "cannot find '%s' in scope" f);
           List.iter (fun a -> ignore (infer a)) args;
           Types.TInt)
-  and check_expr (e : Ast.expr) (expected : Types.ty) : unit =
-    match e with
+  and check_expr (expression : Ast.expr) (expected : Types.ty) : unit =
+    match expression with
     | Ast.Int_lit _ ->
         if expected = Types.TInt || expected = Types.TDouble then ()
         else
-          err (Ast.expr_span e)
+          report_error (Ast.expr_span expression)
             (Printf.sprintf "cannot convert value of type 'Int' to specified type '%s'"
                (Types.string_of_ty expected))
     | Ast.Binary ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div), l, r, _) when Types.is_numeric expected ->
@@ -140,18 +159,13 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         check_expr r Types.TInt
     | Ast.Unary (Ast.Neg, e0, _) when Types.is_numeric expected -> check_expr e0 expected
     | _ ->
-        let t = infer e in
+        let t = infer expression in
         if not (Types.equal t expected) then
-          err (Ast.expr_span e)
+          report_error (Ast.expr_span expression)
             (Printf.sprintf "cannot convert value of type '%s' to specified type '%s'"
                (Types.string_of_ty t) (Types.string_of_ty expected))
   in
   (* does a block definitely return on every path? (the "missing return" check) *)
-  let rec stmt_returns = function
-    | Ast.Return _ -> true
-    | Ast.If { then_blk; else_blk = Some e; _ } -> block_returns then_blk && block_returns e
-    | _ -> false
-  and block_returns stmts = List.exists stmt_returns stmts (* the rest is unreachable *) in
   let rec check_stmt (s : Ast.stmt) : unit =
     match s with
     | Ast.Let { name; is_var; annot; value; span } ->
@@ -161,17 +175,17 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
           | Some tyname -> (
               match Types.of_name tyname with
               | Some t -> check_expr value t; t
-              | None -> err span (Printf.sprintf "cannot find type '%s' in scope" tyname); infer value)
+              | None -> report_error span (Printf.sprintf "cannot find type '%s' in scope" tyname); infer value)
         in
         bind name (t, is_var)
     | Ast.Assign { name; value; span } -> (
         match lookup name with
-        | None -> err span (Printf.sprintf "cannot find '%s' in scope" name); ignore (infer value)
+        | None -> report_error span (Printf.sprintf "cannot find '%s' in scope" name); ignore (infer value)
         | Some (t, is_var) ->
             if not is_var then
-              err span (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" name);
+              report_error span (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" name);
             check_expr value t)
-    | Ast.Expr_stmt (e, _) -> ignore (infer e)
+    | Ast.Expr_stmt (expression, _) -> ignore (infer expression)
     | Ast.If { cond; then_blk; else_blk; _ } ->
         check_expr cond Types.TBool;
         check_block then_blk;
@@ -185,50 +199,50 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         incr loop_depth;
         in_scope (fun () -> bind var (Types.TInt, false); List.iter check_stmt body);
         decr loop_depth
-    | Ast.Break span -> if !loop_depth = 0 then err span "'break' is only allowed inside a loop"
-    | Ast.Continue span -> if !loop_depth = 0 then err span "'continue' is only allowed inside a loop"
+    | Ast.Break span -> if !loop_depth = 0 then report_error span "'break' is only allowed inside a loop"
+    | Ast.Continue span -> if !loop_depth = 0 then report_error span "'continue' is only allowed inside a loop"
     | Ast.Return (eo, span) -> (
-        match !current_ret with
-        | None -> err span "return invalid outside of a func"
+        match !current_return_type with
+        | None -> report_error span "return invalid outside of a func"
         | Some rt -> (
             match eo with
-            | Some e ->
+            | Some expression ->
                 if rt = Types.TVoid then
-                  err span "unexpected non-void return value in void function"
-                else check_expr e rt
+                  report_error span "unexpected non-void return value in void function"
+                else check_expr expression rt
             | None ->
-                if rt <> Types.TVoid then err span "non-void function should return a value"))
-  and check_block (stmts : Ast.stmt list) : unit = in_scope (fun () -> List.iter check_stmt stmts) in
+                if rt <> Types.TVoid then report_error span "non-void function should return a value"))
+  and check_block (statements : Ast.stmt list) : unit = in_scope (fun () -> List.iter check_stmt statements) in
 
   (* check one function body: a fresh scope with the parameters; then "missing return" *)
   let check_func (f : Ast.func_decl) : unit =
     let ret = match f.Ast.ret with None -> Types.TVoid | Some n -> resolve_ty f.Ast.fspan n in
-    let saved_env = !env and saved_ret = !current_ret in
-    env := [];
-    current_ret := Some ret;
+    let saved_env = !environment and saved_ret = !current_return_type in
+    environment := [];
+    current_return_type := Some ret;
     List.iter
       (fun (pr : Ast.param) -> bind pr.Ast.pname (resolve_ty f.Ast.fspan pr.Ast.ptype, false))
       f.Ast.params;
     List.iter check_stmt f.Ast.body;
-    env := saved_env;
-    current_ret := saved_ret;
+    environment := saved_env;
+    current_return_type := saved_ret;
     if ret <> Types.TVoid && not (block_returns f.Ast.body) then
-      err f.Ast.fspan
-        (Printf.sprintf "missing return in %s expected to return '%s'" "global function" (Types.string_of_ty ret))
+      report_error f.Ast.fspan
+        (Printf.sprintf "missing return in global function expected to return '%s'" (Types.string_of_ty ret))
   in
 
   (* PASS 1: collect signatures so calls/recursion/forward-references resolve. *)
   List.iter
     (function
       | Ast.IFunc f ->
-          if Hashtbl.mem funcs f.Ast.fname then
-            err f.Ast.fspan (Printf.sprintf "invalid redeclaration of '%s'" f.Ast.fname);
+          if Hashtbl.mem functions f.Ast.fname then
+            report_error f.Ast.fspan (Printf.sprintf "invalid redeclaration of '%s'" f.Ast.fname);
           let ptypes = List.map (fun (pr : Ast.param) -> resolve_silent pr.Ast.ptype) f.Ast.params in
           let ret = match f.Ast.ret with None -> Types.TVoid | Some n -> resolve_silent n in
-          Hashtbl.replace funcs f.Ast.fname (ptypes, ret)
+          Hashtbl.replace functions f.Ast.fname (ptypes, ret)
       | Ast.IStmt _ -> ())
-    prog.Ast.items;
+    program.Ast.items;
   (* PASS 2: check bodies and top-level statements, in order. *)
   List.iter
     (function Ast.IFunc f -> check_func f | Ast.IStmt s -> check_stmt s)
-    prog.Ast.items
+    program.Ast.items
