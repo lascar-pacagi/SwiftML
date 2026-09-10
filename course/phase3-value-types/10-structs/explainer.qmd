@@ -309,6 +309,7 @@ from the pinned snapshot); the differences are stated, not hidden.
 | `struct S { let x: Int }; var s …; s.x = 2` | `cannot assign to property: 'x' is a 'let' constant` | **same** — a `let` field is immutable through every binding |
 | `p == q` on structs | `binary operator '==' cannot be applied to two 'Point' operands` | **same** (`cannot_apply_binop_to_same_args`, l.220) — no `Equatable` until Exercise 3 |
 | `let n: Int = p` | `cannot convert value of type 'Point' to specified type 'Int'` | **same** |
+| `struct Box { var value: Missing }` | `cannot find type 'Missing' in scope` | **same** |
 | `Nope(x: 1)` | `cannot find 'Nope' in scope` | **same** |
 | `struct A {…}` twice | `invalid redeclaration of 'A'` | **same** (`invalid_redecl`, l.1110) |
 | `print(p)` on a struct | `cannot print a value of type 'Point' (only Int, Double, Bool and String)` | **accepted** — swiftc prints `Point(x: 1, y: 2)` through reflection; ours has no runtime to do it, so sema refuses instead of letting IRGen crash |
