@@ -9,7 +9,8 @@ type ty =
   | TDouble
   | TString
   | TVoid (* () — a value-less result *)
-  | TStruct of string (* a value type — concept 10; the name keys the struct registry *)
+  | TStruct of
+      string (* a value type — concept 10; the name keys the struct registry *)
 
 (* the layout of a struct: its fields in declaration order (name, type). Built by sema/SILGen
    from the `struct` declaration and consulted for member access, init, and codegen. *)

@@ -4,9 +4,19 @@
    Design oracle: swift/include/swift/AST/Decl.h (FuncDecl, ParamDecl), Stmt.h (ReturnStmt). *)
 
 type binop =
-  | Add | Sub | Mul | Div | Mod
-  | Eq | Ne | Lt | Le | Gt | Ge
-  | And | Or
+  | Add
+  | Sub
+  | Mul
+  | Div
+  | Mod
+  | Eq
+  | Ne
+  | Lt
+  | Le
+  | Gt
+  | Ge
+  | And
+  | Or
 
 type unop = Neg
 
@@ -18,7 +28,10 @@ type expr =
   | Var of string * Token.span
   | Unary of unop * expr * Token.span
   | Binary of binop * expr * expr * Token.span
-  | Call of string * (string option * expr) list * Token.span (* function call OR struct init *)
+  | Call of
+      string
+      * (string option * expr) list
+      * Token.span (* function call OR struct init *)
   | Member of expr * string * Token.span (* NEW in this concept: `e.field` *)
   | Ascribe of expr * string * Token.span (* `e as T` — a coercion *)
 
@@ -26,19 +39,45 @@ type expr =
 type arg = string option * expr
 
 type stmt =
-  | Let of { name : string; is_var : bool; annot : string option; value : expr; span : Token.span }
+  | Let of {
+      name : string;
+      is_var : bool;
+      annot : string option;
+      value : expr;
+      span : Token.span;
+    }
   | Assign of { name : string; value : expr; span : Token.span }
-  | Set_member of { obj : string; field : string; value : expr; span : Token.span } (* NEW in this concept: `p.x = e` *)
+  | Set_member of {
+      obj : string;
+      field : string;
+      value : expr;
+      span : Token.span;
+    }
+    (* NEW in this concept: `p.x = e` *)
   | Expr_stmt of expr * Token.span
-  | If of { cond : expr; then_blk : stmt list; else_blk : stmt list option; span : Token.span }
+  | If of {
+      cond : expr;
+      then_blk : stmt list;
+      else_blk : stmt list option;
+      span : Token.span;
+    }
   | While of { cond : expr; body : stmt list; span : Token.span }
-  | For of { var : string; lo : expr; hi : expr; body : stmt list; span : Token.span }
+  | For of {
+      var : string;
+      lo : expr;
+      hi : expr;
+      body : stmt list;
+      span : Token.span;
+    }
   | Break of Token.span
   | Continue of Token.span
   | Return of expr option * Token.span
 
 (* functions *)
-type param = { pname : string; ptype : string (* written type name; sema resolves it *) }
+type param = {
+  pname : string;
+  ptype : string; (* written type name; sema resolves it *)
+}
 
 type func_decl = {
   fname : string;
@@ -52,15 +91,12 @@ type func_decl = {
 type field = {
   fld_name : string;
   fld_ty : string; (* written type name; sema resolves it *)
-  fld_var : bool; (* `var x: T` — a `let` field can't be assigned through any binding *)
+  fld_var : bool;
+      (* `var x: T` — a `let` field can't be assigned through any binding *)
 }
+
 type struct_decl = { sname : string; sfields : field list; sspan : Token.span }
-
-type item =
-  | IFunc of func_decl
-  | IStruct of struct_decl
-  | IStmt of stmt
-
+type item = IFunc of func_decl | IStruct of struct_decl | IStmt of stmt
 type program = { items : item list }
 
 let expr_span = function
@@ -77,9 +113,19 @@ let expr_span = function
       span
 
 let string_of_binop = function
-  | Add -> "+" | Sub -> "-" | Mul -> "*" | Div -> "/" | Mod -> "%"
-  | Eq -> "==" | Ne -> "!=" | Lt -> "<" | Le -> "<=" | Gt -> ">" | Ge -> ">="
-  | And -> "&&" | Or -> "||"
+  | Add -> "+"
+  | Sub -> "-"
+  | Mul -> "*"
+  | Div -> "/"
+  | Mod -> "%"
+  | Eq -> "=="
+  | Ne -> "!="
+  | Lt -> "<"
+  | Le -> "<="
+  | Gt -> ">"
+  | Ge -> ">="
+  | And -> "&&"
+  | Or -> "||"
 
 let string_of_unop = function Neg -> "-"
 
@@ -92,56 +138,84 @@ let rec dump_expr = function
   | Unary (operator, expression, _) ->
       Printf.sprintf "(%s %s)" (string_of_unop operator) (dump_expr expression)
   | Binary (operator, left, right, _) ->
-      Printf.sprintf "(%s %s %s)" (string_of_binop operator) (dump_expr left) (dump_expr right)
-  | Ascribe (expression, type_name, _) -> Printf.sprintf "(as %s %s)" type_name (dump_expr expression)
+      Printf.sprintf "(%s %s %s)" (string_of_binop operator) (dump_expr left)
+        (dump_expr right)
+  | Ascribe (expression, type_name, _) ->
+      Printf.sprintf "(as %s %s)" type_name (dump_expr expression)
   | Call (function_name, arguments, _) ->
       let dump_argument (label, expression) =
         match label with
         | Some label -> Printf.sprintf "%s:%s" label (dump_expr expression)
         | None -> dump_expr expression
       in
-      Printf.sprintf "(%s %s)" function_name (String.concat " " (List.map dump_argument arguments))
-  | Member (expression, field_name, _) -> Printf.sprintf "(. %s %s)" (dump_expr expression) field_name
+      Printf.sprintf "(%s %s)" function_name
+        (String.concat " " (List.map dump_argument arguments))
+  | Member (expression, field_name, _) ->
+      Printf.sprintf "(. %s %s)" (dump_expr expression) field_name
 
 let rec dump_stmt = function
-  | Let { name; is_var; annot; value; _ } ->
+  | Let { name; is_var; annot; value; _ } -> (
       let keyword = if is_var then "var" else "let" in
-      (match annot with
+      match annot with
       | None -> Printf.sprintf "(%s %s %s)" keyword name (dump_expr value)
-      | Some type_name -> Printf.sprintf "(%s %s : %s %s)" keyword name type_name (dump_expr value))
-  | Assign { name; value; _ } -> Printf.sprintf "(= %s %s)" name (dump_expr value)
-  | Set_member { obj; field; value; _ } -> Printf.sprintf "(.= %s %s %s)" obj field (dump_expr value)
+      | Some type_name ->
+          Printf.sprintf "(%s %s : %s %s)" keyword name type_name
+            (dump_expr value))
+  | Assign { name; value; _ } ->
+      Printf.sprintf "(= %s %s)" name (dump_expr value)
+  | Set_member { obj; field; value; _ } ->
+      Printf.sprintf "(.= %s %s %s)" obj field (dump_expr value)
   | Expr_stmt (expression, _) -> dump_expr expression
   | If { cond; then_blk; else_blk; _ } -> (
       match else_blk with
-      | None -> Printf.sprintf "(if %s %s)" (dump_expr cond) (dump_block then_blk)
-      | Some statements -> Printf.sprintf "(if %s %s %s)" (dump_expr cond) (dump_block then_blk) (dump_block statements))
-  | While { cond; body; _ } -> Printf.sprintf "(while %s %s)" (dump_expr cond) (dump_block body)
+      | None ->
+          Printf.sprintf "(if %s %s)" (dump_expr cond) (dump_block then_blk)
+      | Some statements ->
+          Printf.sprintf "(if %s %s %s)" (dump_expr cond) (dump_block then_blk)
+            (dump_block statements))
+  | While { cond; body; _ } ->
+      Printf.sprintf "(while %s %s)" (dump_expr cond) (dump_block body)
   | For { var; lo; hi; body; _ } ->
-      Printf.sprintf "(for %s %s %s %s)" var (dump_expr lo) (dump_expr hi) (dump_block body)
+      Printf.sprintf "(for %s %s %s %s)" var (dump_expr lo) (dump_expr hi)
+        (dump_block body)
   | Break _ -> "break"
   | Continue _ -> "continue"
   | Return (None, _) -> "(return)"
-  | Return (Some expression, _) -> Printf.sprintf "(return %s)" (dump_expr expression)
+  | Return (Some expression, _) ->
+      Printf.sprintf "(return %s)" (dump_expr expression)
 
 and dump_block (statements : stmt list) : string =
   Printf.sprintf "(%s)" (String.concat " " (List.map dump_stmt statements))
 
-let dump_param (parameter : param) : string = Printf.sprintf "%s:%s" parameter.pname parameter.ptype
+let dump_param (parameter : param) : string =
+  Printf.sprintf "%s:%s" parameter.pname parameter.ptype
 
 let dump_func (function_decl : func_decl) : string =
-  let parameters = String.concat " " (List.map dump_param function_decl.params) in
-  let return_type = match function_decl.ret with Some type_name -> Printf.sprintf "-> %s " type_name | None -> "" in
-  Printf.sprintf "(func %s (%s) %s%s)" function_decl.fname parameters return_type (dump_block function_decl.body)
+  let parameters =
+    String.concat " " (List.map dump_param function_decl.params)
+  in
+  let return_type =
+    match function_decl.ret with
+    | Some type_name -> Printf.sprintf "-> %s " type_name
+    | None -> ""
+  in
+  Printf.sprintf "(func %s (%s) %s%s)" function_decl.fname parameters
+    return_type
+    (dump_block function_decl.body)
 
 let dump_field (field : field) : string =
-  Printf.sprintf "%s%s:%s" (if field.fld_var then "" else "let ") field.fld_name field.fld_ty
+  Printf.sprintf "%s%s:%s"
+    (if field.fld_var then "" else "let ")
+    field.fld_name field.fld_ty
+
 let dump_struct (struct_decl : struct_decl) : string =
-  Printf.sprintf "(struct %s (%s))" struct_decl.sname (String.concat " " (List.map dump_field struct_decl.sfields))
+  Printf.sprintf "(struct %s (%s))" struct_decl.sname
+    (String.concat " " (List.map dump_field struct_decl.sfields))
 
 let dump_item = function
   | IFunc function_decl -> dump_func function_decl
   | IStruct struct_decl -> dump_struct struct_decl
   | IStmt statement -> dump_stmt statement
 
-let dump_program (program : program) : string = String.concat "\n" (List.map dump_item program.items)
+let dump_program (program : program) : string =
+  String.concat "\n" (List.map dump_item program.items)

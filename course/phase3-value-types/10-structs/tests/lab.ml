@@ -6,7 +6,9 @@
 
 let usage () =
   prerr_endline "usage: lab build <file.swift> [-o <out>]";
-  prerr_endline "       lab --emit-tokens|--emit-ast|--typecheck|--emit-sil|--emit-llvm <file.swift>";
+  prerr_endline
+    "       lab --emit-tokens|--emit-ast|--typecheck|--emit-sil|--emit-llvm \
+     <file.swift>";
   exit 2
 
 let emit_of_flag : string -> Driver.emit option = function
@@ -28,5 +30,7 @@ let () =
       in
       Driver.compile_file ~out ~src_path:file ~emit:Driver.Exe ()
   | _ :: flag :: [ file ] when emit_of_flag flag <> None ->
-      Driver.compile_file ~src_path:file ~emit:(Option.get (emit_of_flag flag)) ()
+      Driver.compile_file ~src_path:file
+        ~emit:(Option.get (emit_of_flag flag))
+        ()
   | _ -> usage ()

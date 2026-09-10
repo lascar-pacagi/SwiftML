@@ -15,7 +15,9 @@ let status_string : Unix.process_status -> string = function
 
 let require_success description = function
   | Unix.WEXITED 0 -> ()
-  | status -> failwith (Printf.sprintf "%s failed (%s)" description (status_string status))
+  | status ->
+      failwith
+        (Printf.sprintf "%s failed (%s)" description (status_string status))
 
 let run_quiet program arguments =
   let null = Unix.openfile "/dev/null" [ Unix.O_WRONLY ] 0 in
@@ -26,12 +28,14 @@ let run_quiet program arguments =
 
 let compile_swiftc optimization output =
   let arguments = [| "/usr/bin/swiftc"; optimization; source; "-o"; output |] in
-  require_success ("swiftc " ^ optimization) (run_quiet "/usr/bin/swiftc" arguments)
+  require_success ("swiftc " ^ optimization)
+    (run_quiet "/usr/bin/swiftc" arguments)
 
 let write_file path contents =
   let output_channel = open_out_bin path in
-  Fun.protect ~finally:(fun () -> close_out output_channel) (fun () ->
-      output_string output_channel contents)
+  Fun.protect
+    ~finally:(fun () -> close_out output_channel)
+    (fun () -> output_string output_channel contents)
 
 let compile_swiftml_o2 llvm_path output =
   let source_text = Driver.read_file source in
@@ -45,7 +49,8 @@ let compile_swiftml_o2 llvm_path output =
 let capture_output executable =
   let read_descriptor, write_descriptor = Unix.pipe () in
   let process_id =
-    Unix.create_process executable [| executable |] Unix.stdin write_descriptor Unix.stderr
+    Unix.create_process executable [| executable |] Unix.stdin write_descriptor
+      Unix.stderr
   in
   Unix.close write_descriptor;
   let input_channel = Unix.in_channel_of_descr read_descriptor in
@@ -67,7 +72,9 @@ let capture_output executable =
 let time_once executable =
   let null = Unix.openfile "/dev/null" [ Unix.O_WRONLY ] 0 in
   let start_time = Unix.gettimeofday () in
-  let process_id = Unix.create_process executable [| executable |] Unix.stdin null null in
+  let process_id =
+    Unix.create_process executable [| executable |] Unix.stdin null null
+  in
   let _, status = Unix.waitpid [] process_id in
   let elapsed = Unix.gettimeofday () -. start_time in
   Unix.close null;
@@ -121,17 +128,24 @@ let () =
             failwith
               (Printf.sprintf "output mismatch: %s=%S swiftc=%S" name output
                  reference_output))
-        [ ("swiftml", swiftml_o0); ("swiftml + clang -O2", swiftml_o2);
-          ("swiftc -Onone", swiftc_onone) ];
+        [
+          ("swiftml", swiftml_o0);
+          ("swiftml + clang -O2", swiftml_o2);
+          ("swiftc -Onone", swiftc_onone);
+        ];
       Printf.printf " done\n%!";
       Printf.printf "  output: %s (all four binaries agree)\n%!"
         (String.trim reference_output);
       Printf.printf "  native runtime, best of %d after one warm-up:\n%!" runs;
-      let swiftml_o0_time = time_and_report "swiftml (clang default)" swiftml_o0 in
+      let swiftml_o0_time =
+        time_and_report "swiftml (clang default)" swiftml_o0
+      in
       let swiftml_o2_time = time_and_report "swiftml + clang -O2" swiftml_o2 in
       let swiftc_onone_time = time_and_report "swiftc -Onone" swiftc_onone in
       let swiftc_o_time = time_and_report "swiftc -O" swiftc_o in
-      Printf.printf "  clang -O2 speedup: %.2fx\n" (swiftml_o0_time /. swiftml_o2_time);
-      Printf.printf "  swiftc -O speedup: %.2fx\n" (swiftc_onone_time /. swiftc_o_time);
+      Printf.printf "  clang -O2 speedup: %.2fx\n"
+        (swiftml_o0_time /. swiftml_o2_time);
+      Printf.printf "  swiftc -O speedup: %.2fx\n"
+        (swiftc_onone_time /. swiftc_o_time);
       Printf.printf "  optimized gap: %.2fx (swiftml / swiftc)\n"
         (swiftml_o2_time /. swiftc_o_time))

@@ -11,14 +11,16 @@
    Recognizable-but-simplified vs real swiftc SIL (we drop $*T address types, @convention,
    and name mangling). Design oracle: swift/docs/SIL.rst, swift/lib/SIL/. *)
 
-type value = int (* the result of an instruction: %0, %1, … (numbered per function) *)
+type value =
+  int (* the result of an instruction: %0, %1, … (numbered per function) *)
 
 type instr =
   | Int_lit of int
   | Float_lit of float
   | Bool_lit of bool
   | String_lit of string
-  | Alloc_stack of string (* a stack slot for a named variable; the result is its address *)
+  | Alloc_stack of
+      string (* a stack slot for a named variable; the result is its address *)
   | Load of value (* read the value in an address *)
   | Store of value * value (* store <value> to <address> *)
   | Binop of Ast.binop * value * value
@@ -27,19 +29,24 @@ type instr =
   | Apply of value * value list (* call a function_ref with arguments *)
   | Print of value (* the print(_:) builtin *)
   (* structs — concept 10 *)
-  | Struct of value list (* build a struct value from its field values, in order *)
+  | Struct of
+      value list (* build a struct value from its field values, in order *)
   | Struct_extract of value * int (* read field #i out of a struct VALUE *)
-  | Struct_element_addr of value * int (* address of field #i of a struct ADDRESS (for stores) *)
+  | Struct_element_addr of
+      value * int (* address of field #i of a struct ADDRESS (for stores) *)
 
 type term =
   | Br of int (* unconditional branch to block #n *)
-  | Cond_br of value * int * int (* branch on a Bool: (cond, then-block, else-block) *)
+  | Cond_br of
+      value * int * int (* branch on a Bool: (cond, then-block, else-block) *)
   | Return of value option (* return a value, or Void *)
-  | Unreachable (* control never continues from here; also a block's term until one is set *)
+  | Unreachable
+(* control never continues from here; also a block's term until one is set *)
 
 type block = {
   bid : int;
-  mutable instrs : (value * instr) list; (* (result value, instruction), in program order *)
+  mutable instrs : (value * instr) list;
+      (* (result value, instruction), in program order *)
   mutable term : term;
 }
 
@@ -48,10 +55,14 @@ type func = {
   params : (value * Types.ty) list;
   ret : Types.ty;
   mutable blocks : block list; (* block 0 is the entry *)
-  val_ty : (value, Types.ty) Hashtbl.t; (* the type of every value (filled by SILGen) *)
+  val_ty : (value, Types.ty) Hashtbl.t;
+      (* the type of every value (filled by SILGen) *)
 }
 
-type modul = { funcs : func list; structs : Types.struct_layout list (* concept 10 *) }
+type modul = {
+  funcs : func list;
+  structs : Types.struct_layout list (* concept 10 *);
+}
 
 (* ---- printer: `swiftml2 --emit-sil` ------------------------------------------------- *)
 
@@ -61,50 +72,65 @@ let string_of_instr (function_definition : func)
     ((value, instruction) : value * instr) : string =
   let result_name = Printf.sprintf "%%%d" value in
   let result_type () =
-    try sil_type (Hashtbl.find function_definition.val_ty value) with Not_found -> "$?"
+    try sil_type (Hashtbl.find function_definition.val_ty value)
+    with Not_found -> "$?"
   in
   match instruction with
-  | Int_lit integer -> Printf.sprintf "%s = integer_literal $Int, %d" result_name integer
-  | Float_lit number -> Printf.sprintf "%s = float_literal $Double, %g" result_name number
-  | Bool_lit boolean -> Printf.sprintf "%s = integer_literal $Bool, %b" result_name boolean
-  | String_lit text -> Printf.sprintf "%s = string_literal $String, %S" result_name text
+  | Int_lit integer ->
+      Printf.sprintf "%s = integer_literal $Int, %d" result_name integer
+  | Float_lit number ->
+      Printf.sprintf "%s = float_literal $Double, %g" result_name number
+  | Bool_lit boolean ->
+      Printf.sprintf "%s = integer_literal $Bool, %b" result_name boolean
+  | String_lit text ->
+      Printf.sprintf "%s = string_literal $String, %S" result_name text
   | Alloc_stack name ->
-      Printf.sprintf "%s = alloc_stack %s  // %s" result_name (result_type ()) name
-  | Load address -> Printf.sprintf "%s = load %%%d %s" result_name address (result_type ())
-  | Store (stored_value, address) -> Printf.sprintf "store %%%d to %%%d" stored_value address
+      Printf.sprintf "%s = alloc_stack %s  // %s" result_name (result_type ())
+        name
+  | Load address ->
+      Printf.sprintf "%s = load %%%d %s" result_name address (result_type ())
+  | Store (stored_value, address) ->
+      Printf.sprintf "store %%%d to %%%d" stored_value address
   | Binop (operator, left, right) ->
       Printf.sprintf "%s = binop \"%s\" %%%d, %%%d %s" result_name
-        (Ast.string_of_binop operator) left right (result_type ())
+        (Ast.string_of_binop operator)
+        left right (result_type ())
   | Unop (operator, operand) ->
       Printf.sprintf "%s = unop \"%s\" %%%d %s" result_name
-        (Ast.string_of_unop operator) operand (result_type ())
+        (Ast.string_of_unop operator)
+        operand (result_type ())
   | Func_ref name -> Printf.sprintf "%s = function_ref @%s" result_name name
   | Apply (callee, arguments) ->
       Printf.sprintf "%s = apply %%%d(%s)" result_name callee
         (String.concat ", " (List.map (Printf.sprintf "%%%d") arguments))
-  | Print operand -> Printf.sprintf "%s = apply @print(%%%d)" result_name operand
+  | Print operand ->
+      Printf.sprintf "%s = apply @print(%%%d)" result_name operand
   | Struct fields ->
       Printf.sprintf "%s = struct (%s) %s" result_name
         (String.concat ", " (List.map (Printf.sprintf "%%%d") fields))
         (result_type ())
   | Struct_extract (aggregate, field_index) ->
-      Printf.sprintf "%s = struct_extract %%%d, #%d %s" result_name aggregate field_index
-        (result_type ())
+      Printf.sprintf "%s = struct_extract %%%d, #%d %s" result_name aggregate
+        field_index (result_type ())
   | Struct_element_addr (address, field_index) ->
-      Printf.sprintf "%s = struct_element_addr %%%d, #%d" result_name address field_index
+      Printf.sprintf "%s = struct_element_addr %%%d, #%d" result_name address
+        field_index
 
 let string_of_term : term -> string = function
   | Br target -> Printf.sprintf "br bb%d" target
   | Cond_br (condition, then_target, else_target) ->
-      Printf.sprintf "cond_br %%%d, bb%d, bb%d" condition then_target else_target
+      Printf.sprintf "cond_br %%%d, bb%d, bb%d" condition then_target
+        else_target
   | Return None -> "return"
   | Return (Some value) -> Printf.sprintf "return %%%d" value
-  | Unreachable -> "unreachable" (* a genuinely-unreachable block (e.g. after both if-branches return) *)
+  | Unreachable -> "unreachable"
+(* a genuinely-unreachable block (e.g. after both if-branches return) *)
 
 let string_of_block (function_definition : func) (block : block) : string =
   let instruction_lines =
     List.map
-      (fun instruction -> "  " ^ string_of_instr function_definition instruction)
+      (fun instruction ->
+        "  " ^ string_of_instr function_definition instruction)
       (List.rev block.instrs)
   in
   let lines =
@@ -126,7 +152,9 @@ let string_of_func (function_definition : func) : string =
       (sil_type function_definition.ret)
   in
   let blocks =
-    List.map (string_of_block function_definition) (List.rev function_definition.blocks)
+    List.map
+      (string_of_block function_definition)
+      (List.rev function_definition.blocks)
   in
   String.concat "\n" ((header :: blocks) @ [ "}" ])
 
@@ -139,7 +167,8 @@ let string_of_struct (layout : Types.struct_layout) : string =
 
 let string_of_module (sil_module : modul) : string =
   String.concat "\n\n"
-    (List.map string_of_struct sil_module.structs @ List.map string_of_func sil_module.funcs)
+    (List.map string_of_struct sil_module.structs
+    @ List.map string_of_func sil_module.funcs)
 
 (* ---- a small verifier: every block has a real terminator and valid branch targets ---- *)
 
@@ -148,10 +177,14 @@ let verify (sil_module : modul) : string list =
   let report message = errors := message :: !errors in
   List.iter
     (fun (function_definition : func) ->
-      let block_ids = List.map (fun block -> block.bid) function_definition.blocks in
+      let block_ids =
+        List.map (fun block -> block.bid) function_definition.blocks
+      in
       let block_exists block_id = List.mem block_id block_ids in
       if function_definition.blocks = [] then
-        report (Printf.sprintf "function '%s' has no blocks" function_definition.fname);
+        report
+          (Printf.sprintf "function '%s' has no blocks"
+             function_definition.fname);
       List.iter
         (fun block ->
           match block.term with
@@ -160,7 +193,8 @@ let verify (sil_module : modul) : string list =
                 (Printf.sprintf "@%s bb%d: branch to nonexistent bb%d"
                    function_definition.fname block.bid target)
           | Cond_br (_, then_target, else_target)
-            when (not (block_exists then_target)) || not (block_exists else_target) ->
+            when (not (block_exists then_target))
+                 || not (block_exists else_target) ->
               report
                 (Printf.sprintf "@%s bb%d: cond_br to a nonexistent block"
                    function_definition.fname block.bid)
