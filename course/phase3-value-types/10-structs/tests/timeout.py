@@ -14,6 +14,7 @@ def main() -> int:
         ).returncode
         return return_code if return_code >= 0 else 128 - return_code
     except subprocess.TimeoutExpired:
+        print(f"timeout after {sys.argv[1]} seconds", file=sys.stderr)
         return 124
 
 

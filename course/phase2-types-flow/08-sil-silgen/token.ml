@@ -24,8 +24,8 @@ type kind =
   | Kw_in
   | Kw_break
   | Kw_continue
-  | Kw_func (* NEW in this concept *)
-  | Kw_return (* NEW in this concept *)
+  | Kw_func
+  | Kw_return
   | Plus
   | Minus
   | Star
@@ -41,7 +41,7 @@ type kind =
   | AmpAmp
   | PipePipe
   | DotDotLt
-  | Arrow (* `->`, before a return type — NEW in this concept *)
+  | Arrow (* `->`, before a return type *)
   | Colon
   | LParen
   | RParen

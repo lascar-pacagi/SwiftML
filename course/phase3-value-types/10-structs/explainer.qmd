@@ -72,6 +72,81 @@ IRGen starts with `undef`, an aggregate whose fields have no specified values, t
 the final aggregate is the complete `Point`. The SILGen construction plumbing is given; you still
 recognize and check the source syntax, then lower the SIL instruction to LLVM.
 
+Here is the whole path in one small program. `q = p` copies the complete `Point`; the later write
+changes only `q`:
+
+```swift
+struct Point {
+  var x: Int
+  var y: Int
+}
+var p = Point(x: 3, y: 4)
+var q = p
+q.x = 9
+print(p.x)
+print(q.x)
+```
+
+It prints `3`, then `9`. The corresponding SIL makes construction, copying, writing, and reading
+separate operations:
+
+```text
+struct Point { x: Int; y: Int }
+
+sil @main() -> $() {
+bb0:
+  %0 = integer_literal $Int, 3
+  %1 = integer_literal $Int, 4
+  %2 = struct (%0, %1) $Point
+  %3 = alloc_stack $Point  // p
+  store %2 to %3
+  %5 = load %3 $Point
+  %6 = alloc_stack $Point  // q
+  store %5 to %6
+  %8 = integer_literal $Int, 9
+  %9 = struct_element_addr %6, #0
+  store %8 to %9
+  %11 = load %3 $Point
+  %12 = struct_extract %11, #0 $Int
+  %13 = apply @print(%12)
+  %14 = load %6 $Point
+  %15 = struct_extract %14, #0 $Int
+  %16 = apply @print(%15)
+  return
+}
+```
+
+IRGen translates that graph directly. `undef` supplies an aggregate with no initialized fields;
+the two `insertvalue` instructions produce successively more complete `Point` values. Runtime
+declarations are omitted here:
+
+```llvm
+%Point = type { i64, i64 }
+
+define i32 @main() {
+bb0:
+  %t0 = alloca %Point
+  %t1 = alloca %Point
+  %t2 = insertvalue %Point undef, i64 3, 0
+  %t3 = insertvalue %Point %t2, i64 4, 1
+  store %Point %t3, ptr %t0
+  %t4 = load %Point, ptr %t0
+  store %Point %t4, ptr %t1
+  %t5 = getelementptr %Point, ptr %t1, i32 0, i32 0
+  store i64 9, ptr %t5
+  %t6 = load %Point, ptr %t0
+  %t7 = extractvalue %Point %t6, 0
+  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %t7)
+  %t8 = load %Point, ptr %t1
+  %t9 = extractvalue %Point %t8, 0
+  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %t9)
+  ret i32 0
+}
+```
+
+The aggregate `load` followed by an aggregate `store` is the copy from `p` into `q`.
+`getelementptr` computes the address of `q.x`; each `extractvalue` reads `x` from a loaded value.
+
 ### The three new SIL instructions (swiftc's exact names)
 
 | SIL | meaning | LLVM |
@@ -326,10 +401,62 @@ run alone with `T=<filename>` as you move through 10a–10i.
 
 ## 5. Benchmark it
 
-Value semantics has a cost: passing or assigning a big struct **copies every field**. Time a program
-that copies a 6-field struct in a tight loop vs. swiftc. Swift's real answer for large aggregates is
-**copy-on-write** (`Array`/`String` share storage until a mutation) — a Phase-7 optimization — and the
-SIL optimizer (Phase 4) elides many copies outright. Our naive per-field copy is the honest baseline.
+This benchmark passes and returns a six-field struct 50 million times:
+
+```swift
+struct Six {
+  var a: Int
+  var b: Int
+  var c: Int
+  var d: Int
+  var e: Int
+  var f: Int
+}
+
+func rotateAndAdd(_ value: Six, _ step: Int) -> Six {
+  let first = value.b + step % 7
+  return Six(a: first, b: value.c, c: value.d, d: value.e, e: value.f, f: value.a)
+}
+
+var value = Six(a: 1, b: 2, c: 3, d: 4, e: 5, f: 6)
+for step in 0 ..< 50000000 {
+  value = rotateAndAdd(value, step)
+}
+print(value.a + value.b + value.c + value.d + value.e + value.f)
+```
+
+Run all four variants with:
+
+```bash
+make bench C=phase3-value-types/10-structs
+```
+
+The runner first checks that their stdout is byte-identical. It then reports the best of five
+runs after one warm-up. On this machine:
+
+```text
+Struct value benchmark -- 50,000,000 six-field updates
+  compiling and checking four binaries... done
+  output: 150000018 (all four binaries agree)
+  native runtime, best of 5 after one warm-up:
+    swiftml (clang default)     0.216 s
+    swiftml + clang -O2         0.023 s
+    swiftc -Onone               3.609 s
+    swiftc -O                   0.024 s
+  clang -O2 speedup: 9.17x
+  swiftc -O speedup: 150.15x
+  optimized gap: 0.98x (swiftml / swiftc)
+```
+
+`swiftc -Onone` disables optimization for a predictable debugging build. `swiftc -O` enables
+Swift's SIL optimizer and LLVM's speed optimizations. `clang` without an optimization flag leaves
+our generated LLVM at `-O0`; `clang -O2` runs LLVM's standard optimization pipeline.
+
+This program is friendly to LLVM: inlining and scalar replacement remove the temporary aggregate
+copies, so our direct SIL-to-LLVM translation reaches the same speed as `swiftc -O` here. That does
+not make the SIL optimizer redundant. With later Swift features, SIL still has ownership, generic,
+and reference-counting information that a basic LLVM translation has already erased, and its
+high-level optimizations can produce code LLVM alone cannot recover. Timings vary by machine.
 
 ## 6. Exercises
 

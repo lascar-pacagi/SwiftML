@@ -70,10 +70,18 @@ let test_parse_struct_decl () =
 
 (* --- TODO(10c): uses --- *)
 
-let test_parse_struct_uses () =
-  Alcotest.(check string) "labels, chained reads, and a one-level write"
-    "(let p (Point x:1 y:2))\n(print (. (. line b) x))\n(.= p x (+ (. p x) 1))"
-    (ast "let p = Point(x: 1, y: 2)\nprint(line.b.x)\np.x = p.x + 1")
+let test_parse_argument_labels () =
+  Alcotest.(check string) "labels and positional arguments remain distinct"
+    "(let p (Point x:1 y:2))\n(add 2 3)"
+    (ast "let p = Point(x: 1, y: 2)\nadd(2, 3)")
+
+let test_parse_member_reads () =
+  Alcotest.(check string) "postfix member reads chain left to right"
+    "(print (. (. line b) x))" (ast "print(line.b.x)")
+
+let test_parse_member_write () =
+  Alcotest.(check string) "one-level write retains its expression"
+    "(.= p x (+ (. p x) 1))" (ast "p.x = p.x + 1")
 
 (* --- TODO(10d): registry and layouts --- *)
 
@@ -162,7 +170,11 @@ let () =
       ( "parser-struct-decls",
         [ Alcotest.test_case "stored properties in source order" `Quick test_parse_struct_decl ] );
       ( "parser-struct-uses",
-        [ Alcotest.test_case "labels, chained reads, member write" `Quick test_parse_struct_uses ] );
+        [
+          Alcotest.test_case "argument labels" `Quick test_parse_argument_labels;
+          Alcotest.test_case "chained member reads" `Quick test_parse_member_reads;
+          Alcotest.test_case "one-level member write" `Quick test_parse_member_write;
+        ] );
       ( "sema-struct-decls",
         [ Alcotest.test_case "names first, then field layouts" `Quick test_struct_registry ] );
       ( "sema-struct-exprs",

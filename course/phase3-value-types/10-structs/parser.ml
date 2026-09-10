@@ -65,8 +65,9 @@ let span_between (lo : Token.span) (hi : Token.span) : Token.span = { Token.lo =
 (* `as` sits at Swift's CastingPrecedence: above the comparisons, below arithmetic. *)
 let cast_binding_power = 7
 
-(* Reading the type name after `as`; `parse_ident` is defined below the expression parser. *)
-let parse_type_name (parser : t) (description : string) : string * Token.span =
+(* Identifier parsing is shared by expressions (`e as T`, `.field`) and declarations, so it
+   lives before the mutually recursive expression parser. *)
+let parse_ident (parser : t) (description : string) : string * Token.span =
   match peek_kind parser with
   | Token.Ident name -> let token = advance parser in (name, token.Token.span)
   | _ ->
@@ -110,7 +111,7 @@ let rec parse_expr_bp (parser : t) (minimum_binding_power : int) : Ast.expr =
     (* `expression as T` — not a binary operator (its right side is a type NAME) but it binds like one. *)
     if peek_kind parser = Token.Kw_as && cast_binding_power >= minimum_binding_power then (
       ignore (advance parser);
-      let name, type_span = parse_type_name parser "type after 'as'" in
+      let name, type_span = parse_ident parser "type after 'as'" in
       loop (Ast.Ascribe (left, name, span_between (Ast.expr_span left) type_span)))
     else
     match infix_binding_power (peek_kind parser) with
@@ -145,14 +146,6 @@ and parse_call_args (parser : t) : Ast.arg list =
 
 let parse_expr (parser : t) : Ast.expr = parse_expr_bp parser 0
 
-let parse_ident (parser : t) (description : string) : string * Token.span =
-  match peek_kind parser with
-  | Token.Ident name -> let token = advance parser in (name, token.Token.span)
-  | _ ->
-      let token = peek parser in
-      Diagnostics.error parser.diagnostics token.Token.span (Printf.sprintf "expected %s" description);
-      ("_", token.Token.span)
-
 (* optional ": TypeName" annotation *)
 let parse_type_annotation (parser : t) : string option =
   if peek_kind parser = Token.Colon then (
@@ -161,6 +154,13 @@ let parse_type_annotation (parser : t) : string option =
     Some name)
   else None
 
+(* Newlines separate declarations and statements in several grammar productions. Keeping the
+   cursor movement here prevents each parser from inventing a slightly different loop. *)
+let skip_newlines (parser : t) : unit =
+  while peek_kind parser = Token.Newline do
+    ignore (advance parser)
+  done
+
 (* a brace-delimited block, with `nl` one or more Newlines:
      block ::= "{" [ nl ] [ statement { nl statement } ] [ nl ] "}"
    so blank lines are free, a newline SEPARATES statements, and the closing "}" ends the
@@ -168,7 +168,7 @@ let parse_type_annotation (parser : t) : string option =
 let rec parse_block (parser : t) : Ast.stmt list =
   ignore (expect parser Token.LBrace "'{'");
   let rec loop accumulator =
-    while peek_kind parser = Token.Newline do ignore (advance parser) done;
+    skip_newlines parser;
     match peek_kind parser with
     | Token.RBrace ->
         ignore (advance parser);
@@ -196,7 +196,7 @@ and parse_if (parser : t) : Ast.stmt =
   (* `else` may start a later line — look past the newlines for it, and put the cursor back if
      what follows is not an `else`. *)
   let saved_position = mark parser in
-  while peek_kind parser = Token.Newline do ignore (advance parser) done;
+  skip_newlines parser;
   if peek_kind parser <> Token.Kw_else then put_back parser saved_position;
   let else_block =
     if peek_kind parser = Token.Kw_else then (
@@ -297,9 +297,8 @@ let parse_struct (parser : t) : Ast.struct_decl =
 
 (* A program is a sequence of top-level items: function declarations and statements. *)
 let parse_program (parser : t) : Ast.program =
-  let skip_newlines () = while peek_kind parser = Token.Newline do ignore (advance parser) done in
   let rec loop accumulator =
-    skip_newlines ();
+    skip_newlines parser;
     match peek_kind parser with
     | Token.Eof -> { Ast.items = List.rev accumulator }
     | Token.Kw_func ->
@@ -315,7 +314,7 @@ let parse_program (parser : t) : Ast.program =
            is an error here as in Swift (`consecutive declarations on a line …`) *)
         (match peek_kind parser with
         | Token.Newline -> ignore (advance parser)
-        | Token.RBrace | Token.Eof -> ()
+        | Token.Eof -> ()
         | _ -> Diagnostics.error parser.diagnostics (peek parser).Token.span "expected newline or end of declaration");
         loop (Ast.IStruct struct_decl :: accumulator)
     | _ ->

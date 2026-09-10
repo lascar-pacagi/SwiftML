@@ -20,7 +20,7 @@ type kind =
   | Kw_var
   | Kw_true
   | Kw_false
-  | Kw_as (* NEW (concept 05): the `e as T` coercion *)
+  | Kw_as
   | Kw_if (* NEW *)
   | Kw_else
   | Kw_while

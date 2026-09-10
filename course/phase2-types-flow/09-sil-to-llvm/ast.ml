@@ -31,9 +31,9 @@ type stmt =
   | For of { var : string; lo : expr; hi : expr; body : stmt list; span : Token.span }
   | Break of Token.span
   | Continue of Token.span
-  | Return of expr option * Token.span (* NEW in this concept: `return` or `return e` *)
+  | Return of expr option * Token.span
 
-(* NEW in this concept: functions *)
+(* Functions. *)
 type param = { pname : string; ptype : string (* written type name; sema resolves it *) }
 
 type func_decl = {

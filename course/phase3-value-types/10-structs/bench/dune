@@ -1,0 +1,6 @@
+; Runtime comparison for the six-field struct-copy workload documented in §5.
+(executable
+ (name bench)
+ (libraries swiftml_structs unix)
+ (flags
+  (:standard -warn-error -a)))

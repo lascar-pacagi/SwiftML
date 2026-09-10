@@ -11,9 +11,15 @@
 (cram
  (deps lab.exe oracle-corpus.txt typecheck-corpus.txt timeout.py))
 
-(tests
- (names test_structs)
+(executable
+ (name test_structs)
  (modules test_structs)
  (libraries alcotest swiftml_structs)
  (flags
   (:standard -warn-error -a)))
+
+; A non-advancing parser recovery branch must fail the lab instead of hanging it.
+(rule
+ (alias runtest)
+ (deps test_structs.exe timeout.py)
+ (action (run python3 timeout.py 15 %{exe:test_structs.exe})))
