@@ -318,6 +318,8 @@ one if-statement, while `--emit-ast` needs `parse_stmt` to dispatch on the new k
   agree. On a disagreement it prints our first diagnostic, so a rejection that is really an
   unfinished stage (`invalid character in source file` from a lexer that does not know `{`)
   reads as what it is.
+- `test_exercises.ml` (Alcotest `exercises-06`) — the three optional §6 exercises. Each group
+  activates independently when its probe sees that you have started it.
 
 A hole you have not started shows as `TODO` with the list of what it will check; a hole in
 progress shows `FAIL` with, under each failing case, what the test wants and what your code
@@ -329,6 +331,9 @@ Not perf-relevant (still linear, type-check only). Performance enters Phase 4, o
 optimise and generated code to run.
 
 ## 6. Exercises
+
+These are optional. `make exercises C=phase2-types-flow/06-control-flow` runs only their
+self-detecting suite. They also appear in `make lab` as `TODO (optional)` until you start one.
 
 1. **`repeat { } while cond`** (Swift's do-while). Add the `repeat`/`while` keywords, an
    `Ast.Repeat`, and the check (body is a loop; `cond : Bool`). Note the body runs once before the

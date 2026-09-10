@@ -396,6 +396,8 @@ your code here. In the order you fill the holes:
   `swiftc -typecheck` and `./lab.exe --typecheck` for a verdict on the 20 programs of
   `typecheck-corpus.txt` — six well-formed, fourteen the struct rules must refuse — and they must
   agree; that half becomes green after the frontend holes and needs no lowering.
+- `test_exercises.ml` (Alcotest `exercises-10`) — methods, computed properties, and synthesized
+  equality. Each optional group activates separately and runs generated programs with a deadline.
 
 A hole you have not started shows as `TODO` with the list of what it will check; a hole in
 progress shows `FAIL` with, under each failing case, what the test wants and what your code
@@ -462,6 +464,9 @@ and reference-counting information that a basic LLVM translation has already era
 high-level optimizations can produce code LLVM alone cannot recover. Timings vary by machine.
 
 ## 6. Exercises
+
+These are optional. `make exercises C=phase3-value-types/10-structs` runs only their
+self-detecting suite. They also appear in `make lab` as `TODO (optional)` until you start one.
 
 1. **Methods + `mutating`.** Lower `struct Point { … func dist() -> Int { … } }` to a function with an
    implicit `self` parameter (read-only); a `mutating func` takes `self` by **address**

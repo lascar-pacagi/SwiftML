@@ -36,3 +36,16 @@
  (libraries alcotest swiftml_llvm)
  (flags
   (:standard -warn-error -a)))
+
+(test
+ (name test_exercises)
+ (modules test_exercises)
+ (libraries alcotest exercise_tests)
+ (deps lab.exe)
+ (flags
+  (:standard -warn-error -a)))
+
+(rule
+ (alias exercises)
+ (deps lab.exe)
+ (action (run ./test_exercises.exe)))

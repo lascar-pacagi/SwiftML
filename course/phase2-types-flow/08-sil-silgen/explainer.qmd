@@ -347,6 +347,8 @@ raw `--emit-sil`, because there the instructions ARE the lesson.
   go to swiftc and to your `--emit-sil`, and the verdicts must agree. swiftc runs as
   `-emit-sil -o /dev/null`, the same stage we stop at, because "missing return" is a SIL-level
   diagnostic and `-typecheck` would accept three of the reject cases (§2).
+- `test_exercises.ml` (Alcotest `exercises-08`) — the three optional §6 exercises. The SIL reader
+  and CFG pass are checked through their documented `lab` flags, with a five-second deadline.
 
 A hole you have not started shows as `TODO` with the list of what it will check; a hole in progress
 shows `FAIL` with, under each failing case, what the test wants and what your code printed. To look
@@ -366,17 +368,22 @@ thing Phase 4 makes faster.
 
 ## 6. Exercises
 
+These are optional. `make exercises C=phase2-types-flow/08-sil-silgen` runs only their
+self-detecting suite. They also appear in `make lab` as `TODO (optional)` until you start one.
+
 1. **The `guard cond else { … }` statement.** `guard` is an early-exit: if the condition is *false*
    run the else block, which must leave the scope (`return`/`break`/`continue`). Lower it as an
    inverted `if` whose false edge runs the else block and whose true edge simply continues — there is
    no merge_block, because the else block never falls through. (The value-diamond for `&&`/`||` is already
    shipped in `gen_expression` — study it first; swiftc is your oracle.)
 2. **A textual SIL parser.** Write a reader for your `--emit-sil` syntax so SIL can round-trip
-   (emit → parse → emit). This is what makes a `--sil-opt` workflow possible in Phase 4 (run a pass on
-   a `.sil` file).
+   (emit → parse → emit). Add `lab --roundtrip-sil file.sil`, which reads, parses, and emits the
+   module. This is what makes a `--sil-opt` workflow possible in Phase 4 (run a pass on a `.sil`
+   file).
 3. **Critical-edge splitting.** A "critical edge" is a CFG edge from a block with multiple successors
    to one with multiple predecessors. Detect them; some optimizations require splitting them (insert
-   an empty block on the edge). A first taste of CFG surgery.
+   an empty block on the edge). Add `lab --split-critical-edges file.swift`, which lowers the
+   source, runs this pass, and emits the transformed SIL. A first taste of CFG surgery.
 
 ## 7. Recap & what's next
 
@@ -472,9 +479,15 @@ terminators) and rebuild the `Sil.modul`. Round-trip property: `parse (emit m)` 
 renumbering). This unlocks `--sil-opt`: read a `.sil`, run a pass, re-emit — the Phase-4 workflow for
 testing one optimization in isolation.
 
+Expose the round trip as `lab --roundtrip-sil file.sil`; the optional suite uses that command and
+then feeds its output through the command a second time.
+
 ### 3 — critical-edge splitting
 
 Build successor/predecessor sets from the terminators. An edge `u → v` is critical when `u` has ≥2
 successors and `v` has ≥2 predecessors. To split it, make a fresh block `w` with `br v`, and rewrite
 `u`'s terminator to target `w` instead of `v`. Several Phase-4 passes (e.g. inserting code "on an
 edge") need this; it's the simplest CFG-rewriting primitive.
+
+Expose the pass as `lab --split-critical-edges file.swift`. The optional suite supplies a source
+whose short-circuit CFG has a critical edge and checks that the emitted graph has none afterward.

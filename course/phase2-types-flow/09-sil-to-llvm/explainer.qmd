@@ -270,6 +270,8 @@ this concept:
   compiled by `swiftc -Onone` and by `./lab.exe build`, both binaries are run, and stdout and
   exit code must be identical. The numbers in the other files were written down once; this one
   asks swiftc on every run.
+- `test_exercises.ml` (Alcotest `exercises-09`) — the three optional §6 exercises. It compiles
+  and runs focused programs out of process, so parser and generated-code hangs time out.
 
 The `gen_instr` cases can pass before `gen_term` is started. The terminator and execution files stay
 red until the emitted module is complete. A failing case shows the wanted and printed output side by
@@ -363,6 +365,9 @@ the SIL and LLVM optimizers complement each other. This division is described in
 `swift/docs/OptimizerDesign.md` and `swift/docs/HighLevelSILOptimizations.rst`.
 
 ## 6. Exercises
+
+These are optional. `make exercises C=phase2-types-flow/09-sil-to-llvm` runs only their
+self-detecting suite. They also appear in `make lab` as `TODO (optional)` until you start one.
 
 1. **Definite initialization.** Add uninitialized `var x: Int` (a `var` with a type annotation and no
    initializer): parser, an `Ast` node, sema binds it, SILGen `alloc_stack`s but does not `store`.

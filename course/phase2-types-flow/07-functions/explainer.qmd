@@ -377,6 +377,8 @@ oracle — in the order you fill the holes:
   check lives on SIL (§2) — `-typecheck` would accept four of the reject cases. On a
   disagreement the first line we printed is shown, so a rejection that is really an unfinished
   stage reads as what it is.
+- `test_exercises.ml` (Alcotest `exercises-07`) — the three optional §6 exercises. Each group
+  activates independently when its probe sees that you have started it.
 
 A hole you have not started shows as `TODO` with the list of what it will check; a hole in
 progress shows `FAIL` with, under each failing case, what the test wants and what your code
@@ -394,6 +396,9 @@ swiftc -emit-sil -o /dev/null m.swift        # what the oracle asks
 Not perf-relevant (type-check only, linear). Perf arrives in Phase 4 on SIL.
 
 ## 6. Exercises
+
+These are optional. `make exercises C=phase2-types-flow/07-functions` runs only their
+self-detecting suite. They also appear in `make lab` as `TODO (optional)` until you start one.
 
 1. **Argument labels.** Give `Ast.param` a `label : string option` and `Ast.Call` labelled
    arguments; parse `f(x: 1)`; in sema, check each argument's label matches the parameter's. Now

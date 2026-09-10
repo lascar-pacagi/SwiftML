@@ -17,3 +17,14 @@
  (libraries alcotest swiftml_funcs)
  (flags
   (:standard -warn-error -a)))
+
+(test
+ (name test_exercises)
+ (modules test_exercises)
+ (libraries alcotest exercise_tests swiftml_funcs)
+ (flags
+  (:standard -warn-error -a)))
+
+(rule
+ (alias exercises)
+ (action (run ./test_exercises.exe)))

@@ -1,0 +1,7 @@
+(library
+ (name exercise_tests)
+ (wrapped false)
+ (modules exercise_test_support)
+ (libraries alcotest unix)
+ (flags
+  (:standard -warn-error -a)))

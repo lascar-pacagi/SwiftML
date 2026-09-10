@@ -122,8 +122,8 @@ oracle:
 bench:
 	$(DUNE) exec -- ./$(C)/bench/bench.exe
 
-# Run a concept's §6 EXERCISE tests (separate alias — RED until you do the exercises,
-# and never part of `make lab`):
+# Run only a concept's §6 EXERCISE tests. Untouched groups report as optional; a started
+# but incorrect exercise is RED. The same suites also appear in `make lab`.
 #   make exercises C=phase1-minimal/01-lexer
 exercises:
 	$(DUNE) build @$(C)/exercises --force

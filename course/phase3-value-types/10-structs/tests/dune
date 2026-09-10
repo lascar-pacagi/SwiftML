@@ -23,3 +23,16 @@
  (alias runtest)
  (deps test_structs.exe timeout.py)
  (action (run python3 timeout.py 15 %{exe:test_structs.exe})))
+
+(test
+ (name test_exercises)
+ (modules test_exercises)
+ (libraries alcotest exercise_tests)
+ (deps lab.exe)
+ (flags
+  (:standard -warn-error -a)))
+
+(rule
+ (alias exercises)
+ (deps lab.exe)
+ (action (run ./test_exercises.exe)))
