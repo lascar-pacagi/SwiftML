@@ -1,6 +1,38 @@
 TODO(10e) struct expressions — a memberwise initializer checks one labeled value per field,
 in declaration order, and a member read obtains its type from the registered layout.
 
+A member read gets its result type from the field layout. Function parameters let this case test
+`Ast.Member` without using the memberwise initializer implemented later in the same hole.
+
+  $ cat > member-types.swift <<'EOF'
+  > struct Pair {
+  >   var count: Int
+  >   var ready: Bool
+  > }
+  > func count(_ pair: Pair) -> Int { return pair.count }
+  > func ready(_ pair: Pair) -> Bool { return pair.ready }
+  > EOF
+  $ ./lab.exe --typecheck member-types.swift
+
+An unknown field on a struct parameter is diagnosed without constructing a struct value.
+
+  $ cat > unknown-member.swift <<'EOF'
+  > struct Point {
+  >   var x: Int
+  > }
+  > func read(_ point: Point) -> Int { return point.z }
+  > EOF
+  $ ./lab.exe --typecheck unknown-member.swift > member.err 2>&1; rc=$?; sed 's/^[0-9]*:[0-9]*: error: //' member.err; echo "exit=$rc"
+  value of type 'Point' has no member 'z'
+  exit=1
+
+A scalar base has no stored-property layout.
+
+  $ printf 'func read(_ number: Int) -> Int { return number.x }\n' > scalar-member.swift
+  $ ./lab.exe --typecheck scalar-member.swift > scalar.err 2>&1; rc=$?; sed 's/^[0-9]*:[0-9]*: error: //' scalar.err; echo "exit=$rc"
+  value of type 'Int' has no member 'x'
+  exit=1
+
 A well-typed initializer and member read are accepted, including a nested read.
 
   $ cat > ok.swift <<'EOF'

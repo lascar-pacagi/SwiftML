@@ -370,8 +370,9 @@ your code here. In the order you fill the holes:
   missing member name after `.`.
 - `sema-struct-decls.t` — `--typecheck`: the two-pass registry, forward types, unknown types, and
   duplicate names.
-- `sema-struct-exprs.t` — `--typecheck`: initialization, reads, label/arity/type errors, and the two
-  explicit backend guards.
+- `sema-struct-exprs.t` — `--typecheck`: member reads from function parameters first, so that part
+  can pass before the initializer code in the same hole; then initialization, label/arity/type
+  errors, and the two explicit backend guards.
 - `sema-member-write.t` — `--typecheck`: binding mutability, field mutability, and assigned type.
 - `silgen-member-read.t` — `--emit-sil`: `p.x` is a `load` then `struct_extract … #0`; `p.y` is
   `#1` with its type; a field of a fresh `Point(…)` or of a call result extracts with no load; a

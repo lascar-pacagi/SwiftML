@@ -94,6 +94,20 @@ let test_struct_registry () =
   has_error "struct A {}\nstruct A {}" "invalid redeclaration of 'A'"
 
 (* --- TODO(10e): initialization and reads --- *)
+let test_member_read_from_parameter () =
+  accepted
+    "struct Pair { var count: Int; var ready: Bool }\n\
+     func count(_ pair: Pair) -> Int { return pair.count }\n\
+     func ready(_ pair: Pair) -> Bool { return pair.ready }"
+
+let test_member_read_errors_without_init () =
+  has_error
+    "struct Point { var x: Int }\n\
+     func read(_ point: Point) -> Int { return point.z }"
+    "value of type 'Point' has no member 'z'";
+  has_error "func read(_ number: Int) -> Int { return number.x }"
+    "value of type 'Int' has no member 'x'"
+
 let test_accept () =
   accepted (point ^ "let p = Point(x: 3, y: 4)\nprint(p.x)");
   accepted (point ^ "func sum(_ p: Point) -> Int { return p.x + p.y }\nprint(sum(Point(x: 1, y: 2)))");
@@ -179,6 +193,10 @@ let () =
         [ Alcotest.test_case "names first, then field layouts" `Quick test_struct_registry ] );
       ( "sema-struct-exprs",
         [
+          Alcotest.test_case "member types without initializer" `Quick
+            test_member_read_from_parameter;
+          Alcotest.test_case "member errors without initializer" `Quick
+            test_member_read_errors_without_init;
           Alcotest.test_case "well-typed struct programs" `Quick test_accept;
           Alcotest.test_case "memberwise init rules" `Quick test_init_rules;
           Alcotest.test_case "member access rules" `Quick test_member_rules;
