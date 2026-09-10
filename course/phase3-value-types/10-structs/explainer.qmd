@@ -303,7 +303,8 @@ from the pinned snapshot); the differences are stated, not hidden.
 | `Point(y: 2, x: 1)` | two `incorrect argument label` errors | `argument 'x' must precede argument 'y'` (`argument_out_of_order_named_named`, l.1651) |
 | `Point(x: 1)` | `'Point' initializer expects 2 argument(s) but 1 given` | `missing argument for parameter 'y' in call` (`missing_argument_named`, l.1683) |
 | `Point(x: "s", y: 2)` | `cannot convert value of type 'String' to specified type 'Int'` | `… to expected argument type 'Int'` (`cannot_convert_argument_value`, l.382) — we reuse 05's `check_expr` wording |
-| `p.z`, `n.x` on an `Int` | `value of type 'Point' has no member 'z'` | **same** (`could_not_find_value_member`, l.70) |
+| `p.z`, where `p` is a `Point` with no field named `z` | `value of type 'Point' has no member 'z'` | **same** (`could_not_find_value_member`, l.70) |
+| `n.x`, where `n` is an `Int` | `value of type 'Int' has no member 'x'` | **same** (`could_not_find_value_member`, l.70) |
 | `let p …; p.x = 5` | `cannot assign to property: 'p' is a 'let' constant` | **same** (`assignment_lhs_is_immutable_property`, l.5379); swiftc points at the member, we at the statement |
 | `struct S { let x: Int }; var s …; s.x = 2` | `cannot assign to property: 'x' is a 'let' constant` | **same** — a `let` field is immutable through every binding |
 | `p == q` on structs | `binary operator '==' cannot be applied to two 'Point' operands` | **same** (`cannot_apply_binop_to_same_args`, l.220) — no `Equatable` until Exercise 3 |
