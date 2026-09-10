@@ -237,7 +237,7 @@ from the pinned snapshot); the differences are stated, not hidden.
 | `struct A {…}` twice | `invalid redeclaration of 'A'` | **same** (`invalid_redecl`, l.1110) |
 | `print(p)` on a struct | `cannot print a value of type 'Point' (only Int, Double, Bool and String)` | **accepted** — swiftc prints `Point(x: 1, y: 2)` through reflection; ours has no runtime to do it, so sema refuses instead of letting IRGen crash |
 
-Two more honest gaps of the v0 subset, both parser-level: a **nested write** `l.b.x = 1` is
+Two more limitations of this concept: a **nested write** `l.b.x = 1` is
 not parsed (`Set_member` is one level, `p.x = e`; swiftc accepts it — Exercise 1's `mutating`
 machinery is the natural place to generalize), and `print` of a `Double` goes through C's `%g`
 (`3` where swiftc prints `3.0`), which is why the oracle corpus keeps to `Int`/`Bool` fields.
