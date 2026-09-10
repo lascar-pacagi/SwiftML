@@ -67,7 +67,7 @@ against it.
 
 Our functions are *self-contained*: a body sees its parameters and the function table, not the
 top-level variables. Real Swift lets a function read a global (and a closure capture a local —
-Phase 7); we start each body from an empty `env` instead. So `let x = 1` at top level followed by
+Phase 7); we start each body from an empty `environment` instead. So `let x = 1` at top level followed by
 `print(x)` inside a body is "cannot find 'x' in scope" here, where swiftc accepts it. That is the
 one place in this concept where we reject what swiftc accepts, and the oracle corpus stays off it.
 
@@ -291,17 +291,17 @@ Three skeletons; concepts 01–06 are filled in.
    Check the list before you write the declaration that reaches it —
    `make lab C=phase2-types-flow/07-functions T=parser-params` runs `parse_params` on its own
    through `--emit-params`, whose input is a bare `(a: Int, …)`.
-3. **`sema.ml`** — five holes: **call typing** in `infer_call` (look the name up in `funcs`; check
+3. **`sema.ml`** — five holes: **call typing** in `infer_call` (look the name up in `functions`; check
    arity and each arg against its parameter type with `check_expr`; return the function's return
-   type); **`return`** (valid only in a function — `current_ret` says whether you are in one, and
+   type); **`return`** (valid only in a function — `current_return_type` says whether you are in one, and
    what it returns; the value, or its absence, against the Void rules of §2); the **definite-return
    analysis** `stmt_returns` / `block_returns` (§2 reasons out which statements count and which do
    not — four cases, two of which are the ones people get wrong; the pair is mutually recursive
    because an `if` holds blocks, which is the shape the skeleton gives you);
-   **`check_func`** (fresh `env`, parameters bound immutable, set `current_ret`, check the body,
+   **`check_func`** (fresh `environment`, parameters bound immutable, set `current_return_type`, check the body,
    restore both, then the "missing return" rule, which is `block_returns` on the body); and the
-   **two passes** (fill `funcs` with signatures — a name seen twice is a redeclaration — then check
-   each item in order). The scope helpers, `loop_depth`, `current_ret` and `resolve_*` are given.
+   **two passes** (fill `functions` with signatures — a name seen twice is a redeclaration — then check
+   each item in order). The scope helpers, `loop_depth`, `current_return_type` and `resolve_*` are given.
 
    **The definite-return analysis stands alone** — start there if you like. It is a pure function
    of the AST: no environment, no diagnostics, nothing else in the file. So it sits at module
@@ -426,15 +426,15 @@ form is concept 16's lesson.)
 ## 8. Appendix — full solution
 
 Mirrors `solution/sema.ml` — the function machinery. Note the two passes at the bottom, and that
-`check_func` gives the body a fresh `env`.
+`check_func` gives the body a fresh `environment`.
 
 ```ocaml
 and infer_call f args span : Types.ty =
-  match Hashtbl.find_opt funcs f with
+  match Hashtbl.find_opt functions f with
   | Some (ptypes, ret) ->
       let np = List.length ptypes and na = List.length args in
       if np <> na then
-        err span
+        report_error span
           (Printf.sprintf "function '%s' expects %d argument(s) but %d given" f np na)
       else List.iter2 (fun a t -> check_expr a t) args ptypes;
       ret
@@ -442,18 +442,18 @@ and infer_call f args span : Types.ty =
       if f = "print" then (
         (match args with [a] -> ignore (infer a)
          | _ ->
-             err span "print(_:) expects exactly one argument";
+             report_error span "print(_:) expects exactly one argument";
              List.iter (fun a -> ignore (infer a)) args);
         Types.TVoid)
-      else (err span (Printf.sprintf "cannot find '%s' in scope" f); Types.TInt)
+      else (report_error span (Printf.sprintf "cannot find '%s' in scope" f); Types.TInt)
 
 (* return: only in a function; value checked against the return type *)
-| Ast.Return (eo, span) -> (match !current_ret with
-    | None -> err span "return invalid outside of a func"
+| Ast.Return (eo, span) -> (match !current_return_type with
+    | None -> report_error span "return invalid outside of a func"
     | Some rt -> (match eo with
-        | Some e -> if rt = Types.TVoid then err span "unexpected non-void return value in void function"
+        | Some e -> if rt = Types.TVoid then report_error span "unexpected non-void return value in void function"
                     else check_expr e rt
-        | None -> if rt <> Types.TVoid then err span "non-void function should return a value"))
+        | None -> if rt <> Types.TVoid then report_error span "non-void function should return a value"))
 
 (* does a block definitely return on every path? — TODO(07) in the skeleton *)
 let rec stmt_returns = function
@@ -464,30 +464,30 @@ and block_returns stmts = List.exists stmt_returns stmts (* the rest is unreacha
 
 let check_func (f : Ast.func_decl) : unit =
   let ret = match f.Ast.ret with None -> Types.TVoid | Some n -> resolve_ty f.Ast.fspan n in
-  let saved_env = !env and saved_ret = !current_ret in
-  env := []; current_ret := Some ret;                 (* fresh scope; record the return type *)
+  let saved_env = !environment and saved_ret = !current_return_type in
+  environment := []; current_return_type := Some ret;                 (* fresh scope; record the return type *)
   List.iter
     (fun (pr : Ast.param) ->
       bind pr.Ast.pname (resolve_ty f.Ast.fspan pr.Ast.ptype, false))
     f.Ast.params;
   List.iter check_stmt f.Ast.body;
-  env := saved_env; current_ret := saved_ret;
+  environment := saved_env; current_return_type := saved_ret;
   if ret <> Types.TVoid && not (block_returns f.Ast.body) then
-    err f.Ast.fspan
+    report_error f.Ast.fspan
       (Printf.sprintf "missing return in global function expected to return '%s'"
          (Types.string_of_ty ret))
 
 (* PASS 1: signatures. PASS 2: bodies + top-level statements. *)
 List.iter (function
   | Ast.IFunc f ->
-      if Hashtbl.mem funcs f.Ast.fname then
-        err f.Ast.fspan
+      if Hashtbl.mem functions f.Ast.fname then
+        report_error f.Ast.fspan
           (Printf.sprintf "invalid redeclaration of '%s'" f.Ast.fname);
       let ptypes = List.map (fun (pr:Ast.param) -> resolve_silent pr.Ast.ptype) f.Ast.params in
       let ret = match f.Ast.ret with None -> Types.TVoid | Some n -> resolve_silent n in
-      Hashtbl.replace funcs f.Ast.fname (ptypes, ret)
-  | Ast.IStmt _ -> ()) prog.Ast.items;
-List.iter (function Ast.IFunc f -> check_func f | Ast.IStmt s -> check_stmt s) prog.Ast.items
+      Hashtbl.replace functions f.Ast.fname (ptypes, ret)
+  | Ast.IStmt _ -> ()) program.Ast.items;
+List.iter (function Ast.IFunc f -> check_func f | Ast.IStmt s -> check_stmt s) program.Ast.items
 ```
 
 ## 9. Exercise solutions
@@ -514,5 +514,5 @@ of the basic-block reachability you'll get for free once code lives on a SIL CFG
 either body. That's the payoff of two passes, for free. Redeclaration is already handled: Pass 1
 reports "invalid redeclaration of 'f'" when a name is added twice. For swiftc's spelling, print
 `'f()'` when the function has no parameters and `'f'` otherwise, and remember each function's
-declaration span in the `funcs` table so the second declaration can add
+declaration span in the `functions` table so the second declaration can add
 `Diagnostics.note` at the first.

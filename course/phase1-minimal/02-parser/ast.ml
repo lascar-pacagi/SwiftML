@@ -45,7 +45,7 @@ type program = { stmts : stmt list }
 
 (* Span accessor — handy for diagnostics. *)
 let expr_span = function
-  | Int_lit (_, s) | Var (_, s) | Unary (_, _, s) | Binary (_, _, _, s) | Call (_, _, s) -> s
+  | Int_lit (_, span) | Var (_, span) | Unary (_, _, span) | Binary (_, _, _, span) | Call (_, _, span) -> span
 
 let string_of_binop = function
   | Add -> "+"
@@ -58,19 +58,20 @@ let string_of_unop = function Neg -> "-"
 
 (* A compact S-expression dump, used by `swiftml --emit-ast` and AST unit tests. *)
 let rec dump_expr = function
-  | Int_lit (n, _) -> string_of_int n
-  | Var (x, _) -> x
-  | Unary (op, e, _) -> Printf.sprintf "(%s %s)" (string_of_unop op) (dump_expr e)
-  | Binary (op, l, r, _) ->
-      Printf.sprintf "(%s %s %s)" (string_of_binop op) (dump_expr l) (dump_expr r)
-  | Call (f, args, _) ->
-      Printf.sprintf "(%s %s)" f (String.concat " " (List.map dump_expr args))
+  | Int_lit (integer, _) -> string_of_int integer
+  | Var (name, _) -> name
+  | Unary (operator, expression, _) ->
+      Printf.sprintf "(%s %s)" (string_of_unop operator) (dump_expr expression)
+  | Binary (operator, left, right, _) ->
+      Printf.sprintf "(%s %s %s)" (string_of_binop operator) (dump_expr left) (dump_expr right)
+  | Call (function_name, arguments, _) ->
+      Printf.sprintf "(%s %s)" function_name (String.concat " " (List.map dump_expr arguments))
 
 let dump_stmt = function
   | Let { name; is_var; value; _ } ->
       Printf.sprintf "(%s %s %s)" (if is_var then "var" else "let") name (dump_expr value)
   | Assign { name; value; _ } -> Printf.sprintf "(= %s %s)" name (dump_expr value)
-  | Expr_stmt (e, _) -> dump_expr e
+  | Expr_stmt (expression, _) -> dump_expr expression
 
-let dump_program (p : program) : string =
-  String.concat "\n" (List.map dump_stmt p.stmts)
+let dump_program (program : program) : string =
+  String.concat "\n" (List.map dump_stmt program.stmts)

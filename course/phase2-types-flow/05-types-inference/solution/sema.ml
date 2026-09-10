@@ -1,8 +1,8 @@
 (* FROZEN SOLUTION — concept 05 sema: the bidirectional type checker.
 
    Two modes, mutually recursive:
-     infer e        -> ty        synthesize a type (no expectation)
-     check_expr e t -> unit      check e against an expected type t (pushes t down)
+     infer expression        -> ty        synthesize a type (no expectation)
+     check_expr expression t -> unit      check expression against an expected type t (pushes t down)
 
    The one coercion is Swift's `ExpressibleByIntegerLiteral`: an *integer literal*
    (recursively, an arithmetic expression of integer literals) may take type Double when a
@@ -10,21 +10,21 @@
    does not. Full literal flexibility is a constraint-solver job (Phase 5); we special-case
    the common shapes.
 
-   Everything is top-level and takes an explicit [ctx], so every piece can be unit-tested on
+   Everything is top-level and takes an explicit [context], so every piece can be unit-tested on
    its own: the two pure helpers directly, the judgments against a context you build. *)
 
-type ctx = {
-  env : (string, Types.ty * bool) Hashtbl.t;  (* name -> its type, and whether it is a `var` *)
-  diags : Diagnostics.sink;
+type context = {
+  environment : (string, Types.ty * bool) Hashtbl.t;  (* name -> its type, and whether it is a `var` *)
+  diagnostics : Diagnostics.sink;
 }
 
-let create (diags : Diagnostics.sink) : ctx = { env = Hashtbl.create 16; diags }
-let err (cx : ctx) span msg = Diagnostics.error cx.diags span msg
+let create (diagnostics : Diagnostics.sink) : context = { environment = Hashtbl.create 16; diagnostics }
+let report_error (context : context) span msg = Diagnostics.error context.diagnostics span msg
 
 (* a "pure integer-literal" expression can flex to Double *)
 let rec is_int_literal = function
     | Ast.Int_lit _ -> true
-    | Ast.Unary (Ast.Neg, e, _) -> is_int_literal e
+    | Ast.Unary (Ast.Neg, expression, _) -> is_int_literal expression
     | Ast.Binary ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod), a, b, _) ->
       is_int_literal a && is_int_literal b
   | _ -> false
@@ -36,46 +36,46 @@ let unify l tl r tr : Types.ty option =
   else if is_int_literal r && tl = Types.TDouble then Some Types.TDouble
   else None
 
-let rec infer (cx : ctx) (e : Ast.expr) : Types.ty =
-    match e with
+let rec infer (context : context) (expression : Ast.expr) : Types.ty =
+    match expression with
     | Ast.Int_lit _ -> Types.TInt
     | Ast.Double_lit _ -> Types.TDouble
     | Ast.Bool_lit _ -> Types.TBool
     | Ast.String_lit _ -> Types.TString
     | Ast.Var (x, span) -> (
-        match Hashtbl.find_opt cx.env x with
+        match Hashtbl.find_opt context.environment x with
         | Some (t, _) -> t
         | None ->
-            err cx span (Printf.sprintf "cannot find '%s' in scope" x);
+            report_error context span (Printf.sprintf "cannot find '%s' in scope" x);
             Types.TInt)
     | Ast.Unary (Ast.Neg, e0, span) ->
-        let t = infer cx e0 in
+        let t = infer context e0 in
         if Types.is_numeric t then t
         else (
-          err cx span
+          report_error context span
             (Printf.sprintf "unary operator '-' cannot be applied to an operand of type '%s'"
                (Types.string_of_ty t));
           t)
-    | Ast.Binary (op, l, r, span) -> infer_binary cx op l r span
-    | Ast.Call (f, args, span) -> infer_call cx f args span
+    | Ast.Binary (op, l, r, span) -> infer_binary context op l r span
+    | Ast.Call (f, args, span) -> infer_call context f args span
     (* The one place `infer` calls `check`: the type is written down, so there is nothing to
        synthesise — the operand is CHECKED against it, which is what lets `1 as Double` work
        and `i as Double` fail. *)
     | Ast.Ascribe (e0, tyname, span) -> (
         match Types.of_name tyname with
         | Some t ->
-            check_expr cx e0 t;
+            check_expr context e0 t;
             t
         | None ->
-            err cx span (Printf.sprintf "cannot find type '%s' in scope" tyname);
-            infer cx e0)
-  and infer_binary cx op l r span : Types.ty =
-    let tl = infer cx l and tr = infer cx r in
+            report_error context span (Printf.sprintf "cannot find type '%s' in scope" tyname);
+            infer context e0)
+  and infer_binary context op l r span : Types.ty =
+    let tl = infer context l and tr = infer context r in
     let bad () =
       (* swiftc has two wordings, and picks by whether the operands agree:
            1 + true     -> cannot be applied to operands of type 'Int' and 'Bool'
            true < false -> cannot be applied to two 'Bool' operands *)
-      err cx span
+      report_error context span
         (if tl = tr then
            Printf.sprintf "binary operator '%s' cannot be applied to two '%s' operands"
              (Ast.string_of_binop op) (Types.string_of_ty tl)
@@ -102,72 +102,72 @@ let rec infer (cx : ctx) (e : Ast.expr) : Types.ty =
     | _ ->
         bad ();
         Types.TInt
-  and infer_call cx f args span : Types.ty =
+  and infer_call context f args span : Types.ty =
     if f = "print" then (
       (match args with
-      | [ a ] -> ignore (infer cx a)
+      | [ a ] -> ignore (infer context a)
       | _ ->
-          err cx span "print(_:) expects exactly one argument";
-          List.iter (fun a -> ignore (infer cx a)) args);
+          report_error context span "print(_:) expects exactly one argument";
+          List.iter (fun a -> ignore (infer context a)) args);
       Types.TInt (* print returns Void; placeholder, unused as a value *))
     else (
-      err cx span (Printf.sprintf "cannot find '%s' in scope" f);
-      List.iter (fun a -> ignore (infer cx a)) args;
+      report_error context span (Printf.sprintf "cannot find '%s' in scope" f);
+      List.iter (fun a -> ignore (infer context a)) args;
       Types.TInt)
   (* The checking direction — and the other half of a genuine knot: [check_expr] falls back to
-   [infer], and [infer] calls [check_expr] for `e as T`. Neither can be defined without the
+   [infer], and [infer] calls [check_expr] for `expression as T`. Neither can be defined without the
    other, which is what "the two judgments are mutually recursive" means in practice. *)
-and check_expr (cx : ctx) (e : Ast.expr) (expected : Types.ty) : unit =
-  match e with
+and check_expr (context : context) (expression : Ast.expr) (expected : Types.ty) : unit =
+  match expression with
   | Ast.Int_lit _ ->
       (* integer literal: ExpressibleBy both Int and Double *)
       if expected = Types.TInt || expected = Types.TDouble then ()
       else
-        err cx (Ast.expr_span e)
+        report_error context (Ast.expr_span expression)
           (Printf.sprintf "cannot convert value of type 'Int' to specified type '%s'"
              (Types.string_of_ty expected))
   | Ast.Binary ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div), l, r, _) when Types.is_numeric expected ->
       (* push the expected numeric type into both operands: 1 + 2 checks as Double *)
-      check_expr cx l expected;
-      check_expr cx r expected
+      check_expr context l expected;
+      check_expr context r expected
   | Ast.Binary (Ast.Mod, l, r, _) when expected = Types.TInt ->
-      check_expr cx l Types.TInt;
-      check_expr cx r Types.TInt
-  | Ast.Unary (Ast.Neg, e0, _) when Types.is_numeric expected -> check_expr cx e0 expected
+      check_expr context l Types.TInt;
+      check_expr context r Types.TInt
+  | Ast.Unary (Ast.Neg, e0, _) when Types.is_numeric expected -> check_expr context e0 expected
   | _ ->
-      let t = infer cx e in
+      let t = infer context expression in
       if not (Types.equal t expected) then
-        err cx (Ast.expr_span e)
+        report_error context (Ast.expr_span expression)
           (Printf.sprintf "cannot convert value of type '%s' to specified type '%s'"
              (Types.string_of_ty t) (Types.string_of_ty expected))
 
-let check_stmt (cx : ctx) (s : Ast.stmt) : unit =
+let check_stmt (context : context) (s : Ast.stmt) : unit =
     match s with
     | Ast.Let { name; is_var; annot; value; span } ->
         let t =
           match annot with
-          | None -> infer cx value
+          | None -> infer context value
           | Some tyname -> (
               match Types.of_name tyname with
               | Some t ->
-                  check_expr cx value t;
+                  check_expr context value t;
                   t
               | None ->
-                  err cx span (Printf.sprintf "cannot find type '%s' in scope" tyname);
-                  infer cx value)
+                  report_error context span (Printf.sprintf "cannot find type '%s' in scope" tyname);
+                  infer context value)
         in
-        Hashtbl.replace cx.env name (t, is_var)
+        Hashtbl.replace context.environment name (t, is_var)
     | Ast.Assign { name; value; span } -> (
-        match Hashtbl.find_opt cx.env name with
+        match Hashtbl.find_opt context.environment name with
         | None ->
-            err cx span (Printf.sprintf "cannot find '%s' in scope" name);
-            ignore (infer cx value)
+            report_error context span (Printf.sprintf "cannot find '%s' in scope" name);
+            ignore (infer context value)
         | Some (t, is_var) ->
             if not is_var then
-              err cx span (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" name);
-            check_expr cx value t)
-    | Ast.Expr_stmt (e, _) -> ignore (infer cx e)
+              report_error context span (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" name);
+            check_expr context value t)
+    | Ast.Expr_stmt (expression, _) -> ignore (infer context expression)
 
-let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
-  let cx = create diags in
-  List.iter (check_stmt cx) prog.Ast.stmts
+let check (program : Ast.program) (diagnostics : Diagnostics.sink) : unit =
+  let context = create diagnostics in
+  List.iter (check_stmt context) program.Ast.stmts

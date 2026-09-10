@@ -169,8 +169,8 @@ skip whitespace/comments  ->  look at the first significant char  ->  dispatch:
    end of input  => emit Eof
 ```
 
-Each branch consumes characters with `bump` (which also advances line/column) and builds a token
-spanning `[start, here)` so later stages can point diagnostics at exact source ranges.
+Each branch consumes characters with `advance_char` (which also advances line/column) and builds a token
+spanning `[start_position, current_position)` so later stages can point diagnostics at exact source ranges.
 
 ### Maximal munch
 
@@ -209,7 +209,7 @@ fully written, mirroring `swift/lib/AST/DiagnosticEngine.cpp`:
 ```ocaml
 type severity = Error | Warning | Note
 type t    = { severity : severity; span : Token.span; message : string }
-type sink = { mutable diags : t list }          (* threaded through the front end *)
+type sink = { mutable diagnostics : t list }          (* threaded through the front end *)
 
 val create     : unit -> sink
 val error      : sink -> Token.span -> string -> unit
@@ -227,7 +227,7 @@ the spans you build in this concept are what make `line:col` possible three stag
 **The lexer takes one too**, which is why `create` has two parameters:
 
 ```ocaml
-Lexer.create  : string -> Diagnostics.sink -> t           (* here *)
+Lexer.create  : string -> Diagnostics.sink -> t           (* concept 01 *)
 Parser.create : Token.t list -> Diagnostics.sink -> t     (* concept 02 *)
 Sema.check    : Ast.program  -> Diagnostics.sink -> unit  (* concept 03 *)
 ```
@@ -248,45 +248,45 @@ one, and it cannot hand the parser anything at all. (swiftc goes one step furthe
 engine *optional* — `Lexer::diagnose` no-ops when the pointer is null, for callers that lex purely
 to colour syntax. Our sink is always present; it is simply empty when nothing goes wrong.)
 
-The helper is given, right under `make`:
+The helper is given, right under `make_token`:
 
 ```ocaml
-let error (lx : t) (lo : Token.pos) (msg : string) : unit =
-  Diagnostics.error lx.diags { Token.lo; hi = here lx } msg
+let report_error (lexer : t) (lo : Token.pos) (msg : string) : unit =
+  Diagnostics.error lexer.diagnostics { Token.lo; hi = current_position lexer } msg
 ```
 
 ## 3. Build it, step by step
 
-Open `lexer.ml` in this directory. The cursor type, `create`, and the helpers `here`, `at_end`, `peek_char`,
-`bump`, `make`, plus the `tokenize` driver are **already written**. You implement **`next`**.
+Open `lexer.ml` in this directory. The cursor type, `create`, and the helpers `current_position`, `at_end`, `peek_char`,
+`advance_char`, `make_token`, plus the `tokenize` driver are **already written**. You implement **`next`**.
 
-1. **Skip trivia.** Loop: while `peek_char lx` is a space or tab, `bump`. Then handle comments:
-   if you see `//`, `bump` to end of line (but *don't* consume the `\n` — it's a token). If you see
+1. **Skip trivia.** Loop: while `peek_char lexer` is a space or tab, `advance_char`. Then handle comments:
+   if you see `//`, `advance_char` to end of line (but *don't* consume the `\n` — it's a token). If you see
    `/*`, consume a **nesting** block comment (track depth). After skipping, you may need to loop
    again (comment followed by spaces).
-2. **Capture the start** with `let lo = here lx in`.
-3. **End of input:** `if at_end lx then make lo lx Token.Eof`.
-4. **Dispatch** on `peek_char lx`:
-   - `'0'..'9'`: remember `lx.pos`, `bump` while the next char is a digit, take the substring
-     between the two positions, `int_of_string` it, `make lo lx (Token.Int n)`.
+2. **Capture the start** with `let lo = current_position lexer in`.
+3. **End of input:** `if at_end lexer then make_token lo lexer Token.Eof`.
+4. **Dispatch** on `peek_char lexer`:
+   - `'0'..'9'`: remember `lexer.pos`, `advance_char` while the next char is a digit, take the substring
+     between the two positions, `int_of_string` it, `make_token lo lexer (Token.Int n)`.
    - letter or `'_'`: scan an identifier the same way (first char letter/`_`, rest
-     letters/digits/`_`), then `make lo lx (Token.keyword_or_ident text)`.
+     letters/digits/`_`), then `make_token lo lexer (Token.keyword_or_ident text)`.
    - `'+'` → `Plus`, `'-'` → `Minus`, `'*'` → `Star`, `'/'` → `Slash` (only if not a comment, which
      you already handled), `'%'` → `Percent`, `'='` → `Eq`, `'('` → `LParen`, `')'` → `RParen`,
-     `','` → `Comma`. Each: `ignore (bump lx); make lo lx <kind>`.
-   - `'\n'`: `ignore (bump lx); make lo lx Token.Newline`.
-   - anything else: `error lx lo "invalid character in source file"`, then **consume the byte and
-     carry on** (`ignore (bump lx); next lx`) — reporting without recovering would still stop at the
+     `','` → `Comma`. Each: `ignore (advance_char lexer); make_token lo lexer <kind>`.
+   - `'\n'`: `ignore (advance_char lexer); make_token lo lexer Token.Newline`.
+   - anything else: `report_error lexer lo "invalid character in source file"`, then **consume the byte and
+     carry on** (`ignore (advance_char lexer); next lexer`) — reporting without recovering would still stop at the
      first bad character. Same for an unterminated `/* …`: report at end of input, return `Eof`.
 
 **Tip:** factor the "scan while predicate" into a local helper:
 ```ocaml
-let take_while lx pred =
-  let start = lx.pos in
-  while (not (at_end lx)) && pred (peek_char lx) do
-    ignore (bump lx)
+let take_while lexer pred =
+  let start = lexer.pos in
+  while (not (at_end lexer)) && pred (peek_char lexer) do
+    ignore (advance_char lexer)
   done;
-  String.sub lx.src start (lx.pos - start)
+  String.sub lexer.source start (lexer.pos - start)
 ```
 
 Don't peek at §8 until you've tried it.
@@ -398,11 +398,11 @@ becomes a number (~25 words/token for the reference v0, ~7 for v1_fast).
 the report attributes the sampled words to the innermost frame that has a source location:
 
 ```
-   lexer.ml:22 here                        22.0%  ########
-   lexer.ml:37 make                        19.3%  #######
+   lexer.ml:22 current_position            22.0%  ########
+   lexer.ml:37 make_token                  19.3%  #######
 ```
 
-That is as close as it gets to "this line is the bottleneck" — `here` builds a `Token.pos`, `make`
+That is as close as it gets to "this line is the bottleneck" — `current_position` builds a `Token.pos`, `make_token`
 builds the token and its span, and `take_while` is a closure allocated per call.
 
 Once the fast rung exists, the same section runs for **it** too, and the contrast is the lesson:
@@ -423,14 +423,14 @@ And then the honest third view, `v1_fast + to_tokens`, which materialises the sa
 v0 produces:
 
 ```
-   lexer_v1_fast.ml:84  Lexer_v1_fast.pos_of           29.1%
+   lexer_v1_fast.ml:84  Lexer_v1_fast.position_of_offset           29.1%
    lexer_v1_fast.ml:113 lex.push.grow                  17.7%
    lexer_v1_fast.ml:262 to_tokens.build                11.1%
    lexer_v1_fast.ml:257 to_tokens.build                10.9%
    lexer_v1_fast.ml:259 to_tokens.build                10.9%
 ```
 
-The records and the positions are back — `pos_of` is now the single biggest allocator. The fast rung
+The records and the positions are back — `position_of_offset` is now the single biggest allocator. The fast rung
 never made those costs disappear, it **deferred** them; demand every token's span and you pay again.
 That is exactly why the parser is meant to consume the soup, asking for a position only when it has
 a diagnostic to place — which is what swiftc does with `SourceLoc` and `SourceManager`.
@@ -448,7 +448,7 @@ sorts by top-of-stack:
    oldify_mopup                                    295    7.0% [GC]
    Lexer.next                                      277    6.6%
    try_update_object_header                        271    6.5% [GC]
-   Lexer.bump                                      153    3.7%
+   Lexer.advance_char                                      153    3.7%
    List.rev_append                                  96    2.3%
    Lexer.take_while                                 76    1.8%
    ...
@@ -483,7 +483,7 @@ The report names the workload on its first line, and the two pictures could hard
 
 | | hottest frames | OCaml code | GC / allocator | other runtime |
 |---|---|---|---|---|
-| **v0** | `Lexer.next` 5.2%, `bump` 3.2%, `peek_char` 1.7% | 18.2% | **78.1%** | 3.7% |
+| **v0** | `Lexer.next` 5.2%, `advance_char` 3.2%, `peek_char` 1.7% | 18.2% | **78.1%** | 3.7% |
 | **v1_fast** | `skip` 16.2%, `push` 11.7%, `lex` 9.0% | 53.4% | **5.7%** | 40.9% |
 
 The GC column collapsing from 78% to 6% *is* the redesign. But read the third column before
@@ -532,7 +532,7 @@ micro-optimize the scan loop with `unsafe_get` barely helped: it shaved the 3 %,
 
 1. **Offset-only positions (Swift's `SourceLoc`).** A token stores just two `int` byte offsets —
    *start* and *end*. It does **not** carry line/col. Line and column are derived **lazily** from a
-   one-time *line-start table* (`pos_of` binary-searches the offsets of line beginnings) only when
+   one-time *line-start table* (`position_of_offset` binary-searches the offsets of line beginnings) only when
    something — a diagnostic — actually asks. The hot loop no longer touches line/col at all (v0
    bumped them on *every character*). swiftc does exactly this: a `SourceLoc` is a pointer/offset;
    `line:col` is computed on demand by the `SourceManager`.
@@ -543,7 +543,7 @@ micro-optimize the scan loop with `unsafe_get` barely helped: it shaved the 3 %,
    amortized across the whole file.
 3. **Defer the data work.** `Int` literals aren't `int_of_string`'d and identifiers aren't
    `String.sub`'d in the scan; we keep their offset range and resolve them **on demand** in
-   `to_tokens` / `kind_of`. Even the keyword check (`let`/`var`) compares bytes in place rather than
+   `to_tokens` / `token_kind_at`. Even the keyword check (`let`/`var`) compares bytes in place rather than
    allocating a substring.
 
 Net effect: the scanning pass allocates *essentially nothing per token*. That's the 8×.
@@ -557,12 +557,12 @@ concept:
   `push`, and the trivia `skip` are given; you write the token loop. Shape: until you have pushed
   `t_eof`, call `skip ()`, stop at end of input, else read `s = !pos` and dispatch — digits munch
   into `t_int`, an identifier head munches into `t_ident`, the single-character operators and `'\n'`
-  push a one-byte token, and anything else is `error s (s + 1) "invalid character in source file"`
+  push a one-byte token, and anything else is `report_error s (s + 1) "invalid character in source file"`
   followed by carrying on (no token pushed), exactly the recovery v0 does. The rules are the three
   moves above: offsets only, no `Token.t`/`span`/`pos`, and no `String.sub` or `int_of_string` in
   the loop. Mind the end of the buffer — `g` is `String.unsafe_get`, so an off-by-one reads past the
   string instead of raising; test `!pos < len` after `skip ()` and in every munch loop.
-- **`TODO(01-v1b)` — `pos_of`**, the search that turns a byte offset into `line:col` against the
+- **`TODO(01-v1b)` — `position_of_offset`**, the search that turns a byte offset into `line:col` against the
   line-start table `ls`: find the **last index `i` with `ls.(i) <= off`**, then `line = i + 1` and
   `col = off - ls.(i) + 1` (both 1-based) and `offset = off`. Binary-search it — this is the piece
   that *lets* the hot loop ignore positions, and it is the only caller of the table in the rung.
@@ -571,14 +571,14 @@ The two holes are **independent**, and the tests know it — each has its own ch
 skipped until you start that piece:
 
 ```
-[OK]  v1_fast piece: pos_of   checked.
+[OK]  v1_fast piece: position_of_offset   checked.
 [OK]  v1_fast piece: lex      skipped — TODO(01-v1a) lex not written yet
 [OK]  v1_fast                 skipped — lexer_v1_fast.ml is still a skeleton
 ```
 
-`pos_of` needs only the line table, and the scanner touches it only on its error path, so you can
-write and green-light either one first and debug it alone. `pos_of`'s test also cross-checks the
-whole corpus against **v0**: v0 maintained `line`/`col` as it scanned, `pos_of` reconstructs them
+`position_of_offset` needs only the line table, and the scanner touches it only on its error path, so you can
+write and green-light either one first and debug it alone. `position_of_offset`'s test also cross-checks the
+whole corpus against **v0**: v0 maintained `line`/`col` as it scanned, `position_of_offset` reconstructs them
 from the offset alone, and they must agree on every token — a much stronger check than a handful of
 hand-written positions, and it costs nothing because v0 is already there. (If that test *hangs*
 rather than fails, your binary search is not making progress: look at what happens when `lo = hi`.)
@@ -727,99 +727,99 @@ token stream with recursive descent + a Pratt expression parser to build the AST
 ## 8. Appendix — full solution
 
 The complete `next` (and the small helpers it uses) below — mirrors `solution/lexer.ml`. The cursor
-type and `create`/`here`/`at_end`/`peek_char`/`bump`/`make`/`tokenize` are the given scaffolding; the
+type and `create`/`current_position`/`at_end`/`peek_char`/`advance_char`/`make_token`/`tokenize` are the given scaffolding; the
 code here is the part you fill in. **Try §3 first — this is the answer.**
 
 ```ocaml
 (* Two-char lookahead, for the comment forms `//`, `/*`, `*/`. *)
-let peek2 (lx : t) : char = if lx.pos + 1 < lx.len then lx.src.[lx.pos + 1] else '\000'
+let peek_next_char (lexer : t) : char = if lexer.pos + 1 < lexer.len then lexer.source.[lexer.pos + 1] else '\000'
 
 (* Swift identifier/number character classes (ASCII subset for Phase 1). *)
 let is_digit (c : char) : bool = c >= '0' && c <= '9'
-let is_ident_head (c : char) : bool = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c = '_'
-let is_ident_cont (c : char) : bool = is_ident_head c || is_digit c
+let is_identifier_start (c : char) : bool = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c = '_'
+let is_identifier_continue (c : char) : bool = is_identifier_start c || is_digit c
 
-let next (lx : t) : Token.t =
+let next (lexer : t) : Token.t =
   (* 1. Skip trivia: non-newline whitespace and //, /* */ comments. Loop, because a
      comment can be followed by more whitespace/comments. Newlines are NOT trivia. *)
   let rec skip_trivia () =
-    if at_end lx then ()
+    if at_end lexer then ()
     else
-      let c = peek_char lx in
-      if c = ' ' || c = '\t' || c = '\r' then (ignore (bump lx); skip_trivia ())
-      else if c = '/' && peek2 lx = '/' then (
+      let c = peek_char lexer in
+      if c = ' ' || c = '\t' || c = '\r' then (ignore (advance_char lexer); skip_trivia ())
+      else if c = '/' && peek_next_char lexer = '/' then (
         (* line comment: consume to end of line, but leave the '\n' (it's a token). *)
-        ignore (bump lx); ignore (bump lx);
-        while (not (at_end lx)) && peek_char lx <> '\n' do
-          ignore (bump lx)
+        ignore (advance_char lexer); ignore (advance_char lexer);
+        while (not (at_end lexer)) && peek_char lexer <> '\n' do
+          ignore (advance_char lexer)
         done;
         skip_trivia ())
-      else if c = '/' && peek2 lx = '*' then (
+      else if c = '/' && peek_next_char lexer = '*' then (
         (* block comment: nests, unlike C. Track depth until it returns to 0. *)
-        ignore (bump lx); ignore (bump lx);
+        ignore (advance_char lexer); ignore (advance_char lexer);
         let depth = ref 1 in
-        while !depth > 0 && not (at_end lx) do
-          if peek_char lx = '/' && peek2 lx = '*' then (
-            ignore (bump lx);
-            ignore (bump lx);
+        while !depth > 0 && not (at_end lexer) do
+          if peek_char lexer = '/' && peek_next_char lexer = '*' then (
+            ignore (advance_char lexer);
+            ignore (advance_char lexer);
             incr depth)
-          else if peek_char lx = '*' && peek2 lx = '/' then (
-            ignore (bump lx);
-            ignore (bump lx);
+          else if peek_char lexer = '*' && peek_next_char lexer = '/' then (
+            ignore (advance_char lexer);
+            ignore (advance_char lexer);
             decr depth)
-          else ignore (bump lx)
+          else ignore (advance_char lexer)
         done;
         (* depth > 0 here ⇒ unterminated: swiftc's wording, swiftc's position (end of
            input), and we carry on. Exercise 2 adds the note pointing at the opener. *)
-        if !depth > 0 then error lx (here lx) "unterminated '/*' comment";
+        if !depth > 0 then report_error lexer (current_position lexer) "unterminated '/*' comment";
         skip_trivia ())
       else ()
   in
   skip_trivia ();
   (* 2. Capture the start position. 3. End of input. *)
-  let lo = here lx in
-  if at_end lx then make lo lx Token.Eof
+  let lo = current_position lexer in
+  if at_end lexer then make_token lo lexer Token.Eof
   else
-    let c = peek_char lx in
+    let c = peek_char lexer in
     (* 4. Dispatch on the first significant character. *)
     if is_digit c then (
       (* integer literal — maximal munch over the run of digits *)
-      let start = lx.pos in
-      while (not (at_end lx)) && is_digit (peek_char lx) do
-        ignore (bump lx)
+      let start = lexer.pos in
+      while (not (at_end lexer)) && is_digit (peek_char lexer) do
+        ignore (advance_char lexer)
       done;
-      let n = int_of_string (String.sub lx.src start (lx.pos - start)) in
-      make lo lx (Token.Int n))
-    else if is_ident_head c then (
+      let n = int_of_string (String.sub lexer.source start (lexer.pos - start)) in
+      make_token lo lexer (Token.Int n))
+    else if is_identifier_start c then (
       (* identifier — head then run of ident chars; then the keyword table *)
-      let start = lx.pos in
-      while (not (at_end lx)) && is_ident_cont (peek_char lx) do
-        ignore (bump lx)
+      let start = lexer.pos in
+      while (not (at_end lexer)) && is_identifier_continue (peek_char lexer) do
+        ignore (advance_char lexer)
       done;
-      let text = String.sub lx.src start (lx.pos - start) in
-      make lo lx (Token.keyword_or_ident text))
+      let text = String.sub lexer.source start (lexer.pos - start) in
+      make_token lo lexer (Token.keyword_or_ident text))
     else
       match c with
-      | '+' -> ignore (bump lx); make lo lx Token.Plus
-      | '-' -> ignore (bump lx); make lo lx Token.Minus
-      | '*' -> ignore (bump lx); make lo lx Token.Star
-      | '/' -> ignore (bump lx); make lo lx Token.Slash
-      | '%' -> ignore (bump lx); make lo lx Token.Percent
-      | '=' -> ignore (bump lx); make lo lx Token.Eq
-      | '(' -> ignore (bump lx); make lo lx Token.LParen
-      | ')' -> ignore (bump lx); make lo lx Token.RParen
-      | ',' -> ignore (bump lx); make lo lx Token.Comma
-      | '\n' -> ignore (bump lx); make lo lx Token.Newline
+      | '+' -> ignore (advance_char lexer); make_token lo lexer Token.Plus
+      | '-' -> ignore (advance_char lexer); make_token lo lexer Token.Minus
+      | '*' -> ignore (advance_char lexer); make_token lo lexer Token.Star
+      | '/' -> ignore (advance_char lexer); make_token lo lexer Token.Slash
+      | '%' -> ignore (advance_char lexer); make_token lo lexer Token.Percent
+      | '=' -> ignore (advance_char lexer); make_token lo lexer Token.Eq
+      | '(' -> ignore (advance_char lexer); make_token lo lexer Token.LParen
+      | ')' -> ignore (advance_char lexer); make_token lo lexer Token.RParen
+      | ',' -> ignore (advance_char lexer); make_token lo lexer Token.Comma
+      | '\n' -> ignore (advance_char lexer); make_token lo lexer Token.Newline
       | _ ->
           (* report, drop the byte, keep lexing — one run finds every bad character *)
-          ignore (bump lx);
-          error lx lo "invalid character in source file";
-          next lx
+          ignore (advance_char lexer);
+          report_error lexer lo "invalid character in source file";
+          next lexer
 ```
 
 Why it's shaped this way:
 
-- **Maximal munch** is the `while … is_digit …` / `while … is_ident_cont …` loops: keep consuming
+- **Maximal munch** is the `while … is_digit …` / `while … is_identifier_continue …` loops: keep consuming
   while the next char still belongs to the token, so `123` is one `Int` and `print` one identifier.
 - **Newlines are emitted, not skipped** — they're significant (statement terminators), so `'\n'`
   falls through to a real `Token.Newline` while spaces/tabs are trivia.
@@ -827,7 +827,7 @@ Why it's shaped this way:
 - Errors go into the `Diagnostics.sink` the cursor carries, and the lexer **recovers** — the two
   properties that let one run report every bad byte and still hand the parser a token stream.
   Factoring the two munch loops into a `take_while
-  lx pred` helper (see §3) is an equally good style — the solution inlines them for directness.
+  lexer pred` helper (see §3) is an equally good style — the solution inlines them for directness.
 
 ### The `v1_fast` rung
 
@@ -848,9 +848,9 @@ while !continue do
         incr pos
       done;
       push t_int s !pos)
-    else if is_ident_head c then (
+    else if is_identifier_start c then (
       incr pos;
-      while !pos < len && is_ident_cont (g !pos) do
+      while !pos < len && is_identifier_continue (g !pos) do
         incr pos
       done;
       push t_ident s !pos)
@@ -861,12 +861,12 @@ while !continue do
         | _ -> -1        (* not a token: reported below, then skipped *)
       in
       incr pos;
-      if tag < 0 then error s !pos "invalid character in source file" else push tag s !pos)
+      if tag < 0 then report_error s !pos "invalid character in source file" else push tag s !pos)
 done;
-{ tags = !tags; starts = !starts; ends = !ends; n = !n; src }
+{ tags = !tags; starts = !starts; ends = !ends; n = !n; source }
 
 (* TODO(01-v1b) — offset -> line:col, on demand *)
-let pos_of (ls : int array) (off : int) : Token.pos =
+let position_of_offset (ls : int array) (off : int) : Token.pos =
   let lo = ref 0 and hi = ref (Array.length ls - 1) in
   while !lo < !hi do
     let mid = (!lo + !hi + 1) / 2 in
@@ -876,7 +876,7 @@ let pos_of (ls : int array) (off : int) : Token.pos =
 ```
 
 Note what is *absent* from the loop: no `Token.t`, no `span`, no `pos`, no `String.sub`, no
-`int_of_string`, and no line/col bookkeeping. Everything the loop defers, `kind_of`/`to_tokens`
+`int_of_string`, and no line/col bookkeeping. Everything the loop defers, `token_kind_at`/`to_tokens`
 reconstruct later — and only for tokens somebody actually looks at.
 
 ## 9. Exercise solutions
@@ -890,11 +890,11 @@ to consume `_` along with digits, then strip the `_`s before converting:
 
 ```ocaml
 if is_digit c then (
-  let start = lx.pos in
-  while (not (at_end lx)) && (let d = peek_char lx in is_digit d || d = '_') do
-    ignore (bump lx)
+  let start = lexer.pos in
+  while (not (at_end lexer)) && (let d = peek_char lexer in is_digit d || d = '_') do
+    ignore (advance_char lexer)
   done;
-    make lo lx (Token.Int (int_of_string (String.sub lx.src start (lx.pos - start)))))
+    make_token lo lexer (Token.Int (int_of_string (String.sub lexer.source start (lexer.pos - start)))))
 ```
 
 No stripping step is needed: OCaml's own integer literals allow `_`, and `int_of_string` accepts it
@@ -906,22 +906,22 @@ which then reports `cannot find '_1' in scope`.
 
 ### 2 — point at the comment that ran away
 
-The opener has to be captured *before* the two `bump`s that consume `/*`, and the depth counter is
+The opener has to be captured *before* the two `advance_char`s that consume `/*`, and the depth counter is
 already there — it just has to survive the loop:
 
 ```ocaml
-else if c = '/' && peek2 lx = '*' then (
-  let opener = here lx in                       (* <- before consuming the opener *)
-  ignore (bump lx); ignore (bump lx);
+else if c = '/' && peek_next_char lexer = '*' then (
+  let opener = current_position lexer in                       (* <- before consuming the opener *)
+  ignore (advance_char lexer); ignore (advance_char lexer);
   let depth = ref 1 in
-  while !depth > 0 && not (at_end lx) do
+  while !depth > 0 && not (at_end lexer) do
     ...
   done;
   if !depth > 0 then (
-    let eof = here lx in
-    error lx eof "unterminated '/*' comment";
+    let eof = current_position lexer in
+    report_error lexer eof "unterminated '/*' comment";
     let note span msg =
-      Diagnostics.emit lx.diags { Diagnostics.severity = Note; span; message = msg }
+      Diagnostics.emit lexer.diagnostics { Diagnostics.severity = Note; span; message = msg }
     in
     note { Token.lo = opener; hi = { opener with Token.col = opener.Token.col + 2 } }
       "comment started here";
@@ -933,7 +933,7 @@ else if c = '/' && peek2 lx = '*' then (
 ```
 
 Nesting needs no extra work: `opener` is bound once, in the call that saw the outermost `/*`, and
-the inner ones only bump `depth` — which is exactly why `depth` is still the count of *unclosed*
+the inner ones only advance_char `depth` — which is exactly why `depth` is still the count of *unclosed*
 comments when the loop ends. Output:
 
 ```
@@ -960,7 +960,7 @@ let string_of_token (t : t) : string =
 
 Two details the test pins. `hi` is **exclusive**, so `int(20)` on line 2 columns 11–12 prints
 `2:11-2:13` — the end is the first column *after* the token. And a span can **cross a line break**:
-the newline token in `"a\nb"` prints `newline @ 1:2-2:1`, because `bump` moved the cursor to line 2
+the newline token in `"a\nb"` prints `newline @ 1:2-2:1`, because `advance_char` moved the cursor to line 2
 column 1 as it consumed the `\n`.
 
 To see it from the command line, hand it to the driver (concept 04, outside this concept):

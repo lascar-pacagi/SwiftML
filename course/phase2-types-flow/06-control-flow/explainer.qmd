@@ -53,12 +53,12 @@ everything the block added. Lookups scan inner-to-outer, so an inner binding **s
 of the same name and the outer one reappears when the block ends.
 
 ```
-env before block:        [outer ↦ Int]
+environment before block:        [outer ↦ Int]
 inside { let x = 1 }:    [x ↦ Int, outer ↦ Int]     ← x found first, outer still visible
-env after block:         [outer ↦ Int]              ← restored; x is gone
+environment after block:         [outer ↦ Int]              ← restored; x is gone
 ```
 
-That's the entire trick (`in_scope` in the code): `let saved = !env in run (); env := saved`.
+That's the entire trick (`in_scope` in the code): `let saved = !environment in run (); environment := saved`.
 
 ### The `for` loop: a range and an immutable counter
 
@@ -72,7 +72,7 @@ first-class values would need a `Range` type — that's later.)
 ### `break` / `continue` need a *context*
 
 `break` and `continue` are only meaningful inside a loop, so the checker tracks whether it's *in* one
-with a depth counter: bump it entering a loop body, drop it leaving, and a `break`/`continue` seen at
+with a depth counter: increment it when entering a loop body, decrement it when leaving, and a `break`/`continue` seen at
 depth 0 is the error "'break' is only allowed inside a loop." This is the simplest example of a
 **context-sensitive** check — the legality of a statement depends on where it sits, not just on its
 own parts. (Swift threads this context through the checker too; see the loop tracking in
@@ -311,7 +311,7 @@ one if-statement, while `--emit-ast` needs `parse_stmt` to dispatch on the new k
   and shadowing — including a loop variable shadowing an outer name of the same type.
 - `test_sema.ml` (alcotest `sema-flow`) — the exact diagnostics, in-process, plus two groups the
   cram files cannot express as sharply: **recovery** (every rule reports exactly once, and one run
-  reports everything it can see — the property a wrong `err`-then-return pair breaks) and **loop
+  reports everything it can see — the property a wrong report-then-return pair breaks) and **loop
   context** (the depth counter goes back down, so what matters is where a statement sits).
 - `oracle.t` — **the headline**: every program in `oracle-corpus.txt` (28, accept and reject
   side by side) goes to `swiftc -typecheck` and to your `--typecheck`, and the verdicts must
@@ -374,15 +374,15 @@ let rec check_stmt (s : Ast.stmt) : unit =
           bind var (Types.TInt, false);     (* the loop variable is an immutable Int *)
           List.iter check_stmt body);
       decr loop_depth
-  | Ast.Break span -> if !loop_depth = 0 then err span "'break' is only allowed inside a loop"
-  | Ast.Continue span -> if !loop_depth = 0 then err span "'continue' is only allowed inside a loop"
+  | Ast.Break span -> if !loop_depth = 0 then report_error span "'break' is only allowed inside a loop"
+  | Ast.Continue span -> if !loop_depth = 0 then report_error span "'continue' is only allowed inside a loop"
 and check_block (stmts : Ast.stmt list) : unit =
   in_scope (fun () -> List.iter check_stmt stmts)   (* push a scope, check, pop *)
 
 (* the scope stack, defined once at the top of `check`: *)
-(*   let env = ref [] and lookup x = List.assoc_opt x !env
-     and bind n v = env := (n,v) :: !env
-     and in_scope f = let saved = !env in f (); env := saved *)
+(*   let environment = ref [] and lookup x = List.assoc_opt x !environment
+     and bind n v = environment := (n,v) :: !environment
+     and in_scope f = let saved = !environment in f (); environment := saved *)
 
 (* and && / || in infer_binary: *)
 | Ast.And | Ast.Or ->

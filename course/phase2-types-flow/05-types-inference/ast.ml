@@ -75,24 +75,27 @@ let string_of_unop = function Neg -> "-"
 
 (* Compact S-expression dump for `--emit-ast` and AST unit tests. *)
 let rec dump_expr = function
-  | Int_lit (n, _) -> string_of_int n
-  | Double_lit (f, _) -> Printf.sprintf "%g" f
-  | Bool_lit (b, _) -> string_of_bool b
-  | String_lit (s, _) -> Printf.sprintf "%S" s
-  | Var (x, _) -> x
-  | Unary (op, e, _) -> Printf.sprintf "(%s %s)" (string_of_unop op) (dump_expr e)
-  | Binary (op, l, r, _) ->
-      Printf.sprintf "(%s %s %s)" (string_of_binop op) (dump_expr l) (dump_expr r)
-  | Ascribe (e, t, _) -> Printf.sprintf "(as %s %s)" t (dump_expr e)
-  | Call (f, args, _) -> Printf.sprintf "(%s %s)" f (String.concat " " (List.map dump_expr args))
+  | Int_lit (integer, _) -> string_of_int integer
+  | Double_lit (number, _) -> Printf.sprintf "%g" number
+  | Bool_lit (boolean, _) -> string_of_bool boolean
+  | String_lit (text, _) -> Printf.sprintf "%S" text
+  | Var (name, _) -> name
+  | Unary (operator, expression, _) ->
+      Printf.sprintf "(%s %s)" (string_of_unop operator) (dump_expr expression)
+  | Binary (operator, left, right, _) ->
+      Printf.sprintf "(%s %s %s)" (string_of_binop operator) (dump_expr left) (dump_expr right)
+  | Ascribe (expression, type_name, _) -> Printf.sprintf "(as %s %s)" type_name (dump_expr expression)
+  | Call (function_name, arguments, _) ->
+      Printf.sprintf "(%s %s)" function_name (String.concat " " (List.map dump_expr arguments))
 
 let dump_stmt = function
   | Let { name; is_var; annot; value; _ } ->
-      let kw = if is_var then "var" else "let" in
+      let keyword = if is_var then "var" else "let" in
       (match annot with
-      | None -> Printf.sprintf "(%s %s %s)" kw name (dump_expr value)
-      | Some t -> Printf.sprintf "(%s %s : %s %s)" kw name t (dump_expr value))
+      | None -> Printf.sprintf "(%s %s %s)" keyword name (dump_expr value)
+      | Some type_name -> Printf.sprintf "(%s %s : %s %s)" keyword name type_name (dump_expr value))
   | Assign { name; value; _ } -> Printf.sprintf "(= %s %s)" name (dump_expr value)
-  | Expr_stmt (e, _) -> dump_expr e
+  | Expr_stmt (expression, _) -> dump_expr expression
 
-let dump_program (p : program) : string = String.concat "\n" (List.map dump_stmt p.stmts)
+let dump_program (program : program) : string =
+  String.concat "\n" (List.map dump_stmt program.stmts)

@@ -25,7 +25,7 @@ let string_of_ty : ty -> string = function
   | TDouble -> "Double"
   | TString -> "String"
 
-let equal (a : ty) (b : ty) : bool = a = b
+let equal (left : ty) (right : ty) : bool = left = right
 
 (* The arithmetic types. `+ - * /` are defined on these (and `+` also on String);
    comparisons (`< > == …`) take these and yield `TBool`. *)

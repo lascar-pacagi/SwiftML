@@ -84,11 +84,11 @@ let string_of_kind = function
   | Eof -> "eof"
 
 (* Identifier spelling -> keyword kind, or a plain identifier. Grows with the language. *)
-let keyword_or_ident (s : string) : kind =
-  match s with
+let keyword_or_ident (text : string) : kind =
+  match text with
   | "let" -> Kw_let
   | "var" -> Kw_var
   (* TODO(05): the keywords this concept adds — `true` and `false` (Bool literals are KEYWORDS
      in Swift, not identifiers that happen to spell them: a program can't rebind `true`) and `as`
      (the coercion `e as T`). Three arms, and `truely` must stay an `Ident`. §2. *)
-  | _ -> Ident s
+  | _ -> Ident text

@@ -32,7 +32,7 @@ let lower (src : string) : string list * string =
   let c = Irgen.create () in
   let operand = Irgen.emit_expr c (parse_expr src) in
   let lines =
-    String.split_on_char '\n' (Buffer.contents c.Irgen.buf)
+    String.split_on_char '\n' (Buffer.contents c.Irgen.buffer)
     |> List.map String.trim
     |> List.filter (fun l -> l <> "")
   in
@@ -204,7 +204,7 @@ let test_print_call () =
   ignore (Irgen.emit_expr c (parse_expr "print(1)"));
   ignore (Irgen.emit_expr c (parse_expr "print(2)"));
   let ls =
-    String.split_on_char '\n' (Buffer.contents c.Irgen.buf)
+    String.split_on_char '\n' (Buffer.contents c.Irgen.buffer)
     |> List.map String.trim
     |> List.filter (fun l -> l <> "")
   in
@@ -422,7 +422,7 @@ let test_slot_of () =
   Alcotest.(check string) "the same name gives the same slot" r1 r2;
   Alcotest.(check bool) "a different name gives a different slot" true (r1 <> r3);
   let ls =
-    String.split_on_char '\n' (Buffer.contents c.Irgen.buf) |> List.map String.trim
+    String.split_on_char '\n' (Buffer.contents c.Irgen.buffer) |> List.map String.trim
     |> List.filter (fun l -> l <> "")
   in
   Alcotest.(check int) "two names, two allocas" 2 (n_with "alloca" ls)

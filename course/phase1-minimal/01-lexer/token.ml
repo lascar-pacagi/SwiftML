@@ -69,14 +69,14 @@ let string_of_kind = function
 
    (Once it works, `swiftml --emit-tokens` can print it too: that is one line in
    concept 04's `driver.ml`, outside this concept, so it is optional and untested here.) *)
-let string_of_token (t : t) : string =
-  ignore t;
+let string_of_token (token : t) : string =
+  ignore token;
   failwith "TODO(01-ex3): implement Token.string_of_token (kind + span)"
 
 (* Map an identifier spelling to a keyword kind, or keep it an identifier.
    Grows as the language does. *)
-let keyword_or_ident (s : string) : kind =
-  match s with 
+let keyword_or_ident (text : string) : kind =
+  match text with
   | "let" -> Kw_let 
   | "var" -> Kw_var 
-  | _ -> Ident s
+  | _ -> Ident text

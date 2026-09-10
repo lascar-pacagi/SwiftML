@@ -16,12 +16,12 @@ type ty = TInt
 let string_of_ty = function TInt -> "Int"
 
 (* Walk the program, resolving names and (trivially) type-checking, reporting into
-   [diags] — the driver bails before IRGen if [Diagnostics.has_errors].
+   [diagnostics] — the driver bails before IRGen if [Diagnostics.has_errors].
 
    Two rules are easy to get subtly wrong, and the tests pin both: an initializer is
    checked BEFORE its name is bound, and an assignment target must be declared AND
    mutable. Every diagnostic is compared against swiftc's wording.
    Walk-through: explainer §3. *)
-let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
-  ignore (prog, diags, string_of_ty);
+let check (program : Ast.program) (diagnostics : Diagnostics.sink) : unit =
+  ignore (program, diagnostics, string_of_ty);
   failwith "TODO(03-sema): implement Sema.check (scope + name resolution + Int typing)"

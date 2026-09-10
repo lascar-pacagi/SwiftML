@@ -6,7 +6,7 @@ the compiler's mouth: every later stage eats tokens, not characters.
 **Prerequisites:** Phase 0 (toolchain builds).
 
 **You edit:** `lexer.ml` — the function `next` (the scanning DFA) — and then, as the second rung,
-`lexer_v1_fast.ml` (`lex` and `pos_of`). `tokenize` (the driver loop) and the cursor helpers are
+`lexer_v1_fast.ml` (`lex` and `position_of_offset`). `tokenize` (the driver loop) and the cursor helpers are
 already written; the token type lives in `token.ml` (this dir), and `diagnostics.ml` (also here) is
 the shared error sink. Together they make up the **lexer stage library** (`swiftml_lexer`); the
 parser stage depends on it (and uses v0 — v1 is the performance rung, proven equivalent by tests).

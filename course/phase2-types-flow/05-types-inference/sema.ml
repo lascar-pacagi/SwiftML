@@ -1,8 +1,8 @@
 (* Sema — concept 05 (skeleton): the bidirectional type checker.
 
    You implement the TODO(05) holes. The two judgments:
-     infer cx e        -> ty      synthesize a type (no expectation)
-     check_expr cx e t -> unit    check e against an expected type t (pushes t down)
+     infer context expression        -> ty      synthesize a type (no expectation)
+     check_expr context expression t -> unit    check expression against an expected type t (pushes t down)
 
    The one coercion is Swift's `ExpressibleByIntegerLiteral`: an *integer literal*
    (recursively, an arithmetic expression of integer literals) may take type Double when a
@@ -10,25 +10,25 @@
    does not. Full literal flexibility is a constraint-solver job (Phase 5); we special-case
    the common shapes.
 
-   Everything is top-level and takes an explicit [ctx] rather than closing over a hidden
+   Everything is top-level and takes an explicit [context] rather than closing over a hidden
    environment, so every hole below can be unit-tested on its own — see `tests/test_units.ml`.
    No `rec` is written for you: that is a claim about the body you are about to write, and the
    compiler will tell you the moment you need one. The scaffolding is the SHAPE of the checker;
    every rule inside it is yours. Diagnostics are compared against swiftc's wording by the
    tests, so the messages named in each hole must be produced exactly. Walk-through: §3. *)
 
-type ctx = {
-  env : (string, Types.ty * bool) Hashtbl.t;  (* name -> its type, and whether it is a `var` *)
-  diags : Diagnostics.sink;
+type context = {
+  environment : (string, Types.ty * bool) Hashtbl.t;  (* name -> its type, and whether it is a `var` *)
+  diagnostics : Diagnostics.sink;
 }
 
-let create (diags : Diagnostics.sink) : ctx = { env = Hashtbl.create 16; diags }
-let err (cx : ctx) span msg = Diagnostics.error cx.diags span msg
+let create (diagnostics : Diagnostics.sink) : context = { environment = Hashtbl.create 16; diagnostics }
+let report_error (context : context) span msg = Diagnostics.error context.diagnostics span msg
 
-(* TODO(05a): is [e] an *integer literal* for coercion purposes? `1` and `1 + 2` are; an
+(* TODO(05a): is [expression] an *integer literal* for coercion purposes? `1` and `1 + 2` are; an
    Int-typed variable is not — that asymmetry is the whole point of the rule. *)
-let is_int_literal (e : Ast.expr) : bool =
-  ignore e;
+let is_int_literal (expression : Ast.expr) : bool =
+  ignore expression;
   failwith "TODO(05a): is_int_literal"
 
 (* TODO(05b): reconcile a binary operator's two operand types. [Some t] when both sides can be
@@ -39,15 +39,15 @@ let unify (l : Ast.expr) (tl : Types.ty) (r : Ast.expr) (tr : Types.ty) : Types.
   ignore (l, tl, r, tr);
   failwith "TODO(05b): unify"
 
-let infer (cx : ctx) (e : Ast.expr) : Types.ty =
-  match e with
+let infer (context : context) (expression : Ast.expr) : Types.ty =
+  match expression with
   (* literals synthesize their own type — given, as the shape for the rest *)
   | Ast.Int_lit _ -> Types.TInt
   | Ast.Double_lit _ -> Types.TDouble
   | Ast.Bool_lit _ -> Types.TBool
   | Ast.String_lit _ -> Types.TString
   (* TODO(05c): the rest of the synthesis direction.
-       Var       look up `cx.env`, else "cannot find '%s' in scope"
+       Var       look up `context.environment`, else "cannot find '%s' in scope"
        Unary Neg the operand must be numeric, and keeps its type; otherwise
                  "unary operator '-' cannot be applied to an operand of type 'X'"
        Binary    the operator table in §2, via [unify]; the two failure wordings are
@@ -57,12 +57,12 @@ let infer (cx : ctx) (e : Ast.expr) : Types.ty =
                  "print(_:) expects exactly one argument" (ours — Swift's print is
                  variadic), and any OTHER name is "cannot find '%s' in scope", the same
                  message an unknown variable gets. Infer the arguments either way.
-     TODO(05g): `Ascribe (e, tyname, span)` — `e as T`. Resolve the name with `Types.of_name`
+     TODO(05g): `Ascribe (expression, tyname, span)` — `expression as T`. Resolve the name with `Types.of_name`
        ("cannot find type '%s' in scope" if unknown) and CHECK the operand against it, then
        return it. This is the one arm where `infer` calls `check_expr`, which is what makes the
        two judgments mutually recursive — see §2. *)
   | _ ->
-      ignore (cx, unify, err);
+      ignore (context, unify, report_error);
       failwith "TODO(05c): infer"
 
 (* TODO(05d): the checking direction — where an expectation is pushed DOWN.
@@ -72,21 +72,21 @@ let infer (cx : ctx) (e : Ast.expr) : Types.ty =
                "cannot convert value of type 'X' to specified type 'Y'"
    It falls back to [infer]; [infer] never calls back, so the two are not mutually
    recursive in this subset (in a fuller language they would be). *)
-let check_expr (cx : ctx) (e : Ast.expr) (expected : Types.ty) : unit =
-  ignore (cx, e, expected, infer);
+let check_expr (context : context) (expression : Ast.expr) (expected : Types.ty) : unit =
+  ignore (context, expression, expected, infer);
   failwith "TODO(05d): check_expr"
 
 (* TODO(05e): one statement.
      Let/Var    annotated? resolve the name with `Types.of_name` ("cannot find type '%s' in
                 scope" if unknown) and [check_expr] the value against it; otherwise [infer].
-                Either way bind name -> (type, is_var) in `cx.env`.
+                Either way bind name -> (type, is_var) in `context.environment`.
      Assign     the target must exist, must be a `var` — "cannot assign to value: '%s' is a
                 'let' constant" — and the value must check against its type.
      Expr_stmt  infer it and discard the type. *)
-let check_stmt (cx : ctx) (s : Ast.stmt) : unit =
-  ignore (cx, s, infer, check_expr);
+let check_stmt (context : context) (s : Ast.stmt) : unit =
+  ignore (context, s, infer, check_expr);
   failwith "TODO(05e): check_stmt"
 
-let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
-  let cx = create diags in
-  List.iter (check_stmt cx) prog.Ast.stmts
+let check (program : Ast.program) (diagnostics : Diagnostics.sink) : unit =
+  let context = create diagnostics in
+  List.iter (check_stmt context) program.Ast.stmts

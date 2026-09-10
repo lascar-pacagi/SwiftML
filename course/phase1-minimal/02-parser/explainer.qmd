@@ -94,20 +94,20 @@ apart needs **one token of lookahead** past the identifier. The token cursor (`p
 
 The elegant core. **`bp` is *binding power*** — Pratt's name for precedence, from his 1973 paper
 *Top Down Operator Precedence*: how tightly an operator holds onto the operands either side of it
-(`*` binds tighter than `+`). So `parse_expr_bp p min_bp` reads "parse an expression here, but only
-absorb operators that bind at least as tightly as `min_bp`":
+(`*` binds tighter than `+`). So `parse_expr_bp p minimum_binding_power` reads "parse an expression here, but only
+absorb operators that bind at least as tightly as `minimum_binding_power`":
 
 ```
 1. parse a PREFIX (a "nud" — null denotation): a literal, a variable, a parenthesized expr,
    a unary minus, or a call. This is the left operand.
-2. LOOP: peek the next token. If it's an infix operator with binding power bp >= min_bp:
+2. LOOP: peek the next token. If it's an infix operator with binding power bp >= minimum_binding_power:
      - consume it,
      - parse the RIGHT operand with parse_expr_bp p (bp + 1)   <- the +1 gives LEFT associativity,
      - fold:  left := Binary(op, left, right).
    Otherwise stop and return left.
 ```
 
-Why it works: a higher `min_bp` on the recursive call means "only grab operators tighter than me,"
+Why it works: a higher `minimum_binding_power` on the recursive call means "only grab operators tighter than me,"
 so `*` (bp 20) pulls its operands together before `+` (bp 10) ever sees them. Using `bp + 1` for the
 right recursion makes `-` left-associative (`10 - 4 - 3` ⇒ `(- (- 10 4) 3)`); using `bp` would make
 it right-associative. Our `infix_bp` table (already in `parser.ml`) gives `+ -` → 10, `* / %` → 20.
@@ -129,7 +129,7 @@ The parser takes the same error sink the lexer already carries (`diagnostics.ml`
 Parser.create : Token.t list -> Diagnostics.sink -> t
 ```
 
-It's stored as `p.diags`, and the given `expect` is the whole policy in five lines: on a mismatch it
+It's stored as `p.diagnostics`, and the given `expect` is the whole policy in five lines: on a mismatch it
 pushes a `Diagnostics.error` at the offending token's span and **returns that token anyway** instead
 of raising. Parsing continues, so one run reports several syntax errors rather than only the first.
 The AST built after an error may be nonsense — that's fine, because `Driver.bail_on_errors` checks
@@ -199,7 +199,7 @@ Open `parser.ml` in this directory. Helpers `peek`, `peek_kind`, `advance`, `exp
 2. **The infix loop** completes `parse_expr_bp`. Starting from the `left` that `parse_prefix`
    returned, repeat until the next token is no longer an operator you may take:
    - look up `infix_bp (peek_kind p)`;
-   - if it's `Some bp` with `bp >= min_bp`, you have one to fold: read the `Ast.binop` via
+   - if it's `Some bp` with `bp >= minimum_binding_power`, you have one to fold: read the `Ast.binop` via
      `binop_of_kind`, `advance` past the operator, parse the right operand with
      `parse_expr_bp p (bp + 1)` — the **`+ 1`** is exactly what makes `-` left-associative (§2) —
      then combine into `Ast.Binary (op, left, right, span)` and keep going;
@@ -208,9 +208,9 @@ Open `parser.ml` in this directory. Helpers `peek`, `peek_kind`, `advance`, `exp
    Shape it however you like — a `left` ref with a `while`, or a tail-recursive helper. The skeleton
    you're filling in:
    ```ocaml
-   let rec parse_expr_bp (p : t) (min_bp : int) : Ast.expr =
+   let rec parse_expr_bp (p : t) (minimum_binding_power : int) : Ast.expr =
      let left = parse_prefix p in
-     (* TODO: while the next token is an infix op with bp >= min_bp, fold it into
+     (* TODO: while the next token is an infix op with bp >= minimum_binding_power, fold it into
         [left] as above (advance, recurse with bp + 1, build Ast.Binary); then: *)
      left
    ```
@@ -293,7 +293,7 @@ Mirrors `solution/parser.ml`. `type t`, `create`, `peek`/`peek_kind`, `advance`,
 (* One-token lookahead — distinguishes `c = …` (assignment) from `c + …`. *)
 let peek_kind_at (p : t) (n : int) : Token.kind =
   let i = p.pos + n in
-  if i < Array.length p.toks then p.toks.(i).Token.kind else Token.Eof
+  if i < Array.length p.tokens then p.tokens.(i).Token.kind else Token.Eof
 
 let unary_bp = 100 (* unary minus binds tighter than any binary operator *)
 
@@ -301,8 +301,8 @@ let span_between (lo : Token.span) (hi : Token.span) : Token.span =
   { Token.lo = lo.Token.lo; hi = hi.Token.hi }
 
 (* Pratt: a prefix ("nud") then an infix-folding loop. *)
-let rec parse_expr_bp (p : t) (min_bp : int) : Ast.expr =
-  let lhs =
+let rec parse_expr_bp (p : t) (minimum_binding_power : int) : Ast.expr =
+  let left =
     match peek_kind p with
     | Token.Int n -> let t = advance p in Ast.Int_lit (n, t.Token.span)
     | Token.Ident name ->
@@ -324,24 +324,24 @@ let rec parse_expr_bp (p : t) (min_bp : int) : Ast.expr =
         Ast.Unary (Ast.Neg, operand, span_between t.Token.span (Ast.expr_span operand))
     | _ ->
         let t = peek p in
-        Diagnostics.error p.diags t.Token.span "expected expression";
+        Diagnostics.error p.diagnostics t.Token.span "expected expression";
         ignore (advance p);
         Ast.Int_lit (0, t.Token.span) (* recovery placeholder *)
   in
-  let rec loop lhs =
+  let rec loop left =
     match infix_bp (peek_kind p) with
-    | Some bp when bp >= min_bp ->
+    | Some bp when bp >= minimum_binding_power ->
         let op_tok = advance p in
         let op =
           match binop_of_kind op_tok.Token.kind with
           | Some o -> o
           | None -> assert false
         in
-        let rhs = parse_expr_bp p (bp + 1) in (* bp + 1 ⇒ left-associative *)
-        loop (Ast.Binary (op, lhs, rhs, span_between (Ast.expr_span lhs) (Ast.expr_span rhs)))
-    | _ -> lhs
+        let right = parse_expr_bp p (bp + 1) in (* bp + 1 ⇒ left-associative *)
+        loop (Ast.Binary (op, left, right, span_between (Ast.expr_span left) (Ast.expr_span right)))
+    | _ -> left
   in
-  loop lhs
+  loop left
 
 and parse_call_args (p : t) : Ast.expr list =
   if peek_kind p = Token.RParen then []
@@ -361,7 +361,7 @@ let parse_ident (p : t) (what : string) : string * Token.span =
   | Token.Ident s -> let t = advance p in (s, t.Token.span)
   | _ ->
       let t = peek p in
-      Diagnostics.error p.diags t.Token.span (Printf.sprintf "expected %s" what);
+      Diagnostics.error p.diagnostics t.Token.span (Printf.sprintf "expected %s" what);
       ("_", t.Token.span)
 
 let parse_stmt (p : t) : Ast.stmt =
@@ -397,7 +397,7 @@ let parse_program (p : t) : Ast.program =
         (match peek_kind p with
         | Token.Newline -> ignore (advance p)
         | Token.Eof -> ()
-        | _ -> Diagnostics.error p.diags (peek p).Token.span "expected newline or end of statement");
+        | _ -> Diagnostics.error p.diagnostics (peek p).Token.span "expected newline or end of statement");
         loop (s :: acc)
   in
   loop []
@@ -405,7 +405,7 @@ let parse_program (p : t) : Ast.program =
 
 Why it's shaped this way:
 
-- **Precedence falls out of `min_bp`.** The infix loop only folds operators with `bp >= min_bp`;
+- **Precedence falls out of `minimum_binding_power`.** The infix loop only folds operators with `bp >= minimum_binding_power`;
   recursing the right operand with `bp + 1` keeps `-` **left**-associative (use plain `bp` for
   right-assoc, e.g. exponentiation in §6). `*`/`%`/`/` (bp 20) thus bind before `+`/`-` (bp 10).
 - **Unary minus** uses `unary_bp = 100` so `-2 * 3` is `(-2) * 3`, tighter than any binary op.
@@ -423,7 +423,7 @@ First, name the offending token in the prefix error instead of a bare placeholde
 ```ocaml
 | _ ->
     let t = peek p in
-    Diagnostics.error p.diags t.Token.span
+    Diagnostics.error p.diagnostics t.Token.span
       (Printf.sprintf "expected an expression, found '%s'" (Token.string_of_kind t.Token.kind));
     ignore (advance p);
     Ast.Int_lit (0, t.Token.span)
@@ -435,7 +435,7 @@ statement isn't a `Newline`/`Eof`, skip forward to the next `Newline` before con
 
 ```ocaml
 | _ ->
-    Diagnostics.error p.diags (peek p).Token.span "expected newline or end of statement";
+    Diagnostics.error p.diagnostics (peek p).Token.span "expected newline or end of statement";
     while (match peek_kind p with Token.Newline | Token.Eof -> false | _ -> true) do
       ignore (advance p)
     done
@@ -462,21 +462,21 @@ let pow_bp = 30
 let two_stars (p : t) : bool =
   peek_kind p = Token.Star
   && peek_kind_at p 1 = Token.Star
-  && p.pos + 1 < Array.length p.toks
-  && (p.toks.(p.pos)).Token.span.Token.hi.Token.offset
-     = (p.toks.(p.pos + 1)).Token.span.Token.lo.Token.offset
+  && p.pos + 1 < Array.length p.tokens
+  && (p.tokens.(p.pos)).Token.span.Token.hi.Token.offset
+     = (p.tokens.(p.pos + 1)).Token.span.Token.lo.Token.offset
 ```
 
 Then take it before consulting `infix_bp`, and recurse at `pow_bp` rather than `pow_bp + 1` —
 that single missing `+ 1` is the whole of right-associativity:
 
 ```ocaml
-let rec loop lhs =
-  if two_stars p && pow_bp >= min_bp then (
+let rec loop left =
+  if two_stars p && pow_bp >= minimum_binding_power then (
     ignore (advance p); ignore (advance p);
-    let rhs = parse_expr_bp p pow_bp in
-    loop (Ast.Call ("pow", [ lhs; rhs ],
-                    span_between (Ast.expr_span lhs) (Ast.expr_span rhs))))
+    let right = parse_expr_bp p pow_bp in
+    loop (Ast.Call ("pow", [ left; right ],
+                    span_between (Ast.expr_span left) (Ast.expr_span right))))
   else match infix_bp (peek_kind p) with ...
 ```
 

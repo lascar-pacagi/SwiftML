@@ -250,7 +250,8 @@ let errors = [ "/*"; "/*/"; "/*/*/"; "/* /* */"; "1 + /* x"; "1\n/* x\n"; "let x
 
 (* --- the fast rung, piece by piece -----------------------------------------------
    `lexer_v1_fast.ml` has two independent holes, and they can be built (and debugged) in
-   either order: the scanner only calls `pos_of` on its error path, and `pos_of` only needs
+   either order: the scanner only calls `position_of_offset` on its error path, and
+   `position_of_offset` only needs
    the line table. So each gets its own test that skips until you start it — two small
    green lights instead of one big red one, and a failure points at one function.
 
@@ -259,14 +260,18 @@ let errors = [ "/*"; "/*/"; "/*/*/"; "/* /* */"; "1 + /* x"; "1\n/* x\n"; "let x
 
 let started f = match f () with _ -> true | exception Failure m -> not (is_todo m) | exception _ -> true
 let fresh () = Diagnostics.create ()
-let pos_of_started () = started (fun () -> Lexer_v1_fast.pos_of [| 0 |] 0)
+let position_of_offset_started () =
+  started (fun () -> Lexer_v1_fast.position_of_offset [| 0 |] 0)
 let lex_started () = started (fun () -> Lexer_v1_fast.lex "1" (fresh ()))
 
 (* piece 1 — offset -> line:col. If this HANGS rather than fails, your binary search is
    not making progress: check what happens when lo = hi. *)
-let test_pos_of () =
+let test_position_of_offset () =
   let at src off =
-    let p = Lexer_v1_fast.pos_of (Lexer_v1_fast.line_starts src) off in
+    let p =
+      Lexer_v1_fast.position_of_offset
+        (Lexer_v1_fast.line_start_offsets src) off
+    in
     (p.Token.line, p.Token.col)
   in
   let pair = Alcotest.(pair int int) in
@@ -283,7 +288,7 @@ let test_pos_of () =
   Alcotest.check pair "back to content on line 4" (4, 1) (at e 4);
   Alcotest.check pair "single line, no newline at all" (1, 4) (at "abc" 3);
   (* cross-check against v0 over the whole corpus: v0 maintained line/col as it scanned,
-     pos_of reconstructs them from the offset alone — they must agree on every token *)
+     position_of_offset reconstructs them from the offset alone — they must agree on every token *)
   List.iter
     (fun src ->
       List.iter
@@ -313,7 +318,7 @@ let test_soup () =
   (* offsets are enough to recover the text — that is the point of the columnar soup *)
   let s = lex "print(42)" (fresh ()) in
   Alcotest.(check string) "lexeme by offsets" "print"
-    (String.sub s.src s.starts.(0) (s.ends.(0) - s.starts.(0)))
+    (String.sub s.source s.starts.(0) (s.ends.(0) - s.starts.(0)))
 
 
 let diag_t =
@@ -376,7 +381,7 @@ let suite (rung : string) (lex : rung) =
 (* Has the fast rung been started? A `TODO(...)` failure means "still a skeleton" (skip);
    any other outcome — including a wrong answer or a different exception — means it is
    being worked on, so run everything and report properly. *)
-let v1_started = lex_started () && pos_of_started ()
+let v1_started = lex_started () && position_of_offset_started ()
 
 let skip what () = Printf.printf "    (%s not started — this check activates as soon as it is)\n%!" what
 
@@ -391,7 +396,8 @@ let () =
   Alcotest.run "lexer"
     (suite "v0" v0
     @ [
-        piece "v1_fast piece: pos_of" pos_of_started "TODO(01-v1b) pos_of" test_pos_of;
+        piece "v1_fast piece: position_of_offset" position_of_offset_started
+          "TODO(01-v1b) position_of_offset" test_position_of_offset;
         piece "v1_fast piece: lex" lex_started "TODO(01-v1a) lex" test_soup;
       ]
     @

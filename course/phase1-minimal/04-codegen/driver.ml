@@ -16,68 +16,68 @@ type emit =
   | Exe
 
 let read_file (path : string) : string =
-  let ic = open_in_bin path in
+  let input_channel = open_in_bin path in
   Fun.protect
-    ~finally:(fun () -> close_in ic)
-    (fun () -> really_input_string ic (in_channel_length ic))
+    ~finally:(fun () -> close_in input_channel)
+    (fun () -> really_input_string input_channel (in_channel_length input_channel))
 
-(* Front end: source -> checked AST. Reports diagnostics into [diags]. *)
-let frontend (src : string) (diags : Diagnostics.sink) : Ast.program =
-  let toks = Lexer.tokenize (Lexer.create src diags) in
-  let prog = Parser.parse_program (Parser.create toks diags) in
-  Sema.check prog diags;
-  prog
+(* Front end: source -> checked AST. Reports diagnostics into [diagnostics]. *)
+let frontend (source : string) (diagnostics : Diagnostics.sink) : Ast.program =
+  let tokens = Lexer.tokenize (Lexer.create source diagnostics) in
+  let program = Parser.parse_program (Parser.create tokens diagnostics) in
+  Sema.check program diagnostics;
+  program
 
 (* Assemble + link an LLVM IR file into a native executable with clang.
    clang recognizes the .ll extension and runs the LLVM backend + linker. *)
 let run_clang ~(ll_path : string) ~(out : string) : unit =
   (* -Wno-override-module: our IR omits an explicit target triple on purpose (it's
      portable); clang fills in the host triple and would otherwise warn. *)
-  let cmd =
+  let command =
     Printf.sprintf "clang -Wno-override-module %s -o %s" (Filename.quote ll_path)
       (Filename.quote out)
   in
-  let rc = Sys.command cmd in
-  if rc <> 0 then failwith (Printf.sprintf "clang failed (exit %d) on %s" rc ll_path)
+  let exit_code = Sys.command command in
+  if exit_code <> 0 then failwith (Printf.sprintf "clang failed (exit %d) on %s" exit_code ll_path)
 
-let bail_on_errors (diags : Diagnostics.sink) : unit =
-  if Diagnostics.has_errors diags then (
-    Diagnostics.print diags;
+let bail_on_errors (diagnostics : Diagnostics.sink) : unit =
+  if Diagnostics.has_errors diagnostics then (
+    Diagnostics.print diagnostics;
     exit 1)
 
 (* Compile one source file according to [emit]. *)
 let compile_file ~(src_path : string) ~(out : string) ~(emit : emit) : unit =
-  let src = read_file src_path in
-  let diags = Diagnostics.create () in
+  let source = read_file src_path in
+  let diagnostics = Diagnostics.create () in
   match emit with
   | Tokens ->
-      let toks = Lexer.tokenize (Lexer.create src diags) in
-      bail_on_errors diags;
-      List.iter (fun (t : Token.t) -> print_endline (Token.string_of_kind t.Token.kind)) toks
+      let tokens = Lexer.tokenize (Lexer.create source diagnostics) in
+      bail_on_errors diagnostics;
+      List.iter (fun (token : Token.t) -> print_endline (Token.string_of_kind token.Token.kind)) tokens
   | Ast ->
-      let prog = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src diags)) diags) in
-      bail_on_errors diags;
-      print_endline (Ast.dump_program prog)
+      let program = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create source diagnostics)) diagnostics) in
+      bail_on_errors diagnostics;
+      print_endline (Ast.dump_program program)
   | Check ->
       (* Run the whole front end (lex → parse → sema) and report diagnostics, but stop
          before codegen. Lets us test Sema in isolation, exactly like `swiftc -typecheck`. *)
-      let (_ : Ast.program) = frontend src diags in
-      bail_on_errors diags
+      let (_ : Ast.program) = frontend source diagnostics in
+      bail_on_errors diagnostics
   | Llvm ->
-      let prog = frontend src diags in
-      bail_on_errors diags;
-      print_string (Irgen.emit_llvm prog)
+      let program = frontend source diagnostics in
+      bail_on_errors diagnostics;
+      print_string (Irgen.emit_llvm program)
   | Exe ->
-      let prog = frontend src diags in
-      bail_on_errors diags;
-      let ll = Irgen.emit_llvm prog in
+      let program = frontend source diagnostics in
+      bail_on_errors diagnostics;
+      let llvm_ir = Irgen.emit_llvm program in
       let ll_path = Filename.temp_file "swiftml" ".ll" in
       Fun.protect
         ~finally:(fun () -> (try Sys.remove ll_path with _ -> ()))
         (fun () ->
-          let oc = open_out ll_path in
-          output_string oc ll;
-          close_out oc;
+          let output_channel = open_out ll_path in
+          output_string output_channel llvm_ir;
+          close_out output_channel;
           run_clang ~ll_path ~out)
   | Sil -> failwith "TODO(Phase 2): --emit-sil (SILGen is introduced in phase2)"
   | Asm -> failwith "TODO(Phase 8): --emit-asm (the native ARM64 backend)"

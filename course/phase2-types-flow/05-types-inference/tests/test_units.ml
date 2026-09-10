@@ -44,7 +44,7 @@ let test_unify () =
 (* -- TODO(05c) ---------------------------------------------------------- *)
 let test_infer () =
   let cx = Sema.create (Diagnostics.create ()) in
-  Hashtbl.replace cx.Sema.env "i" (Types.TInt, false);
+  Hashtbl.replace cx.Sema.environment "i" (Types.TInt, false);
   Alcotest.(check ty) "a bound name" Types.TInt (Sema.infer cx (var_ "i"));
   Alcotest.(check ty) "int + int" Types.TInt (Sema.infer cx (add_ (int_ 1) (int_ 2)));
   Alcotest.(check ty) "literal + double" Types.TDouble (Sema.infer cx (add_ (int_ 1) (dbl_ 2.0)));
@@ -57,7 +57,7 @@ let test_infer () =
 let reports what src expected =
   let d = Diagnostics.create () in
   let cx = Sema.create d in
-  Hashtbl.replace cx.Sema.env "i" (Types.TInt, false);
+  Hashtbl.replace cx.Sema.environment "i" (Types.TInt, false);
   ignore (Sema.infer cx src);
   match List.map (fun (x : Diagnostics.t) -> x.Diagnostics.message) (Diagnostics.all d) with
   | [ m ] -> Alcotest.(check string) what expected m
@@ -106,7 +106,7 @@ let test_check_stmt () =
   let d = Diagnostics.create () in
   let cx = Sema.create d in
   Sema.check_stmt cx (Ast.Let { name = "x"; is_var = false; annot = None; value = int_ 1; span = sp });
-  (match Hashtbl.find_opt cx.Sema.env "x" with
+  (match Hashtbl.find_opt cx.Sema.environment "x" with
   | Some (t, is_var) ->
       Alcotest.(check ty) "bound type" Types.TInt t;
       Alcotest.(check bool) "let is not a var" false is_var

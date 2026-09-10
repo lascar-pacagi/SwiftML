@@ -21,7 +21,7 @@ let string_of_ty : ty -> string = function
   | TString -> "String"
   | TVoid -> "()"
 
-let equal (a : ty) (b : ty) : bool = a = b
+let equal (left : ty) (right : ty) : bool = left = right
 
 let is_numeric : ty -> bool = function
   | TInt | TDouble -> true

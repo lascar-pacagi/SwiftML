@@ -9,27 +9,30 @@ type severity =
   | Note
 
 type t = { severity : severity; span : Token.span; message : string }
-type sink = { mutable diags : t list }
+type sink = { mutable diagnostics : t list }
 
-let create () : sink = { diags = [] }
-let emit (s : sink) (d : t) = s.diags <- d :: s.diags
-let error (s : sink) (span : Token.span) (message : string) = emit s { severity = Error; span; message }
+let create () : sink = { diagnostics = [] }
+let emit (sink : sink) (diagnostic : t) =
+  sink.diagnostics <- diagnostic :: sink.diagnostics
+let error (sink : sink) (span : Token.span) (message : string) = emit sink { severity = Error; span; message }
 
-let warning (s : sink) (span : Token.span) (message : string) =
-  emit s { severity = Warning; span; message }
+let warning (sink : sink) (span : Token.span) (message : string) =
+  emit sink { severity = Warning; span; message }
 
 (* A note is not a problem in its own right: it explains the diagnostic above it, or points
    at the code that caused it (swiftc: `note: change 'let' to 'var' to make it mutable`).
    It never makes [has_errors] true. *)
-let note (s : sink) (span : Token.span) (message : string) =
-  emit s { severity = Note; span; message }
+let note (sink : sink) (span : Token.span) (message : string) =
+  emit sink { severity = Note; span; message }
 
-let has_errors (s : sink) = List.exists (fun d -> d.severity = Error) s.diags
-let all (s : sink) : t list = List.rev s.diags
+let has_errors (sink : sink) =
+  List.exists (fun diagnostic -> diagnostic.severity = Error) sink.diagnostics
+let all (sink : sink) : t list = List.rev sink.diagnostics
 let string_of_severity = function Error -> "error" | Warning -> "warning" | Note -> "note"
 
-let to_string (d : t) : string =
-  Printf.sprintf "%d:%d: %s: %s" d.span.Token.lo.Token.line d.span.Token.lo.Token.col
-    (string_of_severity d.severity) d.message
+let to_string (diagnostic : t) : string =
+  Printf.sprintf "%d:%d: %s: %s" diagnostic.span.Token.lo.Token.line
+    diagnostic.span.Token.lo.Token.col (string_of_severity diagnostic.severity) diagnostic.message
 
-let print (s : sink) : unit = List.iter (fun d -> prerr_endline (to_string d)) (all s)
+let print (sink : sink) : unit =
+  List.iter (fun diagnostic -> prerr_endline (to_string diagnostic)) (all sink)

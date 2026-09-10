@@ -101,8 +101,8 @@ let string_of_kind = function
   | Newline -> "newline"
   | Eof -> "eof"
 
-let keyword_or_ident (s : string) : kind =
-  match s with
+let keyword_or_ident (text : string) : kind =
+  match text with
   | "let" -> Kw_let
   | "var" -> Kw_var
   | "true" -> Kw_true
@@ -115,4 +115,4 @@ let keyword_or_ident (s : string) : kind =
   | "in" -> Kw_in
   | "break" -> Kw_break
   | "continue" -> Kw_continue
-  | _ -> Ident s
+  | _ -> Ident text

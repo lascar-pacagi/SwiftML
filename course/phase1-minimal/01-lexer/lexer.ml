@@ -4,46 +4,46 @@
      swift/lib/Parse/Lexer.cpp     (Lexer::lexImpl and friends)
 
    >>> You build this in concept  phase1-minimal/01-lexer. <<<
-   The token type (token.ml) is the contract; here you produce it. [tokenize] is
+   The token type (token.ml) is the contract; current_position you produce it. [tokenize] is
    provided (it just drives [next]); the lesson is implementing [next]. *)
 
 type t = {
-  src : string;
+  source : string;
   len : int;
   mutable pos : int; (* byte offset of the next unread char *)
   mutable line : int;
   mutable col : int;
-  diags : Diagnostics.sink; (* where errors go — see [error] below *)
+  diagnostics : Diagnostics.sink; (* where errors go — see [report_error] below *)
 }
 
-let create (src : string) (diags : Diagnostics.sink) : t =
-  { src; len = String.length src; pos = 0; line = 1; col = 1; diags }
+let create (source : string) (diagnostics : Diagnostics.sink) : t =
+  { source; len = String.length source; pos = 0; line = 1; col = 1; diagnostics }
 
 (* --- small cursor helpers you'll want (already written) --------------------- *)
 
-let here (lx : t) : Token.pos = { Token.line = lx.line; col = lx.col; offset = lx.pos }
-let at_end (lx : t) : bool = lx.pos >= lx.len
-let peek_char (lx : t) : char = if at_end lx then '\000' else lx.src.[lx.pos]
+let current_position (lexer : t) : Token.pos = { Token.line = lexer.line; col = lexer.col; offset = lexer.pos }
+let at_end (lexer : t) : bool = lexer.pos >= lexer.len
+let peek_char (lexer : t) : char = if at_end lexer then '\000' else lexer.source.[lexer.pos]
 
 (* Advance one char, maintaining line/col. Returns the consumed char. *)
-let bump (lx : t) : char =
-  let c = lx.src.[lx.pos] in
-  lx.pos <- lx.pos + 1;
+let advance_char (lexer : t) : char =
+  let c = lexer.source.[lexer.pos] in
+  lexer.pos <- lexer.pos + 1;
   (if c = '\n' then (
-     lx.line <- lx.line + 1;
-     lx.col <- 1)
-   else lx.col <- lx.col + 1);
+     lexer.line <- lexer.line + 1;
+     lexer.col <- 1)
+   else lexer.col <- lexer.col + 1);
   c
 
-let make (lo : Token.pos) (lx : t) (kind : Token.kind) : Token.t =
-  { Token.kind; span = { Token.lo; hi = here lx } }
+let make_token (lo : Token.pos) (lexer : t) (kind : Token.kind) : Token.t =
+  { Token.kind; span = { Token.lo; hi = current_position lexer } }
 
-(* Report an error at [lo .. here], then KEEP LEXING. Mirrors `Lexer::diagnose` in
+(* Report an error at [lo .. current_position], then KEEP LEXING. Mirrors `Lexer::diagnose` in
    swift/lib/Parse/Lexer.cpp (its `Lexer` takes a `DiagnosticEngine *` for exactly this;
    Lexer.cpp calls `diagnose` in 59 places). Recovery is the point: one run should report
    every bad byte in the file, not die on the first. *)
-let error (lx : t) (lo : Token.pos) (msg : string) : unit =
-  Diagnostics.error lx.diags { Token.lo; hi = here lx } msg
+let report_error (lexer : t) (lo : Token.pos) (msg : string) : unit =
+  Diagnostics.error lexer.diagnostics { Token.lo; hi = current_position lexer } msg
 
 (* --- the part you implement ------------------------------------------------- *)
 
@@ -51,18 +51,18 @@ let error (lx : t) (lo : Token.pos) (msg : string) : unit =
 
    The contract the tests hold you to: trivia is spaces/tabs/CR and //, /* */ comments
    (which NEST); a newline is a TOKEN, not trivia; a token's span starts at the token,
-   not at the trivia before it; and a problem is REPORTED with [error] and recovered
+   not at the trivia before it; and a problem is REPORTED with [report_error] and recovered
    from, never raised.
 
    Walk-through, if you want one: explainer §3. *)
-let next (lx : t) : Token.t =
-  ignore (here, make, bump, peek_char, at_end, lx);
+let next (lexer : t) : Token.t =
+  ignore (current_position, make_token, advance_char, peek_char, at_end, lexer);
   failwith "TODO(01-lexer): implement Lexer.next (the scanning DFA)"
 
 (* Drive [next] to the end. Provided — you only implement [next]. *)
-let tokenize (lx : t) : Token.t list =
+let tokenize (lexer : t) : Token.t list =
   let rec loop acc =
-    let tok = next lx in
+    let tok = next lexer in
     match tok.Token.kind with Token.Eof -> List.rev (tok :: acc) | _ -> loop (tok :: acc)
   in
   loop []

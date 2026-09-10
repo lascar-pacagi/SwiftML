@@ -82,11 +82,11 @@ let string_of_kind = function
   | Eof -> "eof"
 
 (* Identifier spelling -> keyword kind, or a plain identifier. Grows with the language. *)
-let keyword_or_ident (s : string) : kind =
-  match s with
+let keyword_or_ident (text : string) : kind =
+  match text with
   | "let" -> Kw_let
   | "var" -> Kw_var
   | "true" -> Kw_true
   | "false" -> Kw_false
   | "as" -> Kw_as
-  | _ -> Ident s
+  | _ -> Ident text
