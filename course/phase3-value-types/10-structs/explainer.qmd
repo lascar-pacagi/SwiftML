@@ -217,7 +217,7 @@ continues looking for the next property or the closing brace.
 ### The diagnostics Sema owes you
 
 You implement these checks in TODO(10d–f). Once they pass, lowering may assume every rule below has
-already fired. The three focused Sema tests keep them on record. Wording follows `swiftc
+already fired. Wording follows `swiftc
 -typecheck` where the subset lets it (`swift/include/swift/AST/DiagnosticsSema.def`, line numbers
 from the pinned snapshot); the differences are stated, not hidden.
 
