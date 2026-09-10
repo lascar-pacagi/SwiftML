@@ -6,8 +6,9 @@
 
 let read_file (path : string) : string =
   let ic = open_in_bin path in
-  Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
-      really_input_string ic (in_channel_length ic))
+  Fun.protect
+    ~finally:(fun () -> close_in ic)
+    (fun () -> really_input_string ic (in_channel_length ic))
 
 let () =
   match Array.to_list Sys.argv with
@@ -17,7 +18,9 @@ let () =
       if Diagnostics.has_errors diags then (
         Diagnostics.print diags;
         exit 1);
-      List.iter (fun (t : Token.t) -> print_endline (Token.string_of_kind t.Token.kind)) toks
+      List.iter
+        (fun (t : Token.t) -> print_endline (Token.string_of_kind t.Token.kind))
+        toks
   | _ ->
       prerr_endline "usage: lab --emit-tokens <file.swift>";
       exit 2

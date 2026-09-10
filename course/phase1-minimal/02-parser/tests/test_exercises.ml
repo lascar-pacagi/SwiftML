@@ -19,7 +19,9 @@ let mk_d (src : string) : Parser.t * Diagnostics.sink =
 let msgs_of_program (src : string) : string list =
   let p, d = mk_d src in
   ignore (Parser.parse_program p);
-  List.map (fun (x : Diagnostics.t) -> x.Diagnostics.message) (Diagnostics.all d)
+  List.map
+    (fun (x : Diagnostics.t) -> x.Diagnostics.message)
+    (Diagnostics.all d)
 
 let contains (needle : string) (s : string) : bool =
   let n = String.length needle and l = String.length s in
@@ -42,19 +44,28 @@ let ex1_started () =
 let test_ex1_recovery () =
   let p, d = mk_d fixture in
   let prog = Parser.parse_program p in
-  let ms = List.map (fun (x : Diagnostics.t) -> x.Diagnostics.message) (Diagnostics.all d) in
-  Alcotest.(check bool) "a message names the offending token" true
+  let ms =
+    List.map
+      (fun (x : Diagnostics.t) -> x.Diagnostics.message)
+      (Diagnostics.all d)
+  in
+  Alcotest.(check bool)
+    "a message names the offending token" true
     (List.exists (contains "found") ms);
-  Alcotest.(check bool) "one error per broken line, not a cascade" true
+  Alcotest.(check bool)
+    "one error per broken line, not a cascade" true
     (List.length ms >= 1 && List.length ms <= 3);
   (* and the good statement on the third line still made it into the program *)
   let has_print =
     List.exists
       (fun (s : Ast.stmt) ->
-        match s with Ast.Expr_stmt (Ast.Call ("print", _, _), _) -> true | _ -> false)
+        match s with
+        | Ast.Expr_stmt (Ast.Call ("print", _, _), _) -> true
+        | _ -> false)
       prog.Ast.stmts
   in
-  Alcotest.(check bool) "parsing recovered and kept the good statement" true has_print
+  Alcotest.(check bool)
+    "parsing recovered and kept the good statement" true has_print
 
 (* --- Exercise 2: right-associative `**` ------------------------------------------
    Done inside parser.ml: two ADJACENT `*` tokens are the operator (the spans say whether
@@ -75,7 +86,8 @@ let rec norm (e : Ast.expr) : string =
       Printf.sprintf "(** %s %s)" (norm a) (norm b)
   | e -> Ast.dump_expr e
 
-let dump_expr_of (src : string) : string = norm (Parser.parse_expr (fst (mk_d src)))
+let dump_expr_of (src : string) : string =
+  norm (Parser.parse_expr (fst (mk_d src)))
 
 let ex2_started () =
   let p, d = mk_d "2 ** 3" in
@@ -89,28 +101,42 @@ let ndiags_expr (src : string) : int =
   List.length (Diagnostics.all d)
 
 let test_ex2_power () =
-  Alcotest.(check string) "** is RIGHT associative" "(** 2 (** 3 2))" (dump_expr_of "2 ** 3 ** 2");
-  Alcotest.(check string) "** binds tighter than *" "(* (** 2 3) 4)" (dump_expr_of "2 ** 3 * 4");
-  Alcotest.(check string) "...and tighter than +" "(+ 1 (** 2 3))" (dump_expr_of "1 + 2 ** 3");
+  Alcotest.(check string)
+    "** is RIGHT associative" "(** 2 (** 3 2))"
+    (dump_expr_of "2 ** 3 ** 2");
+  Alcotest.(check string)
+    "** binds tighter than *" "(* (** 2 3) 4)"
+    (dump_expr_of "2 ** 3 * 4");
+  Alcotest.(check string)
+    "...and tighter than +" "(+ 1 (** 2 3))"
+    (dump_expr_of "1 + 2 ** 3");
   (* a single star still means multiplication *)
-  Alcotest.(check string) "one star is unchanged" "(* 2 3)" (dump_expr_of "2 * 3");
+  Alcotest.(check string)
+    "one star is unchanged" "(* 2 3)" (dump_expr_of "2 * 3");
   (* and two stars that are NOT adjacent are not the operator *)
-  Alcotest.(check bool) "`2 * * 3` is still an error" true (ndiags_expr "2 * * 3" >= 1)
+  Alcotest.(check bool)
+    "`2 * * 3` is still an error" true
+    (ndiags_expr "2 * * 3" >= 1)
 
 let skip what () =
-  Printf.printf "    (%s not started — this group activates as soon as it is)\n%!" what
+  Printf.printf
+    "    (%s not started — this group activates as soon as it is)\n%!" what
 
 let group name started what test =
   ( name,
     [
       (if started () then Alcotest.test_case "checked" `Quick test
-       else Alcotest.test_case ("skipped — " ^ what ^ " not started") `Quick (skip what));
+       else
+         Alcotest.test_case
+           ("skipped — " ^ what ^ " not started")
+           `Quick (skip what));
     ] )
 
 let () =
   Alcotest.run "parser exercises"
     [
-      group "ex1 prefix error + recovery" ex1_started "the improved prefix error"
-        test_ex1_recovery;
-      group "ex2 right-associative **" ex2_started "the ** operator" test_ex2_power;
+      group "ex1 prefix error + recovery" ex1_started
+        "the improved prefix error" test_ex1_recovery;
+      group "ex2 right-associative **" ex2_started "the ** operator"
+        test_ex2_power;
     ]

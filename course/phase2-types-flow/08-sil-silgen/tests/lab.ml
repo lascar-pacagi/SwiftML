@@ -9,7 +9,9 @@
 
 let usage () =
   prerr_endline
-    "usage: lab --emit-tokens|--emit-ast|--typecheck|--emit-sil|--emit-sil-canon <file.swift>";
+    "usage: lab \
+     --emit-tokens|--emit-ast|--typecheck|--emit-sil|--emit-sil-canon \
+     <file.swift>";
   exit 2
 
 let emit_of_flag : string -> Driver.emit option = function

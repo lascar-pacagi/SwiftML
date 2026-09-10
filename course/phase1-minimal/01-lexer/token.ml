@@ -76,7 +76,4 @@ let string_of_token (token : t) : string =
 (* Map an identifier spelling to a keyword kind, or keep it an identifier.
    Grows as the language does. *)
 let keyword_or_ident (text : string) : kind =
-  match text with
-  | "let" -> Kw_let 
-  | "var" -> Kw_var 
-  | _ -> Ident text
+  match text with "let" -> Kw_let | "var" -> Kw_var | _ -> Ident text

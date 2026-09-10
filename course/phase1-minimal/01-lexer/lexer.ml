@@ -13,26 +13,38 @@ type t = {
   mutable pos : int; (* byte offset of the next unread char *)
   mutable line : int;
   mutable col : int;
-  diagnostics : Diagnostics.sink; (* where errors go — see [report_error] below *)
+  diagnostics : Diagnostics.sink;
+      (* where errors go — see [report_error] below *)
 }
 
 let create (source : string) (diagnostics : Diagnostics.sink) : t =
-  { source; len = String.length source; pos = 0; line = 1; col = 1; diagnostics }
+  {
+    source;
+    len = String.length source;
+    pos = 0;
+    line = 1;
+    col = 1;
+    diagnostics;
+  }
 
 (* --- small cursor helpers you'll want (already written) --------------------- *)
 
-let current_position (lexer : t) : Token.pos = { Token.line = lexer.line; col = lexer.col; offset = lexer.pos }
+let current_position (lexer : t) : Token.pos =
+  { Token.line = lexer.line; col = lexer.col; offset = lexer.pos }
+
 let at_end (lexer : t) : bool = lexer.pos >= lexer.len
-let peek_char (lexer : t) : char = if at_end lexer then '\000' else lexer.source.[lexer.pos]
+
+let peek_char (lexer : t) : char =
+  if at_end lexer then '\000' else lexer.source.[lexer.pos]
 
 (* Advance one char, maintaining line/col. Returns the consumed char. *)
 let advance_char (lexer : t) : char =
   let c = lexer.source.[lexer.pos] in
   lexer.pos <- lexer.pos + 1;
-  (if c = '\n' then (
-     lexer.line <- lexer.line + 1;
-     lexer.col <- 1)
-   else lexer.col <- lexer.col + 1);
+  if c = '\n' then (
+    lexer.line <- lexer.line + 1;
+    lexer.col <- 1)
+  else lexer.col <- lexer.col + 1;
   c
 
 let make_token (lo : Token.pos) (lexer : t) (kind : Token.kind) : Token.t =
@@ -43,7 +55,9 @@ let make_token (lo : Token.pos) (lexer : t) (kind : Token.kind) : Token.t =
    Lexer.cpp calls `diagnose` in 59 places). Recovery is the point: one run should report
    every bad byte in the file, not die on the first. *)
 let report_error (lexer : t) (lo : Token.pos) (msg : string) : unit =
-  Diagnostics.error lexer.diagnostics { Token.lo; hi = current_position lexer } msg
+  Diagnostics.error lexer.diagnostics
+    { Token.lo; hi = current_position lexer }
+    msg
 
 (* --- the part you implement ------------------------------------------------- *)
 
@@ -63,6 +77,8 @@ let next (lexer : t) : Token.t =
 let tokenize (lexer : t) : Token.t list =
   let rec loop acc =
     let tok = next lexer in
-    match tok.Token.kind with Token.Eof -> List.rev (tok :: acc) | _ -> loop (tok :: acc)
+    match tok.Token.kind with
+    | Token.Eof -> List.rev (tok :: acc)
+    | _ -> loop (tok :: acc)
   in
   loop []

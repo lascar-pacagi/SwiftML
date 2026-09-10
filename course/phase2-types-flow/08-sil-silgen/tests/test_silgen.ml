@@ -6,21 +6,30 @@
 
 let lower (src : string) : Sil.modul =
   let d = Diagnostics.create () in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
+  let p =
+    Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d)
+  in
   Sema.check p d;
   Silgen.lower p
 
-let func_named (m : Sil.modul) name = List.find (fun (f : Sil.func) -> f.Sil.fname = name) m.Sil.funcs
+let func_named (m : Sil.modul) name =
+  List.find (fun (f : Sil.func) -> f.Sil.fname = name) m.Sil.funcs
+
 let main_of src = func_named (lower src) "main"
 let nblocks (f : Sil.func) = List.length f.Sil.blocks
-let block (f : Sil.func) n = List.find (fun (b : Sil.block) -> b.Sil.bid = n) f.Sil.blocks
+
+let block (f : Sil.func) n =
+  List.find (fun (b : Sil.block) -> b.Sil.bid = n) f.Sil.blocks
 
 let has_instr (f : Sil.func) (pred : Sil.instr -> bool) =
-  List.exists (fun (b : Sil.block) -> List.exists (fun (_, i) -> pred i) b.Sil.instrs) f.Sil.blocks
+  List.exists
+    (fun (b : Sil.block) -> List.exists (fun (_, i) -> pred i) b.Sil.instrs)
+    f.Sil.blocks
 
 let count_instr (f : Sil.func) (pred : Sil.instr -> bool) =
   List.fold_left
-    (fun acc (b : Sil.block) -> acc + List.length (List.filter (fun (_, i) -> pred i) b.Sil.instrs))
+    (fun acc (b : Sil.block) ->
+      acc + List.length (List.filter (fun (_, i) -> pred i) b.Sil.instrs))
     0 f.Sil.blocks
 
 let is_alloc = function Sil.Alloc_stack _ -> true | _ -> false
@@ -39,12 +48,16 @@ let reachable_from (f : Sil.func) (start : int) : int list =
   let rec go n =
     if not (Hashtbl.mem seen n) then (
       Hashtbl.replace seen n ();
-      match List.find_opt (fun (b : Sil.block) -> b.Sil.bid = n) f.Sil.blocks with
+      match
+        List.find_opt (fun (b : Sil.block) -> b.Sil.bid = n) f.Sil.blocks
+      with
       | None -> ()
       | Some b -> (
           match b.Sil.term with
           | Sil.Br t -> go t
-          | Sil.Cond_br (_, t, e) -> go t; go e
+          | Sil.Cond_br (_, t, e) ->
+              go t;
+              go e
           | _ -> ()))
   in
   go start;
@@ -54,94 +67,144 @@ let reachable_from (f : Sil.func) (start : int) : int list =
    [what] describes. When there is none, say which half is missing — "no block increments" and
    "the increment block exists but nothing branches to it" are different bugs, and Not_found
    tells you neither. *)
-let find_latch (f : Sil.func) (header : Sil.block) ~(what : string) ~(has : Sil.instr -> bool) =
-  let does_work (b : Sil.block) = List.exists (fun (_, i) -> has i) b.Sil.instrs in
+let find_latch (f : Sil.func) (header : Sil.block) ~(what : string)
+    ~(has : Sil.instr -> bool) =
+  let does_work (b : Sil.block) =
+    List.exists (fun (_, i) -> has i) b.Sil.instrs
+  in
   let back_edge (b : Sil.block) = br_target b = header.Sil.bid in
   let live = reachable_from f header.Sil.bid in
   match
-    List.find_opt (fun b -> List.mem b.Sil.bid live && back_edge b && does_work b) f.Sil.blocks
+    List.find_opt
+      (fun b -> List.mem b.Sil.bid live && back_edge b && does_work b)
+      f.Sil.blocks
   with
   | Some b -> b
   | None ->
-      let orphan = List.find_opt (fun b -> back_edge b && does_work b) f.Sil.blocks in
+      let orphan =
+        List.find_opt (fun b -> back_edge b && does_work b) f.Sil.blocks
+      in
       Alcotest.fail
         (match orphan with
         | Some b ->
             Printf.sprintf
-              "bb%d %s and branches back to the header, but nothing reaches it — the body has to \
-               branch INTO it, or the loop never runs it"
+              "bb%d %s and branches back to the header, but nothing reaches it \
+               — the body has to branch INTO it, or the loop never runs it"
               b.Sil.bid what
         | None ->
-            Printf.sprintf "no block both %s and branches back to bb%d" what header.Sil.bid)
+            Printf.sprintf "no block both %s and branches back to bb%d" what
+              header.Sil.bid)
 
 let preds_by_br (f : Sil.func) n =
-  List.filter (fun (b : Sil.block) -> br_target b = n) f.Sil.blocks |> List.map (fun b -> b.Sil.bid)
+  List.filter (fun (b : Sil.block) -> br_target b = n) f.Sil.blocks
+  |> List.map (fun b -> b.Sil.bid)
 
-let cond_br_of (b : Sil.block) = match b.Sil.term with Sil.Cond_br (_, t, e) -> (t, e) | _ -> (-1, -1)
+let cond_br_of (b : Sil.block) =
+  match b.Sil.term with Sil.Cond_br (_, t, e) -> (t, e) | _ -> (-1, -1)
 
 (* the value that `alloc_stack $T // name` produced — a variable's address *)
 let slot_named (f : Sil.func) name =
   List.concat_map (fun (b : Sil.block) -> b.Sil.instrs) f.Sil.blocks
-  |> List.find_map (function v, Sil.Alloc_stack n when n = name -> Some v | _ -> None)
+  |> List.find_map (function
+    | v, Sil.Alloc_stack n when n = name -> Some v
+    | _ -> None)
   |> Option.get
 
 (* the FIRST block (in creation order) that ends in a cond_br — f.blocks is reverse order *)
 let the_cond_br (f : Sil.func) =
-  let ordered = List.sort (fun (a : Sil.block) (b : Sil.block) -> compare a.Sil.bid b.Sil.bid) f.Sil.blocks in
-  List.find (fun (b : Sil.block) -> match b.Sil.term with Sil.Cond_br _ -> true | _ -> false) ordered
+  let ordered =
+    List.sort
+      (fun (a : Sil.block) (b : Sil.block) -> compare a.Sil.bid b.Sil.bid)
+      f.Sil.blocks
+  in
+  List.find
+    (fun (b : Sil.block) ->
+      match b.Sil.term with Sil.Cond_br _ -> true | _ -> false)
+    ordered
 
-let verifies src = Alcotest.(check (list string)) "verifier is silent" [] (Sil.verify (lower src))
+let verifies src =
+  Alcotest.(check (list string))
+    "verifier is silent" []
+    (Sil.verify (lower src))
 
 (* ---- given: the memory model and the module skeleton (green before you start) ---- *)
 
 let test_main () =
   let m = lower "print(1)" in
-  Alcotest.(check bool) "top-level statements form @main" true
+  Alcotest.(check bool)
+    "top-level statements form @main" true
     (List.exists (fun (f : Sil.func) -> f.Sil.fname = "main") m.Sil.funcs)
 
 let test_func () =
-  let m = lower "func add(_ a: Int, _ b: Int) -> Int { return a + b }\nprint(add(1, 2))" in
+  let m =
+    lower
+      "func add(_ a: Int, _ b: Int) -> Int { return a + b }\nprint(add(1, 2))"
+  in
   let f = func_named m "add" in
   Alcotest.(check int) "add has 2 params" 2 (List.length f.Sil.params);
   Alcotest.(check bool) "add returns Int" true (f.Sil.ret = Types.TInt)
 
 let test_memory_model () =
   let main = main_of "let x = 1\nprint(x)" in
-  Alcotest.(check bool) "alloc_stack for the binding" true (has_instr main is_alloc);
+  Alcotest.(check bool)
+    "alloc_stack for the binding" true (has_instr main is_alloc);
   Alcotest.(check bool) "store the initializer" true (has_instr main is_store);
   Alcotest.(check bool) "load on use" true (has_instr main is_load)
 
 (* ---- TODO(08) if ---- *)
 
 let test_if_diamond () =
-  let main = main_of "let x = 1\nif x < 0 { print(x) } else { print(0) }\nprint(9)" in
+  let main =
+    main_of "let x = 1\nif x < 0 { print(x) } else { print(0) }\nprint(9)"
+  in
   Alcotest.(check bool) "entry/then/else/merge" true (nblocks main >= 4);
   let t, e = cond_br_of (the_cond_br main) in
-  Alcotest.(check bool) "cond_br has two targets" true (t >= 0 && e >= 0 && t <> e);
+  Alcotest.(check bool)
+    "cond_br has two targets" true
+    (t >= 0 && e >= 0 && t <> e);
   (* both branches converge on one merge block, which is where the next statement went *)
   let merge = br_target (block main t) in
-  Alcotest.(check int) "then and else both br to the merge" merge (br_target (block main e));
+  Alcotest.(check int)
+    "then and else both br to the merge" merge
+    (br_target (block main e));
   Alcotest.(check bool) "the merge is a real block" true (merge >= 0)
 
 let test_if_no_else () =
   let main = main_of "let x = 1\nif x > 0 { print(x) }\nprint(9)" in
   Alcotest.(check int) "entry/then/merge only" 3 (nblocks main);
   let t, e = cond_br_of (the_cond_br main) in
-  Alcotest.(check int) "the false edge IS the merge" e (br_target (block main t))
+  Alcotest.(check int)
+    "the false edge IS the merge" e
+    (br_target (block main t))
 
 let test_if_unreachable () =
-  let f = func_named (lower "func pick(_ c: Bool) -> Int { if c { return 1 } else { return 2 } }\nprint(pick(true))") "pick" in
-  Alcotest.(check bool) "the merge stays unreachable" true
-    (List.exists (fun (b : Sil.block) -> b.Sil.term = Sil.Unreachable) f.Sil.blocks)
+  let f =
+    func_named
+      (lower
+         "func pick(_ c: Bool) -> Int { if c { return 1 } else { return 2 } }\n\
+          print(pick(true))")
+      "pick"
+  in
+  Alcotest.(check bool)
+    "the merge stays unreachable" true
+    (List.exists
+       (fun (b : Sil.block) -> b.Sil.term = Sil.Unreachable)
+       f.Sil.blocks)
 
-let test_if_verifies () = verifies "let n = 2\nif n == 1 { print(1) } else if n == 2 { print(2) } else { print(0) }"
+let test_if_verifies () =
+  verifies
+    "let n = 2\n\
+     if n == 1 { print(1) } else if n == 2 { print(2) } else { print(0) }"
 
 (* ---- TODO(08) while ---- *)
 
 let test_while_backedge () =
   let main = main_of "var n = 0\nwhile n < 3 { n = n + 1 }" in
   let backedge =
-    List.exists (fun (b : Sil.block) -> match b.Sil.term with Sil.Br t -> t < b.Sil.bid | _ -> false) main.Sil.blocks
+    List.exists
+      (fun (b : Sil.block) ->
+        match b.Sil.term with Sil.Br t -> t < b.Sil.bid | _ -> false)
+      main.Sil.blocks
   in
   Alcotest.(check bool) "a block branches backwards" true backedge
 
@@ -149,25 +212,39 @@ let test_while_header () =
   let main = main_of "var n = 0\nwhile n < 3 { n = n + 1 }\nprint(n)" in
   let header = the_cond_br main in
   (* the condition is IN the header, so it is re-tested every trip *)
-  Alcotest.(check bool) "the header re-loads n" true
+  Alcotest.(check bool)
+    "the header re-loads n" true
     (List.exists (fun (_, i) -> is_load i) header.Sil.instrs);
   (* the entry falls in, the body branches back: two br's name the header *)
-  Alcotest.(check int) "two blocks br to the header" 2 (List.length (preds_by_br main header.Sil.bid));
-  Alcotest.(check bool) "entry is one of them" true (List.mem 0 (preds_by_br main header.Sil.bid))
+  Alcotest.(check int)
+    "two blocks br to the header" 2
+    (List.length (preds_by_br main header.Sil.bid));
+  Alcotest.(check bool)
+    "entry is one of them" true
+    (List.mem 0 (preds_by_br main header.Sil.bid))
 
 let test_while_exit () =
   let main = main_of "var n = 0\nwhile n < 3 { n = n + 1 }\nprint(n)" in
   let _, e = cond_br_of (the_cond_br main) in
-  Alcotest.(check bool) "the false edge leaves the loop" true
-    (List.exists (fun (_, i) -> match i with Sil.Print _ -> true | _ -> false) (block main e).Sil.instrs)
+  Alcotest.(check bool)
+    "the false edge leaves the loop" true
+    (List.exists
+       (fun (_, i) -> match i with Sil.Print _ -> true | _ -> false)
+       (block main e).Sil.instrs)
 
-let test_while_verifies () = verifies "var i = 0\nwhile i < 2 { var j = 0\n while j < 2 { j = j + 1 } \n i = i + 1 }"
+let test_while_verifies () =
+  verifies
+    "var i = 0\n\
+     while i < 2 { var j = 0\n\
+    \ while j < 2 { j = j + 1 } \n\
+    \ i = i + 1 }"
 
 (* ---- TODO(08) for ---- *)
 
 let test_for_slot () =
   let main = main_of "for i in 0 ..< 3 { print(i) }" in
-  Alcotest.(check bool) "a named slot for i" true
+  Alcotest.(check bool)
+    "a named slot for i" true
     (has_instr main (function Sil.Alloc_stack n -> n = "i" | _ -> false))
 
 let test_for_hi_once () =
@@ -175,26 +252,39 @@ let test_for_hi_once () =
      the bound. It must be computed ONCE and outside the loop, which is a property of the whole
      function, not of any one block: setting the loop up in a block of its own is as correct as
      doing it inline, and this used to fail the second. *)
-  let main = main_of "var t = 0\nlet k = 2\nfor i in 0 ..< k * 3 { t = t + i }" in
-  let is_mul (_, i) = match i with Sil.Binop (Ast.Mul, _, _) -> true | _ -> false in
-  let muls = List.concat_map (fun (b : Sil.block) -> List.filter is_mul b.Sil.instrs) main.Sil.blocks in
+  let main =
+    main_of "var t = 0\nlet k = 2\nfor i in 0 ..< k * 3 { t = t + i }"
+  in
+  let is_mul (_, i) =
+    match i with Sil.Binop (Ast.Mul, _, _) -> true | _ -> false
+  in
+  let muls =
+    List.concat_map
+      (fun (b : Sil.block) -> List.filter is_mul b.Sil.instrs)
+      main.Sil.blocks
+  in
   Alcotest.(check int) "the bound is computed exactly once" 1 (List.length muls);
   (* and not on the way round: the block holding it is neither the header that re-tests the
      condition nor anything the back-edge returns to *)
   let header = the_cond_br main in
   let holder =
-    List.find (fun (b : Sil.block) -> List.exists is_mul b.Sil.instrs) main.Sil.blocks
+    List.find
+      (fun (b : Sil.block) -> List.exists is_mul b.Sil.instrs)
+      main.Sil.blocks
   in
-  Alcotest.(check bool) "the bound is not computed in the loop header" true
+  Alcotest.(check bool)
+    "the bound is not computed in the loop header" true
     (holder.Sil.bid <> header.Sil.bid);
-  Alcotest.(check bool) "nothing branches back to the block holding it" true
+  Alcotest.(check bool)
+    "nothing branches back to the block holding it" true
     (not
        (List.exists
           (fun (b : Sil.block) ->
             match b.Sil.term with
             | Sil.Br t -> t = holder.Sil.bid && b.Sil.bid >= holder.Sil.bid
             | Sil.Cond_br (_, t, e) ->
-                (t = holder.Sil.bid || e = holder.Sil.bid) && b.Sil.bid >= holder.Sil.bid
+                (t = holder.Sil.bid || e = holder.Sil.bid)
+                && b.Sil.bid >= holder.Sil.bid
             | _ -> false)
           main.Sil.blocks))
 
@@ -203,63 +293,113 @@ let test_for_latch () =
   let header = the_cond_br main in
   (* the increment lives in a block of its own, and that block carries the back-edge *)
   let latch =
-    find_latch main header ~what:"increments"
-      ~has:(function Sil.Binop (Ast.Add, _, _) -> true | _ -> false)
+    find_latch main header ~what:"increments" ~has:(function
+      | Sil.Binop (Ast.Add, _, _) -> true
+      | _ -> false)
   in
-  Alcotest.(check bool) "the latch stores i back" true (List.exists (fun (_, i) -> is_store i) latch.Sil.instrs);
-  Alcotest.(check bool) "the body is not the latch" true (latch.Sil.bid <> fst (cond_br_of header))
+  Alcotest.(check bool)
+    "the latch stores i back" true
+    (List.exists (fun (_, i) -> is_store i) latch.Sil.instrs);
+  Alcotest.(check bool)
+    "the body is not the latch" true
+    (latch.Sil.bid <> fst (cond_br_of header))
 
-let test_for_verifies () = verifies "var s = 0\nfor i in 0 ..< 3 { for j in 0 ..< 3 { s = s + 1 } }"
+let test_for_verifies () =
+  verifies "var s = 0\nfor i in 0 ..< 3 { for j in 0 ..< 3 { s = s + 1 } }"
 
 (* ---- TODO(08) break ---- *)
 
 let test_break_exit () =
-  let main = main_of "var n = 0\nwhile n < 10 { n = n + 1\n if n > 3 { break } }\nprint(n)" in
+  let main =
+    main_of
+      "var n = 0\nwhile n < 10 { n = n + 1\n if n > 3 { break } }\nprint(n)"
+  in
   let _, exit_b = cond_br_of (the_cond_br main) in
   (* some block reaches the exit by a plain br: that is the `break` *)
-  Alcotest.(check bool) "break branches to the loop exit" true (List.length (preds_by_br main exit_b) >= 1)
+  Alcotest.(check bool)
+    "break branches to the loop exit" true
+    (List.length (preds_by_br main exit_b) >= 1)
 
 let test_break_inner_only () =
-  let main = main_of "var s = 0\nfor i in 0 ..< 3 { for j in 0 ..< 3 { if j == 1 { break }\n s = s + 1 } }" in
+  let main =
+    main_of
+      "var s = 0\n\
+       for i in 0 ..< 3 { for j in 0 ..< 3 { if j == 1 { break }\n\
+      \ s = s + 1 } }"
+  in
   (* the break's block is empty and branches to the INNER loop's exit, never to the outer's *)
-  let empties = List.filter (fun (b : Sil.block) -> b.Sil.instrs = [] && br_target b >= 0) main.Sil.blocks in
+  let empties =
+    List.filter
+      (fun (b : Sil.block) -> b.Sil.instrs = [] && br_target b >= 0)
+      main.Sil.blocks
+  in
   Alcotest.(check bool) "an empty block just branches away" true (empties <> []);
-  Alcotest.(check bool) "and it does not leave the outer loop" true
+  Alcotest.(check bool)
+    "and it does not leave the outer loop" true
     (List.for_all (fun (b : Sil.block) -> br_target b <> 0) empties)
 
-let test_break_verifies () = verifies "while true { if true { break } }\nprint(0)"
+let test_break_verifies () =
+  verifies "while true { if true { break } }\nprint(0)"
 
 (* ---- TODO(08) continue ---- *)
 
 let test_continue_header () =
-  let main = main_of "var n = 0\nwhile n < 5 { n = n + 1\n if n == 2 { continue }\n print(n) }" in
+  let main =
+    main_of
+      "var n = 0\nwhile n < 5 { n = n + 1\n if n == 2 { continue }\n print(n) }"
+  in
   let header = the_cond_br main in
   (* the continue adds a third edge into the header: entry, fall-through, continue *)
-  Alcotest.(check int) "three blocks br to the header" 3 (List.length (preds_by_br main header.Sil.bid))
+  Alcotest.(check int)
+    "three blocks br to the header" 3
+    (List.length (preds_by_br main header.Sil.bid))
 
 let test_continue_latch () =
   let main = main_of "for i in 0 ..< 5 { if i == 2 { continue }\n print(i) }" in
   let header = the_cond_br main in
-  let latch = find_latch main header ~what:"stores the counter back" ~has:is_store in
+  let latch =
+    find_latch main header ~what:"stores the counter back" ~has:is_store
+  in
   (* THE bug this pins: continue must reach the latch, or the increment never runs *)
-  Alcotest.(check int) "continue and fall-through hit the latch" 2 (List.length (preds_by_br main latch.Sil.bid));
-  Alcotest.(check bool) "so it is not the header" true (latch.Sil.bid <> header.Sil.bid)
+  Alcotest.(check int)
+    "continue and fall-through hit the latch" 2
+    (List.length (preds_by_br main latch.Sil.bid));
+  Alcotest.(check bool)
+    "so it is not the header" true
+    (latch.Sil.bid <> header.Sil.bid)
 
 let test_continue_inner_only () =
-  let main = main_of "var s = 0\nfor i in 0 ..< 3 { for j in 0 ..< 3 { if j == 1 { continue }\n s = s + 1 } }" in
+  let main =
+    main_of
+      "var s = 0\n\
+       for i in 0 ..< 3 { for j in 0 ..< 3 { if j == 1 { continue }\n\
+      \ s = s + 1 } }"
+  in
   (* the latch of each loop is the block that stores back into that loop's counter *)
   let latch_of name =
     let slot = slot_named main name in
     List.find
       (fun (b : Sil.block) ->
-        br_target b >= 0 && List.exists (fun (_, i) -> match i with Sil.Store (_, a) -> a = slot | _ -> false) b.Sil.instrs)
+        br_target b >= 0
+        && List.exists
+             (fun (_, i) ->
+               match i with Sil.Store (_, a) -> a = slot | _ -> false)
+             b.Sil.instrs)
       main.Sil.blocks
   in
   (* the inner latch gains the continue's edge; the outer one is reached only by the inner exit *)
-  Alcotest.(check int) "inner latch: fall-through + continue" 2 (List.length (preds_by_br main (latch_of "j").Sil.bid));
-  Alcotest.(check int) "outer latch: untouched, one edge" 1 (List.length (preds_by_br main (latch_of "i").Sil.bid))
+  Alcotest.(check int)
+    "inner latch: fall-through + continue" 2
+    (List.length (preds_by_br main (latch_of "j").Sil.bid));
+  Alcotest.(check int)
+    "outer latch: untouched, one edge" 1
+    (List.length (preds_by_br main (latch_of "i").Sil.bid))
 
-let test_continue_verifies () = verifies "var s = 0\nfor i in 0 ..< 3 { for j in 0 ..< 3 { if j == 1 { continue }\n s = s + 1 } }"
+let test_continue_verifies () =
+  verifies
+    "var s = 0\n\
+     for i in 0 ..< 3 { for j in 0 ..< 3 { if j == 1 { continue }\n\
+    \ s = s + 1 } }"
 
 let () =
   Alcotest.run "silgen"
@@ -273,36 +413,47 @@ let () =
         ] );
       ( "hole: if",
         [
-          Alcotest.test_case "diamond, both arms to merge" `Quick test_if_diamond;
-          Alcotest.test_case "no else: false edge is merge" `Quick test_if_no_else;
-          Alcotest.test_case "both return: merge unreachable" `Quick test_if_unreachable;
+          Alcotest.test_case "diamond, both arms to merge" `Quick
+            test_if_diamond;
+          Alcotest.test_case "no else: false edge is merge" `Quick
+            test_if_no_else;
+          Alcotest.test_case "both return: merge unreachable" `Quick
+            test_if_unreachable;
           Alcotest.test_case "an else-if chain verifies" `Quick test_if_verifies;
         ] );
       ( "hole: while",
         [
           Alcotest.test_case "the back-edge exists" `Quick test_while_backedge;
-          Alcotest.test_case "condition lives in the header" `Quick test_while_header;
+          Alcotest.test_case "condition lives in the header" `Quick
+            test_while_header;
           Alcotest.test_case "the false edge is the exit" `Quick test_while_exit;
           Alcotest.test_case "nested loops verify" `Quick test_while_verifies;
         ] );
       ( "hole: for",
         [
           Alcotest.test_case "a named slot for the counter" `Quick test_for_slot;
-          Alcotest.test_case "the bound is evaluated once" `Quick test_for_hi_once;
-          Alcotest.test_case "the increment is its own block" `Quick test_for_latch;
+          Alcotest.test_case "the bound is evaluated once" `Quick
+            test_for_hi_once;
+          Alcotest.test_case "the increment is its own block" `Quick
+            test_for_latch;
           Alcotest.test_case "nested for loops verify" `Quick test_for_verifies;
         ] );
       ( "hole: break",
         [
           Alcotest.test_case "branches to the loop exit" `Quick test_break_exit;
-          Alcotest.test_case "leaves only the inner loop" `Quick test_break_inner_only;
-          Alcotest.test_case "while true + break verifies" `Quick test_break_verifies;
+          Alcotest.test_case "leaves only the inner loop" `Quick
+            test_break_inner_only;
+          Alcotest.test_case "while true + break verifies" `Quick
+            test_break_verifies;
         ] );
       ( "hole: continue",
         [
-          Alcotest.test_case "in a while: back to the header" `Quick test_continue_header;
+          Alcotest.test_case "in a while: back to the header" `Quick
+            test_continue_header;
           Alcotest.test_case "in a for: to the latch" `Quick test_continue_latch;
-          Alcotest.test_case "targets the inner loop" `Quick test_continue_inner_only;
-          Alcotest.test_case "continue in a nest verifies" `Quick test_continue_verifies;
+          Alcotest.test_case "targets the inner loop" `Quick
+            test_continue_inner_only;
+          Alcotest.test_case "continue in a nest verifies" `Quick
+            test_continue_verifies;
         ] );
     ]

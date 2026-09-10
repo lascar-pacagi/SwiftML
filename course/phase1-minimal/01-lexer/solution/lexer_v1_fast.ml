@@ -32,10 +32,19 @@ let t_comma = 10
 let t_newline = 11
 let t_eof = 12
 
-type soup = { tags : int array; starts : int array; ends : int array; n : int; source : string }
+type soup = {
+  tags : int array;
+  starts : int array;
+  ends : int array;
+  n : int;
+  source : string;
+}
 
 let is_digit c = c >= '0' && c <= '9'
-let is_identifier_start c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c = '_'
+
+let is_identifier_start c =
+  (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c = '_'
+
 let is_identifier_continue c = is_identifier_start c || is_digit c
 
 (* --- lazy line/column, only ever needed by a DIAGNOSTIC ---------------------
@@ -56,20 +65,28 @@ let position_of_offset (ls : int array) (off : int) : Token.pos =
   done;
   { Token.line = !lo + 1; col = off - ls.(!lo) + 1; offset = off }
 
-
 (* The single scanning pass: offsets only, no line/col, near-zero per-token allocation. *)
 let lex (source : string) (diagnostics : Diagnostics.sink) : soup =
   let ls = lazy (line_start_offsets source) in
   let report_error (lo : int) (hi : int) (msg : string) =
     Diagnostics.error diagnostics
-      { Token.lo = position_of_offset (Lazy.force ls) lo; hi = position_of_offset (Lazy.force ls) hi }
+      {
+        Token.lo = position_of_offset (Lazy.force ls) lo;
+        hi = position_of_offset (Lazy.force ls) hi;
+      }
       msg
   in
   let note (lo : int) (hi : int) (msg : string) =
     Diagnostics.emit diagnostics
-      { Diagnostics.severity = Note;
-        span = { Token.lo = position_of_offset (Lazy.force ls) lo; hi = position_of_offset (Lazy.force ls) hi };
-        message = msg }
+      {
+        Diagnostics.severity = Note;
+        span =
+          {
+            Token.lo = position_of_offset (Lazy.force ls) lo;
+            hi = position_of_offset (Lazy.force ls) hi;
+          };
+        message = msg;
+      }
   in
   let source_length = String.length source in
   let capacity = ref (max 16 (source_length / 4)) in
@@ -103,33 +120,62 @@ let lex (source : string) (diagnostics : Diagnostics.sink) : soup =
       let c = char_at !pos in
       if c = ' ' || c = '\t' || c = '\r' then (
         incr pos;
-        while !pos < source_length && (let d = char_at !pos in d = ' ' || d = '\t' || d = '\r') do incr pos done;
+        while
+          !pos < source_length
+          &&
+          let d = char_at !pos in
+          d = ' ' || d = '\t' || d = '\r'
+        do
+          incr pos
+        done;
         skip_trivia ())
-      else if c = '/' && !pos + 1 < source_length && char_at (!pos + 1) = '/' then (
+      else if c = '/' && !pos + 1 < source_length && char_at (!pos + 1) = '/'
+      then (
         pos := !pos + 2;
-        while !pos < source_length && char_at !pos <> '\n' do incr pos done;
+        while !pos < source_length && char_at !pos <> '\n' do
+          incr pos
+        done;
         skip_trivia ())
-      else if c = '/' && !pos + 1 < source_length && char_at (!pos + 1) = '*' then (
+      else if c = '/' && !pos + 1 < source_length && char_at (!pos + 1) = '*'
+      then (
         let opener = !pos in
         pos := !pos + 2;
         let depth = ref 1 in
         while !depth > 0 && !pos < source_length do
-          if char_at !pos = '/' && !pos + 1 < source_length && char_at (!pos + 1) = '*' then (pos := !pos + 2; incr depth)
-          else if char_at !pos = '*' && !pos + 1 < source_length && char_at (!pos + 1) = '/' then (pos := !pos + 2; decr depth)
+          if
+            char_at !pos = '/'
+            && !pos + 1 < source_length
+            && char_at (!pos + 1) = '*'
+          then (
+            pos := !pos + 2;
+            incr depth)
+          else if
+            char_at !pos = '*'
+            && !pos + 1 < source_length
+            && char_at (!pos + 1) = '/'
+          then (
+            pos := !pos + 2;
+            decr depth)
           else incr pos
         done;
         (* Unterminated: the same three diagnostics v0 produces once §6 exercise 2 is done —
            the error at end of input, a note at the OUTERMOST opener, and the repair. The two
            rungs must agree about what is NOT lexable, not only about what is. Note how much
-           cheaper positions are here: the scan carried plain offsets, and `position_of_offset` turns them
+           cheaper positions are here: the scan carried plain offsets, and
+           `position_of_offset` turns them
            into line/col only now, because someone finally asked. *)
         if !depth > 0 then (
           report_error !pos !pos "unterminated '/*' comment";
           note opener (opener + 2) "comment started here";
-          let terminator = String.concat "" (List.init !depth (fun _ -> "*/")) in
+          let terminator =
+            String.concat "" (List.init !depth (fun _ -> "*/"))
+          in
           note !pos !pos
-            (if !depth = 1 then Printf.sprintf "insert '%s' to close this comment" terminator
-             else Printf.sprintf "insert '%s' to close these %d nested comments" terminator !depth));
+            (if !depth = 1 then
+               Printf.sprintf "insert '%s' to close this comment" terminator
+             else
+               Printf.sprintf "insert '%s' to close these %d nested comments"
+                 terminator !depth));
         skip_trivia ())
       else ()
   in
@@ -144,38 +190,64 @@ let lex (source : string) (diagnostics : Diagnostics.sink) : soup =
       let c = char_at !pos in
       if is_digit c then (
         incr pos;
-        while !pos < source_length && is_digit (char_at !pos) do incr pos done;
+        while !pos < source_length && is_digit (char_at !pos) do
+          incr pos
+        done;
         push t_int s !pos)
       else if is_identifier_start c then (
         incr pos;
-        while !pos < source_length && is_identifier_continue (char_at !pos) do incr pos done;
+        while !pos < source_length && is_identifier_continue (char_at !pos) do
+          incr pos
+        done;
         push t_ident s !pos)
-      else (
+      else
         let tag =
           match c with
-          | '+' -> t_plus | '-' -> t_minus | '*' -> t_star | '/' -> t_slash | '%' -> t_percent
-          | '=' -> t_eq | '(' -> t_lparen | ')' -> t_rparen | ',' -> t_comma | '\n' -> t_newline
+          | '+' -> t_plus
+          | '-' -> t_minus
+          | '*' -> t_star
+          | '/' -> t_slash
+          | '%' -> t_percent
+          | '=' -> t_eq
+          | '(' -> t_lparen
+          | ')' -> t_rparen
+          | ',' -> t_comma
+          | '\n' -> t_newline
           | _ -> -1
         in
         incr pos;
-        if tag < 0 then report_error s !pos "invalid character in source file" else push tag s !pos)
+        if tag < 0 then report_error s !pos "invalid character in source file"
+        else push tag s !pos
   done;
   { tags = !tags; starts = !starts; ends = !ends; n = !n; source }
 
 (* resolve a keyword without allocating a substring *)
 let keyword_or_identifier (source : string) (s : int) (e : int) : Token.kind =
   let n = e - s in
-  let eq3 a b c = n = 3 && source.[s] = a && source.[s + 1] = b && source.[s + 2] = c in
+  let eq3 a b c =
+    n = 3 && source.[s] = a && source.[s + 1] = b && source.[s + 2] = c
+  in
   if eq3 'l' 'e' 't' then Token.Kw_let
   else if eq3 'v' 'a' 'r' then Token.Kw_var
   else Token.Ident (String.sub source s n)
 
 let token_kind_at (s : soup) (i : int) : Token.kind =
   match s.tags.(i) with
-  | 0 -> Token.Int (int_of_string (String.sub s.source s.starts.(i) (s.ends.(i) - s.starts.(i))))
+  | 0 ->
+      Token.Int
+        (int_of_string
+           (String.sub s.source s.starts.(i) (s.ends.(i) - s.starts.(i))))
   | 1 -> keyword_or_identifier s.source s.starts.(i) s.ends.(i)
-  | 2 -> Token.Plus | 3 -> Token.Minus | 4 -> Token.Star | 5 -> Token.Slash | 6 -> Token.Percent
-  | 7 -> Token.Eq | 8 -> Token.LParen | 9 -> Token.RParen | 10 -> Token.Comma | 11 -> Token.Newline
+  | 2 -> Token.Plus
+  | 3 -> Token.Minus
+  | 4 -> Token.Star
+  | 5 -> Token.Slash
+  | 6 -> Token.Percent
+  | 7 -> Token.Eq
+  | 8 -> Token.LParen
+  | 9 -> Token.RParen
+  | 10 -> Token.Comma
+  | 11 -> Token.Newline
   | _ -> Token.Eof
 
 (* Rebuild the exact Token.t list v0 produces — kinds + line/col spans. On demand. *)
@@ -187,7 +259,11 @@ let to_tokens (s : soup) : Token.t list =
       let tok =
         {
           Token.kind = token_kind_at s i;
-          span = { Token.lo = position_of_offset ls s.starts.(i); hi = position_of_offset ls s.ends.(i) };
+          span =
+            {
+              Token.lo = position_of_offset ls s.starts.(i);
+              hi = position_of_offset ls s.ends.(i);
+            };
         }
       in
       build (i - 1) (tok :: acc)

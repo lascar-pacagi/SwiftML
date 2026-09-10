@@ -12,23 +12,28 @@
 
 let front_end (src : string) : Diagnostics.sink =
   let diags = Diagnostics.create () in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src diags)) diags) in
+  let p =
+    Parser.parse_program
+      (Parser.create (Lexer.tokenize (Lexer.create src diags)) diags)
+  in
   Sema.check p diags;
   diags
 
 let sema_errors (src : string) : string list =
   Diagnostics.all (front_end src)
-  |> List.filter (fun (d : Diagnostics.t) -> d.Diagnostics.severity = Diagnostics.Error)
+  |> List.filter (fun (d : Diagnostics.t) ->
+      d.Diagnostics.severity = Diagnostics.Error)
   |> List.map (fun (d : Diagnostics.t) -> d.Diagnostics.message)
 
 (* every error as "line:col: message" — the spans matter as much as the wording, because
    they are what the driver prints and what an editor would underline *)
 let sema_located (src : string) : string list =
   Diagnostics.all (front_end src)
-  |> List.filter (fun (d : Diagnostics.t) -> d.Diagnostics.severity = Diagnostics.Error)
+  |> List.filter (fun (d : Diagnostics.t) ->
+      d.Diagnostics.severity = Diagnostics.Error)
   |> List.map (fun (d : Diagnostics.t) ->
-         Printf.sprintf "%d:%d: %s" d.Diagnostics.span.Token.lo.Token.line
-           d.Diagnostics.span.Token.lo.Token.col d.Diagnostics.message)
+      Printf.sprintf "%d:%d: %s" d.Diagnostics.span.Token.lo.Token.line
+        d.Diagnostics.span.Token.lo.Token.col d.Diagnostics.message)
 
 let has_error src msg =
   Alcotest.(check bool)
@@ -37,10 +42,14 @@ let has_error src msg =
     (List.mem msg (sema_errors src))
 
 let accepted src =
-  Alcotest.(check (list string)) (Printf.sprintf "%S is accepted" src) [] (sema_errors src)
+  Alcotest.(check (list string))
+    (Printf.sprintf "%S is accepted" src)
+    [] (sema_errors src)
 
 let n_errors src n =
-  Alcotest.(check int) (Printf.sprintf "%S reports %d error(s)" src n) n
+  Alcotest.(check int)
+    (Printf.sprintf "%S reports %d error(s)" src n)
+    n
     (List.length (sema_errors src))
 
 (* --- valid programs ---------------------------------------------------------------
@@ -64,7 +73,8 @@ let test_accept () =
   (* nothing to check at all *)
   accepted "";
   accepted "\n\n// only a comment\n\n";
-  Alcotest.(check bool) "a valid program leaves has_errors false" false
+  Alcotest.(check bool)
+    "a valid program leaves has_errors false" false
     (Diagnostics.has_errors (front_end "let a = 1\nprint(a)"))
 
 (* --- name resolution --------------------------------------------------------------
@@ -106,7 +116,8 @@ let test_immutability () =
   (* the target must exist AND be mutable — an undeclared target is the other message *)
   has_error "u = 1" "cannot find 'u' in scope";
   Alcotest.(check (list string))
-    "an undeclared target is not ALSO reported as a constant" [ "cannot find 'u' in scope" ]
+    "an undeclared target is not ALSO reported as a constant"
+    [ "cannot find 'u' in scope" ]
     (sema_errors "u = 1")
 
 (* an assignment has two halves and BOTH are checked: the target must be a declared
@@ -170,26 +181,39 @@ let test_reports_keep_going () =
    `let a = a`, where swiftc reports a different rule ("circular reference") from the
    declaration — see §2's divergence table. *)
 let test_spans () =
-  Alcotest.(check (list string)) "the argument of print" [ "1:7: cannot find 'y' in scope" ]
+  Alcotest.(check (list string))
+    "the argument of print"
+    [ "1:7: cannot find 'y' in scope" ]
     (sema_located "print(y)");
-  Alcotest.(check (list string)) "an assignment target" [ "1:1: cannot find 'x' in scope" ]
+  Alcotest.(check (list string))
+    "an assignment target"
+    [ "1:1: cannot find 'x' in scope" ]
     (sema_located "x = 5");
-  Alcotest.(check (list string)) "inside a binary" [ "1:11: cannot find 'y' in scope" ]
+  Alcotest.(check (list string))
+    "inside a binary"
+    [ "1:11: cannot find 'y' in scope" ]
     (sema_located "print(1 + y)");
-  Alcotest.(check (list string)) "under a unary minus" [ "1:8: cannot find 'y' in scope" ]
+  Alcotest.(check (list string))
+    "under a unary minus"
+    [ "1:8: cannot find 'y' in scope" ]
     (sema_located "print(-y)");
-  Alcotest.(check (list string)) "an unknown callee, at the name" [ "1:1: cannot find 'foo' in scope" ]
+  Alcotest.(check (list string))
+    "an unknown callee, at the name"
+    [ "1:1: cannot find 'foo' in scope" ]
     (sema_located "foo(1)");
   Alcotest.(check (list string))
     "two errors, in source order, each at its own column"
     [ "1:7: cannot find 'p' in scope"; "1:11: cannot find 'q' in scope" ]
     (sema_located "print(p + q)");
   (* line numbers survive across statements *)
-  Alcotest.(check (list string)) "on the third line"
+  Alcotest.(check (list string))
+    "on the third line"
     [ "3:7: cannot find 'y' in scope" ]
     (sema_located "let a = 1\nprint(a)\nprint(y)");
   (* the self-reference points at the USE, not at the declaration *)
-  Alcotest.(check (list string)) "the initializer's own name" [ "1:9: cannot find 'a' in scope" ]
+  Alcotest.(check (list string))
+    "the initializer's own name"
+    [ "1:9: cannot find 'a' in scope" ]
     (sema_located "let a = a")
 
 (* --- severity ----------------------------------------------------------------------
@@ -198,7 +222,8 @@ let test_spans () =
 let test_severity () =
   let d = front_end "print(y)" in
   Alcotest.(check int) "one diagnostic" 1 (List.length (Diagnostics.all d));
-  Alcotest.(check bool) "reported as an Error" true
+  Alcotest.(check bool)
+    "reported as an Error" true
     (List.for_all
        (fun (x : Diagnostics.t) -> x.Diagnostics.severity = Diagnostics.Error)
        (Diagnostics.all d));
@@ -214,24 +239,36 @@ let test_severity () =
 let () =
   Alcotest.run "sema"
     [
-      ("accept", [ Alcotest.test_case "valid programs have no errors" `Quick test_accept ]);
+      ( "accept",
+        [
+          Alcotest.test_case "valid programs have no errors" `Quick test_accept;
+        ] );
       ( "scope",
         [
-          Alcotest.test_case "undeclared names, everywhere" `Quick test_undeclared;
+          Alcotest.test_case "undeclared names, everywhere" `Quick
+            test_undeclared;
           Alcotest.test_case "bound only after declaration" `Quick
             test_declaration_order;
         ] );
       ( "immutability",
         [
           Alcotest.test_case "assign to a let constant" `Quick test_immutability;
-          Alcotest.test_case "the assigned expression is checked" `Quick test_assign_rhs;
+          Alcotest.test_case "the assigned expression is checked" `Quick
+            test_assign_rhs;
         ] );
       ( "calls",
         [
           Alcotest.test_case "print arity" `Quick test_print_arity;
           Alcotest.test_case "unknown callee" `Quick test_unknown_callee;
         ] );
-      ("recovery", [ Alcotest.test_case "one run reports every error" `Quick test_reports_keep_going ]);
-      ("spans", [ Alcotest.test_case "line:col matches swiftc" `Quick test_spans ]);
-      ("severity", [ Alcotest.test_case "errors stop the pipeline" `Quick test_severity ]);
+      ( "recovery",
+        [
+          Alcotest.test_case "one run reports every error" `Quick
+            test_reports_keep_going;
+        ] );
+      ( "spans",
+        [ Alcotest.test_case "line:col matches swiftc" `Quick test_spans ] );
+      ( "severity",
+        [ Alcotest.test_case "errors stop the pipeline" `Quick test_severity ]
+      );
     ]

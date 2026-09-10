@@ -9,20 +9,20 @@
    This file is a *contract* (fully written). Producers (lexer/parser/sema) call
    [error]/[warning]; the driver calls [print] and checks [has_errors]. *)
 
-type severity =
-  | Error
-  | Warning
-  | Note
-
+type severity = Error | Warning | Note
 type t = { severity : severity; span : Token.span; message : string }
 
 (* A mutable sink threaded through the front end. *)
 type sink = { mutable diagnostics : t list }
 
 let create () : sink = { diagnostics = [] }
+
 let emit (sink : sink) (diagnostic : t) =
   sink.diagnostics <- diagnostic :: sink.diagnostics
-let error (sink : sink) (span : Token.span) (message : string) = emit sink { severity = Error; span; message }
+
+let error (sink : sink) (span : Token.span) (message : string) =
+  emit sink { severity = Error; span; message }
+
 let warning (sink : sink) (span : Token.span) (message : string) =
   emit sink { severity = Warning; span; message }
 
@@ -34,15 +34,21 @@ let note (sink : sink) (span : Token.span) (message : string) =
 
 let has_errors (sink : sink) =
   List.exists (fun diagnostic -> diagnostic.severity = Error) sink.diagnostics
+
 let all (sink : sink) : t list = List.rev sink.diagnostics
 
-let string_of_severity = function Error -> "error" | Warning -> "warning" | Note -> "note"
+let string_of_severity = function
+  | Error -> "error"
+  | Warning -> "warning"
+  | Note -> "note"
 
 (* swiftc-style `file:line:col: severity: message`. We omit the filename here and
    let the driver prefix it. *)
 let to_string (diagnostic : t) : string =
   Printf.sprintf "%d:%d: %s: %s" diagnostic.span.Token.lo.Token.line
-    diagnostic.span.Token.lo.Token.col (string_of_severity diagnostic.severity) diagnostic.message
+    diagnostic.span.Token.lo.Token.col
+    (string_of_severity diagnostic.severity)
+    diagnostic.message
 
 let print (sink : sink) : unit =
   List.iter (fun diagnostic -> prerr_endline (to_string diagnostic)) (all sink)

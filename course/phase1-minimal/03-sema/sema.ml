@@ -24,4 +24,5 @@ let string_of_ty = function TInt -> "Int"
    Walk-through: explainer §3. *)
 let check (program : Ast.program) (diagnostics : Diagnostics.sink) : unit =
   ignore (program, diagnostics, string_of_ty);
-  failwith "TODO(03-sema): implement Sema.check (scope + name resolution + Int typing)"
+  failwith
+    "TODO(03-sema): implement Sema.check (scope + name resolution + Int typing)"

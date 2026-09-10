@@ -23,11 +23,13 @@ let peek_kind (parser : t) : Token.kind = (peek parser).Token.kind
 (* One-token lookahead, for distinguishing `c = …` (assignment) from `c + …`. *)
 let peek_kind_at (parser : t) (n : int) : Token.kind =
   let i = parser.pos + n in
-  if i < Array.length parser.tokens then parser.tokens.(i).Token.kind else Token.Eof
+  if i < Array.length parser.tokens then parser.tokens.(i).Token.kind
+  else Token.Eof
 
 let advance (parser : t) : Token.t =
   let token = parser.tokens.(parser.pos) in
-  if parser.pos < Array.length parser.tokens - 1 then parser.pos <- parser.pos + 1;
+  if parser.pos < Array.length parser.tokens - 1 then
+    parser.pos <- parser.pos + 1;
   token
 
 (* Consume a token of the expected kind, or report an error and return the current one. *)
@@ -35,7 +37,8 @@ let expect (parser : t) (k : Token.kind) (description : string) : Token.t =
   let token = peek parser in
   if token.Token.kind = k then advance parser
   else (
-    Diagnostics.error parser.diagnostics token.Token.span (Printf.sprintf "expected %s" description);
+    Diagnostics.error parser.diagnostics token.Token.span
+      (Printf.sprintf "expected %s" description);
     token)
 
 (* Pratt binding powers: higher binds tighter. (Phase 1 levels.) *)
@@ -84,12 +87,14 @@ let rec parse_expr_bp (parser : t) (minimum_binding_power : int) : Ast.expr =
     | Token.Minus ->
         let t = advance parser in
         let operand = parse_expr_bp parser unary_bp in
-        Ast.Unary (Ast.Neg, operand, span_between t.Token.span (Ast.expr_span operand))
+        Ast.Unary
+          (Ast.Neg, operand, span_between t.Token.span (Ast.expr_span operand))
     | _ ->
         let t = peek parser in
         Diagnostics.error parser.diagnostics t.Token.span "expected expression";
         ignore (advance parser);
-        Ast.Int_lit (0, t.Token.span) (* recovery placeholder *)
+        Ast.Int_lit (0, t.Token.span)
+    (* recovery placeholder *)
   in
   (* 2. infix / "led": fold operators that bind at least [minimum_binding_power]. Left-assoc via
      recursing on the right with [bp + 1]. *)
@@ -98,10 +103,17 @@ let rec parse_expr_bp (parser : t) (minimum_binding_power : int) : Ast.expr =
     | Some bp when bp >= minimum_binding_power ->
         let op_tok = advance parser in
         let op =
-          match binop_of_kind op_tok.Token.kind with Some o -> o | None -> assert false
+          match binop_of_kind op_tok.Token.kind with
+          | Some o -> o
+          | None -> assert false
         in
         let right = parse_expr_bp parser (bp + 1) in
-        loop (Ast.Binary (op, left, right, span_between (Ast.expr_span left) (Ast.expr_span right)))
+        loop
+          (Ast.Binary
+             ( op,
+               left,
+               right,
+               span_between (Ast.expr_span left) (Ast.expr_span right) ))
     | _ -> left
   in
   loop left
@@ -131,7 +143,8 @@ let parse_ident (parser : t) (description : string) : string * Token.span =
       (s, t.Token.span)
   | _ ->
       let t = peek parser in
-      Diagnostics.error parser.diagnostics t.Token.span (Printf.sprintf "expected %s" description);
+      Diagnostics.error parser.diagnostics t.Token.span
+        (Printf.sprintf "expected %s" description);
       ("_", t.Token.span)
 
 let parse_stmt (parser : t) : Ast.stmt =
@@ -142,13 +155,20 @@ let parse_stmt (parser : t) : Ast.stmt =
       let name, _ = parse_ident parser "identifier" in
       ignore (expect parser Token.Eq "'='");
       let value = parse_expr parser in
-      Ast.Let { name; is_var; value; span = span_between keyword.Token.span (Ast.expr_span value) }
+      Ast.Let
+        {
+          name;
+          is_var;
+          value;
+          span = span_between keyword.Token.span (Ast.expr_span value);
+        }
   | Token.Ident name when peek_kind_at parser 1 = Token.Eq ->
       (* reassignment: `c = expr` *)
       let id = advance parser in
       ignore (advance parser (* '=' *));
       let value = parse_expr parser in
-      Ast.Assign { name; value; span = span_between id.Token.span (Ast.expr_span value) }
+      Ast.Assign
+        { name; value; span = span_between id.Token.span (Ast.expr_span value) }
   | _ ->
       let expression = parse_expr parser in
       Ast.Expr_stmt (expression, Ast.expr_span expression)

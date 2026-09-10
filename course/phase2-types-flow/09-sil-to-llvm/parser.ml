@@ -1,7 +1,11 @@
 (* Inherited parser — the completed concept-07 recursive-descent and Pratt parser,
    given in concept 09. It handles expressions, control flow, functions, and return. *)
 
-type t = { tokens : Token.t array; mutable pos : int; diagnostics : Diagnostics.sink }
+type t = {
+  tokens : Token.t array;
+  mutable pos : int;
+  diagnostics : Diagnostics.sink;
+}
 
 let create (tokens : Token.t list) (diagnostics : Diagnostics.sink) : t =
   { tokens = Array.of_list tokens; pos = 0; diagnostics }
@@ -11,14 +15,17 @@ let peek_kind (parser : t) : Token.kind = (peek parser).Token.kind
 
 let peek_kind_at (parser : t) (n : int) : Token.kind =
   let i = parser.pos + n in
-  if i < Array.length parser.tokens then parser.tokens.(i).Token.kind else Token.Eof
+  if i < Array.length parser.tokens then parser.tokens.(i).Token.kind
+  else Token.Eof
 
 let advance (parser : t) : Token.t =
   let token = parser.tokens.(parser.pos) in
-  if parser.pos < Array.length parser.tokens - 1 then parser.pos <- parser.pos + 1;
+  if parser.pos < Array.length parser.tokens - 1 then
+    parser.pos <- parser.pos + 1;
   token
 
-(* GIVEN — a lookahead that may have to un-read description it read. `mark` remembers where the cursor
+(* GIVEN — a lookahead that may have to un-read what it read. `mark`
+   remembers where the cursor
    is; `put_back` returns it there. Use them when you must peek PAST something to decide, and
    leave the input untouched if the answer is no: `else` may start a line of its own, so
    `parse_if` skips newlines to look for it and puts the cursor back when it finds anything
@@ -30,7 +37,8 @@ let expect (parser : t) (k : Token.kind) (description : string) : Token.t =
   let token = peek parser in
   if token.Token.kind = k then advance parser
   else (
-    Diagnostics.error parser.diagnostics token.Token.span (Printf.sprintf "expected %s" description);
+    Diagnostics.error parser.diagnostics token.Token.span
+      (Printf.sprintf "expected %s" description);
     token)
 
 (* binding powers: arithmetic > comparison > && > || (Swift's precedence groups) *)
@@ -59,7 +67,9 @@ let binop_of_kind : Token.kind -> Ast.binop option = function
   | _ -> None
 
 let unary_bp = 100
-let span_between (lo : Token.span) (hi : Token.span) : Token.span = { Token.lo = lo.Token.lo; hi = hi.Token.hi }
+
+let span_between (lo : Token.span) (hi : Token.span) : Token.span =
+  { Token.lo = lo.Token.lo; hi = hi.Token.hi }
 
 (* `as` sits at Swift's CastingPrecedence: above the comparisons, below arithmetic. *)
 let cast_bp = 7
@@ -67,20 +77,33 @@ let cast_bp = 7
 (* Reading the type name after `as`; `parse_ident` is defined below the expression parser. *)
 let parse_ident_ty (parser : t) (description : string) : string * Token.span =
   match peek_kind parser with
-  | Token.Ident s -> let t = advance parser in (s, t.Token.span)
+  | Token.Ident s ->
+      let t = advance parser in
+      (s, t.Token.span)
   | _ ->
       let t = peek parser in
-      Diagnostics.error parser.diagnostics t.Token.span (Printf.sprintf "expected %s" description);
+      Diagnostics.error parser.diagnostics t.Token.span
+        (Printf.sprintf "expected %s" description);
       ("_", t.Token.span)
 
 let rec parse_expr_bp (parser : t) (minimum_binding_power : int) : Ast.expr =
   let left =
     match peek_kind parser with
-    | Token.Int n -> let t = advance parser in Ast.Int_lit (n, t.Token.span)
-    | Token.Float f -> let t = advance parser in Ast.Double_lit (f, t.Token.span)
-    | Token.String s -> let t = advance parser in Ast.String_lit (s, t.Token.span)
-    | Token.Kw_true -> let t = advance parser in Ast.Bool_lit (true, t.Token.span)
-    | Token.Kw_false -> let t = advance parser in Ast.Bool_lit (false, t.Token.span)
+    | Token.Int n ->
+        let t = advance parser in
+        Ast.Int_lit (n, t.Token.span)
+    | Token.Float f ->
+        let t = advance parser in
+        Ast.Double_lit (f, t.Token.span)
+    | Token.String s ->
+        let t = advance parser in
+        Ast.String_lit (s, t.Token.span)
+    | Token.Kw_true ->
+        let t = advance parser in
+        Ast.Bool_lit (true, t.Token.span)
+    | Token.Kw_false ->
+        let t = advance parser in
+        Ast.Bool_lit (false, t.Token.span)
     | Token.Ident name ->
         let t = advance parser in
         if peek_kind parser = Token.LParen then (
@@ -97,7 +120,8 @@ let rec parse_expr_bp (parser : t) (minimum_binding_power : int) : Ast.expr =
     | Token.Minus ->
         let t = advance parser in
         let operand = parse_expr_bp parser unary_bp in
-        Ast.Unary (Ast.Neg, operand, span_between t.Token.span (Ast.expr_span operand))
+        Ast.Unary
+          (Ast.Neg, operand, span_between t.Token.span (Ast.expr_span operand))
     | _ ->
         let t = peek parser in
         Diagnostics.error parser.diagnostics t.Token.span "expected expression";
@@ -105,19 +129,29 @@ let rec parse_expr_bp (parser : t) (minimum_binding_power : int) : Ast.expr =
         Ast.Int_lit (0, t.Token.span)
   in
   let rec loop left =
-    (* `expression as T` — not a binary operator (its right side is a type NAME) but it binds like one. *)
+    (* `expression as T` is not a binary operator: its right side is a type
+       name. It still binds like one. *)
     if peek_kind parser = Token.Kw_as && cast_bp >= minimum_binding_power then (
       ignore (advance parser);
       let name, tspan = parse_ident_ty parser "type after 'as'" in
       loop (Ast.Ascribe (left, name, span_between (Ast.expr_span left) tspan)))
     else
-    match infix_bp (peek_kind parser) with
-    | Some bp when bp >= minimum_binding_power ->
-        let op_tok = advance parser in
-        let op = match binop_of_kind op_tok.Token.kind with Some o -> o | None -> assert false in
-        let right = parse_expr_bp parser (bp + 1) in
-        loop (Ast.Binary (op, left, right, span_between (Ast.expr_span left) (Ast.expr_span right)))
-    | _ -> left
+      match infix_bp (peek_kind parser) with
+      | Some bp when bp >= minimum_binding_power ->
+          let op_tok = advance parser in
+          let op =
+            match binop_of_kind op_tok.Token.kind with
+            | Some o -> o
+            | None -> assert false
+          in
+          let right = parse_expr_bp parser (bp + 1) in
+          loop
+            (Ast.Binary
+               ( op,
+                 left,
+                 right,
+                 span_between (Ast.expr_span left) (Ast.expr_span right) ))
+      | _ -> left
   in
   loop left
 
@@ -126,7 +160,10 @@ and parse_call_args (parser : t) : Ast.expr list =
   else
     let rec loop accumulator =
       let expression = parse_expr_bp parser 0 in
-      if peek_kind parser = Token.Comma then (ignore (advance parser); loop (expression :: accumulator)) else List.rev (expression :: accumulator)
+      if peek_kind parser = Token.Comma then (
+        ignore (advance parser);
+        loop (expression :: accumulator))
+      else List.rev (expression :: accumulator)
     in
     loop []
 
@@ -134,10 +171,13 @@ let parse_expr (parser : t) : Ast.expr = parse_expr_bp parser 0
 
 let parse_ident (parser : t) (description : string) : string * Token.span =
   match peek_kind parser with
-  | Token.Ident s -> let t = advance parser in (s, t.Token.span)
+  | Token.Ident s ->
+      let t = advance parser in
+      (s, t.Token.span)
   | _ ->
       let t = peek parser in
-      Diagnostics.error parser.diagnostics t.Token.span (Printf.sprintf "expected %s" description);
+      Diagnostics.error parser.diagnostics t.Token.span
+        (Printf.sprintf "expected %s" description);
       ("_", t.Token.span)
 
 (* optional ": TypeName" annotation *)
@@ -155,7 +195,9 @@ let parse_annot (parser : t) : string option =
 let rec parse_block (parser : t) : Ast.stmt list =
   ignore (expect parser Token.LBrace "'{'");
   let rec loop accumulator =
-    while peek_kind parser = Token.Newline do ignore (advance parser) done;
+    while peek_kind parser = Token.Newline do
+      ignore (advance parser)
+    done;
     match peek_kind parser with
     | Token.RBrace ->
         ignore (advance parser);
@@ -171,24 +213,32 @@ let rec parse_block (parser : t) : Ast.stmt list =
         (match peek_kind parser with
         | Token.Newline -> ignore (advance parser)
         | Token.RBrace | Token.Eof -> ()
-        | _ -> Diagnostics.error parser.diagnostics (peek parser).Token.span "expected newline or end of statement");
+        | _ ->
+            Diagnostics.error parser.diagnostics (peek parser).Token.span
+              "expected newline or end of statement");
         loop (s :: accumulator)
   in
   loop []
 
 and parse_if (parser : t) : Ast.stmt =
-  let keyword = advance parser (* if *) in
+  let keyword =
+    advance parser
+    (* if *)
+  in
   let cond = parse_expr parser in
   let then_blk = parse_block parser in
   (* `else` may start a later line — look past the newlines for it, and put the cursor back if
      description follows is not an `else`. *)
   let saved = mark parser in
-  while peek_kind parser = Token.Newline do ignore (advance parser) done;
+  while peek_kind parser = Token.Newline do
+    ignore (advance parser)
+  done;
   if peek_kind parser <> Token.Kw_else then put_back parser saved;
   let else_blk =
     if peek_kind parser = Token.Kw_else then (
       ignore (advance parser);
-      if peek_kind parser = Token.Kw_if then Some [ parse_if parser ] (* else if *)
+      if peek_kind parser = Token.Kw_if then Some [ parse_if parser ]
+        (* else if *)
       else Some (parse_block parser))
     else None
   in
@@ -211,12 +261,17 @@ and parse_stmt (parser : t) : Ast.stmt =
       let hi = parse_expr parser in
       let body = parse_block parser in
       Ast.For { var; lo; hi; body; span = keyword.Token.span }
-  | Token.Kw_break -> let t = advance parser in Ast.Break t.Token.span
-  | Token.Kw_continue -> let t = advance parser in Ast.Continue t.Token.span
-  | Token.Kw_return ->
+  | Token.Kw_break ->
+      let t = advance parser in
+      Ast.Break t.Token.span
+  | Token.Kw_continue ->
+      let t = advance parser in
+      Ast.Continue t.Token.span
+  | Token.Kw_return -> (
       let keyword = advance parser in
-      (match peek_kind parser with
-      | Token.Newline | Token.RBrace | Token.Eof -> Ast.Return (None, keyword.Token.span)
+      match peek_kind parser with
+      | Token.Newline | Token.RBrace | Token.Eof ->
+          Ast.Return (None, keyword.Token.span)
       | _ -> Ast.Return (Some (parse_expr parser), keyword.Token.span))
   | Token.Kw_let | Token.Kw_var ->
       let keyword = advance parser in
@@ -225,12 +280,20 @@ and parse_stmt (parser : t) : Ast.stmt =
       let annot = parse_annot parser in
       ignore (expect parser Token.Eq "'='");
       let value = parse_expr parser in
-      Ast.Let { name; is_var; annot; value; span = span_between keyword.Token.span (Ast.expr_span value) }
+      Ast.Let
+        {
+          name;
+          is_var;
+          annot;
+          value;
+          span = span_between keyword.Token.span (Ast.expr_span value);
+        }
   | Token.Ident name when peek_kind_at parser 1 = Token.Eq ->
       let id = advance parser in
       ignore (advance parser);
       let value = parse_expr parser in
-      Ast.Assign { name; value; span = span_between id.Token.span (Ast.expr_span value) }
+      Ast.Assign
+        { name; value; span = span_between id.Token.span (Ast.expr_span value) }
   | _ ->
       let expression = parse_expr parser in
       Ast.Expr_stmt (expression, Ast.expr_span expression)
@@ -240,23 +303,35 @@ and parse_stmt (parser : t) : Ast.stmt =
    call positionally and don't check labels (a simplification — see the explainer). *)
 let parse_params (parser : t) : Ast.param list =
   ignore (expect parser Token.LParen "'('");
-  if peek_kind parser = Token.RParen then (ignore (advance parser); [])
+  if peek_kind parser = Token.RParen then (
+    ignore (advance parser);
+    [])
   else
     let rec loop accumulator =
       let first, _ = parse_ident parser "a parameter name" in
       (* `name :` -> label = name; `label name :` -> skip the external label, keep [name] *)
-      let pname = if peek_kind parser = Token.Colon then first else fst (parse_ident parser "a parameter name") in
+      let pname =
+        if peek_kind parser = Token.Colon then first
+        else fst (parse_ident parser "a parameter name")
+      in
       ignore (expect parser Token.Colon "':'");
       let ptype, _ = parse_ident parser "a parameter type" in
       let accumulator = { Ast.pname; ptype } :: accumulator in
-      if peek_kind parser = Token.Comma then (ignore (advance parser); loop accumulator)
-      else (ignore (expect parser Token.RParen "')'"); List.rev accumulator)
+      if peek_kind parser = Token.Comma then (
+        ignore (advance parser);
+        loop accumulator)
+      else (
+        ignore (expect parser Token.RParen "')'");
+        List.rev accumulator)
     in
     loop []
 
 (* `func name ( params ) [ -> Type ] { body }` *)
 let parse_func (parser : t) : Ast.func_decl =
-  let keyword = advance parser (* func *) in
+  let keyword =
+    advance parser
+    (* func *)
+  in
   let fname, _ = parse_ident parser "a function name" in
   let params = parse_params parser in
   let ret =
@@ -271,7 +346,11 @@ let parse_func (parser : t) : Ast.func_decl =
 
 (* A program is a sequence of top-level items: function declarations and statements. *)
 let parse_program (parser : t) : Ast.program =
-  let skip_newlines () = while peek_kind parser = Token.Newline do ignore (advance parser) done in
+  let skip_newlines () =
+    while peek_kind parser = Token.Newline do
+      ignore (advance parser)
+    done
+  in
   let rec loop accumulator =
     skip_newlines ();
     match peek_kind parser with
@@ -281,14 +360,18 @@ let parse_program (parser : t) : Ast.program =
         (match peek_kind parser with
         | Token.Newline -> ignore (advance parser)
         | Token.Eof -> ()
-        | _ -> Diagnostics.error parser.diagnostics (peek parser).Token.span "expected newline or end of statement");
+        | _ ->
+            Diagnostics.error parser.diagnostics (peek parser).Token.span
+              "expected newline or end of statement");
         loop (Ast.IFunc f :: accumulator)
     | _ ->
         let s = parse_stmt parser in
         (match peek_kind parser with
         | Token.Newline -> ignore (advance parser)
         | Token.Eof -> ()
-        | _ -> Diagnostics.error parser.diagnostics (peek parser).Token.span "expected newline or end of statement");
+        | _ ->
+            Diagnostics.error parser.diagnostics (peek parser).Token.span
+              "expected newline or end of statement");
         loop (Ast.IStmt s :: accumulator)
   in
   loop []

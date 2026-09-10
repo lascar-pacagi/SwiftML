@@ -35,19 +35,21 @@ let v1 : rung =
   (toks, Diagnostics.all d)
 
 let toks (lex : rung) (src : string) : Token.t list = fst (lex src)
-
 let is_todo (m : string) = String.length m >= 4 && String.sub m 0 4 = "TODO"
 
 let kinds (lex : rung) (src : string) : Token.kind list =
   List.map (fun (t : Token.t) -> t.Token.kind) (toks lex src)
 
 let kind_t =
-  Alcotest.testable (fun ppf k -> Format.pp_print_string ppf (Token.string_of_kind k)) ( = )
+  Alcotest.testable
+    (fun ppf k -> Format.pp_print_string ppf (Token.string_of_kind k))
+    ( = )
 
 let token_t =
   Alcotest.testable
     (fun ppf (t : Token.t) ->
-      Format.fprintf ppf "%s@%d:%d-%d:%d" (Token.string_of_kind t.Token.kind)
+      Format.fprintf ppf "%s@%d:%d-%d:%d"
+        (Token.string_of_kind t.Token.kind)
         t.Token.span.Token.lo.Token.line t.Token.span.Token.lo.Token.col
         t.Token.span.Token.hi.Token.line t.Token.span.Token.hi.Token.col)
     ( = )
@@ -59,41 +61,79 @@ let test_literals_idents lex () =
   check_kinds lex "empty input" [ Token.Eof ] "";
   check_kinds lex "single int" [ Token.Int 1; Token.Eof ] "1";
   check_kinds lex "maximal-munch int" [ Token.Int 123; Token.Eof ] "123";
-  check_kinds lex "two ints separated" [ Token.Int 1; Token.Int 2; Token.Eof ] "1 2";
+  check_kinds lex "two ints separated"
+    [ Token.Int 1; Token.Int 2; Token.Eof ]
+    "1 2";
   check_kinds lex "identifier" [ Token.Ident "print"; Token.Eof ] "print";
-  check_kinds lex "ident leading _ and digits" [ Token.Ident "_x9"; Token.Eof ] "_x9"
+  check_kinds lex "ident leading _ and digits"
+    [ Token.Ident "_x9"; Token.Eof ]
+    "_x9"
 
 let test_keywords lex () =
-  check_kinds lex "let/var are keywords" [ Token.Kw_let; Token.Kw_var; Token.Eof ] "let var";
+  check_kinds lex "let/var are keywords"
+    [ Token.Kw_let; Token.Kw_var; Token.Eof ]
+    "let var";
   (* keyword match is whole-word only — these are identifiers, not keyword + suffix *)
   check_kinds lex "keyword maximal munch"
-    [ Token.Ident "lets"; Token.Ident "varx"; Token.Ident "let1"; Token.Ident "_let"; Token.Eof ]
+    [
+      Token.Ident "lets";
+      Token.Ident "varx";
+      Token.Ident "let1";
+      Token.Ident "_let";
+      Token.Eof;
+    ]
     "lets varx let1 _let"
 
 let test_operators lex () =
   check_kinds lex "all operators and punctuation"
     [
-      Token.Plus; Token.Minus; Token.Star; Token.Slash; Token.Percent; Token.Eq; Token.LParen;
-      Token.RParen; Token.Comma; Token.Eof;
+      Token.Plus;
+      Token.Minus;
+      Token.Star;
+      Token.Slash;
+      Token.Percent;
+      Token.Eq;
+      Token.LParen;
+      Token.RParen;
+      Token.Comma;
+      Token.Eof;
     ]
     "+ - * / % = ( ) ,";
   check_kinds lex "no whitespace needed between tokens"
-    [ Token.Int 1; Token.Plus; Token.Int 2; Token.Star; Token.Int 3; Token.Eof ] "1+2*3";
+    [ Token.Int 1; Token.Plus; Token.Int 2; Token.Star; Token.Int 3; Token.Eof ]
+    "1+2*3";
   (* the slash is the one operator that must be disambiguated from a comment opener *)
   check_kinds lex "division is not a comment"
-    [ Token.Ident "x"; Token.Slash; Token.Ident "y"; Token.Eof ] "x/y";
+    [ Token.Ident "x"; Token.Slash; Token.Ident "y"; Token.Eof ]
+    "x/y";
   check_kinds lex "punctuation run"
-    [ Token.LParen; Token.Int 1; Token.Comma; Token.Int 2; Token.RParen; Token.Eof ] "(1,2)"
+    [
+      Token.LParen;
+      Token.Int 1;
+      Token.Comma;
+      Token.Int 2;
+      Token.RParen;
+      Token.Eof;
+    ]
+    "(1,2)"
 
 let test_trivia lex () =
   check_kinds lex "newline is a token"
-    [ Token.Ident "a"; Token.Newline; Token.Ident "b"; Token.Eof ] "a\nb";
-  check_kinds lex "line comment leaves the newline" [ Token.Newline; Token.Int 1; Token.Eof ] "// c\n1";
+    [ Token.Ident "a"; Token.Newline; Token.Ident "b"; Token.Eof ]
+    "a\nb";
+  check_kinds lex "line comment leaves the newline"
+    [ Token.Newline; Token.Int 1; Token.Eof ]
+    "// c\n1";
   check_kinds lex "block comment is skipped"
-    [ Token.Int 1; Token.Plus; Token.Int 2; Token.Eof ] "1 /* x */ + 2";
-  check_kinds lex "block comments NEST" [ Token.Int 1; Token.Eof ] "/* a /* b */ c */1";
-  check_kinds lex "spaces and tabs are trivia" [ Token.Int 1; Token.Int 2; Token.Eof ] "\t 1\t  2 ";
-  check_kinds lex "no trailing newline => just eof" [ Token.Int 5; Token.Eof ] "5"
+    [ Token.Int 1; Token.Plus; Token.Int 2; Token.Eof ]
+    "1 /* x */ + 2";
+  check_kinds lex "block comments NEST" [ Token.Int 1; Token.Eof ]
+    "/* a /* b */ c */1";
+  check_kinds lex "spaces and tabs are trivia"
+    [ Token.Int 1; Token.Int 2; Token.Eof ]
+    "\t 1\t  2 ";
+  check_kinds lex "no trailing newline => just eof" [ Token.Int 5; Token.Eof ]
+    "5"
 
 (* --- comments: the messiest corner of the scanner ---------------------------------
    Ground truth for every case here is `swiftc` (the behavioral oracle). The one that
@@ -102,20 +142,29 @@ let test_trivia lex () =
    `swiftc -typecheck` rejects `/*/*/` with "unterminated '/*' comment". *)
 let test_comments_valid lex () =
   check_kinds lex "empty block comment" [ Token.Int 1; Token.Eof ] "/**/1";
-  check_kinds lex "slash immediately after the opener" [ Token.Int 1; Token.Eof ] "/*/ */ 1";
-  check_kinds lex "extra stars before the closer" [ Token.Int 1; Token.Eof ] "/* a **/ 1";
-  check_kinds lex "nested empty comment: open open close close" [ Token.Int 1; Token.Eof ] "/*/**/*/ 1";
-  check_kinds lex "three levels of nesting" [ Token.Int 1; Token.Eof ] "/* a /* b /* c */ d */ e */ 1";
-  check_kinds lex "// inside a block comment is not special" [ Token.Int 1; Token.Eof ] "/* // x */ 1";
+  check_kinds lex "slash immediately after the opener"
+    [ Token.Int 1; Token.Eof ] "/*/ */ 1";
+  check_kinds lex "extra stars before the closer" [ Token.Int 1; Token.Eof ]
+    "/* a **/ 1";
+  check_kinds lex "nested empty comment: open open close close"
+    [ Token.Int 1; Token.Eof ] "/*/**/*/ 1";
+  check_kinds lex "three levels of nesting" [ Token.Int 1; Token.Eof ]
+    "/* a /* b /* c */ d */ e */ 1";
+  check_kinds lex "// inside a block comment is not special"
+    [ Token.Int 1; Token.Eof ] "/* // x */ 1";
   check_kinds lex "/* inside a line comment is not an opener"
-    [ Token.Newline; Token.Int 1; Token.Eof ] "// /* x\n1";
+    [ Token.Newline; Token.Int 1; Token.Eof ]
+    "// /* x\n1";
   check_kinds lex "comment between two tokens"
-    [ Token.Int 1; Token.Plus; Token.Int 2; Token.Eof ] "1 /* x */ + 2";
-  check_kinds lex "back-to-back comments" [ Token.Int 8; Token.Eof ] "/* a */ /* b */ /* c */ 8";
+    [ Token.Int 1; Token.Plus; Token.Int 2; Token.Eof ]
+    "1 /* x */ + 2";
+  check_kinds lex "back-to-back comments" [ Token.Int 8; Token.Eof ]
+    "/* a */ /* b */ /* c */ 8";
   check_kinds lex "newlines inside a block comment are content, not tokens"
     [ Token.Int 1; Token.Eof ] "/* a\n b\n */ 1";
   (* end-of-file cases: a comment may be the last thing in the file, with no newline *)
-  check_kinds lex "line comment at eof, no trailing newline" [ Token.Int 1; Token.Eof ] "1 // trailing";
+  check_kinds lex "line comment at eof, no trailing newline"
+    [ Token.Int 1; Token.Eof ] "1 // trailing";
   check_kinds lex "line comment is the entire file" [ Token.Eof ] "//";
   check_kinds lex "block comment is the entire file" [ Token.Eof ] "/* x */";
   check_kinds lex "empty file" [ Token.Eof ] ""
@@ -125,28 +174,39 @@ let test_comments_valid lex () =
    sink and still returns a token list ending in Eof. Both halves are asserted: a
    diagnostic that never surfaces and a lexer that dies are equally wrong. *)
 let errors_of (ds : Diagnostics.t list) =
-  List.filter (fun (d : Diagnostics.t) -> d.Diagnostics.severity = Diagnostics.Error) ds
+  List.filter
+    (fun (d : Diagnostics.t) -> d.Diagnostics.severity = Diagnostics.Error)
+    ds
 
 let note_messages (ds : Diagnostics.t list) =
   List.filter_map
     (fun (d : Diagnostics.t) ->
-      if d.Diagnostics.severity = Diagnostics.Note then Some d.Diagnostics.message else None)
+      if d.Diagnostics.severity = Diagnostics.Note then
+        Some d.Diagnostics.message
+      else None)
     ds
 
 let expect_lex_error lex name src =
   match lex src with
-  | exception Failure m when String.length m >= 4 && String.sub m 0 4 = "TODO" ->
+  | exception Failure m when String.length m >= 4 && String.sub m 0 4 = "TODO"
+    ->
       Alcotest.failf "%s: not implemented (%s)" name m
-  | exception Failure m -> Alcotest.failf "%s: raised %S instead of reporting a diagnostic" name m
-  | tokens, ds ->
+  | exception Failure m ->
+      Alcotest.failf "%s: raised %S instead of reporting a diagnostic" name m
+  | tokens, ds -> (
       if errors_of ds = [] then
-        Alcotest.failf "%s: expected a diagnostic on %S, but lexed [%s] cleanly" name src
+        Alcotest.failf "%s: expected a diagnostic on %S, but lexed [%s] cleanly"
+          name src
           (String.concat "; "
-             (List.map (fun (t : Token.t) -> Token.string_of_kind t.Token.kind) tokens));
+             (List.map
+                (fun (t : Token.t) -> Token.string_of_kind t.Token.kind)
+                tokens));
       (* recovery: lexing must still have finished *)
       match List.rev tokens with
       | { Token.kind = Token.Eof; _ } :: _ -> ()
-      | _ -> Alcotest.failf "%s: lexing did not recover — the stream does not end in Eof" name
+      | _ ->
+          Alcotest.failf
+            "%s: lexing did not recover — the stream does not end in Eof" name)
 
 (* The exact diagnostics, not just "something was reported": swiftc's wording, at swiftc's
    position (end of input for an unterminated comment; the offending byte for a bad one). *)
@@ -154,21 +214,28 @@ let test_diagnostic_shape lex () =
   let _, ds = lex "let a = 1\n/* x" in
   (match errors_of ds with
   | [ d ] ->
-      Alcotest.(check string) "wording" "unterminated '/*' comment" d.Diagnostics.message;
-      Alcotest.(check int) "reported at end of input, line" 2 d.Diagnostics.span.Token.lo.Token.line;
+      Alcotest.(check string)
+        "wording" "unterminated '/*' comment" d.Diagnostics.message;
+      Alcotest.(check int)
+        "reported at end of input, line" 2
+        d.Diagnostics.span.Token.lo.Token.line;
       Alcotest.(check int) "…column" 5 d.Diagnostics.span.Token.lo.Token.col
   | ds -> Alcotest.failf "expected exactly one error, got %d" (List.length ds));
   (* recovery means several bad bytes in one file produce several diagnostics *)
   let tokens, ds = lex "a ` b ` c" in
-  Alcotest.(check int) "one diagnostic per bad byte" 2 (List.length (errors_of ds));
+  Alcotest.(check int)
+    "one diagnostic per bad byte" 2
+    (List.length (errors_of ds));
   Alcotest.(check (list kind_t))
     "and the good tokens still come out"
     [ Token.Ident "a"; Token.Ident "b"; Token.Ident "c"; Token.Eof ]
     (List.map (fun (t : Token.t) -> t.Token.kind) tokens);
   match errors_of ds with
   | d :: _ ->
-      Alcotest.(check string) "wording" "invalid character in source file" d.Diagnostics.message;
-      Alcotest.(check int) "at the offending byte" 3 d.Diagnostics.span.Token.lo.Token.col
+      Alcotest.(check string)
+        "wording" "invalid character in source file" d.Diagnostics.message;
+      Alcotest.(check int)
+        "at the offending byte" 3 d.Diagnostics.span.Token.lo.Token.col
   | [] -> Alcotest.fail "no diagnostic"
 
 let test_comments_unterminated lex () =
@@ -184,8 +251,14 @@ let test_comments_unterminated lex () =
 let test_call_shape lex () =
   check_kinds lex "print(1 + 2)"
     [
-      Token.Ident "print"; Token.LParen; Token.Int 1; Token.Plus; Token.Int 2; Token.RParen;
-      Token.Newline; Token.Eof;
+      Token.Ident "print";
+      Token.LParen;
+      Token.Int 1;
+      Token.Plus;
+      Token.Int 2;
+      Token.RParen;
+      Token.Newline;
+      Token.Eof;
     ]
     "print(1 + 2)\n"
 
@@ -194,9 +267,11 @@ let nth lex src n = List.nth (toks lex src) n
 
 let test_spans lex () =
   let i = nth lex "  12" 0 in
-  Alcotest.(check int) "int col after two spaces" 3 i.Token.span.Token.lo.Token.col;
+  Alcotest.(check int)
+    "int col after two spaces" 3 i.Token.span.Token.lo.Token.col;
   Alcotest.(check int) "int offset" 2 i.Token.span.Token.lo.Token.offset;
-  Alcotest.(check int) "int span end col is exclusive" 5 i.Token.span.Token.hi.Token.col;
+  Alcotest.(check int)
+    "int span end col is exclusive" 5 i.Token.span.Token.hi.Token.col;
   (* a token on the second line: line/col reset after the newline *)
   let y = nth lex "x\n  y" 2 in
   Alcotest.(check int) "y on line 2" 2 y.Token.span.Token.lo.Token.line;
@@ -210,43 +285,89 @@ let test_spans lex () =
    thing a kinds-only test can never catch, and what every later diagnostic points at. *)
 let test_spans_after_trivia lex () =
   let nl = nth lex "// c\n1" 0 in
-  Alcotest.(check int) "newline after a line comment starts at the newline" 5
+  Alcotest.(check int)
+    "newline after a line comment starts at the newline" 5
     nl.Token.span.Token.lo.Token.col;
-  Alcotest.(check int) "...and at its offset" 4 nl.Token.span.Token.lo.Token.offset;
+  Alcotest.(check int)
+    "...and at its offset" 4 nl.Token.span.Token.lo.Token.offset;
   let i = nth lex "/* x */ 1" 0 in
-  Alcotest.(check int) "int after a block comment" 9 i.Token.span.Token.lo.Token.col;
+  Alcotest.(check int)
+    "int after a block comment" 9 i.Token.span.Token.lo.Token.col;
   let e = nth lex "// only" 0 in
-  Alcotest.(check int) "eof after a line comment sits at end of input" 8
+  Alcotest.(check int)
+    "eof after a line comment sits at end of input" 8
     e.Token.span.Token.lo.Token.col;
   (* newlines inside a block comment still advance the line counter *)
   let j = nth lex "/* a\n b */ 2" 0 in
-  Alcotest.(check int) "token after a multi-line comment is on line 2" 2
+  Alcotest.(check int)
+    "token after a multi-line comment is on line 2" 2
     j.Token.span.Token.lo.Token.line
 
 let test_eof_span lex () =
   let e = List.nth (toks lex "12") 1 in
-  Alcotest.(check int) "eof offset is the input length" 2 e.Token.span.Token.lo.Token.offset;
-  Alcotest.(check int) "eof span is empty" e.Token.span.Token.lo.Token.col
+  Alcotest.(check int)
+    "eof offset is the input length" 2 e.Token.span.Token.lo.Token.offset;
+  Alcotest.(check int)
+    "eof span is empty" e.Token.span.Token.lo.Token.col
     e.Token.span.Token.hi.Token.col
 
 (* Files with CRLF line endings must lex the same as LF ones: '\r' is trivia. *)
 let test_crlf lex () =
-  check_kinds lex "CRLF" [ Token.Int 1; Token.Newline; Token.Int 2; Token.Eof ] "1\r\n2";
-  check_kinds lex "lone CR between tokens" [ Token.Int 1; Token.Int 2; Token.Eof ] "1 \r 2"
+  check_kinds lex "CRLF"
+    [ Token.Int 1; Token.Newline; Token.Int 2; Token.Eof ]
+    "1\r\n2";
+  check_kinds lex "lone CR between tokens"
+    [ Token.Int 1; Token.Int 2; Token.Eof ]
+    "1 \r 2"
 
 (* --- the two rungs must agree, token for token, spans included ------------------- *)
 
 let corpus =
   [
-    ""; "1"; "123"; "1 2"; "print"; "_x9"; "let var"; "lets varx let1 _let"; "+ - * / % = ( ) ,";
-    "1+2*3"; "x/y"; "(1,2)"; "a\nb"; "// c\n1"; "1 /* x */ + 2"; "/* a /* b */ c */1"; "\t 1\t  2 ";
-    "5"; "/**/1"; "/*/ */ 1"; "/* a **/ 1"; "/*/**/*/ 1"; "/* a /* b /* c */ d */ e */ 1";
-    "/* // x */ 1"; "// /* x\n1"; "/* a */ /* b */ /* c */ 8"; "/* a\n b\n */ 1"; "1 // trailing";
-    "//"; "/* x */"; "print(1 + 2)\n"; "  12"; "x\n  y"; "1000"; "// only"; "/* a\n b */ 2"; "12";
-    "1\r\n2"; "1 \r 2"; "let value_9 = 1000 + 9 * 3 - 40 / 5 % 6   // row\n";
+    "";
+    "1";
+    "123";
+    "1 2";
+    "print";
+    "_x9";
+    "let var";
+    "lets varx let1 _let";
+    "+ - * / % = ( ) ,";
+    "1+2*3";
+    "x/y";
+    "(1,2)";
+    "a\nb";
+    "// c\n1";
+    "1 /* x */ + 2";
+    "/* a /* b */ c */1";
+    "\t 1\t  2 ";
+    "5";
+    "/**/1";
+    "/*/ */ 1";
+    "/* a **/ 1";
+    "/*/**/*/ 1";
+    "/* a /* b /* c */ d */ e */ 1";
+    "/* // x */ 1";
+    "// /* x\n1";
+    "/* a */ /* b */ /* c */ 8";
+    "/* a\n b\n */ 1";
+    "1 // trailing";
+    "//";
+    "/* x */";
+    "print(1 + 2)\n";
+    "  12";
+    "x\n  y";
+    "1000";
+    "// only";
+    "/* a\n b */ 2";
+    "12";
+    "1\r\n2";
+    "1 \r 2";
+    "let value_9 = 1000 + 9 * 3 - 40 / 5 % 6   // row\n";
   ]
 
-let errors = [ "/*"; "/*/"; "/*/*/"; "/* /* */"; "1 + /* x"; "1\n/* x\n"; "let x = `1" ]
+let errors =
+  [ "/*"; "/*/"; "/*/*/"; "/* /* */"; "1 + /* x"; "1\n/* x\n"; "let x = `1" ]
 
 (* --- the fast rung, piece by piece -----------------------------------------------
    `lexer_v1_fast.ml` has two independent holes, and they can be built (and debugged) in
@@ -258,10 +379,17 @@ let errors = [ "/*"; "/*/"; "/*/*/"; "/* /* */"; "1 + /* x"; "1\n/* x\n"; "let x
    The full `v1_fast` suite below needs BOTH (it goes through `to_tokens`, which resolves
    every token's span), so it stays skipped until each piece stands on its own. *)
 
-let started f = match f () with _ -> true | exception Failure m -> not (is_todo m) | exception _ -> true
+let started f =
+  match f () with
+  | _ -> true
+  | exception Failure m -> not (is_todo m)
+  | exception _ -> true
+
 let fresh () = Diagnostics.create ()
+
 let position_of_offset_started () =
   started (fun () -> Lexer_v1_fast.position_of_offset [| 0 |] 0)
+
 let lex_started () = started (fun () -> Lexer_v1_fast.lex "1" (fresh ()))
 
 (* piece 1 — offset -> line:col. If this HANGS rather than fails, your binary search is
@@ -270,7 +398,8 @@ let test_position_of_offset () =
   let at src off =
     let p =
       Lexer_v1_fast.position_of_offset
-        (Lexer_v1_fast.line_start_offsets src) off
+        (Lexer_v1_fast.line_start_offsets src)
+        off
     in
     (p.Token.line, p.Token.col)
   in
@@ -317,9 +446,9 @@ let test_soup () =
   Alcotest.(check int) "newline is a token" 4 (lex "a\nb" (fresh ())).n;
   (* offsets are enough to recover the text — that is the point of the columnar soup *)
   let s = lex "print(42)" (fresh ()) in
-  Alcotest.(check string) "lexeme by offsets" "print"
+  Alcotest.(check string)
+    "lexeme by offsets" "print"
     (String.sub s.source s.starts.(0) (s.ends.(0) - s.starts.(0)))
-
 
 let diag_t =
   Alcotest.testable
@@ -358,7 +487,8 @@ let test_rungs_agree () =
 let suite (rung : string) (lex : rung) =
   let case name f = Alcotest.test_case name `Quick (f lex) in
   [
-    (rung ^ " literals/idents", [ case "ints and identifiers" test_literals_idents ]);
+    ( rung ^ " literals/idents",
+      [ case "ints and identifiers" test_literals_idents ] );
     (rung ^ " keywords", [ case "keyword table + munch" test_keywords ]);
     (rung ^ " operators", [ case "operators and punctuation" test_operators ]);
     (rung ^ " trivia", [ case "whitespace and comments" test_trivia ]);
@@ -383,13 +513,18 @@ let suite (rung : string) (lex : rung) =
    being worked on, so run everything and report properly. *)
 let v1_started = lex_started () && position_of_offset_started ()
 
-let skip what () = Printf.printf "    (%s not started — this check activates as soon as it is)\n%!" what
+let skip what () =
+  Printf.printf
+    "    (%s not started — this check activates as soon as it is)\n%!" what
 
 let piece name started what test =
   ( name,
     [
       (if started () then Alcotest.test_case "checked" `Quick test
-       else Alcotest.test_case ("skipped — " ^ what ^ " not written yet") `Quick (skip what));
+       else
+         Alcotest.test_case
+           ("skipped — " ^ what ^ " not written yet")
+           `Quick (skip what));
     ] )
 
 let () =
@@ -405,13 +540,16 @@ let () =
       suite "v1_fast" v1
       @ [
           ( "equivalence",
-            [ Alcotest.test_case "v1 == v0, kinds and spans" `Quick test_rungs_agree ] );
+            [
+              Alcotest.test_case "v1 == v0, kinds and spans" `Quick
+                test_rungs_agree;
+            ] );
         ]
     else
       [
         ( "v1_fast",
           [
-            Alcotest.test_case "skipped — lexer_v1_fast.ml is still a skeleton" `Quick (fun () ->
-                ());
+            Alcotest.test_case "skipped — lexer_v1_fast.ml is still a skeleton"
+              `Quick (fun () -> ());
           ] );
       ])

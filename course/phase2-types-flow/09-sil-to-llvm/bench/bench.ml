@@ -15,7 +15,8 @@ let status_string : Unix.process_status -> string = function
 
 let require_success what = function
   | Unix.WEXITED 0 -> ()
-  | status -> failwith (Printf.sprintf "%s failed (%s)" what (status_string status))
+  | status ->
+      failwith (Printf.sprintf "%s failed (%s)" what (status_string status))
 
 let run_quiet prog argv =
   let null = Unix.openfile "/dev/null" [ Unix.O_WRONLY ] 0 in
@@ -30,15 +31,15 @@ let compile_swiftc flag out =
 
 let write_file path contents =
   let oc = open_out_bin path in
-  Fun.protect ~finally:(fun () -> close_out oc) (fun () -> output_string oc contents)
+  Fun.protect
+    ~finally:(fun () -> close_out oc)
+    (fun () -> output_string oc contents)
 
 let compile_swiftml_o2 ll_path out =
   let src = Driver.read_file source in
   let llvm = Driver.to_llvm src (Diagnostics.create ()) in
   write_file ll_path llvm;
-  let argv =
-    [| "clang"; "-Wno-override-module"; "-O2"; ll_path; "-o"; out |]
-  in
+  let argv = [| "clang"; "-Wno-override-module"; "-O2"; ll_path; "-o"; out |] in
   require_success "clang -O2" (run_quiet "clang" argv)
 
 let capture exe =
@@ -105,7 +106,8 @@ let () =
         [ ll; ml0; ml2; sc0; sco; scu ];
       Unix.rmdir tmp)
     (fun () ->
-      Printf.printf "IRGen runtime benchmark -- Collatz for starts 1..<500000\n%!";
+      Printf.printf
+        "IRGen runtime benchmark -- Collatz for starts 1..<500000\n%!";
       Printf.printf "  compiling and checking five binaries...%!";
       Driver.compile_file ~out:ml0 ~src_path:source ~emit:Driver.Exe ();
       compile_swiftml_o2 ll ml2;
@@ -118,11 +120,17 @@ let () =
           let output = capture exe in
           if output <> reference then
             failwith
-              (Printf.sprintf "output mismatch: %s=%S swiftc=%S" name output reference))
-        [ ("swiftml", ml0); ("swiftml + clang -O2", ml2); ("swiftc -Onone", sc0);
-          ("swiftc -Ounchecked", scu) ];
+              (Printf.sprintf "output mismatch: %s=%S swiftc=%S" name output
+                 reference))
+        [
+          ("swiftml", ml0);
+          ("swiftml + clang -O2", ml2);
+          ("swiftc -Onone", sc0);
+          ("swiftc -Ounchecked", scu);
+        ];
       Printf.printf " done\n%!";
-      Printf.printf "  output: %s (all five binaries agree)\n%!" (String.trim reference);
+      Printf.printf "  output: %s (all five binaries agree)\n%!"
+        (String.trim reference);
       Printf.printf "  native runtime, best of %d after one warm-up:\n%!" runs;
       let ml0_time = time_and_report "swiftml (clang default)" ml0 in
       let ml2_time = time_and_report "swiftml + clang -O2" ml2 in
@@ -131,4 +139,5 @@ let () =
       let scu_time = time_and_report "swiftc -Ounchecked" scu in
       Printf.printf "  clang -O2 speedup: %.2fx\n" (ml0_time /. ml2_time);
       Printf.printf "  swiftc -O speedup: %.2fx\n" (sc0_time /. sco_time);
-      Printf.printf "  unchecked gap: %.2fx (swiftc / swiftml)\n" (scu_time /. ml2_time))
+      Printf.printf "  unchecked gap: %.2fx (swiftc / swiftml)\n"
+        (scu_time /. ml2_time))

@@ -7,13 +7,7 @@
 
    This file is a *contract* (fully written). The parser (parser.ml) builds it. *)
 
-type binop =
-  | Add
-  | Sub
-  | Mul
-  | Div
-  | Mod
-
+type binop = Add | Sub | Mul | Div | Mod
 type unop = Neg
 
 (* Every node carries its source span so Sema/diagnostics can point at it. *)
@@ -45,7 +39,12 @@ type program = { stmts : stmt list }
 
 (* Span accessor — handy for diagnostics. *)
 let expr_span = function
-  | Int_lit (_, span) | Var (_, span) | Unary (_, _, span) | Binary (_, _, _, span) | Call (_, _, span) -> span
+  | Int_lit (_, span)
+  | Var (_, span)
+  | Unary (_, _, span)
+  | Binary (_, _, _, span)
+  | Call (_, _, span) ->
+      span
 
 let string_of_binop = function
   | Add -> "+"
@@ -63,14 +62,19 @@ let rec dump_expr = function
   | Unary (operator, expression, _) ->
       Printf.sprintf "(%s %s)" (string_of_unop operator) (dump_expr expression)
   | Binary (operator, left, right, _) ->
-      Printf.sprintf "(%s %s %s)" (string_of_binop operator) (dump_expr left) (dump_expr right)
+      Printf.sprintf "(%s %s %s)" (string_of_binop operator) (dump_expr left)
+        (dump_expr right)
   | Call (function_name, arguments, _) ->
-      Printf.sprintf "(%s %s)" function_name (String.concat " " (List.map dump_expr arguments))
+      Printf.sprintf "(%s %s)" function_name
+        (String.concat " " (List.map dump_expr arguments))
 
 let dump_stmt = function
   | Let { name; is_var; value; _ } ->
-      Printf.sprintf "(%s %s %s)" (if is_var then "var" else "let") name (dump_expr value)
-  | Assign { name; value; _ } -> Printf.sprintf "(= %s %s)" name (dump_expr value)
+      Printf.sprintf "(%s %s %s)"
+        (if is_var then "var" else "let")
+        name (dump_expr value)
+  | Assign { name; value; _ } ->
+      Printf.sprintf "(= %s %s)" name (dump_expr value)
   | Expr_stmt (expression, _) -> dump_expr expression
 
 let dump_program (program : program) : string =

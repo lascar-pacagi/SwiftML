@@ -36,7 +36,9 @@ let instrs (src : string) : string list =
 
 let contains haystack needle =
   let n = String.length haystack and m = String.length needle in
-  let rec go i = i + m <= n && (String.sub haystack i m = needle || go (i + 1)) in
+  let rec go i =
+    i + m <= n && (String.sub haystack i m = needle || go (i + 1))
+  in
   m = 0 || go 0
 
 let n_with needle ls = List.length (List.filter (fun l -> contains l needle) ls)
@@ -53,8 +55,10 @@ let ex1a_started () =
 
 let test_ex1a_let_value () =
   (* the literal is substituted into the call — not stored and loaded back *)
-  Alcotest.(check (list string)) "the let's value reaches printf directly"
-    [ "%t1 = call i32 (ptr, ...) @printf(ptr @.fmt, i64 5)" ] (instrs "let x = 5\nprint(x)");
+  Alcotest.(check (list string))
+    "the let's value reaches printf directly"
+    [ "%t1 = call i32 (ptr, ...) @printf(ptr @.fmt, i64 5)" ]
+    (instrs "let x = 5\nprint(x)");
   (* substitution survives being used in arithmetic, and through another binding *)
   let no_memory src =
     let ls = instrs src in
@@ -67,14 +71,16 @@ let test_ex1a_let_value () =
   no_memory "let a = 5\nlet b = a\nprint(b)";
   no_memory "let a = 1\nlet b = a + a\nlet c = b + b\nprint(c)";
   (* the operand really is the VALUE: printing a let bound to another let still passes 5 *)
-  Alcotest.(check bool) "a let bound to a let passes the same operand" true
+  Alcotest.(check bool)
+    "a let bound to a let passes the same operand" true
     (List.exists
        (fun l -> contains l "@printf(ptr @.fmt, i64 5)")
        (instrs "let a = 5\nlet b = a\nprint(b)"));
   (* a computed initializer is evaluated ONCE and its register reused — substitution must
      not duplicate work. Use a value no constant folder can reduce (see exercise 2). *)
   let ls = instrs "var v = 1\nv = v + 1\nlet y = v * 3\nprint(y + y)" in
-  Alcotest.(check int) "one multiply, for the let's initializer" 1 (n_with "= mul i64" ls);
+  Alcotest.(check int)
+    "one multiply, for the let's initializer" 1 (n_with "= mul i64" ls);
   let same_operands (l : string) : bool =
     match String.split_on_char ',' l with
     | [ lhs; rhs ] -> (
@@ -83,10 +89,12 @@ let test_ex1a_let_value () =
         | [] -> false)
     | _ -> false
   in
-  Alcotest.(check bool) "both uses of y are the same register" true
+  Alcotest.(check bool)
+    "both uses of y are the same register" true
     (List.exists (fun l -> contains l "= add i64 %" && same_operands l) ls);
   (* and the program still says what it said before *)
-  Alcotest.(check bool) "the assigned var keeps its slot" true
+  Alcotest.(check bool)
+    "the assigned var keeps its slot" true
     (n_with "alloca" ls = 1)
 
 (* --- Exercise 1b: a `var` gets a slot only if something assigns to it ---------------
@@ -97,9 +105,11 @@ let ex1b_started () =
   | ls -> n_with "alloca" ls = 0
 
 let test_ex1b_unassigned_var () =
-  Alcotest.(check int) "an unassigned var needs no slot" 0
+  Alcotest.(check int)
+    "an unassigned var needs no slot" 0
     (n_with "alloca" (instrs "var w = 9\nprint(w)"));
-  Alcotest.(check int) "...but an assigned one still does" 1
+  Alcotest.(check int)
+    "...but an assigned one still does" 1
     (n_with "alloca" (instrs "var w = 9\nw = 10\nprint(w)"));
   (* THE trap. A var assigned LATER must not keep handing out its old value. There is
      more than one right way to avoid it — scan for assignment targets before lowering,
@@ -112,28 +122,34 @@ let test_ex1b_unassigned_var () =
   let printf_args (src : string) : string list =
     instrs src
     |> List.filter_map (fun l ->
-           if contains l "@printf(ptr @.fmt, i64 " then
-             match String.rindex_opt l ' ' with
-             | Some i ->
-                 let a = String.sub l (i + 1) (String.length l - i - 1) in
-                 Some (String.concat "" (String.split_on_char ')' a))
-             | None -> None
-           else None)
+        if contains l "@printf(ptr @.fmt, i64 " then
+          match String.rindex_opt l ' ' with
+          | Some i ->
+              let a = String.sub l (i + 1) (String.length l - i - 1) in
+              Some (String.concat "" (String.split_on_char ')' a))
+          | None -> None
+        else None)
   in
   let args = printf_args "var v = 1\nprint(v)\nv = 2\nprint(v)" in
   Alcotest.(check int) "two prints" 2 (List.length args);
-  Alcotest.(check bool) "the two prints do NOT share an operand" true
+  Alcotest.(check bool)
+    "the two prints do NOT share an operand" true
     (List.nth args 0 <> List.nth args 1);
   (* and after an assignment, the initializer's value is gone for good *)
-  Alcotest.(check bool) "a read after the assignment is not the old immediate" true
-    (match printf_args "var v = 1\nv = 2\nprint(v)" with [ a ] -> a <> "1" | _ -> false);
-  Alcotest.(check bool) "...nor after two of them" true
+  Alcotest.(check bool)
+    "a read after the assignment is not the old immediate" true
+    (match printf_args "var v = 1\nv = 2\nprint(v)" with
+    | [ a ] -> a <> "1"
+    | _ -> false);
+  Alcotest.(check bool)
+    "...nor after two of them" true
     (match printf_args "var v = 1\nv = 2\nv = 3\nprint(v)" with
     | [ a ] -> a <> "1" && a <> "2"
     | _ -> false);
   (* mixed program: the let and the untouched var are promoted, the assigned var is not *)
   let ls = instrs "let k = 7\nvar u = 2\nvar v = 1\nv = v + k + u\nprint(v)" in
-  Alcotest.(check int) "one slot, for the one assigned name" 1 (n_with "alloca" ls)
+  Alcotest.(check int)
+    "one slot, for the one assigned name" 1 (n_with "alloca" ls)
 
 (* --- Exercise 2: fold constant arithmetic ------------------------------------------
    Checked through whole programs, not through `emit_expr`, because folding can live in
@@ -149,7 +165,10 @@ let test_ex2_folding () =
   let folds src expected =
     Alcotest.(check (list string))
       (Printf.sprintf "%S folds to %s" src expected)
-      [ Printf.sprintf "%%t1 = call i32 (ptr, ...) @printf(ptr @.fmt, i64 %s)" expected ]
+      [
+        Printf.sprintf "%%t1 = call i32 (ptr, ...) @printf(ptr @.fmt, i64 %s)"
+          expected;
+      ]
       (instrs (Printf.sprintf "print(%s)" src))
   in
   folds "2 * 3" "6";
@@ -166,32 +185,44 @@ let test_ex2_folding () =
   folds "-7 % 2" "-1";
   (* division and remainder by zero must NOT be folded: the program has to trap where
      Swift traps, and folding it would raise Division_by_zero inside the compiler *)
-  Alcotest.(check int) "1 / 0 still emits an sdiv" 1 (n_with "= sdiv i64" (instrs "print(1 / 0)"));
-  Alcotest.(check int) "1 %% 0 still emits an srem" 1 (n_with "= srem i64" (instrs "print(1 % 0)"));
+  Alcotest.(check int)
+    "1 / 0 still emits an sdiv" 1
+    (n_with "= sdiv i64" (instrs "print(1 / 0)"));
+  Alcotest.(check int)
+    "1 %% 0 still emits an srem" 1
+    (n_with "= srem i64" (instrs "print(1 % 0)"));
   (* a value that is not known at compile time blocks the fold *)
-  Alcotest.(check int) "a loaded value is not folded" 1
+  Alcotest.(check int)
+    "a loaded value is not folded" 1
     (n_with "= mul i64" (instrs "var v = 1\nv = v + 1\nprint(v * 2)"));
   (* folding must not disturb what the program stores *)
-  Alcotest.(check bool) "a folded initializer is stored as an immediate" true
+  Alcotest.(check bool)
+    "a folded initializer is stored as an immediate" true
     (List.exists
        (fun l -> contains l "store i64 42")
        (instrs "var x = 6 * 7\nx = x + 1\nprint(x)"))
 
 let skip what () =
-  Printf.printf "    (%s not started — this group activates as soon as it is)\n%!" what
+  Printf.printf
+    "    (%s not started — this group activates as soon as it is)\n%!" what
 
 let group name started what test =
   ( name,
     [
       (if started () then Alcotest.test_case "checked" `Quick test
-       else Alcotest.test_case ("skipped — " ^ what ^ " not started") `Quick (skip what));
+       else
+         Alcotest.test_case
+           ("skipped — " ^ what ^ " not started")
+           `Quick (skip what));
     ] )
 
 let () =
   Alcotest.run "irgen exercises"
     [
-      group "ex1a let values" ex1a_started "the let half of slot-skipping" test_ex1a_let_value;
+      group "ex1a let values" ex1a_started "the let half of slot-skipping"
+        test_ex1a_let_value;
       group "ex1b unassigned vars" ex1b_started "the var half of slot-skipping"
         test_ex1b_unassigned_var;
-      group "ex2 constant folding" ex2_started "constant folding" test_ex2_folding;
+      group "ex2 constant folding" ex2_started "constant folding"
+        test_ex2_folding;
     ]

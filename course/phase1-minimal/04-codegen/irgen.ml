@@ -18,13 +18,16 @@
 type context = {
   buffer : Buffer.t; (* the instructions of `main`, in order *)
   mutable next_register : int; (* how many %tN names have been handed out *)
-  slots : (string, string) Hashtbl.t; (* source name -> the alloca register holding it *)
+  slots : (string, string) Hashtbl.t;
+      (* source name -> the alloca register holding it *)
 }
 
-let create () : context = { buffer = Buffer.create 256; next_register = 0; slots = Hashtbl.create 16 }
+let create () : context =
+  { buffer = Buffer.create 256; next_register = 0; slots = Hashtbl.create 16 }
 
 (* append one instruction, indented like the body of a function *)
-let emit (context : context) (line : string) : unit = Buffer.add_string context.buffer ("  " ^ line ^ "\n")
+let emit (context : context) (line : string) : unit =
+  Buffer.add_string context.buffer ("  " ^ line ^ "\n")
 
 (* a register name nobody has used yet: %t1, %t2, … ("%%" is a literal '%') *)
 let fresh (context : context) : string =
@@ -36,7 +39,8 @@ let fresh (context : context) : string =
    its existing slot instead of allocating a second one.   Tests: `slots`. *)
 let slot_of (context : context) (name : string) : string =
   ignore (context, name);
-  failwith "TODO(04b): the name -> slot map (alloca on first use, remembered after)"
+  failwith
+    "TODO(04b): the name -> slot map (alloca on first use, remembered after)"
 
 (* Lower an expression: emit its instructions, RETURN the operand holding its result —
    an immediate like "42", or a register like "%t3". That returned string is the whole

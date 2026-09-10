@@ -7,8 +7,9 @@
 
 let read_file (path : string) : string =
   let ic = open_in_bin path in
-  Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
-      really_input_string ic (in_channel_length ic))
+  Fun.protect
+    ~finally:(fun () -> close_in ic)
+    (fun () -> really_input_string ic (in_channel_length ic))
 
 let bail (diags : Diagnostics.sink) : unit =
   if Diagnostics.has_errors diags then (
@@ -17,7 +18,8 @@ let bail (diags : Diagnostics.sink) : unit =
 
 let () =
   match Array.to_list Sys.argv with
-  | [ _; mode; file ] when mode = "--emit-expr" || mode = "--emit-stmt" || mode = "--emit-ast" ->
+  | [ _; mode; file ]
+    when mode = "--emit-expr" || mode = "--emit-stmt" || mode = "--emit-ast" ->
       let diags = Diagnostics.create () in
       let toks = Lexer.tokenize (Lexer.create (read_file file) diags) in
       bail diags;

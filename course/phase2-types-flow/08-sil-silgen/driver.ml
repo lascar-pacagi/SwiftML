@@ -10,7 +10,9 @@ type emit =
 
 let read_file (path : string) : string =
   let input_channel = open_in_bin path in
-  Fun.protect ~finally:(fun () -> close_in input_channel) (fun () ->
+  Fun.protect
+    ~finally:(fun () -> close_in input_channel)
+    (fun () ->
       really_input_string input_channel (in_channel_length input_channel))
 
 let frontend (source : string) (diagnostics : Diagnostics.sink) : Ast.program =
@@ -32,12 +34,15 @@ let compile_file ~(src_path : string) ~(emit : emit) : unit =
       let tokens = Lexer.tokenize (Lexer.create source diagnostics) in
       bail_on_errors diagnostics;
       List.iter
-        (fun (token : Token.t) -> print_endline (Token.string_of_kind token.Token.kind))
+        (fun (token : Token.t) ->
+          print_endline (Token.string_of_kind token.Token.kind))
         tokens
   | Ast ->
       let program =
         Parser.parse_program
-          (Parser.create (Lexer.tokenize (Lexer.create source diagnostics)) diagnostics)
+          (Parser.create
+             (Lexer.tokenize (Lexer.create source diagnostics))
+             diagnostics)
       in
       bail_on_errors diagnostics;
       print_endline (Ast.dump_program program)
@@ -52,7 +57,8 @@ let compile_file ~(src_path : string) ~(emit : emit) : unit =
       | [] -> ()
       | errors ->
           List.iter
-            (fun message -> prerr_endline ("SIL verification error: " ^ message))
+            (fun message ->
+              prerr_endline ("SIL verification error: " ^ message))
             errors;
           exit 1);
       print_endline (Sil.string_of_module sil_module)

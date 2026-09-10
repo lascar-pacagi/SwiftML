@@ -6,8 +6,9 @@
 
 let read_file (path : string) : string =
   let ic = open_in_bin path in
-  Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
-      really_input_string ic (in_channel_length ic))
+  Fun.protect
+    ~finally:(fun () -> close_in ic)
+    (fun () -> really_input_string ic (in_channel_length ic))
 
 let bail (diags : Diagnostics.sink) : unit =
   if Diagnostics.has_errors diags then (

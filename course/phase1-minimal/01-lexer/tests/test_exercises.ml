@@ -21,12 +21,17 @@ let lex_with (src : string) : Token.t list * Diagnostics.t list =
   (toks, Diagnostics.all d)
 
 let lex (src : string) : Token.t list = fst (lex_with src)
-let kinds (src : string) : Token.kind list = List.map (fun (t : Token.t) -> t.Token.kind) (lex src)
+
+let kinds (src : string) : Token.kind list =
+  List.map (fun (t : Token.t) -> t.Token.kind) (lex src)
 
 let kind_t =
-  Alcotest.testable (fun ppf k -> Format.pp_print_string ppf (Token.string_of_kind k)) ( = )
+  Alcotest.testable
+    (fun ppf k -> Format.pp_print_string ppf (Token.string_of_kind k))
+    ( = )
 
-let check_kinds name expected src = Alcotest.check (Alcotest.list kind_t) name expected (kinds src)
+let check_kinds name expected src =
+  Alcotest.check (Alcotest.list kind_t) name expected (kinds src)
 
 (* --- Exercise 1: `_` as a digit separator ---------------------------------------
    `swiftc` accepts an underscore anywhere AFTER the first digit, in any number:
@@ -35,16 +40,22 @@ let check_kinds name expected src = Alcotest.check (Alcotest.list kind_t) name e
    which is why swiftc answers "cannot find '_1000' in scope". *)
 let test_digit_separators () =
   check_kinds "the classic" [ Token.Int 1000000; Token.Eof ] "1_000_000";
-  check_kinds "separators anywhere after the first digit" [ Token.Int 100; Token.Eof ] "1_0_0";
+  check_kinds "separators anywhere after the first digit"
+    [ Token.Int 100; Token.Eof ]
+    "1_0_0";
   check_kinds "doubled separator" [ Token.Int 10; Token.Eof ] "1__0";
-  check_kinds "trailing separator (swiftc accepts it)" [ Token.Int 1; Token.Eof ] "1_";
+  check_kinds "trailing separator (swiftc accepts it)"
+    [ Token.Int 1; Token.Eof ] "1_";
   check_kinds "leading underscore is an IDENTIFIER, not a number"
-    [ Token.Ident "_1000"; Token.Eof ] "_1000";
+    [ Token.Ident "_1000"; Token.Eof ]
+    "_1000";
   check_kinds "separators do not glue two literals together"
-    [ Token.Int 1000; Token.Plus; Token.Int 2000; Token.Eof ] "1_000 + 2_000";
+    [ Token.Int 1000; Token.Plus; Token.Int 2000; Token.Eof ]
+    "1_000 + 2_000";
   (* the span still covers the written lexeme, underscores included *)
   let t = List.hd (lex "1_000") in
-  Alcotest.(check int) "span covers the whole literal" 6 t.Token.span.Token.hi.Token.col
+  Alcotest.(check int)
+    "span covers the whole literal" 6 t.Token.span.Token.hi.Token.col
 
 (* --- Exercise 2: point at the comment that ran away -----------------------------
    The base lexer already reports `unterminated '/*' comment` — at end of input, which is
@@ -71,25 +82,39 @@ let test_digit_separators () =
       One open level reads `insert '*/' to close this comment`. That means carrying the
       depth out of the loop alongside the opener. *)
 let notes_of (ds : Diagnostics.t list) =
-  List.filter (fun (d : Diagnostics.t) -> d.Diagnostics.severity = Diagnostics.Note) ds
+  List.filter
+    (fun (d : Diagnostics.t) -> d.Diagnostics.severity = Diagnostics.Note)
+    ds
 
-let note_saying pred ds = List.find_opt (fun (d : Diagnostics.t) -> pred d.Diagnostics.message) (notes_of ds)
-let starts_with pre s = String.length s >= String.length pre && String.sub s 0 (String.length pre) = pre
+let note_saying pred ds =
+  List.find_opt
+    (fun (d : Diagnostics.t) -> pred d.Diagnostics.message)
+    (notes_of ds)
+
+let starts_with pre s =
+  String.length s >= String.length pre
+  && String.sub s 0 (String.length pre) = pre
 
 let expect_note ~name ~line ~col src =
   let _, ds = lex_with src in
   match note_saying (( = ) "comment started here") ds with
-  | None -> Alcotest.failf "%s: no note — the error alone does not say where the comment opened" name
+  | None ->
+      Alcotest.failf
+        "%s: no note — the error alone does not say where the comment opened"
+        name
   | Some n ->
-      Alcotest.(check int) (name ^ ": line") line n.Diagnostics.span.Token.lo.Token.line;
-      Alcotest.(check int) (name ^ ": column") col n.Diagnostics.span.Token.lo.Token.col
+      Alcotest.(check int)
+        (name ^ ": line") line n.Diagnostics.span.Token.lo.Token.line;
+      Alcotest.(check int)
+        (name ^ ": column") col n.Diagnostics.span.Token.lo.Token.col
 
 (* our stand-in for swiftc's fix-it: the exact text to insert, at the insertion point *)
 let expect_repair ~name ~msg src =
   let _, ds = lex_with src in
   match note_saying (starts_with "insert") ds with
   | None -> Alcotest.failf "%s: no note saying what to insert" name
-  | Some n -> Alcotest.(check string) (name ^ ": repair") msg n.Diagnostics.message
+  | Some n ->
+      Alcotest.(check string) (name ^ ": repair") msg n.Diagnostics.message
 
 let test_unterminated_points_at_the_opener () =
   expect_note ~name:"opener on its own line" ~line:3 ~col:1
@@ -98,16 +123,22 @@ let test_unterminated_points_at_the_opener () =
   expect_note ~name:"nested: the OUTERMOST opener" ~line:1 ~col:1
     "/* outer /* inner */ still open";
   (* the repair note: one '*/' per level still open, at end of input *)
-  expect_repair ~name:"one level" ~msg:"insert '*/' to close this comment" "let x = /* oops";
-  expect_repair ~name:"two levels" ~msg:"insert '*/*/' to close these 2 nested comments"
+  expect_repair ~name:"one level" ~msg:"insert '*/' to close this comment"
+    "let x = /* oops";
+  expect_repair ~name:"two levels"
+    ~msg:"insert '*/*/' to close these 2 nested comments"
     "/* outer /* inner still open";
   expect_repair ~name:"three levels"
     ~msg:"insert '*/*/*/' to close these 3 nested comments" "/* a /* b /* c";
   (* the error itself must survive alongside the note, and lexing must still recover *)
   let tokens, ds = lex_with "let x = /* oops" in
-  Alcotest.(check int) "still exactly one error" 1
+  Alcotest.(check int)
+    "still exactly one error" 1
     (List.length
-       (List.filter (fun (d : Diagnostics.t) -> d.Diagnostics.severity = Diagnostics.Error) ds));
+       (List.filter
+          (fun (d : Diagnostics.t) ->
+            d.Diagnostics.severity = Diagnostics.Error)
+          ds));
   match List.rev tokens with
   | { Token.kind = Token.Eof; _ } :: _ -> ()
   | _ -> Alcotest.fail "lexing must still recover and end in Eof"
@@ -123,9 +154,19 @@ let test_unterminated_points_at_the_opener () =
    but outside this concept, so nothing here depends on it. *)
 let expected_dump =
   [
-    "let @ 1:1-1:4"; "ident(x) @ 1:5-1:6"; "= @ 1:7-1:8"; "int(1) @ 1:9-1:10";
-    "newline @ 1:10-2:1"; "ident(print) @ 2:1-2:6"; "( @ 2:6-2:7"; "ident(x) @ 2:7-2:8";
-    "+ @ 2:9-2:10"; "int(20) @ 2:11-2:13"; ") @ 2:13-2:14"; "newline @ 2:14-3:1"; "eof @ 3:1-3:1";
+    "let @ 1:1-1:4";
+    "ident(x) @ 1:5-1:6";
+    "= @ 1:7-1:8";
+    "int(1) @ 1:9-1:10";
+    "newline @ 1:10-2:1";
+    "ident(print) @ 2:1-2:6";
+    "( @ 2:6-2:7";
+    "ident(x) @ 2:7-2:8";
+    "+ @ 2:9-2:10";
+    "int(20) @ 2:11-2:13";
+    ") @ 2:13-2:14";
+    "newline @ 2:14-3:1";
+    "eof @ 3:1-3:1";
   ]
 
 let test_string_of_token () =
@@ -133,7 +174,8 @@ let test_string_of_token () =
     "kind @ line:col-line:col" expected_dump
     (List.map Token.string_of_token (lex "let x = 1\nprint(x + 20)\n"));
   (* a span can cross a line break: the newline token ends at column 1 of the next line *)
-  Alcotest.(check string) "newline span crosses the line break" "newline @ 1:2-2:1"
+  Alcotest.(check string)
+    "newline span crosses the line break" "newline @ 1:2-2:1"
     (Token.string_of_token (List.nth (lex "a\nb") 1))
 
 (* --- "have you started this one?" probes -----------------------------------------
@@ -168,7 +210,8 @@ let ex3_started () =
   | exception _ -> false
 
 let skipped what () =
-  Printf.printf "    (%s not started — this group activates as soon as it is)\n%!" what
+  Printf.printf
+    "    (%s not started — this group activates as soon as it is)\n%!" what
 
 let group name started what test =
   ( name,
@@ -183,5 +226,6 @@ let () =
       group "ex1 digit separators" ex1_started "1_000_000" test_digit_separators;
       group "ex2 unterminated comment" ex2_started "the opener position"
         test_unterminated_points_at_the_opener;
-      group "ex3 token spans" ex3_started "Token.string_of_token" test_string_of_token;
+      group "ex3 token spans" ex3_started "Token.string_of_token"
+        test_string_of_token;
     ]

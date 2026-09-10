@@ -8,12 +8,13 @@ let llvm_module ?(should_emit_terminator = fun _ -> true) sil_module =
 
 let llvm ?(should_emit_terminator = fun _ -> true) (src : string) : string =
   let d = Diagnostics.create () in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
+  let p =
+    Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d)
+  in
   Sema.check p d;
   llvm_module ~should_emit_terminator (Silgen.lower p)
 
 let instruction_llvm = llvm ~should_emit_terminator:(fun _ -> false)
-
 let terminator_llvm should_emit_terminator = llvm ~should_emit_terminator
 
 let contains hay needle =
@@ -24,12 +25,14 @@ let contains hay needle =
 let instruction_has src needle =
   Alcotest.(check bool)
     (Printf.sprintf "%S has %S" src needle)
-    true (contains (instruction_llvm src) needle)
+    true
+    (contains (instruction_llvm src) needle)
 
 let instruction_hasnt src needle =
   Alcotest.(check bool)
     (Printf.sprintf "%S lacks %S" src needle)
-    false (contains (instruction_llvm src) needle)
+    false
+    (contains (instruction_llvm src) needle)
 
 let instruction_count src needle =
   String.split_on_char '\n' (instruction_llvm src)
@@ -42,7 +45,10 @@ let main_body_lines module_lines =
     | [] -> []
     | l :: rest -> if contains l "@main(" then rest else after rest
   in
-  let rec upto = function [] -> [] | l :: rest -> if l = "}" then [] else l :: upto rest in
+  let rec upto = function
+    | [] -> []
+    | l :: rest -> if l = "}" then [] else l :: upto rest
+  in
   upto (after module_lines)
 
 (* ---- given: the module preamble and the alloca-hoisting rule ---- *)
@@ -61,8 +67,11 @@ let test_allocas_in_entry () =
     {
       Sil.bid = 1;
       instrs =
-        [ (2, Sil.Alloc_stack "third"); (1, Sil.Alloc_stack "second");
-          (0, Sil.Alloc_stack "first") ];
+        [
+          (2, Sil.Alloc_stack "third");
+          (1, Sil.Alloc_stack "second");
+          (0, Sil.Alloc_stack "first");
+        ];
       term = Sil.Return None;
     }
   in
@@ -76,7 +85,9 @@ let test_allocas_in_entry () =
     }
   in
   let emitted =
-    llvm_module ~should_emit_terminator:(fun _ -> false) { Sil.funcs = [ func ] }
+    llvm_module
+      ~should_emit_terminator:(fun _ -> false)
+      { Sil.funcs = [ func ] }
   in
   let body = String.split_on_char '\n' emitted |> main_body_lines in
   let rec before_bb1 = function
@@ -84,11 +95,14 @@ let test_allocas_in_entry () =
     | l :: rest -> if l = "bb1:" then [] else l :: before_bb1 rest
   in
   let entry = before_bb1 body in
-  Alcotest.(check int) "three allocas, all in bb0" 3
+  Alcotest.(check int)
+    "three allocas, all in bb0" 3
     (List.length (List.filter (fun l -> contains l "alloca") entry));
-  Alcotest.(check int) "and none anywhere else" 3
+  Alcotest.(check int)
+    "and none anywhere else" 3
     (List.length
-       (List.filter (fun line -> contains line "alloca")
+       (List.filter
+          (fun line -> contains line "alloca")
           (String.split_on_char '\n' emitted)))
 
 (* ---- TODO(09) gen_instr ---- *)
@@ -143,7 +157,7 @@ let test_calls () =
   let src =
     "func add(_ a: Int, _ b: Int) -> Int { return a + b }\n\
      func choose(_ flag: Bool, _ n: Int) -> Int {\n\
-       if flag { return n } else { return 0 }\n\
+     if flag { return n } else { return 0 }\n\
      }\n\
      func sink(_ n: Int) {}\n\
      add(1, 2)\n\
@@ -157,7 +171,8 @@ let test_calls () =
   instruction_has src "call void @sink(i64 ";
   instruction_hasnt src "= call void";
   (* a function_ref is an operand too — it emits no line of its own *)
-  Alcotest.(check int) "one call line per apply" 3
+  Alcotest.(check int)
+    "one call line per apply" 3
     (instruction_count src "call ")
 
 let test_print () =
@@ -171,18 +186,27 @@ let test_print () =
 let test_br () =
   (* the loop's entry edge and its back-edge are both plain branches to the header *)
   let src = "var n = 0\nwhile n < 3 { n = n + 1 }\nprint(n)" in
-  let emitted = terminator_llvm (function Sil.Br _ -> true | _ -> false) src in
-  Alcotest.(check bool) "has br label %bb1" true (contains emitted "br label %bb1");
-  Alcotest.(check int) "two edges into the header" 2
+  let emitted =
+    terminator_llvm (function Sil.Br _ -> true | _ -> false) src
+  in
+  Alcotest.(check bool)
+    "has br label %bb1" true
+    (contains emitted "br label %bb1");
+  Alcotest.(check int)
+    "two edges into the header" 2
     (String.split_on_char '\n' emitted
     |> List.filter (fun line -> contains line "br label %bb1")
     |> List.length)
 
 let test_cond_br () =
   let src = "let x = 1\nif x < 0 { print(0) } else { print(1) }" in
-  let emitted = terminator_llvm (function Sil.Cond_br _ -> true | _ -> false) src in
+  let emitted =
+    terminator_llvm (function Sil.Cond_br _ -> true | _ -> false) src
+  in
   Alcotest.(check bool) "has br i1" true (contains emitted "br i1 ");
-  Alcotest.(check bool) "has typed block labels" true (contains emitted ", label %bb")
+  Alcotest.(check bool)
+    "has typed block labels" true
+    (contains emitted ", label %bb")
 
 let test_ret_typed () =
   let emit_returns =
@@ -196,7 +220,8 @@ let test_ret_typed () =
 
 let test_ret_void () =
   let emitted =
-    terminator_llvm (function Sil.Return None -> true | _ -> false)
+    terminator_llvm
+      (function Sil.Return None -> true | _ -> false)
       "func shout(_ n: Int) { print(n) }\nshout(1)"
   in
   Alcotest.(check bool) "has ret void" true (contains emitted "ret void")
@@ -207,7 +232,9 @@ let test_main_returns_i32 () =
     terminator_llvm (function Sil.Return None -> true | _ -> false) "print(1)"
   in
   Alcotest.(check bool) "main has ret i32 0" true (contains emitted "ret i32 0");
-  Alcotest.(check bool) "main is not void" false (contains emitted "define void @main")
+  Alcotest.(check bool)
+    "main is not void" false
+    (contains emitted "define void @main")
 
 let test_unreachable () =
   let src =
@@ -225,16 +252,21 @@ let () =
       ( "given: preamble + alloca rule",
         [
           Alcotest.test_case "printf, formats, @main" `Quick test_preamble;
-          Alcotest.test_case "allocas only in the entry" `Quick test_allocas_in_entry;
+          Alcotest.test_case "allocas only in the entry" `Quick
+            test_allocas_in_entry;
         ] );
       ( "hole: gen_instr",
         [
           Alcotest.test_case "alloca / load / store" `Quick test_memory;
-          Alcotest.test_case "Double memory stays typed" `Quick test_double_memory;
-          Alcotest.test_case "literals are operands" `Quick test_literals_are_operands;
+          Alcotest.test_case "Double memory stays typed" `Quick
+            test_double_memory;
+          Alcotest.test_case "literals are operands" `Quick
+            test_literals_are_operands;
           Alcotest.test_case "Int arithmetic mnemonics" `Quick test_int_opcodes;
-          Alcotest.test_case "signed icmp predicates" `Quick test_compare_opcodes;
-          Alcotest.test_case "Double picks the f-family" `Quick test_double_opcodes;
+          Alcotest.test_case "signed icmp predicates" `Quick
+            test_compare_opcodes;
+          Alcotest.test_case "Double picks the f-family" `Quick
+            test_double_opcodes;
           Alcotest.test_case "func_ref + apply = call" `Quick test_calls;
           Alcotest.test_case "print dispatches by type" `Quick test_print;
         ] );

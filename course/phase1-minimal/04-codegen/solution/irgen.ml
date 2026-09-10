@@ -15,13 +15,16 @@
 type context = {
   buffer : Buffer.t; (* the instructions of `main`, in order *)
   mutable next_register : int; (* how many %tN names have been handed out *)
-  slots : (string, string) Hashtbl.t; (* source name -> the alloca register holding it *)
+  slots : (string, string) Hashtbl.t;
+      (* source name -> the alloca register holding it *)
 }
 
-let create () : context = { buffer = Buffer.create 256; next_register = 0; slots = Hashtbl.create 16 }
+let create () : context =
+  { buffer = Buffer.create 256; next_register = 0; slots = Hashtbl.create 16 }
 
 (* append one instruction, indented like the body of a function *)
-let emit (context : context) (line : string) : unit = Buffer.add_string context.buffer ("  " ^ line ^ "\n")
+let emit (context : context) (line : string) : unit =
+  Buffer.add_string context.buffer ("  " ^ line ^ "\n")
 
 (* a register name nobody has used yet: %t1, %t2, … ("%%" is a literal '%') *)
 let fresh (context : context) : string =
@@ -48,12 +51,14 @@ let rec emit_expr (context : context) (expression : Ast.expr) : string =
   | Ast.Var (name, _) ->
       let result_register = fresh context in
       emit context
-        (Printf.sprintf "%s = load i64, ptr %s" result_register (slot_of context name));
+        (Printf.sprintf "%s = load i64, ptr %s" result_register
+           (slot_of context name));
       result_register
   | Ast.Unary (Ast.Neg, operand, _) ->
       let operand_value = emit_expr context operand in
       let result_register = fresh context in
-      emit context (Printf.sprintf "%s = sub i64 0, %s" result_register operand_value);
+      emit context
+        (Printf.sprintf "%s = sub i64 0, %s" result_register operand_value);
       result_register
   | Ast.Binary (operator, left, right, _) ->
       let left_operand = emit_expr context left in
@@ -69,7 +74,8 @@ let rec emit_expr (context : context) (expression : Ast.expr) : string =
         | Ast.Mod -> "srem"
       in
       emit context
-        (Printf.sprintf "%s = %s i64 %s, %s" result_register opcode left_operand right_operand);
+        (Printf.sprintf "%s = %s i64 %s, %s" result_register opcode left_operand
+           right_operand);
       result_register
   | Ast.Call (callee, arguments, _) ->
       if callee = "print" then (

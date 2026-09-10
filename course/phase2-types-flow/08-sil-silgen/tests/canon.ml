@@ -22,7 +22,10 @@ let canon_func (f : Sil.func) : Sil.func =
          (fun (b : Sil.block) -> (b.Sil.bid, List.rev b.Sil.instrs, b.Sil.term))
          (List.rev f.Sil.blocks))
   in
-  let term_of bid = let _, _, t = List.find (fun (i, _, _) -> i = bid) !blocks in t in
+  let term_of bid =
+    let _, _, t = List.find (fun (i, _, _) -> i = bid) !blocks in
+    t
+  in
   let exists bid = List.exists (fun (i, _, _) -> i = bid) !blocks in
   let succs = function
     | Sil.Br t -> [ t ]
@@ -30,7 +33,8 @@ let canon_func (f : Sil.func) : Sil.func =
     | _ -> []
   in
   let preds bid =
-    List.filter (fun (i, _, t) -> i <> bid && List.mem bid (succs t)) !blocks |> List.map (fun (i, _, _) -> i)
+    List.filter (fun (i, _, t) -> i <> bid && List.mem bid (succs t)) !blocks
+    |> List.map (fun (i, _, _) -> i)
   in
 
   (* MERGE: a block reached only by a plain `br`, from one place, belongs to that place. This is
@@ -44,14 +48,17 @@ let canon_func (f : Sil.func) : Sil.func =
       List.find_opt
         (fun (bid, _, t) ->
           match t with
-          | Sil.Br tgt -> tgt <> bid && tgt <> 0 && exists tgt && preds tgt = [ bid ]
+          | Sil.Br tgt ->
+              tgt <> bid && tgt <> 0 && exists tgt && preds tgt = [ bid ]
           | _ -> false)
         !blocks
     with
     | None -> ()
     | Some (bid, instrs, t) ->
         let tgt = match t with Sil.Br x -> x | _ -> assert false in
-        let _, tgt_instrs, tgt_term = List.find (fun (i, _, _) -> i = tgt) !blocks in
+        let _, tgt_instrs, tgt_term =
+          List.find (fun (i, _, _) -> i = tgt) !blocks
+        in
         blocks :=
           List.filter_map
             (fun (i, ins, tm) ->
@@ -70,19 +77,27 @@ let canon_func (f : Sil.func) : Sil.func =
     List.fold_left
       (fun (a, r) (bid, instrs, term) ->
         let mine, others =
-          List.partition (fun (_, i) -> match i with Sil.Alloc_stack _ -> true | _ -> false) instrs
+          List.partition
+            (fun (_, i) ->
+              match i with Sil.Alloc_stack _ -> true | _ -> false)
+            instrs
         in
         (a @ mine, r @ [ (bid, others, term) ]))
       ([], []) !blocks
   in
   blocks :=
-    List.map (fun (bid, instrs, term) -> if bid = 0 then (bid, allocs @ instrs, term) else (bid, instrs, term)) rest;
+    List.map
+      (fun (bid, instrs, term) ->
+        if bid = 0 then (bid, allocs @ instrs, term) else (bid, instrs, term))
+      rest;
 
   (* HOIST the constants too, to the top of the block that defines them. A literal has no
      operands and no effects, so emitting it early or late is not observable — but it moves
      every number after it. Same reason as the slots. *)
   let is_const = function
-    | Sil.Int_lit _ | Sil.Float_lit _ | Sil.Bool_lit _ | Sil.String_lit _ | Sil.Func_ref _ -> true
+    | Sil.Int_lit _ | Sil.Float_lit _ | Sil.Bool_lit _ | Sil.String_lit _
+    | Sil.Func_ref _ ->
+        true
     | _ -> false
   in
   blocks :=
@@ -108,7 +123,11 @@ let canon_func (f : Sil.func) : Sil.func =
 
   let vmap = Hashtbl.create 16 in
   let next = ref 0 in
-  let define v = if not (Hashtbl.mem vmap v) then (Hashtbl.replace vmap v !next; incr next) in
+  let define v =
+    if not (Hashtbl.mem vmap v) then (
+      Hashtbl.replace vmap v !next;
+      incr next)
+  in
   List.iter (fun (v, _) -> define v) f.Sil.params;
   List.iter
     (fun bid ->
@@ -151,4 +170,5 @@ let canon_func (f : Sil.func) : Sil.func =
         order;
   }
 
-let canon (m : Sil.modul) : Sil.modul = { Sil.funcs = List.map canon_func m.Sil.funcs }
+let canon (m : Sil.modul) : Sil.modul =
+  { Sil.funcs = List.map canon_func m.Sil.funcs }

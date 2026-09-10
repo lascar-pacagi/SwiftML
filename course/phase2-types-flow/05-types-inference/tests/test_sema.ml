@@ -6,15 +6,25 @@
 
 let errors (src : string) : string list =
   let d = Diagnostics.create () in
-  let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
+  let p =
+    Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d)
+  in
   Sema.check p d;
   Diagnostics.all d
-  |> List.filter (fun (x : Diagnostics.t) -> x.Diagnostics.severity = Diagnostics.Error)
+  |> List.filter (fun (x : Diagnostics.t) ->
+      x.Diagnostics.severity = Diagnostics.Error)
   |> List.map (fun (x : Diagnostics.t) -> x.Diagnostics.message)
 
-let accepted src = Alcotest.(check (list string)) (Printf.sprintf "accept %S" src) [] (errors src)
+let accepted src =
+  Alcotest.(check (list string))
+    (Printf.sprintf "accept %S" src)
+    [] (errors src)
+
 let has_error src msg =
-  Alcotest.(check bool) (Printf.sprintf "%S => %S" src msg) true (List.mem msg (errors src))
+  Alcotest.(check bool)
+    (Printf.sprintf "%S => %S" src msg)
+    true
+    (List.mem msg (errors src))
 
 let test_accept () =
   accepted "let x = 1";
@@ -31,16 +41,19 @@ let test_accept () =
   accepted "let c: Bool = 1.5 >= 2.5"
 
 let test_mismatch () =
-  has_error "let x: Int = \"s\"" "cannot convert value of type 'String' to specified type 'Int'";
+  has_error "let x: Int = \"s\""
+    "cannot convert value of type 'String' to specified type 'Int'";
   has_error "let i = 1\nlet d: Double = i"
     "cannot convert value of type 'Int' to specified type 'Double'";
-  has_error "var n = 1\nn = 2.0" "cannot convert value of type 'Double' to specified type 'Int'"
+  has_error "var n = 1\nn = 2.0"
+    "cannot convert value of type 'Double' to specified type 'Int'"
 
 let test_operators () =
   has_error "let y = 1 + true"
     "binary operator '+' cannot be applied to operands of type 'Int' and 'Bool'";
   has_error "let b = 1 == \"a\""
-    "binary operator '==' cannot be applied to operands of type 'Int' and 'String'";
+    "binary operator '==' cannot be applied to operands of type 'Int' and \
+     'String'";
   has_error "let n = -true"
     (* swiftc: cannot_apply_unop_to_arg — note "an operand", not "operand" *)
     "unary operator '-' cannot be applied to an operand of type 'Bool'";
@@ -56,8 +69,19 @@ let test_scope () =
 let () =
   Alcotest.run "sema-types"
     [
-      ("accept", [ Alcotest.test_case "well-typed: no diagnostics" `Quick test_accept ]);
-      ("annotations", [ Alcotest.test_case "cannot convert value of type" `Quick test_mismatch ]);
-      ("operators", [ Alcotest.test_case "operator cannot be applied" `Quick test_operators ]);
-      ("scope", [ Alcotest.test_case "cannot find in scope; let const" `Quick test_scope ]);
+      ( "accept",
+        [ Alcotest.test_case "well-typed: no diagnostics" `Quick test_accept ]
+      );
+      ( "annotations",
+        [
+          Alcotest.test_case "cannot convert value of type" `Quick test_mismatch;
+        ] );
+      ( "operators",
+        [
+          Alcotest.test_case "operator cannot be applied" `Quick test_operators;
+        ] );
+      ( "scope",
+        [
+          Alcotest.test_case "cannot find in scope; let const" `Quick test_scope;
+        ] );
     ]

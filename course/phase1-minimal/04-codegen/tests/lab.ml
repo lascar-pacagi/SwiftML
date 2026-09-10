@@ -7,8 +7,11 @@
 
 let () =
   match Array.to_list Sys.argv with
-  | [ _; "--emit-llvm"; file ] -> Driver.compile_file ~src_path:file ~out:"/dev/null" ~emit:Driver.Llvm
-  | [ _; "build"; file; "-o"; out ] -> Driver.compile_file ~src_path:file ~out ~emit:Driver.Exe
+  | [ _; "--emit-llvm"; file ] ->
+      Driver.compile_file ~src_path:file ~out:"/dev/null" ~emit:Driver.Llvm
+  | [ _; "build"; file; "-o"; out ] ->
+      Driver.compile_file ~src_path:file ~out ~emit:Driver.Exe
   | _ ->
-      prerr_endline "usage: lab --emit-llvm <file.swift> | lab build <file.swift> -o <exe>";
+      prerr_endline
+        "usage: lab --emit-llvm <file.swift> | lab build <file.swift> -o <exe>";
       exit 2

@@ -12,26 +12,38 @@ type t = {
   mutable pos : int; (* byte offset of the next unread char *)
   mutable line : int;
   mutable col : int;
-  diagnostics : Diagnostics.sink; (* where errors go — see [report_error] below *)
+  diagnostics : Diagnostics.sink;
+      (* where errors go — see [report_error] below *)
 }
 
 let create (source : string) (diagnostics : Diagnostics.sink) : t =
-  { source; len = String.length source; pos = 0; line = 1; col = 1; diagnostics }
+  {
+    source;
+    len = String.length source;
+    pos = 0;
+    line = 1;
+    col = 1;
+    diagnostics;
+  }
 
 (* --- small cursor helpers --------------------------------------------------- *)
 
-let current_position (lexer : t) : Token.pos = { Token.line = lexer.line; col = lexer.col; offset = lexer.pos }
+let current_position (lexer : t) : Token.pos =
+  { Token.line = lexer.line; col = lexer.col; offset = lexer.pos }
+
 let at_end (lexer : t) : bool = lexer.pos >= lexer.len
-let peek_char (lexer : t) : char = if at_end lexer then '\000' else lexer.source.[lexer.pos]
+
+let peek_char (lexer : t) : char =
+  if at_end lexer then '\000' else lexer.source.[lexer.pos]
 
 (* Advance one char, maintaining line/col. Returns the consumed char. *)
 let advance_char (lexer : t) : char =
   let c = lexer.source.[lexer.pos] in
   lexer.pos <- lexer.pos + 1;
-  (if c = '\n' then (
-     lexer.line <- lexer.line + 1;
-     lexer.col <- 1)
-   else lexer.col <- lexer.col + 1);
+  if c = '\n' then (
+    lexer.line <- lexer.line + 1;
+    lexer.col <- 1)
+  else lexer.col <- lexer.col + 1;
   c
 
 let make_token (lo : Token.pos) (lexer : t) (kind : Token.kind) : Token.t =
@@ -42,11 +54,14 @@ let make_token (lo : Token.pos) (lexer : t) (kind : Token.kind) : Token.t =
    Lexer.cpp calls `diagnose` in 59 places). Recovery is the point: one run should report
    every bad byte in the file, not die on the first. *)
 let report_error (lexer : t) (lo : Token.pos) (msg : string) : unit =
-  Diagnostics.error lexer.diagnostics { Token.lo; hi = current_position lexer } msg
+  Diagnostics.error lexer.diagnostics
+    { Token.lo; hi = current_position lexer }
+    msg
 
 (* Look one char past the cursor (or '\000' past end) — for the two-char lookahead
    the comment forms need: `//`, `/*`, `*/`. *)
-let peek_next_char (lexer : t) : char = if lexer.pos + 1 < lexer.len then lexer.source.[lexer.pos + 1] else '\000'
+let peek_next_char (lexer : t) : char =
+  if lexer.pos + 1 < lexer.len then lexer.source.[lexer.pos + 1] else '\000'
 
 (* Swift identifier/number character classes (ASCII subset for Phase 1; Unicode
    identifiers come later). Mirrors the predicates in swift/lib/Parse/Lexer.cpp. *)
@@ -55,7 +70,8 @@ let is_digit (c : char) : bool = c >= '0' && c <= '9'
 let is_identifier_start (c : char) : bool =
   (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c = '_'
 
-let is_identifier_continue (c : char) : bool = is_identifier_start c || is_digit c
+let is_identifier_continue (c : char) : bool =
+  is_identifier_start c || is_digit c
 
 (* --- the scanning DFA ------------------------------------------------------- *)
 
@@ -97,7 +113,9 @@ let rec next (lexer : t) : Token.t =
            as swiftc (`diag::lex_unterminated_block_comment`, reported at end-of-file); we
            then carry on and finish with Eof. Exercise 2 adds the NOTE swiftc also emits,
            pointing back at the opener. *)
-        if !depth > 0 then report_error lexer (current_position lexer) "unterminated '/*' comment";
+        if !depth > 0 then
+          report_error lexer (current_position lexer)
+            "unterminated '/*' comment";
         skip_trivia ())
       else ()
   in
@@ -115,7 +133,9 @@ let rec next (lexer : t) : Token.t =
       while (not (at_end lexer)) && is_digit (peek_char lexer) do
         ignore (advance_char lexer)
       done;
-      let n = int_of_string (String.sub lexer.source start (lexer.pos - start)) in
+      let n =
+        int_of_string (String.sub lexer.source start (lexer.pos - start))
+      in
       make_token lo lexer (Token.Int n))
     else if is_identifier_start c then (
       (* identifier — head then run of ident chars; then the keyword table *)
@@ -170,6 +190,8 @@ let rec next (lexer : t) : Token.t =
 let tokenize (lexer : t) : Token.t list =
   let rec loop acc =
     let tok = next lexer in
-    match tok.Token.kind with Token.Eof -> List.rev (tok :: acc) | _ -> loop (tok :: acc)
+    match tok.Token.kind with
+    | Token.Eof -> List.rev (tok :: acc)
+    | _ -> loop (tok :: acc)
   in
   loop []

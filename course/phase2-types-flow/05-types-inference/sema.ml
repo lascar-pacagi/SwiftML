@@ -2,7 +2,8 @@
 
    You implement the TODO(05) holes. The two judgments:
      infer context expression        -> ty      synthesize a type (no expectation)
-     check_expr context expression t -> unit    check expression against an expected type t (pushes t down)
+     check_expr context expression t -> unit
+       check expression against an expected type t (pushes t down)
 
    The one coercion is Swift's `ExpressibleByIntegerLiteral`: an *integer literal*
    (recursively, an arithmetic expression of integer literals) may take type Double when a
@@ -18,12 +19,16 @@
    tests, so the messages named in each hole must be produced exactly. Walk-through: §3. *)
 
 type context = {
-  environment : (string, Types.ty * bool) Hashtbl.t;  (* name -> its type, and whether it is a `var` *)
+  environment : (string, Types.ty * bool) Hashtbl.t;
+      (* name -> its type, and whether it is a `var` *)
   diagnostics : Diagnostics.sink;
 }
 
-let create (diagnostics : Diagnostics.sink) : context = { environment = Hashtbl.create 16; diagnostics }
-let report_error (context : context) span msg = Diagnostics.error context.diagnostics span msg
+let create (diagnostics : Diagnostics.sink) : context =
+  { environment = Hashtbl.create 16; diagnostics }
+
+let report_error (context : context) span msg =
+  Diagnostics.error context.diagnostics span msg
 
 (* TODO(05a): is [expression] an *integer literal* for coercion purposes? `1` and `1 + 2` are; an
    Int-typed variable is not — that asymmetry is the whole point of the rule. *)
@@ -35,7 +40,8 @@ let is_int_literal (expression : Ast.expr) : bool =
    [t] — possibly by letting ONE side flex from Int-literal to Double — and [None] when they
    cannot. It does not decide whether the OPERATOR accepts [t], and it reports nothing: the
    caller turns a [None] into the diagnostic. §2 has the table of cases. *)
-let unify (l : Ast.expr) (tl : Types.ty) (r : Ast.expr) (tr : Types.ty) : Types.ty option =
+let unify (l : Ast.expr) (tl : Types.ty) (r : Ast.expr) (tr : Types.ty) :
+    Types.ty option =
   ignore (l, tl, r, tr);
   failwith "TODO(05b): unify"
 
@@ -57,7 +63,8 @@ let infer (context : context) (expression : Ast.expr) : Types.ty =
                  "print(_:) expects exactly one argument" (ours — Swift's print is
                  variadic), and any OTHER name is "cannot find '%s' in scope", the same
                  message an unknown variable gets. Infer the arguments either way.
-     TODO(05g): `Ascribe (expression, tyname, span)` — `expression as T`. Resolve the name with `Types.of_name`
+     TODO(05g): `Ascribe (expression, tyname, span)` — `expression as T`.
+       Resolve the name with `Types.of_name`
        ("cannot find type '%s' in scope" if unknown) and CHECK the operand against it, then
        return it. This is the one arm where `infer` calls `check_expr`, which is what makes the
        two judgments mutually recursive — see §2. *)
@@ -72,7 +79,8 @@ let infer (context : context) (expression : Ast.expr) : Types.ty =
                "cannot convert value of type 'X' to specified type 'Y'"
    It falls back to [infer]; [infer] never calls back, so the two are not mutually
    recursive in this subset (in a fuller language they would be). *)
-let check_expr (context : context) (expression : Ast.expr) (expected : Types.ty) : unit =
+let check_expr (context : context) (expression : Ast.expr) (expected : Types.ty)
+    : unit =
   ignore (context, expression, expected, infer);
   failwith "TODO(05d): check_expr"
 

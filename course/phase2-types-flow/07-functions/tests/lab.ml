@@ -11,7 +11,9 @@
 
 let usage () =
   prerr_endline
-    "usage: lab --emit-tokens|--emit-ast|--emit-params|--emit-returns|--typecheck <file.swift>";
+    "usage: lab \
+     --emit-tokens|--emit-ast|--emit-params|--emit-returns|--typecheck \
+     <file.swift>";
   exit 2
 
 let emit_of_flag : string -> Driver.emit option = function
@@ -29,7 +31,8 @@ let emit_params (src_path : string) : unit =
   let toks = Lexer.tokenize (Lexer.create src diags) in
   let params = Parser.parse_params (Parser.create toks diags) in
   Driver.bail_on_errors diags;
-  print_endline (Printf.sprintf "(%s)" (String.concat " " (List.map Ast.dump_param params)))
+  print_endline
+    (Printf.sprintf "(%s)" (String.concat " " (List.map Ast.dump_param params)))
 
 (* For each function in the file: does its body definitely return on every path? Parses, then
    calls `Sema.block_returns` directly — `Sema.check` never runs, so this reports on the analysis
@@ -37,13 +40,17 @@ let emit_params (src_path : string) : unit =
 let emit_returns (src_path : string) : unit =
   let src = Driver.read_file src_path in
   let diags = Diagnostics.create () in
-  let prog = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src diags)) diags) in
+  let prog =
+    Parser.parse_program
+      (Parser.create (Lexer.tokenize (Lexer.create src diags)) diags)
+  in
   Driver.bail_on_errors diags;
   List.iter
     (function
       | Ast.IFunc f ->
           Printf.printf "%s: %s\n" f.Ast.fname
-            (if Sema.block_returns f.Ast.body then "returns" else "does not return")
+            (if Sema.block_returns f.Ast.body then "returns"
+             else "does not return")
       | Ast.IStmt _ -> ())
     prog.Ast.items
 

@@ -4,12 +4,16 @@
 
    RED until the TODO(05) rows are filled; GREEN against solution/types.ml. *)
 
-let ty = Alcotest.testable (fun fmt t -> Format.pp_print_string fmt (Types.string_of_ty t)) Types.equal
+let ty =
+  Alcotest.testable
+    (fun fmt t -> Format.pp_print_string fmt (Types.string_of_ty t))
+    Types.equal
 
 let test_known () =
   let same name expected =
-    Alcotest.(check (option ty)) (Printf.sprintf "of_name %S" name) (Some expected)
-      (Types.of_name name)
+    Alcotest.(check (option ty))
+      (Printf.sprintf "of_name %S" name)
+      (Some expected) (Types.of_name name)
   in
   same "Int" Types.TInt;
   same "Bool" Types.TBool;
@@ -18,7 +22,9 @@ let test_known () =
 
 let test_unknown () =
   let none name =
-    Alcotest.(check (option ty)) (Printf.sprintf "of_name %S" name) None (Types.of_name name)
+    Alcotest.(check (option ty))
+      (Printf.sprintf "of_name %S" name)
+      None (Types.of_name name)
   in
   none "Foo";
   (* case matters: Swift's type names are capitalised, `int` is not `Int` *)
@@ -35,7 +41,8 @@ let test_round_trip () =
   List.iter
     (fun name ->
       match Types.of_name name with
-      | Some t -> Alcotest.(check string) "round-trip" name (Types.string_of_ty t)
+      | Some t ->
+          Alcotest.(check string) "round-trip" name (Types.string_of_ty t)
       | None -> Alcotest.failf "of_name %S returned None" name)
     [ "Int"; "Bool"; "Double"; "String" ]
 
@@ -43,6 +50,11 @@ let () =
   Alcotest.run "types"
     [
       ("of_name", [ Alcotest.test_case "the four type names" `Quick test_known ]);
-      ("unknown", [ Alcotest.test_case "anything else is None" `Quick test_unknown ]);
-      ("spelling", [ Alcotest.test_case "string_of_ty inverts of_name" `Quick test_round_trip ]);
+      ( "unknown",
+        [ Alcotest.test_case "anything else is None" `Quick test_unknown ] );
+      ( "spelling",
+        [
+          Alcotest.test_case "string_of_ty inverts of_name" `Quick
+            test_round_trip;
+        ] );
     ]

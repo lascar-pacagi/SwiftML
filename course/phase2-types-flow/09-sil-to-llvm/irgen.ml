@@ -15,7 +15,8 @@ let llvm_type : Types.ty -> string = function
   | Types.TString -> "ptr"
   | Types.TVoid -> "void"
 
-let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul) : string =
+let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
+    : string =
   let global_definitions = Buffer.create 256 in
   let function_definitions = Buffer.create 1024 in
   let next_string_id = ref 0 in
@@ -23,9 +24,13 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
     let escaped = Buffer.create (String.length text) in
     String.iter
       (fun character ->
-        if character = '"' || character = '\\' || Char.code character < 32
-           || Char.code character > 126
-        then Buffer.add_string escaped (Printf.sprintf "\\%02X" (Char.code character))
+        if
+          character = '"' || character = '\\'
+          || Char.code character < 32
+          || Char.code character > 126
+        then
+          Buffer.add_string escaped
+            (Printf.sprintf "\\%02X" (Char.code character))
         else Buffer.add_char escaped character)
       text;
     Buffer.contents escaped
@@ -34,8 +39,11 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
     let global_name = Printf.sprintf "@.str%d" !next_string_id in
     incr next_string_id;
     Buffer.add_string global_definitions
-      (Printf.sprintf "%s = private unnamed_addr constant [%d x i8] c\"%s\\00\"\n" global_name
-         (String.length text + 1) (escape text));
+      (Printf.sprintf
+         "%s = private unnamed_addr constant [%d x i8] c\"%s\\00\"\n"
+         global_name
+         (String.length text + 1)
+         (escape text));
     global_name
   in
   let gen_func (func : Sil.func) =
@@ -54,7 +62,9 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
     in
     (* Read or record a value's LLVM spelling. Keeping both operations here hides the table. *)
     let lookup_operand value = Hashtbl.find operands value in
-    let bind_operand value llvm_operand = Hashtbl.replace operands value llvm_operand in
+    let bind_operand value llvm_operand =
+      Hashtbl.replace operands value llvm_operand
+    in
     (* Look up the SIL type when choosing an LLVM type or opcode. *)
     let value_type value = Hashtbl.find func.Sil.val_ty value in
     (* Append emitted LLVM text to the module's function buffer. *)
@@ -77,20 +87,32 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
       let result_operand = fresh_temp () in
       let mnemonic =
         match (operator, operand_type) with
-        | Ast.Add, Types.TInt -> "add i64" | Ast.Sub, Types.TInt -> "sub i64"
-        | Ast.Mul, Types.TInt -> "mul i64" | Ast.Div, Types.TInt -> "sdiv i64"
+        | Ast.Add, Types.TInt -> "add i64"
+        | Ast.Sub, Types.TInt -> "sub i64"
+        | Ast.Mul, Types.TInt -> "mul i64"
+        | Ast.Div, Types.TInt -> "sdiv i64"
         | Ast.Mod, Types.TInt -> "srem i64"
-        | Ast.Add, Types.TDouble -> "fadd double" | Ast.Sub, Types.TDouble -> "fsub double"
-        | Ast.Mul, Types.TDouble -> "fmul double" | Ast.Div, Types.TDouble -> "fdiv double"
-        | Ast.Eq, Types.TInt -> "icmp eq i64" | Ast.Ne, Types.TInt -> "icmp ne i64"
-        | Ast.Lt, Types.TInt -> "icmp slt i64" | Ast.Le, Types.TInt -> "icmp sle i64"
-        | Ast.Gt, Types.TInt -> "icmp sgt i64" | Ast.Ge, Types.TInt -> "icmp sge i64"
-        | Ast.Eq, Types.TDouble -> "fcmp oeq double" | Ast.Ne, Types.TDouble -> "fcmp une double"
-        | Ast.Lt, Types.TDouble -> "fcmp olt double" | Ast.Le, Types.TDouble -> "fcmp ole double"
-        | Ast.Gt, Types.TDouble -> "fcmp ogt double" | Ast.Ge, Types.TDouble -> "fcmp oge double"
+        | Ast.Add, Types.TDouble -> "fadd double"
+        | Ast.Sub, Types.TDouble -> "fsub double"
+        | Ast.Mul, Types.TDouble -> "fmul double"
+        | Ast.Div, Types.TDouble -> "fdiv double"
+        | Ast.Eq, Types.TInt -> "icmp eq i64"
+        | Ast.Ne, Types.TInt -> "icmp ne i64"
+        | Ast.Lt, Types.TInt -> "icmp slt i64"
+        | Ast.Le, Types.TInt -> "icmp sle i64"
+        | Ast.Gt, Types.TInt -> "icmp sgt i64"
+        | Ast.Ge, Types.TInt -> "icmp sge i64"
+        | Ast.Eq, Types.TDouble -> "fcmp oeq double"
+        | Ast.Ne, Types.TDouble -> "fcmp une double"
+        | Ast.Lt, Types.TDouble -> "fcmp olt double"
+        | Ast.Le, Types.TDouble -> "fcmp ole double"
+        | Ast.Gt, Types.TDouble -> "fcmp ogt double"
+        | Ast.Ge, Types.TDouble -> "fcmp oge double"
         | (Ast.Eq | Ast.Ne), Types.TBool ->
-            Printf.sprintf "icmp %s i1" (if operator = Ast.Eq then "eq" else "ne")
-        | Ast.And, _ -> "and i1" | Ast.Or, _ -> "or i1"
+            Printf.sprintf "icmp %s i1"
+              (if operator = Ast.Eq then "eq" else "ne")
+        | Ast.And, _ -> "and i1"
+        | Ast.Or, _ -> "or i1"
         | _ -> "add i64" (* String ops not lowered in this subset *)
       in
       (* a zero divisor traps: run the operand through the guard, then divide by its result *)
@@ -99,20 +121,23 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
         | (Ast.Div | Ast.Mod), Types.TInt ->
             let guarded_right = Printf.sprintf "%%dz%d" result in
             emit
-              (Printf.sprintf "  %s = call i64 @swiftml.%s(i64 %s)\n" guarded_right
-                 (if operator = Ast.Div then "divz" else "remz") (lookup_operand right));
+              (Printf.sprintf "  %s = call i64 @swiftml.%s(i64 %s)\n"
+                 guarded_right
+                 (if operator = Ast.Div then "divz" else "remz")
+                 (lookup_operand right));
             guarded_right
         | _ -> lookup_operand right
       in
       emit
-        (Printf.sprintf "  %s = %s %s, %s\n" result_operand mnemonic (lookup_operand left)
-           right_operand);
+        (Printf.sprintf "  %s = %s %s, %s\n" result_operand mnemonic
+           (lookup_operand left) right_operand);
       bind_operand result result_operand
     and gen_print value =
       match value_type value with
       | Types.TInt ->
           emit
-            (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %s)\n"
+            (Printf.sprintf
+               "  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %s)\n"
                (lookup_operand value))
       | Types.TBool ->
           let string_operand = fresh_temp () in
@@ -120,15 +145,18 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
             (Printf.sprintf "  %s = select i1 %s, ptr @.btrue, ptr @.bfalse\n"
                string_operand (lookup_operand value));
           emit
-            (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_str, ptr %s)\n"
+            (Printf.sprintf
+               "  call i32 (ptr, ...) @printf(ptr @.fmt_str, ptr %s)\n"
                string_operand)
       | Types.TString ->
           emit
-            (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_str, ptr %s)\n"
+            (Printf.sprintf
+               "  call i32 (ptr, ...) @printf(ptr @.fmt_str, ptr %s)\n"
                (lookup_operand value))
       | Types.TDouble ->
           emit
-            (Printf.sprintf "  call i32 (ptr, ...) @printf(ptr @.fmt_dbl, double %s)\n"
+            (Printf.sprintf
+               "  call i32 (ptr, ...) @printf(ptr @.fmt_dbl, double %s)\n"
                (lookup_operand value))
       | Types.TVoid -> ()
     in
@@ -136,17 +164,23 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
       match (instr : Sil.instr) with
       (* given as the pattern: a SIL Int_lit maps a SIL value to a constant operand *)
       | Sil.Int_lit integer -> bind_operand value (string_of_int integer)
-      | Sil.Bool_lit boolean -> bind_operand value (if boolean then "1" else "0")
+      | Sil.Bool_lit boolean ->
+          bind_operand value (if boolean then "1" else "0")
       | Sil.Float_lit float ->
-          bind_operand value (Printf.sprintf "0x%016LX" (Int64.bits_of_float float))
+          bind_operand value
+            (Printf.sprintf "0x%016LX" (Int64.bits_of_float float))
       | Sil.String_lit text -> bind_operand value (add_string_const text)
-      | Sil.Alloc_stack _ -> () (* emitted in the entry block by gen_allocas below (no-op here) *)
+      | Sil.Alloc_stack _ ->
+          () (* emitted in the entry block by gen_allocas below (no-op here) *)
       (* TODO(09): the remaining instructions. The mapping is near 1:1 — §2 tabulates every SIL
          instruction against its LLVM line. Emit with [emit], and register each result operand
          with [bind_operand value (fresh_temp ())] so later instructions can refer to it.
          Watch the ones that emit NO line (a func_ref is just an operand) and the ones that
          produce no result (a void call, a store). *)
-      | _ -> ignore gen_binop; ignore gen_print; failwith "TODO(09): lower a SIL instruction"
+      | _ ->
+          ignore gen_binop;
+          ignore gen_print;
+          failwith "TODO(09): lower a SIL instruction"
     in
     let gen_term (terminator : Sil.term) =
       ignore terminator;
@@ -220,28 +254,35 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
     else
       preamble
       ^ String.concat "\n"
-          [ "declare void @llvm.trap()";
-             "declare i64 @write(i32, ptr, i64)";
-             "@.dz.div = private unnamed_addr constant [30 x i8] c\"Fatal error: Division by zero\\0A\"";
-             "@.dz.rem = private unnamed_addr constant [53 x i8] c\"Fatal error: Division by zero in remainder operation\\0A\"";
-             "define private i64 @swiftml.divz(i64 %d) {";
-             "  switch i64 %d, label %ok [ i64 0, label %bad ]";
-             "bad:";
-             "  call i64 @write(i32 2, ptr @.dz.div, i64 30)";
-             "  call void @llvm.trap()";
-             "  unreachable";
-             "ok:";
-             "  ret i64 %d";
-             "}";
-             "define private i64 @swiftml.remz(i64 %d) {";
-             "  switch i64 %d, label %ok [ i64 0, label %bad ]";
-             "bad:";
-             "  call i64 @write(i32 2, ptr @.dz.rem, i64 53)";
-             "  call void @llvm.trap()";
-             "  unreachable";
-             "ok:";
-             "  ret i64 %d";
-             "}";
-             "" ]
+          [
+            "declare void @llvm.trap()";
+            "declare i64 @write(i32, ptr, i64)";
+            "@.dz.div = private unnamed_addr constant [30 x i8] c\"Fatal \
+             error: Division by zero\\0A\"";
+            "@.dz.rem = private unnamed_addr constant [53 x i8] c\"Fatal \
+             error: Division by zero in remainder operation\\0A\"";
+            "define private i64 @swiftml.divz(i64 %d) {";
+            "  switch i64 %d, label %ok [ i64 0, label %bad ]";
+            "bad:";
+            "  call i64 @write(i32 2, ptr @.dz.div, i64 30)";
+            "  call void @llvm.trap()";
+            "  unreachable";
+            "ok:";
+            "  ret i64 %d";
+            "}";
+            "define private i64 @swiftml.remz(i64 %d) {";
+            "  switch i64 %d, label %ok [ i64 0, label %bad ]";
+            "bad:";
+            "  call i64 @write(i32 2, ptr @.dz.rem, i64 53)";
+            "  call void @llvm.trap()";
+            "  unreachable";
+            "ok:";
+            "  ret i64 %d";
+            "}";
+            "";
+          ]
   in
-  preamble ^ Buffer.contents global_definitions ^ "\n" ^ Buffer.contents function_definitions
+  preamble
+  ^ Buffer.contents global_definitions
+  ^ "\n"
+  ^ Buffer.contents function_definitions

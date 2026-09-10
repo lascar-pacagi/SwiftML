@@ -37,7 +37,8 @@ type stmt =
   | Let of {
       name : string;
       is_var : bool;
-      annot : string option; (* NEW in this concept: the written type name, e.g. Some "Double"; sema resolves it *)
+      annot : string option;
+          (* NEW in this concept: the written type name, e.g. Some "Double"; sema resolves it *)
       value : expr;
       span : Token.span;
     }
@@ -83,18 +84,24 @@ let rec dump_expr = function
   | Unary (operator, expression, _) ->
       Printf.sprintf "(%s %s)" (string_of_unop operator) (dump_expr expression)
   | Binary (operator, left, right, _) ->
-      Printf.sprintf "(%s %s %s)" (string_of_binop operator) (dump_expr left) (dump_expr right)
-  | Ascribe (expression, type_name, _) -> Printf.sprintf "(as %s %s)" type_name (dump_expr expression)
+      Printf.sprintf "(%s %s %s)" (string_of_binop operator) (dump_expr left)
+        (dump_expr right)
+  | Ascribe (expression, type_name, _) ->
+      Printf.sprintf "(as %s %s)" type_name (dump_expr expression)
   | Call (function_name, arguments, _) ->
-      Printf.sprintf "(%s %s)" function_name (String.concat " " (List.map dump_expr arguments))
+      Printf.sprintf "(%s %s)" function_name
+        (String.concat " " (List.map dump_expr arguments))
 
 let dump_stmt = function
-  | Let { name; is_var; annot; value; _ } ->
+  | Let { name; is_var; annot; value; _ } -> (
       let keyword = if is_var then "var" else "let" in
-      (match annot with
+      match annot with
       | None -> Printf.sprintf "(%s %s %s)" keyword name (dump_expr value)
-      | Some type_name -> Printf.sprintf "(%s %s : %s %s)" keyword name type_name (dump_expr value))
-  | Assign { name; value; _ } -> Printf.sprintf "(= %s %s)" name (dump_expr value)
+      | Some type_name ->
+          Printf.sprintf "(%s %s : %s %s)" keyword name type_name
+            (dump_expr value))
+  | Assign { name; value; _ } ->
+      Printf.sprintf "(= %s %s)" name (dump_expr value)
   | Expr_stmt (expression, _) -> dump_expr expression
 
 let dump_program (program : program) : string =

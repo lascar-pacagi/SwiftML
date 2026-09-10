@@ -11,7 +11,10 @@ let expr_of src =
   | _ -> Alcotest.fail "expected one expression statement"
 
 let dump src = Ast.dump_expr (expr_of src)
-let check_dump name expected src = Alcotest.(check string) name expected (dump src)
+
+let check_dump name expected src =
+  Alcotest.(check string) name expected (dump src)
+
 let stmt_dump src = Ast.dump_program (prog src)
 
 let test_literals () =
@@ -20,7 +23,9 @@ let test_literals () =
   check_dump "string literal" "\"hi\"" "\"hi\""
 
 let test_annotations () =
-  Alcotest.(check string) "annotated let" "(let d : Double 3.14)" (stmt_dump "let d: Double = 3.14");
+  Alcotest.(check string)
+    "annotated let" "(let d : Double 3.14)"
+    (stmt_dump "let d: Double = 3.14");
   Alcotest.(check string) "unannotated let" "(let x 1)" (stmt_dump "let x = 1")
 
 let test_comparisons () =
@@ -32,7 +37,17 @@ let test_comparisons () =
 let () =
   Alcotest.run "parser-types"
     [
-      ("literals", [ Alcotest.test_case "Double/Bool/String prefixes" `Quick test_literals ]);
-      ("annotations", [ Alcotest.test_case "': Type' kept in the let" `Quick test_annotations ]);
-      ("comparisons", [ Alcotest.test_case "1+2<3*4 nests as (1+2)<(3*4)" `Quick test_comparisons ]);
+      ( "literals",
+        [
+          Alcotest.test_case "Double/Bool/String prefixes" `Quick test_literals;
+        ] );
+      ( "annotations",
+        [
+          Alcotest.test_case "': Type' kept in the let" `Quick test_annotations;
+        ] );
+      ( "comparisons",
+        [
+          Alcotest.test_case "1+2<3*4 nests as (1+2)<(3*4)" `Quick
+            test_comparisons;
+        ] );
     ]

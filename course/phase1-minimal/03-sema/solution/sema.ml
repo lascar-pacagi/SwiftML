@@ -26,7 +26,8 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : unit =
     | Ast.Int_lit _ -> TInt
     | Ast.Var (x, span) ->
         if not (Hashtbl.mem scope x) then
-          Diagnostics.error diagnostics span (Printf.sprintf "cannot find '%s' in scope" x);
+          Diagnostics.error diagnostics span
+            (Printf.sprintf "cannot find '%s' in scope" x);
         TInt
     | Ast.Unary (_, expression, _) ->
         ignore (check_expr expression);
@@ -45,7 +46,8 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : unit =
                 "print(_:) expects exactly one argument";
               List.iter (fun a -> ignore (check_expr a)) args)
         else (
-          Diagnostics.error diagnostics span (Printf.sprintf "cannot find '%s' in scope" f);
+          Diagnostics.error diagnostics span
+            (Printf.sprintf "cannot find '%s' in scope" f);
           List.iter (fun a -> ignore (check_expr a)) args);
         TInt
   in
@@ -58,11 +60,13 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : unit =
     | Ast.Assign { name; value; span } ->
         (match Hashtbl.find_opt scope name with
         | None ->
-            Diagnostics.error diagnostics span (Printf.sprintf "cannot find '%s' in scope" name)
+            Diagnostics.error diagnostics span
+              (Printf.sprintf "cannot find '%s' in scope" name)
         | Some is_var ->
             if not is_var then
               Diagnostics.error diagnostics span
-                (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" name));
+                (Printf.sprintf
+                   "cannot assign to value: '%s' is a 'let' constant" name));
         ignore (check_expr value)
     | Ast.Expr_stmt (expression, _) -> ignore (check_expr expression)
   in

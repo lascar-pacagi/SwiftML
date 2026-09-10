@@ -12,11 +12,7 @@
      swift/include/swift/AST/Types.h      (the Type hierarchy)
      swift/lib/Sema/CSGen.cpp / CSSolver.cpp  (the constraint system — Phase 5) *)
 
-type ty =
-  | TInt
-  | TBool
-  | TDouble
-  | TString
+type ty = TInt | TBool | TDouble | TString
 
 (* swiftc's spelling, for diagnostics: "expected 'Int', found 'String'". *)
 let string_of_ty : ty -> string = function
