@@ -79,39 +79,59 @@ changes only `q`:
 struct Point {
   var x: Int
   var y: Int
+  var visible: Bool
 }
-var p = Point(x: 3, y: 4)
+var p = Point(x: 3, y: 4, visible: true)
 var q = p
 q.x = 9
+q.y = 8
+q.visible = false
 print(p.x)
 print(q.x)
+print(q.y)
+print(q.visible)
 ```
 
-It prints `3`, then `9`. The corresponding SIL makes construction, copying, writing, and reading
+It prints `3`, `9`, `8`, then `false`. The three writes select fields `#0`, `#1`, and
+`#2`; the last field also shows that an aggregate can mix an `Int` with a differently
+represented `Bool`. The corresponding SIL makes construction, copying, writing, and reading
 separate operations:
 
 ```text
-struct Point { x: Int; y: Int }
+struct Point { x: Int; y: Int; visible: Bool }
 
 sil @main() -> $() {
 bb0:
   %0 = integer_literal $Int, 3
   %1 = integer_literal $Int, 4
-  %2 = struct (%0, %1) $Point
-  %3 = alloc_stack $Point  // p
-  store %2 to %3
-  %5 = load %3 $Point
-  %6 = alloc_stack $Point  // q
-  store %5 to %6
-  %8 = integer_literal $Int, 9
-  %9 = struct_element_addr %6, #0
-  store %8 to %9
-  %11 = load %3 $Point
-  %12 = struct_extract %11, #0 $Int
-  %13 = apply @print(%12)
-  %14 = load %6 $Point
-  %15 = struct_extract %14, #0 $Int
-  %16 = apply @print(%15)
+  %2 = integer_literal $Bool, true
+  %3 = struct (%0, %1, %2) $Point
+  %4 = alloc_stack $Point  // p
+  store %3 to %4
+  %6 = load %4 $Point
+  %7 = alloc_stack $Point  // q
+  store %6 to %7
+  %9 = integer_literal $Int, 9
+  %10 = struct_element_addr %7, #0
+  store %9 to %10
+  %12 = integer_literal $Int, 8
+  %13 = struct_element_addr %7, #1
+  store %12 to %13
+  %15 = integer_literal $Bool, false
+  %16 = struct_element_addr %7, #2
+  store %15 to %16
+  %18 = load %4 $Point
+  %19 = struct_extract %18, #0 $Int
+  %20 = apply @print(%19)
+  %21 = load %7 $Point
+  %22 = struct_extract %21, #0 $Int
+  %23 = apply @print(%22)
+  %24 = load %7 $Point
+  %25 = struct_extract %24, #1 $Int
+  %26 = apply @print(%25)
+  %27 = load %7 $Point
+  %28 = struct_extract %27, #2 $Bool
+  %29 = apply @print(%28)
   return
 }
 ```
@@ -121,7 +141,7 @@ the two `insertvalue` instructions produce successively more complete `Point` va
 declarations are omitted here:
 
 ```llvm
-%Point = type { i64, i64 }
+%Point = type { i64, i64, i1 }
 
 define i32 @main() {
 bb0:
@@ -129,23 +149,38 @@ bb0:
   %t1 = alloca %Point
   %t2 = insertvalue %Point undef, i64 3, 0
   %t3 = insertvalue %Point %t2, i64 4, 1
-  store %Point %t3, ptr %t0
-  %t4 = load %Point, ptr %t0
-  store %Point %t4, ptr %t1
-  %t5 = getelementptr %Point, ptr %t1, i32 0, i32 0
-  store i64 9, ptr %t5
-  %t6 = load %Point, ptr %t0
-  %t7 = extractvalue %Point %t6, 0
-  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %t7)
-  %t8 = load %Point, ptr %t1
-  %t9 = extractvalue %Point %t8, 0
-  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %t9)
+  %t4 = insertvalue %Point %t3, i1 1, 2
+  store %Point %t4, ptr %t0
+  %t5 = load %Point, ptr %t0
+  store %Point %t5, ptr %t1
+  %t6 = getelementptr %Point, ptr %t1, i32 0, i32 0
+  store i64 9, ptr %t6
+  %t7 = getelementptr %Point, ptr %t1, i32 0, i32 1
+  store i64 8, ptr %t7
+  %t8 = getelementptr %Point, ptr %t1, i32 0, i32 2
+  store i1 0, ptr %t8
+  %t9 = load %Point, ptr %t0
+  %t10 = extractvalue %Point %t9, 0
+  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %t10)
+  %t11 = load %Point, ptr %t1
+  %t12 = extractvalue %Point %t11, 0
+  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %t12)
+  %t13 = load %Point, ptr %t1
+  %t14 = extractvalue %Point %t13, 1
+  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %t14)
+  %t15 = load %Point, ptr %t1
+  %t16 = extractvalue %Point %t15, 2
+  %t17 = select i1 %t16, ptr @.btrue, ptr @.bfalse
+  call i32 (ptr, ...) @printf(ptr @.fmt_str, ptr %t17)
   ret i32 0
 }
 ```
 
 The aggregate `load` followed by an aggregate `store` is the copy from `p` into `q`.
-`getelementptr` computes the address of `q.x`; each `extractvalue` reads `x` from a loaded value.
+The final index of each `getelementptr` selects `x`, `y`, or `visible`. These are field indices,
+not byte offsets: LLVM derives the actual byte offset from `%Point = type { i64, i64, i1 }`,
+including any alignment padding. The `extractvalue` indices select the same three fields from a
+loaded aggregate.
 
 ### The three new SIL instructions (swiftc's exact names)
 
