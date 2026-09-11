@@ -134,6 +134,7 @@ function load_t(file,   line, blk, prose, started, ln) {
 }
 !cram && clean ~ /^\[(exception|failure)\]/ {
   line = clean; sub(/^\[[a-z]*\] */, "", line)
+  if (line ~ /TODO\([^)]*\)/) alctodo[cur] = 1
   put("         " R "error:" Z " " line); next
 }
 !cram && clean ~ /^ *(Expected|Received):/ {
@@ -271,8 +272,10 @@ END {
         failing = (kind == "cram") ? (si && failedcram(si)) : (si && nbad[si] > 0)
         optional = (kind == "alcotest" && si && nopt[si] > 0 && nbad[si] == 0)
         tf = prefix part[2]; unstarted = 0
-        if (failing && kind == "cram") unstarted = (nblk[tf] > 0 && nfailing(si, tf) == nblk[tf])
-        else if (failing) unstarted = (nbad[si] > 0 && nok[si] == 0)
+        # Zero passing cases does not mean untouched: an attempted implementation can make every
+        # case fail or crash. Reserve TODO for output that names an explicit unfinished hole.
+        if (failing && kind == "cram") unstarted = all_failed_are_todo(si, tf)
+        else if (failing) unstarted = (nbad[si] > 0 && nok[si] == 0 && alctodo[si])
         total++
         if (kind == "cram" && part[2] in explicitly_skipped && !si) {
           out = out sprintf("%sSKIP%s %s (%s) — an earlier stage failed\n", D, Z, part[2], kind)
@@ -293,8 +296,9 @@ END {
         if (kind == "cram") out = out cases_str(si, tf, unstarted)
         else if (si) {
           b2 = body[si]
-          # An untouched suite fails every case the SAME way, and alcotest reports the detail of
-          # only the first — dangling under the last case, where it reads as if it belonged to it.
+          # An untouched suite fails every case at an explicit TODO, and alcotest reports the
+          # detail of only the first — dangling under the last case, where it reads as if it
+          # belonged to it.
           # List what the suite will check, then say once why nothing runs yet.
           if (unstarted && !detail_all) {
             gsub(/  \033\[31mFAIL\033\[0m |  FAIL /, "  " D "·" Z "    ", b2)
@@ -336,8 +340,17 @@ function nfailing(si, file,   b, c) {
   for (b = 1; b <= nblk[file]; b++) if (si SUBSEP b in bad) c++
   return c
 }
-# One OK/FAIL line per case, in file order. When EVERY case fails the hole hasn't been started,
-# so the diffs are noise — list what the file will check and leave it at that (DETAIL=1 expands).
+# Every case failed specifically because it reached an explicit TODO(NN).
+function all_failed_are_todo(si, file,   b, key) {
+  if (nblk[file] == 0 || nfailing(si, file) != nblk[file]) return 0
+  for (b = 1; b <= nblk[file]; b++) {
+    key = si SUBSEP b
+    if ((key in bad) && !(key in todo)) return 0
+  }
+  return 1
+}
+# One OK/FAIL line per case, in file order. For an explicit untouched TODO, the repeated diffs
+# are noise — list what the file will check and leave it at that (DETAIL=1 expands).
 function cases_str(si, file, unstarted,   b, key, out) {
   load_t(file)
   unstarted = unstarted && !detail_all

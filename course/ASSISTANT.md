@@ -95,8 +95,9 @@ Other standing rules, all learned the hard way:
 - **Goldens are produced, never written.** Run the case against `solution/` and paste what it
   prints. A hand-written expectation is how a test ends up asserting the wrong thing.
 - **One `.t` per hole**, each case named by a claim sentence, so a finished hole shows up by name.
-  `TODO` means *nothing* in the file passes; `FAIL` means some cases pass; `SKIP` means it never
-  ran. Never report a test that did not run as passing.
+  `TODO` means every failing case reached an explicit unwritten `TODO(NN)`; `FAIL` means the test
+  ran and found wrong output or a crash; `SKIP` means it never ran. Never report a test that did
+  not run as passing.
 - **A hole must be gradeable on its own.** If a test can only go green once a *later* hole exists,
   that is a defect — give the hole its own entry point (`--emit-params`, `--emit-returns`,
   `--emit-sil-canon` all exist for this reason).

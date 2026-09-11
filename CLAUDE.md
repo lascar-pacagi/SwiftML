@@ -125,18 +125,19 @@ the opening quote"*, not *"unterminated strings"*. For alcotest it is the `test_
 **alcotest itself truncates near 34 characters** — keep those terse (`cannot find in scope; let
 const`) and put the detail in the group name.
 
-**`make lab` (`tooling/labfmt.awk`) is the contract.** Four states, because "not green" has three
-different causes and only one of them is worth reading a diff over:
+**`make lab` (`tooling/labfmt.awk`) is the contract.** Four states distinguish completed tests,
+attempted implementations, untouched holes, and tests that never ran:
 
 | state | meaning | detected by |
 |---|---|---|
 | `PASS` | ran, every case matched | on the roster, no failure section |
-| `FAIL` | ran, **some** cases pass — in progress, diffs are worth reading | mixed results |
-| `TODO` | ran, **nothing** in it passes — the hole is untouched | every case in the file/suite failed |
+| `FAIL` | ran and found wrong output or a crash — diffs are worth reading | a failure not caused by an explicit `TODO(NN)` |
+| `TODO` | ran into an unwritten hole | every failing case reached an explicit `TODO(NN)` |
 | `SKIP` | **never ran** — a compile error aborted dune first | a build-error block was emitted |
 
 A `TODO` file lists what it *will* check and stops there (`typecheck.t` went from ~40 lines of
-want/got to four bullets); `DETAIL=1` forces the diffs back. Then:
+want/got to four bullets); `DETAIL=1` forces the diffs back. An attempted implementation that
+makes every case fail is still `FAIL`, with its useful output shown by default. Then:
 - an `OK`/`FAIL` line per case inside a file — including the passing cases of a failing file,
   which is the progress signal;
 - under a failing case only, the two outputs whole: `the test wants:` / `your code printed:`
