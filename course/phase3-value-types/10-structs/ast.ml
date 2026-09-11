@@ -28,15 +28,12 @@ type expr =
   | Var of string * Token.span
   | Unary of unop * expr * Token.span
   | Binary of binop * expr * expr * Token.span
-  | Call of
-      string
-      * (string option * expr) list
-      * Token.span (* function call OR struct init *)
+  | Call of string * arg list * Token.span (* function call OR struct init *)
   | Member of expr * string * Token.span (* NEW in this concept: `e.field` *)
   | Ascribe of expr * string * Token.span (* `e as T` — a coercion *)
 
 (* a call/init argument may carry an external label, e.g. `Point(x: 1)` — concept 10 *)
-type arg = string option * expr
+and arg = string option * expr
 
 type stmt =
   | Let of {

@@ -226,12 +226,12 @@ initializer (a `func` still takes its arguments positionally, concept 07's simpl
 ### The new AST contract
 
 ```ocaml
-type arg = string option * expr
-
 type expr =
   | (* earlier cases *)
   | Call of string * arg list * Token.span
   | Member of expr * string * Token.span
+
+and arg = string option * expr
 
 type stmt =
   | (* earlier cases *)

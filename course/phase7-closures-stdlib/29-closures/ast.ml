@@ -21,9 +21,9 @@ type expr =
   | Var of string * Token.span
   | Unary of unop * expr * Token.span
   | Binary of binop * expr * expr * Token.span
-  | Call of string * (string option * expr) list * Token.span (* function call OR struct init *)
+  | Call of string * arg list * Token.span (* function call OR struct init *)
   | Member of expr * string * Token.span (* `e.field` (concept 10) / `E.case` / `e.rawValue` (11) *)
-  | Method_call of expr * string * (string option * expr) list * Token.span (* `e.name(args)` — 11: `E.case(args)` *)
+  | Method_call of expr * string * arg list * Token.span (* `e.name(args)` — 11: `E.case(args)` *)
   (* optionals — concept 13 *)
   | Nil of Token.span (* the `nil` literal (contextually typed) *)
   | Force_unwrap of expr * Token.span (* `e!` — traps if nil *)
@@ -39,7 +39,7 @@ type expr =
   | Ascribe of expr * string * Token.span (* `e as T` — a coercion *)
 
 (* a call/init argument may carry an external label, e.g. `Point(x: 1)` — concept 10 *)
-type arg = string option * expr
+and arg = string option * expr
 
 (* patterns for `switch`. A binding is `let x` (Bind) or `_` (Ignore). *)
 type pat_binding = Bind of string | Ignore
