@@ -36,13 +36,8 @@ let sil_module (src : string) : Sil.modul =
 let sil (src : string) : string = Sil.string_of_module (sil_module src)
 
 let llvm (src : string) : string =
-  try
-    let p, _ = front src in
-    Irgen.emit_llvm (Silgen.lower p)
-  with exception_ ->
-    Alcotest.failf "IRGen raised %s while compiling %S"
-      (Printexc.to_string exception_)
-      src
+  let p, _ = front src in
+  Irgen.emit_llvm (Silgen.lower p)
 
 let point = "struct Point {\n  var x: Int\n  var y: Int\n}\n"
 let line = point ^ "struct Line {\n  var a: Point\n  var b: Point\n}\n"

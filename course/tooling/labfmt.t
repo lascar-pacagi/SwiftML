@@ -38,3 +38,24 @@ feedback about a learner's implementation.
     ·   A started case reports its error
          nothing here passes yet — DETAIL=1 to see the diffs
   0 passing, 0 failing, 1 not started
+
+An unexpected Alcotest exception keeps the first compiler frames but drops the library stack.
+
+  $ cat > exception.raw <<'EOF2'
+  > Testing `structs'.
+  > > [FAIL]        irgen-structs                0   insertvalue construction.
+  > [exception] Not_found
+  >             Raised at Stdlib__Hashtbl.find in file "hashtbl.ml", line 584
+  >             Called from Stdlib__List.iter in file "list.ml", line 114
+  >             Called from Irgen.emit_llvm.lookup_operand in file "irgen.ml", line 62
+  >             Called from Irgen.emit_llvm.gen_instruction in file "irgen.ml", line 191
+  >             Called from Alcotest_engine__Core.protect_test in file "core.ml", line 186
+  > EOF2
+  $ awk -v alcotest_suites='structs' -f labfmt.awk exception.raw | sed '/^$/d'
+  ── structs: 0 of 1 passing
+  FAIL structs (alcotest)
+    FAIL irgen-structs — insertvalue construction
+           error: Not_found
+           at:   Irgen.emit_llvm.lookup_operand in file "irgen.ml", line 62
+           at:   Irgen.emit_llvm.gen_instruction in file "irgen.ml", line 191
+  0 passing, 1 failing

@@ -135,7 +135,19 @@ function load_t(file,   line, blk, prose, started, ln) {
 !cram && clean ~ /^\[(exception|failure)\]/ {
   line = clean; sub(/^\[[a-z]*\] */, "", line)
   if (line ~ /TODO\([^)]*\)/) alctodo[cur] = 1
+  trace_left = (clean ~ /^\[exception\]/ ? 2 : 0)
   put("         " R "error:" Z " " line); next
+}
+# Keep the first two compiler frames after an unexpected exception. Alcotest's full trace is
+# noisy, but the helper that raised and its caller answer where a bare Not_found came from.
+!cram && trace_left > 0 && clean ~ /^ *Called from / {
+  if (clean !~ /Stdlib__|Alcotest|Dune__/) {
+    line = clean
+    sub(/^ *Called from /, "", line)
+    put("         " D "at:   " line Z)
+    trace_left--
+  }
+  next
 }
 !cram && clean ~ /^ *(Expected|Received):/ {
   line = clean; sub(/^ */, "", line)
