@@ -36,8 +36,13 @@ let sil_module (src : string) : Sil.modul =
 let sil (src : string) : string = Sil.string_of_module (sil_module src)
 
 let llvm (src : string) : string =
-  let p, _ = front src in
-  Irgen.emit_llvm (Silgen.lower p)
+  try
+    let p, _ = front src in
+    Irgen.emit_llvm (Silgen.lower p)
+  with exception_ ->
+    Alcotest.failf "IRGen raised %s while compiling %S"
+      (Printexc.to_string exception_)
+      src
 
 let point = "struct Point {\n  var x: Int\n  var y: Int\n}\n"
 let line = point ^ "struct Line {\n  var a: Point\n  var b: Point\n}\n"
@@ -316,16 +321,24 @@ let test_write_own_slot () =
     (List.mem (address_of "p") field_bases)
 
 (* --- TODO(10i): LLVM aggregates --- *)
-let test_llvm_shape () =
-  ir_has (point ^ "let p = Point(x: 1, y: 2)") "%Point = type { i64, i64 }";
-  ir_has (point ^ "let p = Point(x: 1, y: 2)") "insertvalue %Point undef, i64";
-  ir_has (point ^ "var p = Point(x: 1, y: 2)\nprint(p.x)") "extractvalue %Point";
+let test_llvm_named_type () =
+  ir_has point "%Point = type { i64, i64 }"
+
+let test_llvm_nested_type () =
+  ir_has line "%Line = type { %Point, %Point }"
+
+let test_llvm_construction () =
+  ir_has (point ^ "let p = Point(x: 1, y: 2)")
+    "insertvalue %Point undef, i64"
+
+let test_llvm_extract () =
+  ir_has (point ^ "var p = Point(x: 1, y: 2)\nprint(p.x)")
+    "extractvalue %Point"
+
+let test_llvm_element_address () =
   ir_has
     (point ^ "var p = Point(x: 1, y: 2)\np.x = 9\nprint(p.x)")
-    "getelementptr %Point";
-  ir_has
-    (line ^ "let l = Line(a: Point(x: 0, y: 0), b: Point(x: 7, y: 9))")
-    "%Line = type { %Point, %Point }"
+    "getelementptr %Point"
 
 let () =
   Alcotest.run "structs"
@@ -381,5 +394,13 @@ let () =
             test_write_own_slot;
         ] );
       ( "irgen-structs",
-        [ Alcotest.test_case "aggregate IR shape" `Quick test_llvm_shape ] );
+        [
+          Alcotest.test_case "named struct type" `Quick test_llvm_named_type;
+          Alcotest.test_case "nested struct type" `Quick test_llvm_nested_type;
+          Alcotest.test_case "insertvalue construction" `Quick
+            test_llvm_construction;
+          Alcotest.test_case "extractvalue member read" `Quick test_llvm_extract;
+          Alcotest.test_case "getelementptr member write" `Quick
+            test_llvm_element_address;
+        ] );
     ]
