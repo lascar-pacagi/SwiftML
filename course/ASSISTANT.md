@@ -102,9 +102,9 @@ Other standing rules, all learned the hard way:
   that is a defect — give the hole its own entry point (`--emit-params`, `--emit-returns`,
   `--emit-sil-canon` all exist for this reason).
 - **Prove RED/GREEN before believing a test.** Skeleton must fail, `make check-solution` must
-  pass. Do it in a scratch copy or a worktree, never by editing my files.
-- **`dune --auto-promote` rewrites every golden in the directory.** Only ever run it with
-  `solution/` swapped in, or it will happily record skeleton output as the expected answer.
+  pass. That command uses an isolated worktree; never replace my live files, even temporarily.
+- **`dune --auto-promote` rewrites every golden in the directory.** Only ever run it inside an
+  isolated answer-key worktree, or it will happily record learner output as the expected answer.
 
 ---
 

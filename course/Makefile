@@ -107,7 +107,7 @@ lab:
 # solution/, so a reference that has drifted from the skeleton is caught by a command rather
 # than by chance:
 #   make check-solution C=phase2-types-flow/05-types-inference
-# Your work is copied aside and restored by a trap, so an interrupt cannot leave the swap in place.
+# The answer key runs in an isolated detached worktree, so the learner's live files are untouched.
 check-solution:
 	@C="$(C)" ./tooling/check-solution.sh
 

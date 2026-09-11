@@ -4,36 +4,38 @@
 #   make check-solution C=phase2-types-flow/05-types-inference
 #
 # Nothing else in the course ever compiles solution/, so a reference can rot silently — that is
-# how `solution/token.ml` came to be missing a keyword the skeleton had. This swaps each
-# solution/<f>.ml over <f>.ml, runs the concept's tests, and puts the originals back.
-#
-# The learner's work is copied aside FIRST and restored by a trap, so an interrupt or a failing
-# build cannot leave the swap in place.
+# how `solution/token.ml` came to be missing a keyword the skeleton had. Run the answer key in a
+# detached worktree: replacing files in the learner's live checkout, even briefly, races with an
+# editor or a second `make lab`.
 set -u
 C="${C:-}"
 [ -n "$C" ] || { echo "usage: make check-solution C=<concept dir>"; exit 2; }
 [ -d "$C/solution" ] || { echo "$C has no solution/ — nothing to check"; exit 0; }
 
-BAK="$(mktemp -d)"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+WORKTREE="$(mktemp -d)"
 FILES=""
-restore() {
-  for f in $FILES; do [ -f "$BAK/$f" ] && cp "$BAK/$f" "$C/$f"; done
-  rm -rf "$BAK"
+cleanup() {
+  git -C "$REPO_ROOT" worktree remove --force "$WORKTREE" >/dev/null 2>&1 || true
+  rm -rf "$WORKTREE"
 }
-trap restore EXIT INT TERM
+trap cleanup EXIT INT TERM
 
-for sol in "$C"/solution/*.ml; do
+git -C "$REPO_ROOT" worktree add --quiet --detach "$WORKTREE" HEAD || exit $?
+WORK_C="$WORKTREE/course/$C"
+
+for sol in "$WORK_C"/solution/*.ml; do
   f="$(basename "$sol")"
-  [ -f "$C/$f" ] || continue          # solution-only files (e.g. a v1 rung) are not swapped in
-  cp "$C/$f" "$BAK/$f"; FILES="$FILES $f"
-  cp "$sol" "$C/$f"
+  [ -f "$WORK_C/$f" ] || continue     # solution-only files (e.g. a v1 rung) are not copied in
+  cp "$sol" "$WORK_C/$f"
+  FILES="$FILES $f"
 done
 [ -n "$FILES" ] || { echo "$C: solution/ has no counterpart in the concept dir"; exit 0; }
-echo "check-solution: swapped$FILES"
+echo "check-solution: isolated answer key:$FILES"
 
-# Use the same runner as the learner.  Besides keeping the report identical, this
-# preserves any staged test order declared by the concept.
-make -s lab C="$C"
+# Use the same runner as the learner. Besides keeping the report identical, this preserves any
+# staged test order declared by the concept.
+(cd "$WORKTREE/course" && make -s lab C="$C")
 rc=$?
 
 if [ $rc -eq 0 ]; then echo; echo "ANSWER KEY OK — $C passes its own tests"
