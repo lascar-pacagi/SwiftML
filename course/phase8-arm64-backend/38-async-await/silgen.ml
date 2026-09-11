@@ -783,7 +783,7 @@ and rt_call (b : builder) (name : string) (args : Sil.value list) (ret : Types.t
    via `Apply_value`. map/filter build a fresh result array; reduce folds into an accumulator
    slot. The source is only READ — no copy-on-write needed. *)
 and gen_array_hof (b : builder) (src : Sil.value) (el : Types.ty) (m : string)
-    (args : (string option * Ast.expr) list) : Sil.value =
+    (args : Ast.arg list) : Sil.value =
   let count = rt_call b "rt.array_count" [ src ] Types.TInt in
   let iaddr = emit b (Sil.Alloc_stack "$i") Types.TInt in
   emit_void b (Sil.Store (emit b (Sil.Int_lit 0) Types.TInt, iaddr));
