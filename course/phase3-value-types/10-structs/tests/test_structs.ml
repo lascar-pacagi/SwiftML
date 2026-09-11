@@ -29,9 +29,11 @@ let errors (src : string) : string list =
       x.Diagnostics.severity = Diagnostics.Error)
   |> List.map (fun (x : Diagnostics.t) -> x.Diagnostics.message)
 
-let sil (src : string) : string =
+let sil_module (src : string) : Sil.modul =
   let p, _ = front src in
-  Sil.string_of_module (Silgen.lower p)
+  Silgen.lower p
+
+let sil (src : string) : string = Sil.string_of_module (sil_module src)
 
 let llvm (src : string) : string =
   let p, _ = front src in
@@ -241,19 +243,77 @@ let test_read_nested_sil () =
 (* --- TODO(10h): SIL member write --- *)
 let test_write_sil () =
   let src = point ^ "var p = Point(x: 1, y: 2)\np.x = 9" in
-  sil_has src "struct_element_addr %3, #0";
-  sil_has src "store %5 to %6";
-  sil_lacks src "struct_extract"
+  let main =
+    List.find
+      (fun (function_ : Sil.func) -> function_.Sil.fname = "main")
+      (sil_module src).Sil.funcs
+  in
+  let instructions =
+    List.concat_map
+      (fun (block : Sil.block) -> List.rev block.Sil.instrs)
+      (List.rev main.Sil.blocks)
+  in
+  let result_of wanted =
+    fst (List.find (fun (_, instruction) -> instruction = wanted) instructions)
+  in
+  let p_address = result_of (Sil.Alloc_stack "p") in
+  let nine = result_of (Sil.Int_lit 9) in
+  let field_address, base_address =
+    List.find_map
+      (fun (result, instruction) ->
+        match instruction with
+        | Sil.Struct_element_addr (base, 0) -> Some (result, base)
+        | _ -> None)
+      instructions
+    |> Option.get
+  in
+  Alcotest.(check int) "field address starts at p's slot" p_address base_address;
+  Alcotest.(check bool)
+    "the value 9 is stored through that field address" true
+    (List.exists
+       (fun (_, instruction) -> instruction = Sil.Store (nine, field_address))
+       instructions);
+  Alcotest.(check bool)
+    "a write does not extract a value" false
+    (List.exists
+       (fun (_, instruction) ->
+         match instruction with Sil.Struct_extract _ -> true | _ -> false)
+       instructions)
 
 let test_write_own_slot () =
   (* value semantics in the SIL: q's write addresses q's slot, and p's slot is never addressed *)
-  let s = sil (point ^ "var p = Point(x: 1, y: 2)\nvar q = p\nq.x = 99") in
-  Alcotest.(check int)
-    "one field address taken" 1
-    (count s "struct_element_addr");
+  let module_ =
+    sil_module (point ^ "var p = Point(x: 1, y: 2)\nvar q = p\nq.x = 99")
+  in
+  let main =
+    List.find
+      (fun (function_ : Sil.func) -> function_.Sil.fname = "main")
+      module_.Sil.funcs
+  in
+  let instructions =
+    List.concat_map
+      (fun (block : Sil.block) -> List.rev block.Sil.instrs)
+      (List.rev main.Sil.blocks)
+  in
+  let address_of name =
+    fst
+      (List.find
+         (fun (_, instruction) -> instruction = Sil.Alloc_stack name)
+         instructions)
+  in
+  let field_bases =
+    List.filter_map
+      (fun (_, instruction) ->
+        match instruction with
+        | Sil.Struct_element_addr (base, 0) -> Some base
+        | _ -> None)
+      instructions
+  in
+  Alcotest.(check (list int))
+    "only q's slot is addressed" [ address_of "q" ] field_bases;
   Alcotest.(check bool)
-    "it is q's slot (%6), not p's (%3)" true
-    (contains s "struct_element_addr %6, #0")
+    "p's slot is not addressed" false
+    (List.mem (address_of "p") field_bases)
 
 (* --- TODO(10i): LLVM aggregates --- *)
 let test_llvm_shape () =

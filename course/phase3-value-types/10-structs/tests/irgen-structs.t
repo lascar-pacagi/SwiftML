@@ -13,11 +13,11 @@ A struct is a named LLVM type, and `Point(x: 3, y: 4)` is built by inserting eac
   > }
   > let p = Point(x: 3, y: 4)
   > EOF
-  $ ./lab.exe --emit-llvm build.swift | grep -E '%Point = type|insertvalue|store %Point'
+  $ ./lab.exe --emit-llvm build.swift | grep -E '%Point = type|insertvalue|store %Point' | sed -E 's/%t[0-9]+/%t/g'
   %Point = type { i64, i64 }
-    %t1 = insertvalue %Point undef, i64 3, 0
-    %t2 = insertvalue %Point %t1, i64 4, 1
-    store %Point %t2, ptr %t0
+    %t = insertvalue %Point undef, i64 3, 0
+    %t = insertvalue %Point %t, i64 4, 1
+    store %Point %t, ptr %t
 
 A nested struct is an aggregate OF aggregates: `%Line = type { %Point, %Point }`:
 
@@ -45,10 +45,10 @@ Fields keep their own LLVM types: `{ double, i1 }` for a Double and a Bool:
   > }
   > let m = M(d: 1.5, ok: true)
   > EOF
-  $ ./lab.exe --emit-llvm mixed.swift | grep -E '= type|insertvalue'
+  $ ./lab.exe --emit-llvm mixed.swift | grep -E '= type|insertvalue' | sed -E 's/%t[0-9]+/%t/g'
   %M = type { double, i1 }
-    %t1 = insertvalue %M undef, double 0x3FF8000000000000, 0
-    %t2 = insertvalue %M %t1, i1 1, 1
+    %t = insertvalue %M undef, double 0x3FF8000000000000, 0
+    %t = insertvalue %M %t, i1 1, 1
 
 A read `p.y` is `extractvalue %Point %v, 1` on the loaded aggregate:
 
@@ -60,9 +60,9 @@ A read `p.y` is `extractvalue %Point %v, 1` on the loaded aggregate:
   > let p = Point(x: 3, y: 4)
   > print(p.y)
   > EOF
-  $ ./lab.exe --emit-llvm read.swift | grep -E 'load %Point|extractvalue'
-    %t3 = load %Point, ptr %t0
-    %t4 = extractvalue %Point %t3, 1
+  $ ./lab.exe --emit-llvm read.swift | grep -E 'load %Point|extractvalue' | sed -E 's/%t[0-9]+/%t/g'
+    %t = load %Point, ptr %t
+    %t = extractvalue %Point %t, 1
 
 A write `p.x = 9` is `getelementptr %Point, ptr %slot, i32 0, i32 0` then a `store i64`:
 
@@ -74,9 +74,9 @@ A write `p.x = 9` is `getelementptr %Point, ptr %slot, i32 0, i32 0` then a `sto
   > var p = Point(x: 1, y: 2)
   > p.x = 9
   > EOF
-  $ ./lab.exe --emit-llvm write.swift | grep -E 'getelementptr|store i64 9'
-    %t3 = getelementptr %Point, ptr %t0, i32 0, i32 0
-    store i64 9, ptr %t3
+  $ ./lab.exe --emit-llvm write.swift | grep -E 'getelementptr|store i64 9' | sed -E 's/%t[0-9]+/%t/g'
+    %t = getelementptr %Point, ptr %t, i32 0, i32 0
+    store i64 9, ptr %t
 
 Runs: `read.swift` above prints 4, and a program reading both fields prints 3 then 4:
 

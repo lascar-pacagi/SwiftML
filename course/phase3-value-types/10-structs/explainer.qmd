@@ -421,9 +421,9 @@ your code here. In the order you fill the holes:
   nested `l.b.x` is two extracts; a read inside a function goes through the parameter's slot. No
   case writes a field, so this file goes green with the read hole alone.
 - `silgen-member-write.t` — `--emit-sil`: `p.x = 9` is `struct_element_addr %slot, #0` and a
-  `store`; the value is generated before the address; two writes share one slot; after `var q = p`
-  the write addresses **q's** slot (value semantics, visible in the SIL); a write in a loop. No case
-  reads a field.
+  `store`; the right-hand side and field address may be generated in either order; two writes
+  share one slot; after `var q = p` the write addresses **q's** slot (value semantics, visible in
+  the SIL); a write in a loop. No case reads a field.
 - `irgen-structs.t` — `--emit-llvm` then `build`: the named type, the `insertvalue` chain (this
   first case needs no silgen hole), nested and mixed-type aggregates, `extractvalue`,
   `getelementptr`; then programs **run**: 3/4, the value-semantics `1`/`99`, by-value argument,
@@ -440,6 +440,10 @@ your code here. In the order you fill the holes:
   agree; that half becomes green after the frontend holes and needs no lowering.
 - `test_exercises.ml` (Alcotest `exercises-10`) — methods, computed properties, and synthesized
   equality. Each optional group activates separately and runs generated programs with a deadline.
+
+The focused lowering tests compare field indices and data-flow relationships, not the spelling of
+temporary values such as `%6` or `%t3`. They also accept either order for two independent
+instructions. Those choices do not change the SIL or LLVM meaning.
 
 A hole you have not started shows as `TODO` with the list of what it will check; a hole in
 progress shows `FAIL` with, under each failing case, what the test wants and what your code
