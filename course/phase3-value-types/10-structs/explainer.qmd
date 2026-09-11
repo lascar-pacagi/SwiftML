@@ -45,6 +45,12 @@ later phase — where `q = p` copies a *pointer*, and both names see the same ob
 is *the* Swift distinction, and it's a property of how the type is copied, which is exactly what you
 implement here.)
 
+The same rule applies when a function returns a struct. LLVM IR such as `ret %Point %value`
+returns the aggregate **value**, not the address of a slot in the callee's stack. Semantically the
+caller receives an independent copy. LLVM may later lower that return according to the platform
+ABI (calling convention), using registers or a hidden result buffer owned by the caller so no
+physical copy is needed. That changes how the return is performed, not its value semantics.
+
 ### Reading vs. writing a field — value vs. address
 
 The two halves of member access are deliberately asymmetric. An **lvalue** identifies a storage
