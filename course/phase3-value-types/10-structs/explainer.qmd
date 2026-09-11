@@ -72,8 +72,9 @@ IRGen starts with `undef`, an aggregate whose fields have no specified values, t
 the final aggregate is the complete `Point`. The SILGen construction plumbing is given; you still
 recognize and check the source syntax, then lower the SIL instruction to LLVM.
 
-Here is the whole path in one small program. `q = p` copies the complete `Point`; the later write
-changes only `q`:
+Here is the whole path in one small program. To illustrate both value semantics and field
+selection, it copies a `Point`, then writes all three fields and reads fields with different
+indices and LLVM types. The writes change only `q`:
 
 ```swift
 struct Point {
@@ -181,6 +182,12 @@ The final index of each `getelementptr` selects `x`, `y`, or `visible`. These ar
 not byte offsets: LLVM derives the actual byte offset from `%Point = type { i64, i64, i1 }`,
 including any alignment padding. The `extractvalue` indices select the same three fields from a
 loaded aggregate.
+
+There are two indices in `getelementptr %Point, ptr %t1, i32 0, i32 2`. The first `0` means
+“stay at the `Point` addressed by `%t1`”; a `1` there would move to the next complete `Point`.
+The second index selects field 2, `visible`. LLVM requires a struct-field index to be a constant
+`i32`; it is a field identifier, unrelated to the field's own `i1` type. The first index is
+allowed to use another integer width, but this IR generator consistently emits `i32`.
 
 ### The three new SIL instructions (swiftc's exact names)
 
