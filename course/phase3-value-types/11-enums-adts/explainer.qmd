@@ -238,6 +238,73 @@ identifier followed by `(` is a case construction here, and the same shape becom
 Phase 5. Nothing in the *expression* grammar knows about enums — sema decides, from the registry,
 whether `Color.red` names a case or is a member access on a value.
 
+### The new AST contract
+
+```ocaml
+type expr =
+  | (* earlier cases *)
+  | Member of expr * string * Token.span
+  | Method_call of expr * string * arg list * Token.span
+
+type enum_case = {
+  cname : string;
+  payload : string list;
+}
+
+type enum_decl = {
+  ename : string;
+  ecases : enum_case list;
+  eraw : string option;
+  espan : Token.span;
+}
+
+type item =
+  | (* earlier cases *)
+  | IEnum of enum_decl
+```
+
+`Member` came from concept 10 and is reused for both `Color.red` and `value.rawValue`.
+`Method_call` is new. Ignoring the different source spans, `Shape.rect(3, 4)` becomes:
+
+```ocaml
+Method_call (
+  Var ("Shape", span),
+  "rect",
+  [ (None, Int_lit (3, span)); (None, Int_lit (4, span)) ],
+  span)
+```
+
+The node says only “a member followed by arguments.” The parser cannot know whether it denotes an
+enum case or a future method; Sema resolves the receiver.
+
+An `enum_case` retains its name and the written payload type names. An `enum_decl` preserves the
+case order because that order determines the implicit tag and raw value. `eraw` is `Some "Int"`
+for `enum Direction: Int` and `None` when no raw type is written. `IEnum` places the declaration in
+the top-level item stream beside functions, structs, and executable statements.
+
+### The parser diagnostics added here
+
+The parser reports the first missing piece at the token it found. These messages are part of the
+concept's contract:
+
+| source shape | message |
+|---|---|
+| `enum { case a }` | `expected an enum name` |
+| `enum E: { case a }` | `expected a raw type` |
+| `enum E case a }` | `expected '{'` |
+| `enum E { value }` | `expected a 'case' declaration` |
+| `enum E { case (Int) }` | `expected a case name` |
+| `enum E { case value() }` | `expected an associated-value type` |
+| `enum E { case value(Int }` | `expected ')'` |
+| `enum E { case a case b }` | `expected newline or end of declaration` |
+| end of input before the enum's `}` | `expected '}'` |
+| `Shape.circle(5` | `expected ')'` |
+
+`parse_enum` emits the unexpected-declaration and missing-separator messages directly. Its calls
+to `parse_ident` and the given `expect` helper produce the others. The recovery branch consumes an
+unexpected token before continuing, so invalid input still reaches the closing brace or end of
+input instead of looping forever.
+
 ### The new SIL instructions (swiftc's shape)
 
 | SIL | meaning | LLVM |
@@ -245,8 +312,12 @@ whether `Color.red` names a case or is a member access on a value.
 | `enum #t (payload…)` | build a value of case `t` | `insertvalue` (tag at #0, payload at #1…) |
 | `enum_tag %e` | read the case tag (an `Int`) | `extractvalue %e, 0` |
 
-swiftc's real instructions are `enum`/`unchecked_enum_data`/`select_enum`; `enum_tag` stands in for
-"read the discriminator." Concept 12 will add the destructuring counterpart.
+Real Swift SIL uses `enum` to construct a case. To inspect it, Swift normally uses `switch_enum`
+to branch by case or `select_enum` to choose a value by case; it does not first turn the case into
+our integer index. Once a branch has established which case is present, `unchecked_enum_data`
+extracts that case's payload. Our smaller SIL uses `enum_tag` to read the numeric case index needed
+for `.rawValue` and equality. Concept 12 adds `enum_payload` and combines it with a checked tag
+branch to implement pattern matching.
 
 ### The diagnostics sema owes you
 
