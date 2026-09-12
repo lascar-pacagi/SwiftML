@@ -1,4 +1,4 @@
-The second silgen hole, TODO(11): a case that carries associated values, `Shape.rect(3, 4)`,
+TODO(11h) payload SIL construction — a case such as `Shape.rect(3, 4)`
 lowers to `enum #tag (%a, %b)` — the same instruction, now with the evaluated arguments as the
 payload. `--emit-sil` stops after SILGen. No program here builds a payload-free case, so this
 file can go green on its own.

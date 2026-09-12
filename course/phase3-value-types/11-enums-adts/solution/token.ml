@@ -1,5 +1,4 @@
-(* Tokens for concept 11 — the token kinds are a contract. You extend keyword
-   classification for enum declarations; the scanner itself is unchanged. *)
+(* Complete token classification for concept 11. *)
 
 type pos = { line : int; col : int; offset : int }
 type span = { lo : pos; hi : pos }
@@ -122,8 +121,6 @@ let keyword_or_ident (s : string) : kind =
   | "func" -> Kw_func
   | "return" -> Kw_return
   | "struct" -> Kw_struct
-  (* TODO(11a): classify the two words that introduce an enum and its cases.
-     See explainer §3, "Recognize the enum keywords". *)
-  | "enum" | "case" ->
-      failwith "TODO(11a): classify the enum and case keywords"
+  | "enum" -> Kw_enum
+  | "case" -> Kw_case
   | _ -> Ident s

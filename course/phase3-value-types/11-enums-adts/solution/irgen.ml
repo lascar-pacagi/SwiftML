@@ -154,21 +154,30 @@ let emit_llvm (m : Sil.modul) : string =
           Hashtbl.replace opnd v r
       (* enums — concept 11: a tagged union { tag at #0, payload at #1.. } *)
       | Sil.Enum (tag, payload) ->
-          let ety = llty (vty v) in
-          let r0 = fresh () in
-          p (Printf.sprintf "  %s = insertvalue %s undef, i64 %d, 0\n" r0 ety tag);
-          let acc = ref r0 in
+          let enum_type = llty (vty v) in
+          let tag_register = fresh () in
+          p
+            (Printf.sprintf "  %s = insertvalue %s undef, i64 %d, 0\n"
+               tag_register enum_type tag);
+          let aggregate_operand = ref tag_register in
           List.iteri
-            (fun idx fv ->
-              let r = fresh () in
-              p (Printf.sprintf "  %s = insertvalue %s %s, %s %s, %d\n" r ety !acc (llty (vty fv)) (op fv) (idx + 1));
-              acc := r)
+            (fun payload_index payload_value ->
+              let result_register = fresh () in
+              p
+                (Printf.sprintf
+                   "  %s = insertvalue %s %s, %s %s, %d\n"
+                   result_register enum_type !aggregate_operand
+                   (llty (vty payload_value)) (op payload_value)
+                   (payload_index + 1));
+              aggregate_operand := result_register)
             payload;
-          Hashtbl.replace opnd v !acc
-      | Sil.Enum_tag a ->
-          let r = fresh () in
-          p (Printf.sprintf "  %s = extractvalue %s %s, 0\n" r (llty (vty a)) (op a));
-          Hashtbl.replace opnd v r
+          Hashtbl.replace opnd v !aggregate_operand
+      | Sil.Enum_tag enum_value ->
+          let result_register = fresh () in
+          p
+            (Printf.sprintf "  %s = extractvalue %s %s, 0\n"
+               result_register (llty (vty enum_value)) (op enum_value));
+          Hashtbl.replace opnd v result_register
     in
     let gen_term (t : Sil.term) =
       match t with
@@ -225,7 +234,7 @@ let emit_llvm (m : Sil.modul) : string =
   let type_defs = struct_defs @ enum_defs in
   (* assemble: preamble + struct/enum types + string constants + functions *)
   let preamble =
-    "; swiftml Phase-2 LLVM IR\n\
+    "; swiftml Phase-3 LLVM IR\n\
      declare i32 @printf(ptr, ...)\n\
      @.fmt_int = private unnamed_addr constant [6 x i8] c\"%lld\\0A\\00\"\n\
      @.fmt_str = private unnamed_addr constant [4 x i8] c\"%s\\0A\\00\"\n\

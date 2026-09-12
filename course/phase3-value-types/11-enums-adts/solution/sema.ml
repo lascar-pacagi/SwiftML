@@ -1,4 +1,4 @@
-(* Sema — concept 11 skeleton: concepts 05–10 are complete; you add enums.
+(* Complete Sema for concept 11: concepts 05–10 plus enums.
 
    New vs 10: an enum registry alongside the struct registry (PASS 0), case typing
    (`E.case` / `E.case(args)`), `.rawValue` on a `: Int` enum, and the Equatable rule — a
@@ -93,34 +93,65 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         | None ->
             err span (Printf.sprintf "cannot find type '%s' in scope" tyname);
             infer e0)
-    (* TODO(11e): type `E.case`, including lookup and the missing-payload
-       diagnostic. See explainer §3, "Type enum construction". *)
-    | Ast.Member (Ast.Var (type_name, _), _, _)
-      when Hashtbl.mem enums type_name ->
-        failwith "TODO(11e): type a payload-free enum case"
-    | Ast.Member (e0, fld, span) -> (
-        match infer e0 with
+    (* `E.case` — a no-payload enum case names a value of the enum type (concept 11) *)
+    | Ast.Member (Ast.Var (type_name, _), case_name, span)
+      when Hashtbl.mem enums type_name -> (
+        let layout = Hashtbl.find enums type_name in
+        match Types.case_payload layout case_name with
+        | Some [] -> Types.TEnum type_name
+        | Some _ ->
+            err span
+              (Printf.sprintf "enum case '%s.%s' requires arguments"
+                 type_name case_name);
+            Types.TEnum type_name
+        | None ->
+            err span
+              (Printf.sprintf "type '%s' has no member '%s'" type_name
+                 case_name);
+            Types.TEnum type_name)
+    | Ast.Member (receiver, field, span) -> (
+        match infer receiver with
         | Types.TStruct sn -> (
             match Hashtbl.find_opt structs sn with
             | Some sl -> (
-                match Types.field_type sl fld with
+                match Types.field_type sl field with
                 | Some ft -> ft
                 | None ->
-                    err span (Printf.sprintf "value of type '%s' has no member '%s'" sn fld);
+                    err span
+                      (Printf.sprintf "value of type '%s' has no member '%s'" sn
+                         field);
                     Types.TInt)
             | None -> Types.TInt)
-        (* TODO(11f): `.rawValue` is available only on an enum declared
-           with an Int raw type. See explainer §3. *)
-        | Types.TEnum _ when fld = "rawValue" ->
-            failwith "TODO(11f): type rawValue on an enum"
+        (* `e.rawValue` on a raw-value enum yields its Int raw value (concept 11) *)
+        | Types.TEnum enum_name
+          when field = "rawValue"
+               && (Hashtbl.find enums enum_name).Types.el_raw ->
+            Types.TInt
         | t ->
-            err span (Printf.sprintf "value of type '%s' has no member '%s'" (Types.string_of_ty t) fld);
+            err span
+              (Printf.sprintf "value of type '%s' has no member '%s'"
+                 (Types.string_of_ty t) field);
             Types.TInt)
-    (* TODO(11e): type `E.case(arguments)`, checking the case, arity, and
-       every associated value. *)
-    | Ast.Method_call (Ast.Var (type_name, _), _, _, _)
-      when Hashtbl.mem enums type_name ->
-        failwith "TODO(11e): type a payload-carrying enum case"
+    (* `E.case(args)` — a payload-carrying enum case (concept 11) *)
+    | Ast.Method_call (Ast.Var (type_name, _), case_name, args, span)
+      when Hashtbl.mem enums type_name -> (
+        let layout = Hashtbl.find enums type_name in
+        match Types.case_payload layout case_name with
+        | Some expected_types ->
+            let expressions = List.map snd args in
+            if List.length expected_types <> List.length expressions then
+              err span
+                (Printf.sprintf
+                   "enum case '%s.%s' expects %d associated value(s) but %d given"
+                   type_name case_name (List.length expected_types)
+                   (List.length expressions))
+            else List.iter2 check_expr expressions expected_types;
+            Types.TEnum type_name
+        | None ->
+            err span
+              (Printf.sprintf "type '%s' has no member '%s'" type_name
+                 case_name);
+            Types.TEnum type_name)
     | Ast.Method_call (e0, _, _, span) ->
         ignore (infer e0);
         err span "methods are not supported in this subset (Phase 3 v0)";
@@ -153,13 +184,17 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         match unify l tl r tr with
         (* a payload-free enum is implicitly Equatable; an associated-value enum needs an explicit
            `: Equatable` conformance (deferred), so swiftc — and we — reject `==` on it *)
-        | Some (Types.TEnum _) ->
-            (* TODO(11f): payload-free enums compare by tag; an enum with an
-               associated value is not Equatable in this subset. *)
-            failwith "TODO(11f): check enum equality"
+        | Some (Types.TEnum enum_name) ->
+            if Types.has_payload (Hashtbl.find enums enum_name) then
+              err span
+                (Printf.sprintf
+                   "type '%s' does not conform to protocol 'Equatable'"
+                   enum_name);
+            Types.TBool
         (* a struct would need an Equatable conformance too (concept 10, Exercise 3), and the
            back end has no aggregate compare — swiftc's two-operands wording, from `bad ()` *)
-        | Some (Types.TInt | Types.TDouble | Types.TBool | Types.TString) -> Types.TBool
+        | Some (Types.TInt | Types.TDouble | Types.TBool | Types.TString) ->
+            Types.TBool
         | _ -> ignore (bad ()); Types.TBool)
     | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge -> (
         match unify l tl r tr with
@@ -338,10 +373,10 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             err s.Ast.sspan (Printf.sprintf "invalid redeclaration of '%s'" s.Ast.sname);
           Hashtbl.replace structs s.Ast.sname { Types.sl_name = s.Ast.sname; sl_fields = [] }
       | Ast.IEnum e ->
-          (* TODO(11d): predeclare the enum name so later layouts may refer
-             to it. Structs and enums share one type namespace. *)
-          ignore e;
-          failwith "TODO(11d): register an enum name"
+          if Hashtbl.mem structs e.Ast.ename || Hashtbl.mem enums e.Ast.ename then
+            err e.Ast.espan (Printf.sprintf "invalid redeclaration of '%s'" e.Ast.ename);
+          Hashtbl.replace enums e.Ast.ename
+            { Types.el_name = e.Ast.ename; el_cases = []; el_raw = e.Ast.eraw <> None }
       | _ -> ())
     prog.Ast.items;
   List.iter
@@ -355,11 +390,30 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             s.Ast.sfields;
           Hashtbl.replace structs s.Ast.sname { Types.sl_name = s.Ast.sname; sl_fields = fields }
       | Ast.IEnum e ->
-          (* TODO(11d): resolve every associated-value type, enforce this
-             concept's Int-only payload/raw-type boundary, and replace the
-             placeholder with the completed layout. *)
-          ignore e;
-          failwith "TODO(11d): complete an enum layout"
+          let cases =
+            List.map
+              (fun (c : Ast.enum_case) ->
+                let payload =
+                  List.map (resolve_ty e.Ast.espan) c.Ast.payload
+                in
+                List.iter2
+                  (fun written resolved ->
+                    if resolved <> Types.TInt then
+                      err e.Ast.espan
+                        (Printf.sprintf
+                           "associated value type '%s' is not supported (only Int)"
+                           written))
+                  c.Ast.payload payload;
+                (c.Ast.cname, payload))
+              e.Ast.ecases
+          in
+          (match e.Ast.eraw with
+          | Some "Int" | None -> ()
+          | Some raw ->
+              err e.Ast.espan
+                (Printf.sprintf "raw type '%s' is not supported (only Int)" raw));
+          Hashtbl.replace enums e.Ast.ename
+            { Types.el_name = e.Ast.ename; el_cases = cases; el_raw = e.Ast.eraw <> None }
       | _ -> ())
     prog.Ast.items;
   (* PASS 1: collect signatures so calls/recursion/forward-references resolve. *)

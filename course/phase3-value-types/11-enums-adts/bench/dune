@@ -1,0 +1,6 @@
+; Runtime comparison for the enum-state workload documented in §5.
+(executable
+ (name bench)
+ (libraries swiftml_enums unix)
+ (flags
+  (:standard -warn-error -a)))

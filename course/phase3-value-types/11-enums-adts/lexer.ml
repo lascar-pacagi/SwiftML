@@ -1,6 +1,5 @@
-(* FROZEN SOLUTION — concept 07 lexer (carries 05–06; adds the '->' arrow). Phase-1 scanning + the Phase-2 lexemes:
-   string/float literals, the `:` colon, and the comparison operators. Verify by copying
-   over ../lexer.ml and running the concept's runtest. *)
+(* Lexer scanner carried through concept 11. No new character rule is needed here:
+   enum and case have identifier spelling, so token.ml classifies them. *)
 
 type t = {
   src : string;

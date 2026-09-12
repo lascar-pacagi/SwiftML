@@ -14,7 +14,8 @@ circle *or* a rectangle, a value that's present *or* `nil` (that last one is `Op
 it's an enum). You'll add `enum` through the whole compiler, represented the way every compiler
 represents a sum type: a **tagged union**.
 
-- **You implement:** enum *construction* in SILGen and the enum LLVM instructions in IRGen.
+- **You implement:** the enum keywords, declaration and construction syntax, enum type checking,
+  construction in SILGen, and the enum instructions in IRGen.
 - **Outcome:** enum programs **run and match swiftc** — case equality, raw values, enums in
   conditionals.
 - **Out of scope (by design):** taking an enum *apart* — reading a case's associated values — needs
@@ -41,6 +42,114 @@ bits** of the payload when it can — see `swift/lib/IRGen/GenEnum.cpp`), but th
 builds the aggregate: store the case's **index** as the tag, then the associated values into the
 payload slots. `Color.red` → `enum #0 ()`; `Shape.rect(3, 4)` → `enum #1 (%a, %b)`. In LLVM that's an
 `insertvalue` chain, exactly like a struct — the tag is just field 0.
+
+Here is the complete path through the compiler. `Direction` has no payload and exposes implicit
+integer raw values. `Command.move` carries two `Int` values. The `score` function accepts both enum
+types; this concept can pass a `Command` around even though concept 12 is needed to inspect its
+payload.
+
+```swift
+enum Direction: Int {
+  case north, east, south, west
+}
+
+enum Command {
+  case stop
+  case move(Int, Int)
+}
+
+func score(_ direction: Direction, _ command: Command) -> Int {
+  if direction == Direction.west { return 1 }
+  return 0
+}
+
+print(Direction.south.rawValue)
+print(score(Direction.west, Command.move(3, 4)))
+```
+
+It prints `2`, then `1`. SIL keeps an enum construction as one operation. `Direction.south` is
+case 2, `Direction.west` is case 3, and `Command.move` is case 1 with two payload operands:
+
+```text
+enum Direction { north; east; south; west }
+
+enum Command { stop; move(Int, Int) }
+
+sil @score(%0 : $Direction, %1 : $Command) -> $Int {
+bb0:
+  %2 = alloc_stack $Direction  // direction
+  store %0 to %2
+  %4 = alloc_stack $Command  // command
+  store %1 to %4
+  %6 = load %2 $Direction
+  %7 = enum #3 () $Direction
+  %8 = enum_tag %6
+  %9 = enum_tag %7
+  %10 = binop "==" %8, %9 $Bool
+  cond_br %10, bb1, bb2
+bb1:
+  %11 = integer_literal $Int, 1
+  return %11
+bb2:
+  %12 = integer_literal $Int, 0
+  return %12
+}
+
+sil @main() -> $() {
+bb0:
+  %0 = enum #2 () $Direction
+  %1 = enum_tag %0
+  %2 = apply @print(%1)
+  %3 = enum #3 () $Direction
+  %4 = integer_literal $Int, 3
+  %5 = integer_literal $Int, 4
+  %6 = enum #1 (%4, %5) $Command
+  %7 = function_ref @score
+  %8 = apply %7(%3, %6)
+  %9 = apply @print(%8)
+  return
+}
+```
+
+IRGen expands each construction into an `insertvalue` chain and each tag read into
+`extractvalue`. Runtime declarations are omitted here:
+
+```llvm
+%Direction = type { i64 }
+%Command = type { i64, i64, i64 }
+
+define i64 @score(%Direction %arg0, %Command %arg1) {
+bb0:
+  %t0 = alloca %Direction
+  %t1 = alloca %Command
+  store %Direction %arg0, ptr %t0
+  store %Command %arg1, ptr %t1
+  %t2 = load %Direction, ptr %t0
+  %t3 = insertvalue %Direction undef, i64 3, 0
+  %t4 = extractvalue %Direction %t2, 0
+  %t5 = extractvalue %Direction %t3, 0
+  %t6 = icmp eq i64 %t4, %t5
+  br i1 %t6, label %bb1, label %bb2
+bb1:
+  ret i64 1
+bb2:
+  ret i64 0
+}
+
+define i32 @main() {
+bb0:
+  %t0 = insertvalue %Direction undef, i64 2, 0
+  %t1 = extractvalue %Direction %t0, 0
+  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %t1)
+  %t2 = insertvalue %Direction undef, i64 3, 0
+  %t3 = insertvalue %Command undef, i64 1, 0
+  %t4 = insertvalue %Command %t3, i64 3, 1
+  %t5 = insertvalue %Command %t4, i64 4, 2
+  %t6 = call i64 @score(%Direction %t2, %Command %t5)
+  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %t6)
+  ret i32 0
+}
+```
 
 ### Raw values and equality — what you *can* do without `switch`
 
@@ -139,12 +248,11 @@ whether `Color.red` names a case or is a member access on a value.
 swiftc's real instructions are `enum`/`unchecked_enum_data`/`select_enum`; `enum_tag` stands in for
 "read the discriminator." Concept 12 will add the destructuring counterpart.
 
-### The diagnostics sema owes you (given)
+### The diagnostics sema owes you
 
-You write no diagnostics in this concept — sema is given — but the lowering may assume every rule
-below has already fired, and `sema-enums.t` keeps them on record. Wording follows `swiftc
--typecheck` where the subset lets it (`swift/include/swift/AST/DiagnosticsSema.def`, line numbers
-from the pinned snapshot); the differences are stated, not hidden.
+The Sema holes establish these rules before lowering runs. Wording follows `swiftc -typecheck`
+where the subset permits the same program (`swift/include/swift/AST/DiagnosticsSema.def`, using
+line numbers from the pinned snapshot). The deliberate subset differences are explicit.
 
 | program | our message | swiftc |
 |---|---|---|
@@ -155,6 +263,8 @@ from the pinned snapshot); the differences are stated, not hidden.
 | `S.a(1) == S.a(1)` | `type 'S' does not conform to protocol 'Equatable'` (`type_does_not_conform`, l.2897 — a real swiftc line, at a different site) | `referencing operator function '==' on 'Equatable' requires that 'S' conform to 'Equatable'` (`type_does_not_conform_in_decl_ref`, l.2984) — same verdict, longer sentence |
 | `C.a == C.b`, payload-free | **accepted** | **accepted** — a payload-free enum is implicitly `Equatable` |
 | `enum A {…}` and `struct A {…}` | `invalid redeclaration of 'A'` | **same** (`invalid_redecl`, l.1110) — one namespace for both kinds |
+| `case value(Bool)` | `associated value type 'Bool' is not supported (only Int)` | **accepted** — this concept's LLVM payload slots are `i64`; more payload types need a typed union layout |
+| `enum E: Bool` | `raw type 'Bool' is not supported (only Int)` | rejected for a different language rule — Swift permits integer, floating-point, string, and character-literal raw types, while this concept implements `Int` only |
 | `let n: Int = Color.red` | `cannot convert value of type 'Color' to specified type 'Int'` | **same** |
 | `let e = E.a` where `case a(Int)` | `enum case 'E.a' requires arguments` | **accepted** — swiftc reads a bare payload case as its *constructor function*, `(Int) -> E`. Our subset has no function values until concept 29, so we refuse instead of inferring a type we cannot represent |
 | `print(c)` of an enum | `cannot print a value of type 'Color' (only Int, Double, Bool and String)` | **accepted** — swiftc prints `red` through reflection; ours has no runtime to do it, so sema refuses rather than letting IRGen crash |
@@ -164,23 +274,60 @@ initializer's labels, `p.x = e` needing a `var` binding and a `var` field, `==` 
 
 ## 3. Build it, step by step
 
-The front end is given — the parser builds the declarations, sema fills the enum registry and has
-already rejected everything in the table above. Three holes, in this order:
+The AST, type-layout, and SIL node definitions are given contracts. You thread those contracts
+through every compiler stage in nine holes:
 
-- **`silgen.ml`, `TODO(11)` in `gen_expr`, the `Member (Var tn, case, _)` arm** — `Color.red`,
-  a case with no associated values. It must become **one** `Sil.Enum` instruction whose tag is the
-  case's index in the declaration and whose payload list is empty, typed `Types.TEnum tn`. The
-  layout is `Hashtbl.find b.enums tn`; `Types.case_index` turns the case *name* into that index.
-  `silgen-case.t` prints the SIL and pins the tag.
-- **`silgen.ml`, `TODO(11)` in the `Method_call (Var tn, case, args, _)` arm** — `Shape.rect(3, 4)`.
-  The same instruction, with the arguments **evaluated first** (left to right, each through
-  `gen_expr`) and handed over as the payload. `silgen-payload.t` pins both the operand order and
-  the tag, which counts every case, payload-carrying or not.
-- **`irgen.ml`, `TODO(11)`** — the two instructions in LLVM. `Enum` builds the aggregate the way
-  `Struct` does in concept 10, an `insertvalue` chain from `undef`, except that field 0 is the
-  **tag** (an `i64` constant, not an operand) and the payload starts at field 1. `Enum_tag` reads
-  field 0 back out. `llty (vty v)` gives the LLVM type of a value, `fresh ()` a register, `opnd` the
-  operand of a SIL value.
+1. **`token.ml`, `TODO(11a)` — recognize the enum keywords.** Extend `keyword_or_ident` so the
+   exact words `enum` and `case` produce `Kw_enum` and `Kw_case`. Longer names such as
+   `enumValue` remain identifiers. The scanner already sends every identifier-shaped word to this
+   function, so `lexer.ml` needs no new character rule.
+
+2. **`parser.ml`, `TODO(11b)` — parse enum declarations.** `parse_enum` begins on `Kw_enum` and
+   returns an `Ast.enum_decl`. Parse the name, an optional `: RawType`, and the braces. Its body has
+   a declaration loop like `parse_struct`, but only `case` is legal. A single `case` keyword may
+   introduce several comma-separated cases. Each case may then have a parenthesized,
+   comma-separated list of *type names*. Preserve both case order and payload-type order. Consume
+   the closing brace, and make every recovery branch advance or finish so malformed input cannot
+   trap the parser in a loop.
+
+3. **`parser.ml`, `TODO(11c)` — parse payload construction.** In `parse_postfix`, after reading
+   `.name`, an opening `(` distinguishes `E.case(args)` from ordinary member access. Reuse
+   `parse_call_args`, require `)`, build `Ast.Method_call`, and pass the result back to
+   `parse_postfix` so a later `.member` can still chain. The parser records only syntax; Sema will
+   decide whether the receiver is an enum type.
+
+4. **`sema.ml`, `TODO(11d)` — build the enum registry.** Pass 0 has two walks. In the first,
+   predeclare every enum name with an empty layout so function signatures can refer forward to it;
+   structs and enums share one namespace. In the second, resolve the payload type names, preserve
+   case order, record whether a raw type was written, and replace the placeholder layout. This
+   concept accepts only `Int` payloads and `Int` raw types; diagnose other resolved types before
+   they reach the fixed `i64` LLVM payload slots.
+
+5. **`sema.ml`, `TODO(11e)` — type enum construction.** For `E.case`, find `E`, then find the case
+   in its layout. It is a value only when its payload list is empty. For `E.case(args)`, check the
+   case exists, compare the two list lengths, then check each argument against the corresponding
+   payload type. Both forms have type `Types.TEnum E`, including after a diagnostic so later
+   checking can continue.
+
+6. **`sema.ml`, `TODO(11f)` — type enum observation.** A `.rawValue` read produces `Int` only when
+   the enum layout records a raw type; otherwise use the normal missing-member diagnostic. For
+   `==` and `!=`, accept a payload-free enum and produce `Bool`. Reject an enum with any associated
+   value because this subset does not synthesize its payload-aware `Equatable` conformance.
+
+7. **`silgen.ml`, `TODO(11g)` — construct a payload-free case.** `Color.red` becomes one
+   `Sil.Enum` instruction. `Types.case_index` maps the case name to its declaration index. Its
+   payload list is empty and its result type is `Types.TEnum` for the enum name.
+
+8. **`silgen.ml`, `TODO(11h)` — construct a payload case.** Evaluate arguments from left to right
+   through `gen_expr`, then emit the same `Sil.Enum` instruction with those values as its payload.
+   The tag still counts every declared case, including earlier cases with no payload.
+
+9. **`irgen.ml`, `TODO(11i)` — lower both enum instructions.** `Enum` builds the aggregate with an
+   `insertvalue` chain from `undef`. Insert the integer tag at field 0, then each already-mapped
+   payload operand at fields 1 onward. Bind the final aggregate as the LLVM operand for the SIL
+   result. `Enum_tag` uses `extractvalue` at field 0 and binds that fresh register as its result.
+   `llty (vty value)` gives an LLVM type; `lookup_operand` and `bind_operand` read and update the
+   SIL-to-LLVM operand table.
 
 Reference: `solution/` — after you have tried it.
 
@@ -193,45 +340,104 @@ make lab C=phase3-value-types/11-enums-adts
 Every `.t` file calls `./lab.exe`, built from **this directory's** library, so the report is about
 your code here. In the order you fill the holes:
 
-- `sema-enums.t` — `--typecheck`: the given rules from the table above, green from the start. It
-  is the contract the lowering may rely on (no unknown case, no payload mismatch, no `==` on an
-  associated-value enum ever reaches SILGen).
+- `lexer-enums.t` — exact keyword matching for `enum` and `case`; nearby identifiers stay intact.
+- `parser-enum-decls.t` — enum names, raw types, ordered case lists, associated-value type lists,
+  declaration errors, and a missing `}`. Every invocation has a two-second timeout.
+- `parser-enum-uses.t` — payload arguments and continued postfix chaining, plus the missing `)`
+  diagnostic. It has the same timeout guard.
+- `sema-enum-decls.t` — forward use of an enum type, the Int-only payload/raw-type boundary,
+  unknown payload types, and the shared struct/enum namespace.
+- `sema-enum-cases.t` — case lookup, required payloads, arity, and payload expression types.
+- `sema-enum-observation.t` — `.rawValue`, payload-free equality, and the associated-value
+  `Equatable` rejection.
 - `silgen-case.t` — `--emit-sil`: `Color.green` is `enum #1 () $Color`; the tag follows the
   declaration order whether the cases are written on one line or several; `==` is two `enum_tag`
   reads and an integer compare; `.rawValue` is the same `enum_tag`; an enum in a `var`, and one
-  crossing a function boundary. No program here carries a payload, so this file goes green with
-  the first hole alone.
+  crossing a function boundary.
 - `silgen-payload.t` — `--emit-sil`: `Shape.rect(3, 4)` is `enum #1 (%0, %1)`, with the payload
   evaluated before the case is built; a one-value case; an arbitrary expression as an associated
-  value; a tag that counts payload-free cases too; a call result as a payload. No program here
-  builds a payload-free case, so this file goes green with the second hole alone.
+  value; a tag that counts payload-free cases too; and a call result as a payload.
 - `irgen-enums.t` — `--emit-llvm` then `build`: the one-field aggregate of a payload-free enum,
   the widest-case sizing, the `insertvalue` chain with the tag at 0, `extractvalue … , 0`; then
   programs **run** — tag equality, the raw values 0/1/3, the left-to-right case order, an enum
   driving a loop, an enum through a function, and an associated-value enum built and passed on.
-- `test_enums.ml` (alcotest `enums`) — the same four groups in-process: `sema-enums` (given — its
-  three cases pass on the skeleton), `silgen-case`, `silgen-payload`, `irgen-enums`.
+- `test_enums.ml` (alcotest `enums`) — nine in-process groups with the same stage boundaries.
 - `oracle.t` — **the headline**, in two halves. The runtime half compiles the 16 programs of
   `oracle-corpus.txt` with `swiftc -Onone` and with `./lab.exe build`, runs both binaries, and
   demands identical stdout and exit code; when ours refuses with a `TODO(` the loop stops, so it
   stays red until the last hole is filled. The front-end half asks `swiftc -typecheck` and
   `./lab.exe --typecheck` for a verdict on the 18 programs of `typecheck-corpus.txt` — six
-  well-formed, twelve the enum rules must refuse — and they must agree; that half needs no
-  lowering, so it is green from the start.
+  well-formed and twelve invalid — and requires the same verdict.
 
 A hole you have not started shows as `TODO` with the list of what it will check; a hole in
 progress shows `FAIL` with, under each failing case, what the test wants and what your code
-printed. On the untouched skeleton the two silgen files and `irgen-enums.t` are `TODO`,
-`sema-enums.t` is `PASS`, `oracle.t` is `FAIL` with its front-end half already `OK`, and the
-alcotest is `FAIL` with its three sema cases `OK`.
+printed. On the untouched skeleton, `lexer-enums.t` is the first TODO. Each focused file can be
+run alone with `T=<filename>` as you work through 11a–11i.
 
 ## 5. Benchmark it
 
-An enum is the size of its widest case (plus tag), regardless of which case is live — so a
-`{ huge payload | empty case }` enum wastes space in the empty case. swiftc's spare-bit packing
-reclaims much of this; `Optional` (concept 13) is the famous win (`Optional<SomePointer>` is the same
-size as the pointer, using an invalid bit pattern as the `nil` tag). Ours is unpacked — the honest
-baseline a Phase-4/layout pass would later optimize.
+This benchmark performs 20 million transitions through a four-case enum. Each iteration passes
+the enum into a function, compares tags, returns another enum, and reads `.rawValue`:
+
+```swift
+enum State: Int {
+  case first, second, third, fourth
+}
+
+func next(_ state: State) -> State {
+  if state == State.first { return State.second }
+  if state == State.second { return State.third }
+  if state == State.third { return State.fourth }
+  return State.first
+}
+
+var state = State.first
+var checksum = 0
+for _ in 0 ..< 20000000 {
+  state = next(state)
+  checksum = checksum + state.rawValue
+}
+print(checksum)
+```
+
+Run all four variants with:
+
+```bash
+make bench C=phase3-value-types/11-enums-adts
+```
+
+The runner checks byte-identical output before timing. It then reports the best of five runs after
+one warm-up. On this machine:
+
+```text
+Enum benchmark -- 20,000,000 state transitions and tag reads
+  compiling and checking four binaries... done
+  output: 30000000 (all four binaries agree)
+  native runtime, best of 5 after one warm-up:
+    swiftml (clang default)     0.030 s
+    swiftml + clang -O2         0.010 s
+    swiftc -Onone               1.703 s
+    swiftc -O                   0.019 s
+  clang -O2 speedup: 3.06x
+  swiftc -O speedup: 87.53x
+  optimized gap: 0.51x (swiftml / swiftc)
+```
+
+`swiftc -Onone` disables optimization for a predictable debugging build. `swiftc -O` runs Swift's
+SIL optimizer and LLVM's speed optimizations. `clang` without an optimization flag leaves our LLVM
+at `-O0`; `clang -O2` runs LLVM's standard optimization pipeline.
+
+This small tag-only program is especially easy for LLVM: after inlining, an enum value is just its
+integer discriminator, and register promotion removes its stack slot. Our `clang -O2` result was
+faster than `swiftc -O` on this run. It is not a general compiler comparison: swiftml omits Swift's
+overflow checks and runtime semantics, and later features give Swift's SIL optimizer information
+that a basic LLVM translation no longer has. Timings vary by machine.
+
+Representation size is a separate issue from this runtime benchmark. An enum is the size of its
+widest case plus its tag, even when the current case carries no payload. swiftc can pack tags into
+spare payload bits. `Optional<SomePointer>` is the famous example: an invalid pointer pattern can
+represent `nil`, so no separate tag word is needed. Our unpacked layout is the honest baseline for
+a later layout optimization.
 
 ## 6. Exercises
 
@@ -258,36 +464,252 @@ the tagged unions you just built become the ADTs that make Swift Swift.
 
 ## 8. Appendix — full solution
 
-From `solution/silgen.ml` (construction) and `solution/irgen.ml` (the LLVM):
+The new keyword cases in `solution/token.ml`:
+
+```ocaml
+| "enum" -> Kw_enum
+| "case" -> Kw_case
+```
+
+The payload-call branch in `parse_postfix` consumes the delimiters and resumes postfix parsing:
+
+```ocaml
+if peek_kind p = Token.LParen then (
+  ignore (advance p);
+  let args = parse_call_args p in
+  let right_paren = expect p Token.RParen "')'" in
+  let call_span =
+    span_between (Ast.expr_span e) right_paren.Token.span
+  in
+  parse_postfix p (Ast.Method_call (e, name, args, call_span)))
+else
+  parse_postfix p
+    (Ast.Member (e, name, span_between (Ast.expr_span e) name_token.Token.span))
+```
+
+`parse_enum` uses one inner loop for cases on the same line and one outer loop for the body:
+
+```ocaml
+let parse_enum (p : t) : Ast.enum_decl =
+  let enum_keyword = advance p in
+  let enum_name, _ = parse_ident p "an enum name" in
+  let raw_type =
+    if peek_kind p = Token.Colon then (
+      ignore (advance p);
+      Some (fst (parse_ident p "a raw type")))
+    else None
+  in
+  ignore (expect p Token.LBrace "'{'");
+  let parse_payload () =
+    if peek_kind p <> Token.LParen then []
+    else (
+      ignore (advance p);
+      let rec loop accumulator =
+        let type_name, _ =
+          parse_ident p "an associated-value type"
+        in
+        if peek_kind p = Token.Comma then (
+          ignore (advance p);
+          loop (type_name :: accumulator))
+        else (
+          ignore (expect p Token.RParen "')'");
+          List.rev (type_name :: accumulator))
+      in
+      loop [])
+  in
+  let rec loop accumulator =
+    while peek_kind p = Token.Newline do
+      ignore (advance p)
+    done;
+    match peek_kind p with
+    | Token.RBrace ->
+        ignore (advance p);
+        List.rev accumulator
+    | Token.Eof ->
+        ignore (expect p Token.RBrace "'}'");
+        List.rev accumulator
+    | Token.Kw_case ->
+        ignore (advance p);
+        let rec parse_cases same_line =
+          let case_name, _ = parse_ident p "a case name" in
+          let enum_case = { Ast.cname = case_name; payload = parse_payload () } in
+          if peek_kind p = Token.Comma then (
+            ignore (advance p);
+            parse_cases (enum_case :: same_line))
+          else List.rev (enum_case :: same_line)
+        in
+        let cases = parse_cases [] in
+        (match peek_kind p with
+        | Token.Newline -> ignore (advance p)
+        | Token.RBrace | Token.Eof -> ()
+        | _ ->
+            Diagnostics.error p.diags (peek p).Token.span
+              "expected newline or end of declaration");
+        loop (List.rev_append cases accumulator)
+    | _ ->
+        let token = peek p in
+        Diagnostics.error p.diags token.Token.span
+          "expected a 'case' declaration";
+        ignore (advance p);
+        loop accumulator
+  in
+  let cases = loop [] in
+  { Ast.ename = enum_name;
+    ecases = cases;
+    eraw = raw_type;
+    espan = enum_keyword.Token.span }
+```
+
+The Sema solution first fills the registry, then uses it in the expression rules. The complete
+file remains in `solution/sema.ml`; these are the enum-specific branches:
+
+```ocaml
+| Ast.Member (Ast.Var (type_name, _), case_name, span)
+  when Hashtbl.mem enums type_name -> (
+    let layout = Hashtbl.find enums type_name in
+    match Types.case_payload layout case_name with
+    | Some [] -> Types.TEnum type_name
+    | Some _ ->
+        err span
+          (Printf.sprintf "enum case '%s.%s' requires arguments"
+             type_name case_name);
+        Types.TEnum type_name
+    | None ->
+        err span
+          (Printf.sprintf "type '%s' has no member '%s'"
+             type_name case_name);
+        Types.TEnum type_name)
+```
+
+```ocaml
+| Ast.Method_call (Ast.Var (type_name, _), case_name, args, span)
+  when Hashtbl.mem enums type_name -> (
+    let layout = Hashtbl.find enums type_name in
+    match Types.case_payload layout case_name with
+    | Some expected_types ->
+        let expressions = List.map snd args in
+        if List.length expected_types <> List.length expressions then
+          err span
+            (Printf.sprintf
+               "enum case '%s.%s' expects %d associated value(s) but %d given"
+               type_name case_name (List.length expected_types)
+               (List.length expressions))
+        else List.iter2 check_expr expressions expected_types;
+        Types.TEnum type_name
+    | None ->
+        err span
+          (Printf.sprintf "type '%s' has no member '%s'"
+             type_name case_name);
+        Types.TEnum type_name)
+```
+
+The remaining enum work is the raw-value member arm, the enum case in equality, and the two-pass
+registry construction:
+
+```ocaml
+| Types.TEnum enum_name
+  when field = "rawValue"
+       && (Hashtbl.find enums enum_name).Types.el_raw ->
+    Types.TInt
+```
+
+```ocaml
+| Some (Types.TEnum enum_name) ->
+    if Types.has_payload (Hashtbl.find enums enum_name) then
+      err span
+        (Printf.sprintf
+           "type '%s' does not conform to protocol 'Equatable'"
+           enum_name);
+    Types.TBool
+```
+
+The first registry walk reserves names; the second resolves and validates layouts:
+
+```ocaml
+| Ast.IEnum enum_decl ->
+    if Hashtbl.mem structs enum_decl.Ast.ename
+       || Hashtbl.mem enums enum_decl.Ast.ename then
+      err enum_decl.Ast.espan
+        (Printf.sprintf "invalid redeclaration of '%s'"
+           enum_decl.Ast.ename);
+    Hashtbl.replace enums enum_decl.Ast.ename
+      { Types.el_name = enum_decl.Ast.ename;
+        el_cases = [];
+        el_raw = enum_decl.Ast.eraw <> None }
+```
+
+```ocaml
+| Ast.IEnum enum_decl ->
+    let cases =
+      List.map
+        (fun (enum_case : Ast.enum_case) ->
+          let payload =
+            List.map (resolve_ty enum_decl.Ast.espan)
+              enum_case.Ast.payload
+          in
+          List.iter2
+            (fun written resolved ->
+              if resolved <> Types.TInt then
+                err enum_decl.Ast.espan
+                  (Printf.sprintf
+                     "associated value type '%s' is not supported (only Int)"
+                     written))
+            enum_case.Ast.payload payload;
+          (enum_case.Ast.cname, payload))
+        enum_decl.Ast.ecases
+    in
+    (match enum_decl.Ast.eraw with
+    | Some "Int" | None -> ()
+    | Some raw ->
+        err enum_decl.Ast.espan
+          (Printf.sprintf "raw type '%s' is not supported (only Int)" raw));
+    Hashtbl.replace enums enum_decl.Ast.ename
+      { Types.el_name = enum_decl.Ast.ename;
+        el_cases = cases;
+        el_raw = enum_decl.Ast.eraw <> None }
+```
+
+From `solution/silgen.ml` (construction) and `solution/irgen.ml` (LLVM lowering):
 
 ```ocaml
 (* SILGen — an enum case is a tag + payload values *)
-| Ast.Member (Ast.Var (tn, _), case, _) when Hashtbl.mem b.enums tn ->
-    let el = Hashtbl.find b.enums tn in
-    emit b (Sil.Enum (Option.get (Types.case_index el case), [])) (Types.TEnum tn)
-| Ast.Method_call (Ast.Var (tn, _), case, args, _) when Hashtbl.mem b.enums tn ->
-    let el = Hashtbl.find b.enums tn in
-    let argvs = List.map (fun (_, e) -> gen_expr b e) args in
-    emit b (Sil.Enum (Option.get (Types.case_index el case), argvs)) (Types.TEnum tn)
+| Ast.Member (Ast.Var (type_name, _), case_name, _)
+  when Hashtbl.mem b.enums type_name ->
+    let layout = Hashtbl.find b.enums type_name in
+    let case_index = Option.get (Types.case_index layout case_name) in
+    emit b (Sil.Enum (case_index, [])) (Types.TEnum type_name)
+| Ast.Method_call (Ast.Var (type_name, _), case_name, args, _)
+  when Hashtbl.mem b.enums type_name ->
+    let layout = Hashtbl.find b.enums type_name in
+    let argument_values = List.map (fun (_, e) -> gen_expr b e) args in
+    let case_index = Option.get (Types.case_index layout case_name) in
+    emit b (Sil.Enum (case_index, argument_values)) (Types.TEnum type_name)
 ```
 
 ```ocaml
 (* IRGen — a tagged union in LLVM: tag at #0, payload at #1.. *)
 | Sil.Enum (tag, payload) ->
-    let ety = llty (vty v) in
-    let r0 = fresh () in
-    p (Printf.sprintf "  %s = insertvalue %s undef, i64 %d, 0\n" r0 ety tag);
-    let acc = ref r0 in
-    List.iteri (fun idx fv ->
-      let r = fresh () in
-      p (Printf.sprintf "  %s = insertvalue %s %s, %s %s, %d\n"
-           r ety !acc (llty (vty fv)) (op fv) (idx + 1));
-      acc := r) payload;
-    Hashtbl.replace opnd v !acc
-| Sil.Enum_tag a ->
-    let r = fresh () in
-    p (Printf.sprintf "  %s = extractvalue %s %s, 0\n" r (llty (vty a)) (op a));
-    Hashtbl.replace opnd v r
+    let enum_type = llty (vty v) in
+    let tag_register = fresh () in
+    p (Printf.sprintf "  %s = insertvalue %s undef, i64 %d, 0\n"
+         tag_register enum_type tag);
+    let aggregate_operand = ref tag_register in
+    List.iteri
+      (fun payload_index payload_value ->
+        let result_register = fresh () in
+        p (Printf.sprintf
+             "  %s = insertvalue %s %s, %s %s, %d\n"
+             result_register enum_type !aggregate_operand
+             (llty (vty payload_value)) (op payload_value)
+             (payload_index + 1));
+        aggregate_operand := result_register)
+      payload;
+    Hashtbl.replace opnd v !aggregate_operand
+| Sil.Enum_tag enum_value ->
+    let result_register = fresh () in
+    p (Printf.sprintf "  %s = extractvalue %s %s, 0\n"
+         result_register (llty (vty enum_value)) (op enum_value));
+    Hashtbl.replace opnd v result_register
 ```
 
 ## 9. Exercise solutions

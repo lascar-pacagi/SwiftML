@@ -1,4 +1,4 @@
-The irgen hole, TODO(11): the two enum instructions become LLVM aggregate operations — `enum`
+TODO(11i) enum IRGen — the two enum instructions become LLVM aggregate operations: `enum` is
 an `insertvalue` chain (the tag at field 0, the payload after it), `enum_tag` an `extractvalue …
 , 0`. It needs the silgen holes too, since it lowers what SILGen produced; from "runs" on, the
 programs BUILD and RUN.

@@ -1,4 +1,4 @@
-(* The driver — a *contract* (given). The full Phase-2 pipeline:
+(* The driver — a given contract. The Phase-3 pipeline through enums:
    lex -> parse -> sema -> SILGen -> SIL -> IRGen -> LLVM IR -> clang -> native.
    Concept 09 adds `--emit-llvm` and `build` (programs finally run). *)
 

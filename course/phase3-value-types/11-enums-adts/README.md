@@ -8,15 +8,18 @@ widest case. Together, structs and enums are *algebraic data types*.
 **Prerequisites:** the struct compiler (concept 10), given and working. Enums are a second new type
 kind, threaded the same way.
 
-**You edit (the enum *lowering*):**
+**You edit (the enum path through the compiler):**
 
-- `silgen.ml` — `TODO(11)`: **construct** an enum value — `E.case` (no payload) and `E.case(args)`
-  (payload) → `Sil.Enum (tag, payloads)`, where `tag` is the case's index.
-- `irgen.ml` — `TODO(11)`: the enum instructions → LLVM (`Enum` builds the aggregate
+- `token.ml` — `TODO(11a)`: classify `enum` and `case` as keywords.
+- `parser.ml` — `TODO(11b–c)`: parse enum declarations and `E.case(args)`.
+- `sema.ml` — `TODO(11d–f)`: build enum layouts; check construction, raw values, and equality.
+- `silgen.ml` — `TODO(11g–h)`: construct `E.case` and `E.case(args)` as
+  `Sil.Enum (tag, payloads)`, where `tag` is the case's index.
+- `irgen.ml` — `TODO(11i)`: the enum instructions → LLVM (`Enum` builds the aggregate
   `{ i64 tag, payload… }` with `insertvalue`; `Enum_tag` reads field 0 with `extractvalue`).
 
-Given: the contracts (`types`/`ast`/`sil` gain enum nodes), parser (enum decls, `E.case(args)`), and
-sema (enum registry, case typing, raw values, the `Equatable` rule).
+Given: the contracts (`types`/`ast`/`sil` gain enum nodes) and the inherited compiler through
+concept 10.
 
 **Design oracle:** `../../../swift/lib/SIL/` (the `enum`/`unchecked_enum_data` instructions),
 `swift/docs/SIL.rst`; `swift/lib/IRGen/GenEnum.cpp` for the real (spare-bit-optimized) layouts.
@@ -41,8 +44,8 @@ sema (enum registry, case typing, raw values, the `Equatable` rule).
 
 ## Done when
 
-`make lab C=phase3-value-types/11-enums-adts` is green: one cram file per hole
-(`silgen-case.t`, `silgen-payload.t`, `irgen-enums.t`, each `TODO` until you start it) plus the
-given `sema-enums.t`, the alcotest's four groups, and `oracle.t` — 16 programs compiled by `swiftc`
-and by `./lab.exe build`, run, and compared byte for byte, and 18 more where `swiftc -typecheck`
-and `--typecheck` must reach the same verdict.
+`make lab C=phase3-value-types/11-enums-adts` is green: one cram file per hole from lexer through
+IRGen, nine matching alcotest groups, and `oracle.t` — 16 programs compiled by `swiftc` and by
+`./lab.exe build`, run, and compared byte for byte, and 18 more where `swiftc -typecheck` and
+`--typecheck` must reach the same verdict. `make bench C=phase3-value-types/11-enums-adts` checks
+four binaries and compares their runtime.

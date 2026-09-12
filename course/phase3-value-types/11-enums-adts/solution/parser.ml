@@ -1,5 +1,5 @@
-(* Parser — concept 11 skeleton. The parser through structs is complete. You add
-   payload calls after `.case` and enum declarations. *)
+(* Complete parser for concept 11: the inherited recursive-descent and Pratt
+   parser plus enum declarations and payload-case construction. *)
 
 type t = { toks : Token.t array; mutable pos : int; diags : Diagnostics.sink }
 
@@ -122,19 +122,26 @@ let rec parse_expr_bp (p : t) (min_bp : int) : Ast.expr =
   in
   loop lhs
 
-(* Postfix `.name` (member access), chained; concept 11 adds `.name(args)` for a
-   payload-carrying enum case. It still binds tighter than every infix operator. *)
+(* postfix `.name` (member access) or `.name(args)` (method/enum-case call), chained: binds
+   tighter than any infix operator (concepts 10–11) *)
 and parse_postfix (p : t) (e : Ast.expr) : Ast.expr =
   if peek_kind p = Token.Dot then (
     ignore (advance p);
     match peek_kind p with
     | Token.Ident name ->
-        let nt = advance p in
-        if peek_kind p = Token.LParen then
-          (* TODO(11c): parse `.case(arguments)` as one Method_call node, then
-             continue the postfix chain. See explainer §3. *)
-          failwith "TODO(11c): parse a payload enum-case expression"
-        else parse_postfix p (Ast.Member (e, name, span_between (Ast.expr_span e) nt.Token.span))
+        let name_token = advance p in
+        if peek_kind p = Token.LParen then (
+          ignore (advance p);
+          let args = parse_call_args p in
+          let right_paren = expect p Token.RParen "')'" in
+          let call_span =
+            span_between (Ast.expr_span e) right_paren.Token.span
+          in
+          parse_postfix p (Ast.Method_call (e, name, args, call_span)))
+        else
+          parse_postfix p
+            (Ast.Member
+               (e, name, span_between (Ast.expr_span e) name_token.Token.span))
     | _ ->
         Diagnostics.error p.diags (peek p).Token.span "expected a member name";
         e)
@@ -340,11 +347,73 @@ let parse_struct (p : t) : Ast.struct_decl =
 (* `enum Name [: Raw] { case a; case b(T, U) … }` — cases in order, optional payloads. We
    ignore explicit `= raw` (implicit raws = index); see the explainer. (concept 11) *)
 let parse_enum (p : t) : Ast.enum_decl =
-  (* TODO(11b): parse the name, optional raw type, and ordered case list.
-     A case may carry type names, and one `case` keyword may introduce several
-     comma-separated cases. See explainer §3. *)
-  ignore p;
-  failwith "TODO(11b): parse an enum declaration"
+  let enum_keyword = advance p in
+  let enum_name, _ = parse_ident p "an enum name" in
+  let raw_type =
+    if peek_kind p = Token.Colon then (
+      ignore (advance p);
+      Some (fst (parse_ident p "a raw type")))
+    else None
+  in
+  ignore (expect p Token.LBrace "'{'");
+  let parse_payload () =
+    if peek_kind p <> Token.LParen then []
+    else (
+      ignore (advance p);
+      let rec loop accumulator =
+        let type_name, _ = parse_ident p "an associated-value type" in
+        if peek_kind p = Token.Comma then (
+          ignore (advance p);
+          loop (type_name :: accumulator))
+        else (
+          ignore (expect p Token.RParen "')'");
+          List.rev (type_name :: accumulator))
+      in
+      loop [])
+  in
+  let rec loop accumulator =
+    while peek_kind p = Token.Newline do
+      ignore (advance p)
+    done;
+    match peek_kind p with
+    | Token.RBrace ->
+        ignore (advance p);
+        List.rev accumulator
+    | Token.Eof ->
+        ignore (expect p Token.RBrace "'}'");
+        List.rev accumulator
+    | Token.Kw_case ->
+        ignore (advance p);
+        let rec parse_cases same_line =
+          let case_name, _ = parse_ident p "a case name" in
+          let enum_case =
+            { Ast.cname = case_name; payload = parse_payload () }
+          in
+          if peek_kind p = Token.Comma then (
+            ignore (advance p);
+            parse_cases (enum_case :: same_line))
+          else List.rev (enum_case :: same_line)
+        in
+        let cases = parse_cases [] in
+        (* a declaration ends at a newline or at the body's `}` — `{ var x: Int var y: Int }`
+           is an error here as in Swift (`consecutive declarations on a line …`) *)
+        (match peek_kind p with
+        | Token.Newline -> ignore (advance p)
+        | Token.RBrace | Token.Eof -> ()
+        | _ -> Diagnostics.error p.diags (peek p).Token.span "expected newline or end of declaration");
+        loop (List.rev_append cases accumulator)
+    | _ ->
+        let token = peek p in
+        Diagnostics.error p.diags token.Token.span
+          "expected a 'case' declaration";
+        ignore (advance p);
+        loop accumulator
+  in
+  let cases = loop [] in
+  { Ast.ename = enum_name;
+    ecases = cases;
+    eraw = raw_type;
+    espan = enum_keyword.Token.span }
 
 (* A program is a sequence of top-level items: function declarations and statements. *)
 let parse_program (p : t) : Ast.program =

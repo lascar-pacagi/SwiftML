@@ -1,5 +1,5 @@
-(* IRGen — concept 11 (skeleton). Carries the struct compiler complete; you add the ENUM
-   instructions (TODO(11)). Lower a SIL module to LLVM IR text.
+(* IRGen — concept 11 skeleton. Carries the struct compiler complete; you add the enum
+   instructions (TODO(11i)). Lower a SIL module to LLVM IR text.
 
    The mapping is almost one-to-one because raw SIL is already memory-based with basic
    blocks, just like LLVM: alloc_stack -> alloca, load/store -> load/store, a SIL block ->
@@ -156,10 +156,10 @@ let emit_llvm (m : Sil.modul) : string =
           bind_operand v r
       (* enums — concept 11: a tagged union { tag at #0, payload at #1.. } *)
       | Sil.Enum _ | Sil.Enum_tag _ ->
-          (* TODO(11-irgen): the two enum instructions. The representation is in §2: a tag at field
-             #0 and the payload after it. *)
+          (* TODO(11i): lower the two enum instructions. The tag occupies
+             field #0 and payload operands start at field #1. See explainer §3. *)
           ignore (v, i);
-          failwith "TODO(11-irgen): lower the enum instruction (insertvalue/extractvalue)"
+          failwith "TODO(11i): lower enum and enum_tag"
     in
     let gen_term (t : Sil.term) =
       match t with
@@ -216,7 +216,7 @@ let emit_llvm (m : Sil.modul) : string =
   let type_defs = struct_defs @ enum_defs in
   (* assemble: preamble + struct/enum types + string constants + functions *)
   let preamble =
-    "; swiftml Phase-2 LLVM IR\n\
+    "; swiftml Phase-3 LLVM IR\n\
      declare i32 @printf(ptr, ...)\n\
      @.fmt_int = private unnamed_addr constant [6 x i8] c\"%lld\\0A\\00\"\n\
      @.fmt_str = private unnamed_addr constant [4 x i8] c\"%s\\0A\\00\"\n\

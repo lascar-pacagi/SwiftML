@@ -146,9 +146,11 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
         emit b (Sil.Apply (fr, argvs)) ret)
       else emit b (Sil.Print (List.hd argvs)) Types.TVoid
   (* `E.case` — a no-payload enum case (concept 11) *)
-  | Ast.Member (Ast.Var (tn, _), case, _) when Hashtbl.mem b.enums tn ->
-      let el = Hashtbl.find b.enums tn in
-      emit b (Sil.Enum (Option.get (Types.case_index el case), [])) (Types.TEnum tn)
+  | Ast.Member (Ast.Var (type_name, _), case_name, _)
+    when Hashtbl.mem b.enums type_name ->
+      let layout = Hashtbl.find b.enums type_name in
+      let case_index = Option.get (Types.case_index layout case_name) in
+      emit b (Sil.Enum (case_index, [])) (Types.TEnum type_name)
   | Ast.Member (e0, fld, _) -> (
       let sv = gen_expr b e0 in
       match vty b sv with
@@ -159,10 +161,12 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       | Types.TEnum _ -> emit b (Sil.Enum_tag sv) Types.TInt (* `.rawValue` = the tag *)
       | _ -> assert false)
   (* `E.case(args)` — a payload-carrying enum case (concept 11) *)
-  | Ast.Method_call (Ast.Var (tn, _), case, args, _) when Hashtbl.mem b.enums tn ->
-      let el = Hashtbl.find b.enums tn in
-      let argvs = List.map (fun (_, e) -> gen_expr b e) args in
-      emit b (Sil.Enum (Option.get (Types.case_index el case), argvs)) (Types.TEnum tn)
+  | Ast.Method_call (Ast.Var (type_name, _), case_name, args, _)
+    when Hashtbl.mem b.enums type_name ->
+      let layout = Hashtbl.find b.enums type_name in
+      let argument_values = List.map (fun (_, e) -> gen_expr b e) args in
+      let case_index = Option.get (Types.case_index layout case_name) in
+      emit b (Sil.Enum (case_index, argument_values)) (Types.TEnum type_name)
   | Ast.Method_call _ -> assert false (* sema rejected non-enum method calls *)
 
 (* Generate [e] AT an expected type. The only coercion this early is the integer literal that

@@ -1,5 +1,5 @@
-(* SILGen — concept 11 (skeleton). Carries the struct compiler complete; you add the ENUM
-   construction (TODO(11)). Lower the (checked) AST to raw, memory-based SIL.
+(* SILGen — concept 11 skeleton. Carries the struct compiler complete; you add enum
+   construction (TODO(11g–h)). Lower the checked AST to raw, memory-based SIL.
 
    Each variable becomes an `alloc_stack` slot, read with `load`, written with `store` (no
    SSA — Phase-4 mem2reg does that). Control flow becomes basic blocks: `if`/`while`/`for`
@@ -148,9 +148,10 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       else emit b (Sil.Print (List.hd argvs)) Types.TVoid
   (* `E.case` — a no-payload enum case (concept 11) *)
   | Ast.Member (Ast.Var (tn, _), case, _) when Hashtbl.mem b.enums tn ->
-      (* TODO(11): a case with no payload — its TAG is its index in the declaration. §2. *)
+      (* TODO(11g): a case with no payload — its tag is its index in the
+         declaration. See explainer §3. *)
       ignore (tn, case);
-      failwith "TODO(11-silgen): construct a no-payload enum case"
+      failwith "TODO(11g): construct a no-payload enum case"
   | Ast.Member (e0, fld, _) -> (
       let sv = gen_expr b e0 in
       match vty b sv with
@@ -162,9 +163,10 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       | _ -> assert false)
   (* `E.case(args)` — a payload-carrying enum case (concept 11) *)
   | Ast.Method_call (Ast.Var (tn, _), case, args, _) when Hashtbl.mem b.enums tn ->
-      (* TODO(11): the same, carrying the evaluated arguments as the payload. *)
+      (* TODO(11h): the same instruction, carrying the evaluated arguments
+         as its payload. See explainer §3. *)
       ignore (tn, case, args);
-      failwith "TODO(11-silgen): construct a payload-carrying enum case"
+      failwith "TODO(11h): construct a payload-carrying enum case"
   | Ast.Method_call _ -> assert false (* sema rejected non-enum method calls *)
 
 (* Generate [e] AT an expected type. The only coercion this early is the integer literal that

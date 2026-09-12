@@ -1,4 +1,4 @@
-The first silgen hole, TODO(11): a case with no associated values, `Color.red`, lowers to one
+TODO(11g) payload-free SIL construction — a case such as `Color.red` lowers to one
 `enum #tag ()` instruction — the tag IS the case's index in the declaration. `--emit-sil` stops
 after SILGen, so this file needs no IRGen; no program here carries a payload (that is the second
 hole), so it can go green on its own.

@@ -9,11 +9,17 @@
   (:standard -warn-error -a)))
 
 (cram
- (deps lab.exe oracle-corpus.txt typecheck-corpus.txt))
+ (deps lab.exe oracle-corpus.txt typecheck-corpus.txt timeout.py))
 
-(tests
- (names test_enums)
+(executable
+ (name test_enums)
  (modules test_enums)
  (libraries alcotest swiftml_enums)
  (flags
   (:standard -warn-error -a)))
+
+; A non-advancing parser recovery branch must fail the lab instead of hanging it.
+(rule
+ (alias runtest)
+ (deps test_enums.exe timeout.py)
+ (action (run python3 timeout.py 15 %{exe:test_enums.exe})))
