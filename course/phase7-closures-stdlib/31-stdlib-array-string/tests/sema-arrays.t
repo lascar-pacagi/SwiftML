@@ -10,6 +10,8 @@ the concept's stated scope, and its first exercise:
   > SWIFT
   $ ./lab.exe --typecheck s.swift
   1:13: error: arrays of 'String' are not supported in this subset (only '[Int]'; element-generic buffers are this concept's exercise)
+  let names = ["a", "b"]
+              ^
   [1]
 
 A literal's elements must agree, and an empty one takes its element type from the annotation:
@@ -19,6 +21,8 @@ A literal's elements must agree, and an empty one takes its element type from th
   > SWIFT
   $ ./lab.exe --typecheck mix.swift
   1:20: error: cannot convert value of type 'String' to specified type 'Int'
+  let a: [Int] = [1, "x"]
+                     ^
   [1]
 
 `append` MUTATES, so it needs a `var`. A `let` array is a constant value, not a constant handle
@@ -31,6 +35,8 @@ on a `let` compiled and grew it:
   > SWIFT
   $ ./lab.exe --typecheck la.swift
   2:1: error: cannot use mutating member on immutable value: 'a' is a 'let' constant
+  a.append(3)
+  ^
   [1]
 
 The subscript write has always had the matching rule:
@@ -41,6 +47,8 @@ The subscript write has always had the matching rule:
   > SWIFT
   $ ./lab.exe --typecheck ls.swift
   2:4: error: cannot assign through subscript: 'a' is a 'let' constant
+  a[0] = 5
+     ^
   [1]
 
 An `Int` is not a collection, and `for-in` needs one:
@@ -51,12 +59,18 @@ An `Int` is not a collection, and `for-in` needs one:
   > SWIFT
   $ ./lab.exe --typecheck sub.swift
   2:7: error: value of type 'Int' has no subscripts
+  print(a[0][1])
+        ^
   [1]
 
   $ printf 'for x in 5 { print(x) }\n' > fi.swift
   $ ./lab.exe --typecheck fi.swift
   1:1: error: type 'Int' is not a sequence
+  for x in 5 { print(x) }
+  ^
   1:20: error: cannot find 'x' in scope
+  for x in 5 { print(x) }
+                     ^
   [1]
 
 Two divergences, in the restrictive direction, both because the back end has no aggregate
@@ -69,6 +83,8 @@ both rather than emitting an `add i64 %ptr` that clang throws out.
   > SWIFT
   $ ./lab.exe --typecheck pr.swift
   2:7: error: cannot print a value of type '[Int]' (only Int, Double, Bool and String)
+  print(a)
+        ^
   [1]
 
   $ cat > eq.swift <<'SWIFT'
@@ -78,6 +94,8 @@ both rather than emitting an `add i64 %ptr` that clang throws out.
   > SWIFT
   $ ./lab.exe --typecheck eq.swift
   3:7: error: binary operator '==' cannot be applied to two '[Int]' operands
+  print(a == b)
+        ^
   [1]
 
 A `String` is a C string, byte-indexed and not subscriptable here; `count` is bytes, not
@@ -89,4 +107,6 @@ graphemes, which is a divergence on non-ASCII text and stated as one:
   > SWIFT
   $ ./lab.exe --typecheck str.swift
   2:7: error: value of type 'String' has no subscripts
+  print(s[0])
+        ^
   [1]

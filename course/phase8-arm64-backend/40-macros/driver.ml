@@ -110,7 +110,7 @@ let run_clang ~(opt : bool) ~(ll_path : string) ~(out : string) : unit =
 
 let compile_file ?(out = "a.out") ?(opt = false) ~(src_path : string) ~(emit : emit) () : unit =
   let src = read_file src_path in
-  let diags = Diagnostics.create () in
+  let diags = Diagnostics.create ~source:src () in
   match emit with
   | Tokens ->
       let toks = Lexer.tokenize (Lexer.create src diags) in

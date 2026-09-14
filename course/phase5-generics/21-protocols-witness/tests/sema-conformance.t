@@ -41,6 +41,8 @@ A conformer missing a requirement is "type 'C' does not conform to protocol 'S'"
   $ printf 'protocol S { func area() -> Int }\nstruct C: S { var r: Int }\n' > miss.swift
   $ ./lab.exe --typecheck miss.swift; echo "exit=$?"
   2:8: error: type 'C' does not conform to protocol 'S'
+  struct C: S { var r: Int }
+         ^
   exit=1
 
 The same words when the method exists with the wrong return type:
@@ -54,6 +56,8 @@ The same words when the method exists with the wrong return type:
   > EOF
   $ ./lab.exe --typecheck ret.swift; echo "exit=$?"
   2:8: error: type 'C' does not conform to protocol 'S'
+  struct C: S {
+         ^
   exit=1
 
 And when the parameter types differ — `(Bool) -> Int` does not witness `(Int) -> Int`:
@@ -67,6 +71,8 @@ And when the parameter types differ — `(Bool) -> Int` does not witness `(Int) 
   > EOF
   $ ./lab.exe --typecheck par.swift; echo "exit=$?"
   2:8: error: type 'C' does not conform to protocol 'S'
+  struct C: S {
+         ^
   exit=1
 
 Requirement order is irrelevant; only the set matters. Methods declared in the reverse order
@@ -99,8 +105,14 @@ clause order; failing only the second is one:
   > EOF
   $ ./lab.exe --typecheck two.swift; echo "exit=$?"
   3:8: error: type 'Both' does not conform to protocol 'P'
+  struct Both: P, Q { var x: Int }
+         ^
   3:8: error: type 'Both' does not conform to protocol 'Q'
+  struct Both: P, Q { var x: Int }
+         ^
   4:8: error: type 'Half' does not conform to protocol 'Q'
+  struct Half: P, Q {
+         ^
   exit=1
 
 The implicit wrap needs the SAME predicate. A non-conformer where `any S` is expected fails
@@ -122,9 +134,17 @@ with swiftc's site-specific words — here return, initializer, argument, assign
   > EOF
   $ ./lab.exe --typecheck wrap.swift; echo "exit=$?"
   8:24: error: return expression of type 'D' does not conform to 'S'
+  func g() -> S { return D(r: 1) }
+                         ^
   9:12: error: value of type 'D' does not conform to specified type 'S'
+  let s: S = D(r: 1)
+             ^
   10:9: error: argument type 'D' does not conform to expected type 'S'
+  print(f(D(r: 2)))
+          ^
   12:5: error: cannot assign value of type 'D' to type 'any S'
+  v = D(r: 3)
+      ^
   exit=1
 
 A non-struct value gets the same site wording (`Int` at an initializer and as an argument):
@@ -141,7 +161,11 @@ A non-struct value gets the same site wording (`Int` at an initializer and as an
   > EOF
   $ ./lab.exe --typecheck int.swift; echo "exit=$?"
   7:12: error: value of type 'Int' does not conform to specified type 'S'
+  let s: S = 3
+             ^
   8:9: error: argument type 'Bool' does not conform to expected type 'S'
+  print(f(true))
+          ^
   exit=1
 
 An existential exposes only its requirements: a non-requirement method or a stored property
@@ -160,7 +184,11 @@ of the conformer is "value of type 'any S' has no member":
   > EOF
   $ ./lab.exe --typecheck mem.swift; echo "exit=$?"
   8:7: error: value of type 'any S' has no member 'extra'
+  print(s.extra())
+        ^
   9:7: error: value of type 'any S' has no member 'r'
+  print(s.r)
+        ^
   exit=1
 
 Two existentials cannot be compared: `==` on `any S` is rejected like swiftc:
@@ -177,6 +205,8 @@ Two existentials cannot be compared: `==` on `any S` is rejected like swiftc:
   > EOF
   $ ./lab.exe --typecheck eq.swift; echo "exit=$?"
   8:7: error: binary operator '==' cannot be applied to two 'any S' operands
+  print(a == b)
+        ^
   exit=1
 
 A conformer's method is non-mutating: writing a stored property in it is rejected:
@@ -190,6 +220,8 @@ A conformer's method is non-mutating: writing a stored property in it is rejecte
   > EOF
   $ ./lab.exe --typecheck mut.swift; echo "exit=$?"
   4:17: error: cannot assign to property: 'self' is immutable
+    func bump() { x = x + 1 }
+                  ^
   exit=1
 
 An existential is an aggregate IRGen cannot print, so `print(s)` on an `any S` is refused the
@@ -208,4 +240,6 @@ divergence recorded in §2. Calling the requirement and printing THAT is what we
   > EOF
   $ ./lab.exe --typecheck pre.swift; echo "exit=$?"
   8:7: error: cannot print a value of type 'any S' (only Int, Double, Bool and String)
+  print(s)
+        ^
   exit=1

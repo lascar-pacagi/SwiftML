@@ -48,6 +48,8 @@ Two declarations in a row, separated by a blank line:
   $ printf 'func () { }\n' > e1.swift
   $ ./lab.exe --emit-ast e1.swift; echo "exit=$?"
   1:6: error: expected a function name
+  func () { }
+       ^
   exit=1
 
 An arrow with no type after it — `-> {` — is "expected a return type", at the `{`:
@@ -55,6 +57,8 @@ An arrow with no type after it — `-> {` — is "expected a return type", at th
   $ printf 'func f() -> { }\n' > e2.swift
   $ ./lab.exe --emit-ast e2.swift; echo "exit=$?"
   1:13: error: expected a return type
+  func f() -> { }
+              ^
   exit=1
 
 A declaration without a body — `func f() -> Int` then a newline — is "expected '{'" at the
@@ -69,6 +73,8 @@ A body that never closes is "expected '}'", reported at end of input:
   $ printf 'func f() {\n  print(1)\n' > e4.swift
   $ ./lab.exe --emit-ast e4.swift; echo "exit=$?"
   3:1: error: expected '}'
+  
+  ^
   exit=1
 
 Whitespace is not part of the grammar — `func f()->Int{return 1}` with no spaces at all parses

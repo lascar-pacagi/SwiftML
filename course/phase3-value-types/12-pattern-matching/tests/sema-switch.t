@@ -44,7 +44,11 @@ w)` as binding the whole `(Int, Int)` tuple to `w`, a type our subset has no roo
   > EOF
   $ ./lab.exe --typecheck arity.swift
   6:1: error: pattern '.rect' binds 1 value(s) but case 'rect' has 2 associated value(s)
+  switch s {
+  ^
   7:26: error: cannot find 'w' in scope
+  case .rect(let w): print(w)
+                           ^
   [1]
 
 A pattern naming a case the enum does not have is `type 'E' has no member 'nope'`:
@@ -60,6 +64,8 @@ A pattern naming a case the enum does not have is `type 'E' has no member 'nope'
   > EOF
   $ ./lab.exe --typecheck nocase.swift
   3:1: error: type 'E' has no member 'nope'
+  switch e {
+  ^
   [1]
 
 An Int pattern cannot match an enum, and an enum-case pattern cannot match an Int:
@@ -79,7 +85,11 @@ An Int pattern cannot match an enum, and an enum-case pattern cannot match an In
   > EOF
   $ ./lab.exe --typecheck mixed.swift
   3:1: error: expression pattern of type 'Int' cannot match values of type 'E'
+  switch e {
+  ^
   8:1: error: enum case '.a' cannot match values of type 'Int'
+  switch n {
+  ^
   [1]
 
 `switch` needs something with a discriminant: a Bool subject has no tag to read:
@@ -93,6 +103,8 @@ An Int pattern cannot match an enum, and an enum-case pattern cannot match an In
   > EOF
   $ ./lab.exe --typecheck bool.swift
   2:1: error: cannot 'switch' over a value of type 'Bool'
+  switch b {
+  ^
   [1]
 
 A binding belongs to ITS arm only — `r` is out of scope after the switch, and in the other arm:
@@ -111,7 +123,11 @@ A binding belongs to ITS arm only — `r` is out of scope after the switch, and 
   > EOF
   $ ./lab.exe --typecheck scope.swift
   8:18: error: cannot find 'r' in scope
+  case .dot: print(r)
+                   ^
   10:7: error: cannot find 'r' in scope
+  print(r)
+        ^
   [1]
 
 A bound value carries its declared type: binding an `Int` payload and using it as a `Bool` fails:
@@ -129,4 +145,6 @@ A bound value carries its declared type: binding an `Int` payload and using it a
   > EOF
   $ ./lab.exe --typecheck bindty.swift
   7:36: error: cannot convert value of type 'Int' to specified type 'Bool'
+  case .circle(let r): let b: Bool = r
+                                     ^
   [1]

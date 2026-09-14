@@ -14,6 +14,8 @@ NAME, and so do we:
   $ printf 'class C { var x: Int }\n' > c1.swift
   $ ./lab.exe --typecheck c1.swift; echo "exit=$?"
   1:7: error: class 'C' has no initializers
+  class C { var x: Int }
+        ^
   exit=1
 
 Definite initialization: every own stored property assigned before the initializer returns, and
@@ -30,6 +32,8 @@ ours fires in sema, same programs rejected, earlier (§2):
   > SWIFT
   $ ./lab.exe --typecheck di.swift; echo "exit=$?"
   4:3: error: return from initializer without initializing all stored properties
+    init() { x = 1 }
+    ^
   exit=1
 
   $ cat > c4.swift <<'SWIFT'
@@ -40,6 +44,8 @@ ours fires in sema, same programs rejected, earlier (§2):
   > SWIFT
   $ ./lab.exe --typecheck c4.swift; echo "exit=$?"
   4:3: error: 'super.init' isn't called on all paths before returning from initializer
+    init() { y = 2 } }
+    ^
   exit=1
 
 `super` has three ways to be wrong, and swiftc has a different sentence for each: called twice,
@@ -55,6 +61,8 @@ used in a class with no superclass, and used outside an initializer.
   > SWIFT
   $ ./lab.exe --typecheck s1.swift; echo "exit=$?"
   6:5: error: 'super.init' called multiple times in initializer
+      super.init(2) } }
+      ^
   exit=1
 
   $ cat > s2.swift <<'SWIFT'
@@ -64,6 +72,8 @@ used in a class with no superclass, and used outside an initializer.
   > SWIFT
   $ ./lab.exe --typecheck s2.swift; echo "exit=$?"
   3:5: error: 'super' cannot be used in class 'A' because it has no superclass
+      super.init() } }
+      ^
   exit=1
 
   $ cat > s3.swift <<'SWIFT'
@@ -73,6 +83,8 @@ used in a class with no superclass, and used outside an initializer.
   > SWIFT
   $ ./lab.exe --typecheck s3.swift; echo "exit=$?"
   3:25: error: 'super.init' cannot be called outside of an initializer
+  class B: A { func g() { super.init() } }
+                          ^
   exit=1
 
 An unknown superclass is reported once, at the class that named it, and does not take the rest
@@ -81,6 +93,8 @@ of the check down with it:
   $ printf 'class B: Nope { var y: Int\n  init() { y = 1 } }\n' > sup.swift
   $ ./lab.exe --typecheck sup.swift; echo "exit=$?"
   1:7: error: cannot find type 'Nope' in scope
+  class B: Nope { var y: Int
+        ^
   exit=1
 
 A `let` stored property takes its value once, inside the initializer that owns it. Writing it
@@ -101,7 +115,11 @@ free. (`c` is a `let` BINDING and that is fine: the binding is constant, the obj
   > SWIFT
   $ ./lab.exe --typecheck lf.swift; echo "exit=$?"
   6:16: error: cannot assign to property: 'k' is a 'let' constant
+    func bad() { k = 9 }
+                 ^
   10:1: error: cannot assign to property: 'k' is a 'let' constant
+  c.k = 5
+  ^
   exit=1
 
 The same rule for a struct's `let` property, which reaches this concept unchanged from
@@ -121,7 +139,11 @@ is the constant:
   > SWIFT
   $ ./lab.exe --typecheck lfs.swift; echo "exit=$?"
   7:1: error: cannot assign to property: 'k' is a 'let' constant
+  s.k = 5
+  ^
   9:1: error: cannot assign to property: 't' is a 'let' constant
+  t.n = 5
+  ^
   exit=1
 
 `print` lowers a scalar only, and `==` needs an Equatable conformance the back end could
@@ -146,11 +168,23 @@ words we use (§2). Class identity is `===`, an exercise.
   > SWIFT
   $ ./lab.exe --typecheck agg.swift; echo "exit=$?"
   8:7: error: cannot print a value of type 'C' (only Int, Double, Bool and String)
+  print(C())
+        ^
   9:7: error: cannot print a value of type 'S' (only Int, Double, Bool and String)
+  print(S(x: 1))
+        ^
   10:7: error: cannot print a value of type 'E' (only Int, Double, Bool and String)
+  print(E.a)
+        ^
   11:7: error: cannot print a value of type 'Int?' (only Int, Double, Bool and String)
+  print(o)
+        ^
   12:7: error: binary operator '==' cannot be applied to two 'C' operands
+  print(C() == C())
+        ^
   13:7: error: binary operator '==' cannot be applied to two 'S' operands
+  print(S(x: 1) == S(x: 2))
+        ^
   exit=1
 
 An upcast is implicit and free; the other direction is not a conversion at all (downcasting
@@ -166,6 +200,8 @@ classes is an exercise), so it is a type error:
   > SWIFT
   $ ./lab.exe --typecheck up.swift; echo "exit=$?"
   6:12: error: cannot convert value of type 'A' to specified type 'B'
+  let b: B = A()
+             ^
   exit=1
 
 A method that is not in the receiver's STATIC type cannot be called on it, however the object
@@ -180,4 +216,6 @@ was made — the slot is chosen at compile time:
   > SWIFT
   $ ./lab.exe --typecheck mem.swift; echo "exit=$?"
   5:7: error: value of type 'A' has no member 'fetch'
+  print(a.fetch())
+        ^
   exit=1

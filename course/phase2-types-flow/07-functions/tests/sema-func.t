@@ -13,6 +13,8 @@ A parameter is a `let`: `a = 5` in the body is the constant-assignment error:
   $ printf 'func f(_ a: Int) {\n  a = 5\n}\n' > p2.swift
   $ ./lab.exe --typecheck p2.swift; echo "exit=$?"
   2:3: error: cannot assign to value: 'a' is a 'let' constant
+    a = 5
+    ^
   exit=1
 
 A body sees no top-level names — `x` declared outside is not found inside (swiftc would
@@ -21,6 +23,8 @@ accept this: our functions are self-contained, a divergence the explainer states
   $ printf 'let x = 1\nfunc f() {\n  print(x)\n}\n' > p3.swift
   $ ./lab.exe --typecheck p3.swift; echo "exit=$?"
   3:9: error: cannot find 'x' in scope
+    print(x)
+          ^
   exit=1
 
 A parameter does not leak out of its function — `print(a)` after the body cannot find it:
@@ -28,6 +32,8 @@ A parameter does not leak out of its function — `print(a)` after the body cann
   $ printf 'func f(_ a: Int) { }\nprint(a)\n' > p4.swift
   $ ./lab.exe --typecheck p4.swift; echo "exit=$?"
   2:7: error: cannot find 'a' in scope
+  print(a)
+        ^
   exit=1
 
 A body may declare a local that shadows a parameter:
@@ -42,7 +48,11 @@ type (both reported on the declaration — a parameter carries no span of its ow
   $ printf 'func f(_ a: Nope) { }\nfunc g() -> Nope { return 1 }\n' > t1.swift
   $ ./lab.exe --typecheck t1.swift; echo "exit=$?"
   1:1: error: cannot find type 'Nope' in scope
+  func f(_ a: Nope) { }
+  ^
   2:1: error: cannot find type 'Nope' in scope
+  func g() -> Nope { return 1 }
+  ^
   exit=1
 
 A `Void` function need not return — a body of two prints is fine:
@@ -56,6 +66,8 @@ A `Void` function need not return — a body of two prints is fine:
   $ printf 'func f() -> Int {\n  print(1)\n  print(2)\n}\n' > m1.swift
   $ ./lab.exe --typecheck m1.swift; echo "exit=$?"
   1:1: error: missing return in global function expected to return 'Int'
+  func f() -> Int {
+  ^
   exit=1
 
 An `if` with no `else` does not return on every path — `if n > 0 { return 1 }` alone is missing:
@@ -63,6 +75,8 @@ An `if` with no `else` does not return on every path — `if n > 0 { return 1 }`
   $ printf 'func f(_ n: Int) -> Int {\n  if n > 0 { return 1 }\n}\n' > m2.swift
   $ ./lab.exe --typecheck m2.swift; echo "exit=$?"
   1:1: error: missing return in global function expected to return 'Int'
+  func f(_ n: Int) -> Int {
+  ^
   exit=1
 
 A `return` inside a loop does not count — the loop may run zero times:
@@ -70,6 +84,8 @@ A `return` inside a loop does not count — the loop may run zero times:
   $ printf 'func f(_ n: Int) -> Int {\n  while n > 0 { return 1 }\n}\n' > m3.swift
   $ ./lab.exe --typecheck m3.swift; echo "exit=$?"
   1:1: error: missing return in global function expected to return 'Int'
+  func f(_ n: Int) -> Int {
+  ^
   exit=1
 
 An `if` / `else` whose two branches both return is a definite return:
@@ -83,6 +99,8 @@ An `else if` chain returns on every path only if its final `else` does:
   $ printf 'func f(_ n: Int) -> Int {\n  if n > 0 { return 1 } else if n < 0 { return 2 } else { return 0 }\n}\nfunc g(_ n: Int) -> Int {\n  if n > 0 { return 1 } else if n < 0 { return 2 }\n}\n' > m5.swift
   $ ./lab.exe --typecheck m5.swift; echo "exit=$?"
   4:1: error: missing return in global function expected to return 'Int'
+  func g(_ n: Int) -> Int {
+  ^
   exit=1
 
 A `return` followed by a `print` still returns — what follows a return is unreachable:
@@ -96,5 +114,9 @@ Each function is checked on its own — errors in two bodies are both reported, 
   $ printf 'func f() -> Int {\n  print(1)\n}\nfunc g(_ a: Int) {\n  a = 1\n}\n' > two.swift
   $ ./lab.exe --typecheck two.swift; echo "exit=$?"
   1:1: error: missing return in global function expected to return 'Int'
+  func f() -> Int {
+  ^
   5:3: error: cannot assign to value: 'a' is a 'let' constant
+    a = 1
+    ^
   exit=1

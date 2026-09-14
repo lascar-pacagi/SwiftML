@@ -23,6 +23,8 @@ A `let` struct binding makes even its `var` properties immutable.
   > EOF
   $ ./lab.exe --typecheck letbind.swift
   5:1: error: cannot assign to property: 'p' is a 'let' constant
+  p.x = 5
+  ^
   [1]
 
 A `let` property remains immutable through a `var` binding.
@@ -38,6 +40,8 @@ A `let` property remains immutable through a `var` binding.
   > EOF
   $ ./lab.exe --typecheck letfield.swift
   7:1: error: cannot assign to property: 'first' is a 'let' constant
+  pair.first = 4
+  ^
   [1]
 
 The assigned expression is checked against the property's declared type.
@@ -51,4 +55,6 @@ The assigned expression is checked against the property's declared type.
   > EOF
   $ ./lab.exe --typecheck value.swift
   5:7: error: cannot convert value of type 'String' to specified type 'Int'
+  p.x = "wrong"
+        ^
   [1]

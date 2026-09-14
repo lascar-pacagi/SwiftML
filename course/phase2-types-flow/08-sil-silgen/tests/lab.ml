@@ -23,7 +23,7 @@ let emit_of_flag : string -> Driver.emit option = function
 
 let emit_sil_canon (src_path : string) : unit =
   let src = Driver.read_file src_path in
-  let diags = Diagnostics.create () in
+  let diags = Diagnostics.create ~source:src () in
   let prog = Driver.frontend src diags in
   Driver.bail_on_errors diags;
   print_string (Sil.string_of_module (Canon.canon (Silgen.lower prog)))

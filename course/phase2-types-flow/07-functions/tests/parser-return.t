@@ -44,4 +44,6 @@ Two statements on one line are still an error — `return 1 print(2)` stops at `
   $ printf 'return 1 print(2)\n' > e1.swift
   $ ./lab.exe --emit-ast e1.swift; echo "exit=$?"
   1:10: error: expected newline or end of statement
+  return 1 print(2)
+           ^
   exit=1

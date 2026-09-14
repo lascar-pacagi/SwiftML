@@ -29,5 +29,9 @@ A field of an undeclared type and a struct declared twice are both reported.
   > EOF
   $ ./lab.exe --typecheck invalid.swift
   4:1: error: invalid redeclaration of 'A'
+  struct A {
+  ^
   1:1: error: cannot find type 'Missing' in scope
+  struct A {
+  ^
   [1]

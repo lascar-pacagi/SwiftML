@@ -18,8 +18,9 @@ let bail (diags : Diagnostics.sink) : unit =
 let () =
   match Array.to_list Sys.argv with
   | [ _; "--typecheck"; file ] ->
-      let diags = Diagnostics.create () in
-      let toks = Lexer.tokenize (Lexer.create (read_file file) diags) in
+      let src = read_file file in
+      let diags = Diagnostics.create ~source:src () in
+      let toks = Lexer.tokenize (Lexer.create src diags) in
       bail diags;
       let prog = Parser.parse_program (Parser.create toks diags) in
       bail diags;

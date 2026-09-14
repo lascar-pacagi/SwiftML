@@ -136,5 +136,9 @@ Because the lexer RECOVERS, one run reports every bad character rather than only
   $ printf 'let x = `1 + `2\n' > stray.swift
   $ ./lab.exe --emit-tokens stray.swift
   1:9: error: invalid character in source file
+  let x = `1 + `2
+          ^
   1:14: error: invalid character in source file
+  let x = `1 + `2
+               ^
   [1]

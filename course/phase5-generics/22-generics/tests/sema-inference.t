@@ -33,6 +33,8 @@ swiftc's "conflicting arguments", reported at the call:
   > EOF
   $ ./lab.exe --typecheck conflict.swift; echo "exit=$?"
   6:7: error: conflicting arguments to generic parameter 'T' ('A' vs. 'B')
+  print(pair(A(), B()))
+        ^
   exit=1
 
 An inferred binding must satisfy the constraint. `D` conforms to nothing, so it cannot be `T`:
@@ -47,6 +49,8 @@ An inferred binding must satisfy the constraint. `D` conforms to nothing, so it 
   > EOF
   $ ./lab.exe --typecheck constraint.swift; echo "exit=$?"
   6:7: error: global function 'one' requires that 'D' conform to 'P'
+  print(one(D(x: 1)))
+        ^
   exit=1
 
 A non-struct argument fails the same way — there is no conformance for `Int` here:
@@ -58,6 +62,8 @@ A non-struct argument fails the same way — there is no conformance for `Int` h
   > EOF
   $ ./lab.exe --typecheck scalar.swift; echo "exit=$?"
   3:7: error: global function 'one' requires that 'Int' conform to 'P'
+  print(one(3))
+        ^
   exit=1
 
 A parameter that is NOT in a `T` position is checked the ordinary way, so a `Bool` where an
@@ -72,6 +78,8 @@ A parameter that is NOT in a `T` position is checked the ordinary way, so a `Boo
   > EOF
   $ ./lab.exe --typecheck mixed.swift; echo "exit=$?"
   5:18: error: cannot convert value of type 'Bool' to specified type 'Int'
+  print(scale(A(), true))
+                   ^
   exit=1
 
 Arity is checked before anything is inferred. swiftc says `extra argument in call` here; we
@@ -85,6 +93,8 @@ keep the count-based sentence the rest of the compiler uses — same verdict, di
   > EOF
   $ ./lab.exe --typecheck arity.swift; echo "exit=$?"
   4:7: error: function 'one' expects 1 argument(s) but 2 given
+  print(one(A(), A()))
+        ^
   exit=1
 
 A `where` clause is the same constraint spelled after the signature, and a generic calling a
@@ -117,4 +127,6 @@ have no way to recover the concrete type, so we refuse. §2 records the divergen
   > EOF
   $ ./lab.exe --typecheck mixwrap.swift; echo "exit=$?"
   7:7: error: global function 'one' requires that 'any P' conform to 'P'
+  print(one(e))
+        ^
   exit=1

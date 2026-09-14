@@ -17,6 +17,8 @@ prints `P(x: 1)`, an honest divergence (§2); printing the field is fine:
   > PROG
   $ ./lab.exe --typecheck pr.swift
   6:7: error: cannot print a value of type 'P' (only Int, Double, Bool and String)
+  print(p)
+        ^
   [1]
 
 The same for an enum case and for an optional, the two other aggregates in the subset:
@@ -32,7 +34,11 @@ The same for an enum case and for an optional, the two other aggregates in the s
   > PROG
   $ ./lab.exe --typecheck pr2.swift
   6:7: error: cannot print a value of type 'E' (only Int, Double, Bool and String)
+  print(e)
+        ^
   7:7: error: cannot print a value of type 'Int?' (only Int, Double, Bool and String)
+  print(o)
+        ^
   [1]
 
 `==` on two structs is refused in swiftc's own words — there is no aggregate compare in SIL,
@@ -48,6 +54,8 @@ and `P` has no `Equatable` conformance to synthesize one from:
   > PROG
   $ ./lab.exe --typecheck eq.swift
   6:7: error: binary operator '==' cannot be applied to two 'P' operands
+  print(a == b)
+        ^
   [1]
 
 `==` on two optionals is refused too, and here swiftc accepts (`Int?` is `Equatable`) — the
@@ -61,6 +69,8 @@ comparison we do support is against `nil`, which reads the tag:
   > PROG
   $ ./lab.exe --typecheck eqo.swift
   4:7: error: binary operator '==' cannot be applied to two 'Int?' operands
+  print(a == b)
+        ^
   [1]
 
 A `let` stored property cannot be assigned through any binding, however `var` the binding is —
@@ -77,6 +87,8 @@ the `var` property beside it can:
   > PROG
   $ ./lab.exe --typecheck lf.swift
   7:1: error: cannot assign to property: 'k' is a 'let' constant
+  c.k = 5
+  ^
   [1]
 
 And a `let` binding freezes every property, `var` ones included — swiftc names the binding, not
@@ -91,4 +103,6 @@ the field, which is why our message does too:
   > PROG
   $ ./lab.exe --typecheck lb.swift
   5:1: error: cannot assign to property: 'c' is a 'let' constant
+  c.n = 5
+  ^
   [1]

@@ -3,8 +3,9 @@
    Design oracle:
      swift/include/swift/Basic/Diagnostic*.h
      swift/lib/AST/DiagnosticEngine.cpp
-   Swift has a rich engine (fix-its, categories, localization). Ours starts as a
-   simple collected list; you grow it (source snippets, carets, fix-its) over time.
+   Swift has a rich engine (fix-its, categories, localization). Ours is a collected
+   list plus the snippet-and-caret renderer below; fix-its and categories are still
+   to come.
 
    This file is a *contract* (fully written). Producers (lexer/parser/sema) call
    [error]/[warning]; the driver calls [print] and checks [has_errors]. *)
@@ -13,9 +14,9 @@ type severity = Error | Warning | Note
 type t = { severity : severity; span : Token.span; message : string }
 
 (* A mutable sink threaded through the front end. *)
-type sink = { mutable diagnostics : t list }
+type sink = { mutable diagnostics : t list; source : string option }
 
-let create () : sink = { diagnostics = [] }
+let create ?source () : sink = { diagnostics = []; source }
 
 let emit (sink : sink) (diagnostic : t) =
   sink.diagnostics <- diagnostic :: sink.diagnostics
@@ -50,5 +51,29 @@ let to_string (diagnostic : t) : string =
     (string_of_severity diagnostic.severity)
     diagnostic.message
 
+(* The source line a diagnostic points at, with a caret under its column — the shape
+   `swiftc -diagnostic-style=llvm` prints. The caret matters most when the span points at a
+   token with no glyph: the Newline that ends a line puts it just past the text, which reads
+   as "at the end of THIS line" instead of at a column that looks empty. The prefix copies the
+   line's own leading characters so a tab stays a tab and the caret still lines up. *)
+let snippet (source : string) (span : Token.span) : string list =
+  let lines = String.split_on_char '\n' source in
+  match List.nth_opt lines (span.Token.lo.Token.line - 1) with
+  | None -> []
+  | Some line ->
+      let col = max 1 span.Token.lo.Token.col in
+      let prefix =
+        String.init (col - 1) (fun i ->
+            if i < String.length line && line.[i] = '\t' then '\t' else ' ')
+      in
+      [ line; prefix ^ "^" ]
+
 let print (sink : sink) : unit =
-  List.iter (fun diagnostic -> prerr_endline (to_string diagnostic)) (all sink)
+  List.iter
+    (fun diagnostic ->
+      prerr_endline (to_string diagnostic);
+      match sink.source with
+      | None -> ()
+      | Some source ->
+          List.iter prerr_endline (snippet source diagnostic.span))
+    (all sink)

@@ -209,15 +209,31 @@ fully written, mirroring `swift/lib/AST/DiagnosticEngine.cpp`:
 ```ocaml
 type severity = Error | Warning | Note
 type t    = { severity : severity; span : Token.span; message : string }
-type sink = { mutable diagnostics : t list }          (* threaded through the front end *)
+type sink = { mutable diagnostics : t list             (* threaded through the front end *)
+            ; source : string option }                 (* the text, for rendering snippets *)
 
-val create     : unit -> sink
+val create     : ?source:string -> unit -> sink
 val error      : sink -> Token.span -> string -> unit
 val warning    : sink -> Token.span -> string -> unit
 val note       : sink -> Token.span -> string -> unit   (* explains the diagnostic above it *)
 val has_errors : sink -> bool
 val print      : sink -> unit                   (* swiftc-style `line:col: error: message` *)
 ```
+
+`print` renders what `swiftc -diagnostic-style=llvm` renders: the message, then the source line it
+points at, then a caret under the offending column.
+
+```
+2:8: error: expected expression
+let y =
+       ^
+```
+
+That third line is why the sink carries the source at all. A span can point at a token with no
+glyph — the `Newline` that ends a line — and then `2:8` on a seven-character line looks like it
+points at nothing; the caret sitting just past the text says *end of this line* instead. A sink
+built without a source (a unit test that only inspects `all`) still works and prints the message
+alone, which is why `source` is optional.
 
 The pattern is *collect, then report*: a stage pushes diagnostics into the sink and keeps going, so
 one run surfaces every error rather than dying on the first; the driver then calls `has_errors`,
@@ -685,7 +701,9 @@ loop alongside the opener is the whole trick: when the loop ends, `!depth` **is*
 comments still open.
 
 The exact strings, because a test has to compare against something and you cannot guess wording.
-One level open:
+`Diagnostics.print` also echoes the offending source line with a caret under it after each of these
+(§2's *The third file*); the transcripts below show only the message lines, which are what the wording
+exercise is about. One level open:
 
 ```
 $ printf 'let x = 1\n/*/\n' > u.swift

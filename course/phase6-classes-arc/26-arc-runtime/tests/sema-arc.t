@@ -12,6 +12,8 @@ machinery exists (swiftc has it, and accepts this):
   $ printf 'class K { var x: Int\n  init() { x = 1 } }\nstruct S { var k: K }\n' > g1.swift
   $ ./lab.exe --typecheck g1.swift; echo "exit=$?"
   3:8: error: class references inside structs are not supported in this subset
+  struct S { var k: K }
+         ^
   exit=1
 
 The same for an enum payload and for an optional, the other two value containers — including
@@ -25,6 +27,8 @@ reference the ARC insertion never saw, so the deinit ran on freed memory):
   > SWIFT
   $ ./lab.exe --typecheck g2.swift; echo "exit=$?"
   3:6: error: class references inside enum payloads are not supported in this subset
+  enum E { case some(K) }
+       ^
   exit=1
 
   $ cat > g3.swift <<'SWIFT'
@@ -37,6 +41,8 @@ reference the ARC insertion never saw, so the deinit ran on freed memory):
   > SWIFT
   $ ./lab.exe --typecheck g3.swift; echo "exit=$?"
   4:12: error: optional class references are not supported in this subset
+  func f() { let k: K? = K(7)
+             ^
   exit=1
 
 `deinit` takes no parameters and there is at most one per class, so a second is a redeclaration:
@@ -49,6 +55,8 @@ reference the ARC insertion never saw, so the deinit ran on freed memory):
   > SWIFT
   $ ./lab.exe --typecheck d2.swift; echo "exit=$?"
   4:3: error: invalid redeclaration of 'deinit'
+    deinit { print(2) } }
+    ^
   exit=1
 
 The class rules inherited from concept 25 are unchanged, and the corpus depends on them: the
@@ -69,7 +77,15 @@ override diagnostics, definite initialization, `let` properties, and the refusal
   > SWIFT
   $ ./lab.exe --typecheck c25.swift; echo "exit=$?"
   4:14: error: overriding declaration requires an 'override' keyword
+  class B: A { func f() -> Int { return 2 } }
+               ^
   8:1: error: cannot assign to property: 'k' is a 'let' constant
+  c.k = 5
+  ^
   9:7: error: cannot print a value of type 'C' (only Int, Double, Bool and String)
+  print(c)
+        ^
   10:7: error: binary operator '==' cannot be applied to two 'C' operands
+  print(c == c)
+        ^
   exit=1

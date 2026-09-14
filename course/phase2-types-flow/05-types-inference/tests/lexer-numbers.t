@@ -49,9 +49,13 @@ floating point literal; it must be written '0.5'":
   $ printf 'print(1.)\n' > n4.swift
   $ ./lab.exe --emit-tokens n4.swift 2>&1; echo "exit=$?"
   1:8: error: invalid character in source file
+  print(1.)
+         ^
   exit=1
 
   $ printf 'print(.5)\n' > n5.swift
   $ ./lab.exe --emit-tokens n5.swift 2>&1; echo "exit=$?"
   1:7: error: invalid character in source file
+  print(.5)
+        ^
   exit=1

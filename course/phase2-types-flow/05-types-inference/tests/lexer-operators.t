@@ -47,4 +47,6 @@ recovers. swiftc's lexer accepts `!` and complains later from the parser, so thi
   $ printf 'a ! b\n' > m4.swift
   $ ./lab.exe --emit-tokens m4.swift 2>&1; echo "exit=$?"
   1:3: error: expected '=' after '!'
+  a ! b
+    ^
   exit=1

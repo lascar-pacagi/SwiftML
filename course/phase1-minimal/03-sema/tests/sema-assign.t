@@ -22,6 +22,8 @@ Mutability is the only difference:
   $ printf 'var v = 1\nv = q\n' > c3.swift
   $ ./lab.exe --typecheck c3.swift
   2:5: error: cannot find 'q' in scope
+  v = q
+      ^
   [1]
 
 Reading a `let` is always fine; only writing one is an error:

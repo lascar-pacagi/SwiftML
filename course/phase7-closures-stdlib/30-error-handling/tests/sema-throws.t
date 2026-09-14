@@ -11,6 +11,8 @@ A throwing call with no `try` — swiftc's exact words:
   > SWIFT
   $ ./lab.exe --typecheck a.swift
   3:26: error: call can throw, but it is not marked with 'try' and the error is not handled
+  func g() -> Int { return f() }
+                           ^
   [1]
 
 `try` alone is not enough: the call has to sit somewhere the error can go — a `do`, a `try?`,
@@ -24,6 +26,8 @@ is a different mistake.
   > SWIFT
   $ ./lab.exe --typecheck b.swift
   3:30: error: errors thrown from here are not handled
+  func g() -> Int { return try f() }
+                               ^
   [1]
 
 A METHOD that throws needs `try` just as a function does. Until this was checked,
@@ -44,6 +48,8 @@ A METHOD that throws needs `try` just as a function does. Until this was checked
   > SWIFT
   $ ./lab.exe --typecheck m.swift
   11:7: error: call can throw, but it is not marked with 'try' and the error is not handled
+  print(a.take(3))
+        ^
   [1]
 
 `throw` in a function that is not declared `throws`:
@@ -54,6 +60,8 @@ A METHOD that throws needs `try` just as a function does. Until this was checked
   > SWIFT
   $ ./lab.exe --typecheck c.swift
   2:19: error: error is not handled because the enclosing function is not declared 'throws'
+  func g() -> Int { throw E.x }
+                    ^
   [1]
 
 Only an `Error` type can be thrown — an ordinary enum is not one, and neither is an Int:
@@ -64,11 +72,15 @@ Only an `Error` type can be thrown — an ordinary enum is not one, and neither 
   > SWIFT
   $ ./lab.exe --typecheck d.swift
   2:26: error: thrown expression type 'C' does not conform to 'Error'
+  func g() throws -> Int { throw C.a }
+                           ^
   [1]
 
   $ printf 'func g() throws -> Int { throw 5 }\n' > e.swift
   $ ./lab.exe --typecheck e.swift
   1:26: error: thrown expression type 'Int' does not conform to 'Error'
+  func g() throws -> Int { throw 5 }
+                           ^
   [1]
 
 The throw path RETURNS a placeholder of the return type — the caller checks the error register
@@ -87,6 +99,8 @@ would enter the ARC accounting. swiftc has no such limit.
   > SWIFT
   $ ./lab.exe --typecheck k.swift
   4:1: error: a throwing function cannot return 'C' in this subset
+  func mk(_ n: Int) throws -> C {
+  ^
   [1]
 
 A struct return is fine, and it is not free: the placeholder has to be struct-shaped, or IRGen

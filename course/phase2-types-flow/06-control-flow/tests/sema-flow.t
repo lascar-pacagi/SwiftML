@@ -13,6 +13,8 @@ A well-typed program with every construct is silent, exit 0:
   $ printf 'if 1 {\n  print(1)\n}\n' > c1.swift
   $ timeout 5 ./lab.exe --typecheck c1.swift; echo "exit=$?"
   1:4: error: cannot convert value of type 'Int' to specified type 'Bool'
+  if 1 {
+     ^
   exit=1
 
 A `while` condition is checked the same way:
@@ -20,6 +22,8 @@ A `while` condition is checked the same way:
   $ printf 'while "no" {\n  print(1)\n}\n' > c2.swift
   $ timeout 5 ./lab.exe --typecheck c2.swift; echo "exit=$?"
   1:7: error: cannot convert value of type 'String' to specified type 'Bool'
+  while "no" {
+        ^
   exit=1
 
 The loop variable is a `let`: `i = 0` inside the body is the constant-assignment error:
@@ -27,6 +31,8 @@ The loop variable is a `let`: `i = 0` inside the body is the constant-assignment
   $ printf 'for i in 0 ..< 3 {\n  i = 0\n}\n' > f1.swift
   $ timeout 5 ./lab.exe --typecheck f1.swift; echo "exit=$?"
   2:3: error: cannot assign to value: 'i' is a 'let' constant
+    i = 0
+    ^
   exit=1
 
 The range bounds must be Int: `0.0 ..< 3` is a conversion error on the bound:
@@ -34,6 +40,8 @@ The range bounds must be Int: `0.0 ..< 3` is a conversion error on the bound:
   $ printf 'for i in 0.0 ..< 3 {\n  print(i)\n}\n' > f2.swift
   $ timeout 5 ./lab.exe --typecheck f2.swift; echo "exit=$?"
   1:10: error: cannot convert value of type 'Double' to specified type 'Int'
+  for i in 0.0 ..< 3 {
+           ^
   exit=1
 
 The loop variable is in scope only in the body: `print(i)` after the loop is unknown:
@@ -41,6 +49,8 @@ The loop variable is in scope only in the body: `print(i)` after the loop is unk
   $ printf 'for i in 0 ..< 3 {\n  print(i)\n}\nprint(i)\n' > f3.swift
   $ timeout 5 ./lab.exe --typecheck f3.swift; echo "exit=$?"
   4:7: error: cannot find 'i' in scope
+  print(i)
+        ^
   exit=1
 
 `break` at top level is "'break' is only allowed inside a loop"; `continue` likewise:
@@ -48,7 +58,11 @@ The loop variable is in scope only in the body: `print(i)` after the loop is unk
   $ printf 'break\ncontinue\n' > b1.swift
   $ timeout 5 ./lab.exe --typecheck b1.swift; echo "exit=$?"
   1:1: error: 'break' is only allowed inside a loop
+  break
+  ^
   2:1: error: 'continue' is only allowed inside a loop
+  continue
+  ^
   exit=1
 
 `break` inside an `if` that is inside a loop is fine — the `if` is not a loop but the `while` is:
@@ -62,6 +76,8 @@ A name declared in a block dies with the block: `print(z)` after the `if` cannot
   $ printf 'if true {\n  let z = 1\n}\nprint(z)\n' > s1.swift
   $ timeout 5 ./lab.exe --typecheck s1.swift; echo "exit=$?"
   4:7: error: cannot find 'z' in scope
+  print(z)
+        ^
   exit=1
 
 A block sees the names outside it, and assigning an outer `var` from inside works:
@@ -87,6 +103,8 @@ A name from the then-block is not in scope in the else-block — the two are sib
   $ printf 'if true {\n  let a = 1\n} else {\n  print(a)\n}\n' > s5.swift
   $ timeout 5 ./lab.exe --typecheck s5.swift; echo "exit=$?"
   4:9: error: cannot find 'a' in scope
+    print(a)
+          ^
   exit=1
 
 Conditions nest: an `if` inside a `while` inside a `for`, each checked in its own scope:
@@ -112,6 +130,8 @@ A `break` in a `for` body is fine, and so is one in a `while` nested in a `for`:
   $ printf 'while true {\n  break\n}\nbreak\n' > b4.swift
   $ timeout 5 ./lab.exe --typecheck b4.swift; echo "exit=$?"
   4:1: error: 'break' is only allowed inside a loop
+  break
+  ^
   exit=1
 
 The condition of a `while` may use a name the loop itself assigns, and the body may shadow it:
@@ -131,7 +151,11 @@ Both bounds are checked, so two bad ones report twice:
   $ printf 'for i in "a" ..< true {\n}\n' > f5.swift
   $ timeout 5 ./lab.exe --typecheck f5.swift; echo "exit=$?"
   1:10: error: cannot convert value of type 'String' to specified type 'Int'
+  for i in "a" ..< true {
+           ^
   1:18: error: cannot convert value of type 'Bool' to specified type 'Int'
+  for i in "a" ..< true {
+                   ^
   exit=1
 
 The body is checked even when the bounds are wrong — one run reports everything:
@@ -139,5 +163,9 @@ The body is checked even when the bounds are wrong — one run reports everythin
   $ printf 'for i in 0.0 ..< 3 {\n  print(nope)\n}\n' > f6.swift
   $ timeout 5 ./lab.exe --typecheck f6.swift; echo "exit=$?"
   1:10: error: cannot convert value of type 'Double' to specified type 'Int'
+  for i in 0.0 ..< 3 {
+           ^
   2:9: error: cannot find 'nope' in scope
+    print(nope)
+          ^
   exit=1

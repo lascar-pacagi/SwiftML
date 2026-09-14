@@ -16,6 +16,8 @@ it too, wording it "cannot convert value of type 'Int' to type 'Double' in coerc
   $ printf 'let i = 1\nlet y = i as Double\n' > s2.swift
   $ ./lab.exe --typecheck s2.swift 2>&1; echo "exit=$?"
   2:9: error: cannot convert value of type 'Int' to specified type 'Double'
+  let y = i as Double
+          ^
   exit=1
 
 `"s" as Int` is rejected, and `1 as Foo` cannot find the type.
@@ -25,9 +27,13 @@ The first is the ordinary check failing; the second is `Types.of_name` returning
   $ printf 'let z = "s" as Int\n' > s3.swift
   $ ./lab.exe --typecheck s3.swift 2>&1; echo "exit=$?"
   1:9: error: cannot convert value of type 'String' to specified type 'Int'
+  let z = "s" as Int
+          ^
   exit=1
 
   $ printf 'let u = 1 as Foo\n' > s4.swift
   $ ./lab.exe --typecheck s4.swift 2>&1; echo "exit=$?"
   1:9: error: cannot find type 'Foo' in scope
+  let u = 1 as Foo
+          ^
   exit=1

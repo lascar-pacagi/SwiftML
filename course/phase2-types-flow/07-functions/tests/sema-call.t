@@ -32,6 +32,8 @@ An integer literal argument coerces to a `Double` parameter, as at a `let`:
   $ printf 'func f(_ x: Int) -> Int { return x }\nprint(f(1, 2))\n' > a1.swift
   $ ./lab.exe --typecheck a1.swift; echo "exit=$?"
   2:7: error: function 'f' expects 1 argument(s) but 2 given
+  print(f(1, 2))
+        ^
   exit=1
 
 Too few is the same message — `f()` on a one-parameter `f`:
@@ -39,6 +41,8 @@ Too few is the same message — `f()` on a one-parameter `f`:
   $ printf 'func f(_ x: Int) -> Int { return x }\nprint(f())\n' > a2.swift
   $ ./lab.exe --typecheck a2.swift; echo "exit=$?"
   2:7: error: function 'f' expects 1 argument(s) but 0 given
+  print(f())
+        ^
   exit=1
 
 An argument to a parameterless function is an arity error too:
@@ -46,6 +50,8 @@ An argument to a parameterless function is an arity error too:
   $ printf 'func f() -> Int { return 1 }\nprint(f(1))\n' > a3.swift
   $ ./lab.exe --typecheck a3.swift; echo "exit=$?"
   2:7: error: function 'f' expects 0 argument(s) but 1 given
+  print(f(1))
+        ^
   exit=1
 
 On an arity error the arguments are not checked against anything — one message, not two:
@@ -53,6 +59,8 @@ On an arity error the arguments are not checked against anything — one message
   $ printf 'func f(_ x: Int) -> Int { return x }\nprint(f("a", "b"))\n' > a4.swift
   $ ./lab.exe --typecheck a4.swift; echo "exit=$?"
   2:7: error: function 'f' expects 1 argument(s) but 2 given
+  print(f("a", "b"))
+        ^
   exit=1
 
 `f("s")` on `f(_ x: Int)` is a conversion error, at the argument:
@@ -60,6 +68,8 @@ On an arity error the arguments are not checked against anything — one message
   $ printf 'func f(_ x: Int) -> Int { return x }\nprint(f("s"))\n' > t1.swift
   $ ./lab.exe --typecheck t1.swift; echo "exit=$?"
   2:9: error: cannot convert value of type 'String' to specified type 'Int'
+  print(f("s"))
+          ^
   exit=1
 
 Each argument is checked against its own parameter — two wrong ones give two errors:
@@ -67,7 +77,11 @@ Each argument is checked against its own parameter — two wrong ones give two e
   $ printf 'func f(_ a: Int, _ b: Bool) { }\nf(true, 1)\n' > t2.swift
   $ ./lab.exe --typecheck t2.swift; echo "exit=$?"
   2:3: error: cannot convert value of type 'Bool' to specified type 'Int'
+  f(true, 1)
+    ^
   2:9: error: cannot convert value of type 'Int' to specified type 'Bool'
+  f(true, 1)
+          ^
   exit=1
 
 The result has the declared type: an `Int` result annotated `String` is a conversion error:
@@ -75,6 +89,8 @@ The result has the declared type: an `Int` result annotated `String` is a conver
   $ printf 'func f() -> Int { return 1 }\nlet s: String = f()\n' > r1.swift
   $ ./lab.exe --typecheck r1.swift; echo "exit=$?"
   2:17: error: cannot convert value of type 'Int' to specified type 'String'
+  let s: String = f()
+                  ^
   exit=1
 
 A `Void` result is `()`: binding it as an `Int`, or adding to it, is rejected:
@@ -82,7 +98,11 @@ A `Void` result is `()`: binding it as an `Int`, or adding to it, is rejected:
   $ printf 'func f() { }\nlet v: Int = f()\nlet w = f() + 1\n' > r2.swift
   $ ./lab.exe --typecheck r2.swift; echo "exit=$?"
   2:14: error: cannot convert value of type '()' to specified type 'Int'
+  let v: Int = f()
+               ^
   3:9: error: binary operator '+' cannot be applied to operands of type '()' and 'Int'
+  let w = f() + 1
+          ^
   exit=1
 
 A wrong argument inside a nested call is reported once, at the inner call:
@@ -90,6 +110,8 @@ A wrong argument inside a nested call is reported once, at the inner call:
   $ printf 'func f(_ x: Int) -> Int { return x }\nprint(f(f(true)))\n' > n1.swift
   $ ./lab.exe --typecheck n1.swift; echo "exit=$?"
   2:11: error: cannot convert value of type 'Bool' to specified type 'Int'
+  print(f(f(true)))
+            ^
   exit=1
 
 A call to a name that is not a function is still "cannot find 'nope' in scope":
@@ -97,4 +119,6 @@ A call to a name that is not a function is still "cannot find 'nope' in scope":
   $ printf 'print(nope(1))\n' > u1.swift
   $ ./lab.exe --typecheck u1.swift; echo "exit=$?"
   1:7: error: cannot find 'nope' in scope
+  print(nope(1))
+        ^
   exit=1

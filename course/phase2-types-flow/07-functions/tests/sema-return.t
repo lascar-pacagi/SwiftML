@@ -7,10 +7,14 @@ messages, all swiftc's; each lands on the `return` keyword.
   $ printf 'return 1\n' > t1.swift
   $ ./lab.exe --typecheck t1.swift; echo "exit=$?"
   1:1: error: return invalid outside of a func
+  return 1
+  ^
   exit=1
   $ printf 'let x = 1\nreturn\n' > t2.swift
   $ ./lab.exe --typecheck t2.swift; echo "exit=$?"
   2:1: error: return invalid outside of a func
+  return
+  ^
   exit=1
 
 A `return` in a top-level `if` is still outside any function:
@@ -18,6 +22,8 @@ A `return` in a top-level `if` is still outside any function:
   $ printf 'if true {\n  return 1\n}\n' > t3.swift
   $ ./lab.exe --typecheck t3.swift; echo "exit=$?"
   2:3: error: return invalid outside of a func
+    return 1
+    ^
   exit=1
 
 `return 1` in a function with no `-> T` is "unexpected non-void return value in void function":
@@ -25,6 +31,8 @@ A `return` in a top-level `if` is still outside any function:
   $ printf 'func f() {\n  return 1\n}\n' > v1.swift
   $ ./lab.exe --typecheck v1.swift; echo "exit=$?"
   2:3: error: unexpected non-void return value in void function
+    return 1
+    ^
   exit=1
 
 A bare `return` in a `-> Int` function is "non-void function should return a value":
@@ -32,6 +40,8 @@ A bare `return` in a `-> Int` function is "non-void function should return a val
   $ printf 'func f() -> Int {\n  return\n}\n' > v2.swift
   $ ./lab.exe --typecheck v2.swift; echo "exit=$?"
   2:3: error: non-void function should return a value
+    return
+    ^
   exit=1
 
 A bare `return` in a `Void` function is fine — an early exit:
@@ -45,6 +55,8 @@ A bare `return` in a `Void` function is fine — an early exit:
   $ printf 'func f() -> Int {\n  return "s"\n}\n' > c1.swift
   $ ./lab.exe --typecheck c1.swift; echo "exit=$?"
   2:10: error: cannot convert value of type 'String' to specified type 'Int'
+    return "s"
+           ^
   exit=1
 
 `return 1` from `-> Bool` is rejected the same way — a literal is not a Bool:
@@ -52,6 +64,8 @@ A bare `return` in a `Void` function is fine — an early exit:
   $ printf 'func f() -> Bool {\n  return 1\n}\n' > c2.swift
   $ ./lab.exe --typecheck c2.swift; echo "exit=$?"
   2:10: error: cannot convert value of type 'Int' to specified type 'Bool'
+    return 1
+           ^
   exit=1
 
 `return 1` from `-> Double` is accepted — the return type is the contextual type, and the
@@ -72,6 +86,8 @@ A `return` whose value has an error reports that error, not a second one about t
   $ printf 'func f() -> Int {\n  return nothere\n}\n' > c5.swift
   $ ./lab.exe --typecheck c5.swift; echo "exit=$?"
   2:10: error: cannot find 'nothere' in scope
+    return nothere
+           ^
   exit=1
 
 Every `return` in a body is checked — two bad ones give two errors:
@@ -79,5 +95,9 @@ Every `return` in a body is checked — two bad ones give two errors:
   $ printf 'func f(_ n: Int) -> Int {\n  if n > 0 { return true }\n  return "no"\n}\n' > c6.swift
   $ ./lab.exe --typecheck c6.swift; echo "exit=$?"
   2:21: error: cannot convert value of type 'Bool' to specified type 'Int'
+    if n > 0 { return true }
+                      ^
   3:10: error: cannot convert value of type 'String' to specified type 'Int'
+    return "no"
+           ^
   exit=1

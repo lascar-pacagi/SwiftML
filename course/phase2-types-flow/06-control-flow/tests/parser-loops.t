@@ -33,6 +33,8 @@ Loops nest, and a body can hold every statement kind:
   $ printf 'for i 0 ..< 3 {\n}\n' > e1.swift
   $ timeout 5 ./lab.exe --emit-ast e1.swift; echo "exit=$?"
   1:7: error: expected 'in'
+  for i 0 ..< 3 {
+        ^
   exit=1
 
 `for i in 0 to 3` — no `..<` — is "expected '..<'" first; the rest of the line cascades:

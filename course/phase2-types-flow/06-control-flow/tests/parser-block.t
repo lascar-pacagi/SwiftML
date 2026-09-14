@@ -40,6 +40,8 @@ Two statements on one line are an error: a newline SEPARATES them, as at top lev
   $ printf '{\n  print(1) print(2)\n}\n' > b6.swift
   $ timeout 5 ./lab.exe --emit-block b6.swift; echo "exit=$?"
   2:12: error: expected newline or end of statement
+    print(1) print(2)
+             ^
   exit=1
 
 A block that runs off the end of the file is "expected '}'", at the end:
@@ -47,6 +49,8 @@ A block that runs off the end of the file is "expected '}'", at the end:
   $ printf '{\n  print(1)\n' > b7.swift
   $ timeout 5 ./lab.exe --emit-block b7.swift; echo "exit=$?"
   3:1: error: expected '}'
+  
+  ^
   exit=1
 
 A block whose statements are every given form — binding, reassignment, bare expression:
@@ -66,7 +70,11 @@ A missing `{` is reported at the token that is there, and nothing is parsed as a
   $ printf 'print(1)\n' > b10.swift
   $ timeout 5 ./lab.exe --emit-block b10.swift; echo "exit=$?"
   1:1: error: expected '{'
+  print(1)
+  ^
   2:1: error: expected '}'
+  
+  ^
   exit=1
 
 A statement that is itself broken is reported inside the block, once:
@@ -74,4 +82,6 @@ A statement that is itself broken is reported inside the block, once:
   $ printf '{\n  let = 1\n}\n' > b11.swift
   $ timeout 5 ./lab.exe --emit-block b11.swift; echo "exit=$?"
   2:7: error: expected identifier
+    let = 1
+        ^
   exit=1

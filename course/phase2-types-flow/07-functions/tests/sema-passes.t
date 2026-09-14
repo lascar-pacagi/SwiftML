@@ -7,6 +7,8 @@ A program with no functions is still checked: a bad top-level `let` is rejected 
   $ printf 'let x: Int = "s"\n' > s1.swift
   $ ./lab.exe --typecheck s1.swift; echo "exit=$?"
   1:14: error: cannot convert value of type 'String' to specified type 'Int'
+  let x: Int = "s"
+               ^
   exit=1
 
 A statement-only program is accepted, exit 0:
@@ -20,6 +22,8 @@ Declaring `f` twice is "invalid redeclaration of 'f'", reported on the second on
   $ printf 'func f() { }\nfunc f() { }\n' > d1.swift
   $ ./lab.exe --typecheck d1.swift; echo "exit=$?"
   2:1: error: invalid redeclaration of 'f'
+  func f() { }
+  ^
   exit=1
 
 A statement between two declarations is checked in its place — pass 2 walks items in order:
@@ -27,6 +31,8 @@ A statement between two declarations is checked in its place — pass 2 walks it
   $ printf 'func a() { }\nlet q: Int = true\nfunc b() { }\n' > o1.swift
   $ ./lab.exe --typecheck o1.swift; echo "exit=$?"
   2:14: error: cannot convert value of type 'Bool' to specified type 'Int'
+  let q: Int = true
+               ^
   exit=1
 
 `print(g())` above `func g()` is accepted — the signature was collected before any body:
@@ -59,5 +65,9 @@ signature is the one later calls are checked against — `f()` is now an arity e
   $ printf 'func f() -> Int { return 1 }\nfunc f(_ a: Int) -> Int { return a }\nprint(f())\n' > d2.swift
   $ ./lab.exe --typecheck d2.swift; echo "exit=$?"
   2:1: error: invalid redeclaration of 'f'
+  func f(_ a: Int) -> Int { return a }
+  ^
   3:7: error: function 'f' expects 1 argument(s) but 0 given
+  print(f())
+        ^
   exit=1

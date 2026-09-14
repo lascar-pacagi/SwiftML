@@ -1011,7 +1011,7 @@ thing you'll want to blame. In `skip_trivia`'s block-comment branch:
 
 `Diagnostics.note` (see `diagnostics.ml`) is a severity that never makes `has_errors` true — it
 explains the error above it rather than being a problem of its own, so the driver still exits on
-the error and prints both lines:
+the error and prints both lines (each followed by its source line and a caret, elided here):
 
 ```
 2:1: note: comment started here

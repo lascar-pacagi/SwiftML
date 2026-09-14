@@ -111,4 +111,6 @@ the one to reject it — one error, at the `#`.
   $ printf 'print(#nope)\n' > bad.swift
   $ ./lab.exe --typecheck bad.swift
   1:7: error: unknown macro '#nope'
+  print(#nope)
+        ^
   [1]

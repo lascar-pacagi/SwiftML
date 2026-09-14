@@ -20,8 +20,9 @@ let () =
   match Array.to_list Sys.argv with
   | [ _; mode; file ]
     when mode = "--emit-expr" || mode = "--emit-stmt" || mode = "--emit-ast" ->
-      let diags = Diagnostics.create () in
-      let toks = Lexer.tokenize (Lexer.create (read_file file) diags) in
+      let src = read_file file in
+      let diags = Diagnostics.create ~source:src () in
+      let toks = Lexer.tokenize (Lexer.create src diags) in
       bail diags;
       let p = Parser.create toks diags in
       let out =

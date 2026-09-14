@@ -13,6 +13,8 @@ which may be falsely rejected:
   $ printf 'print(y)\n' > u1.swift
   $ ./lab.exe --typecheck u1.swift; echo "exit=$?"
   1:7: error: cannot find 'y' in scope
+  print(y)
+        ^
   exit=1
 
 Assigning to an undeclared name is the same "in scope" error:
@@ -20,6 +22,8 @@ Assigning to an undeclared name is the same "in scope" error:
   $ printf 'x = 5\n' > u2.swift
   $ ./lab.exe --typecheck u2.swift
   1:1: error: cannot find 'x' in scope
+  x = 5
+  ^
   [1]
 
 `let a = a` reads an unbound `a`: a name is in scope only AFTER its declaration.
@@ -29,6 +33,8 @@ accepted:
   $ printf 'let a = a\n' > u3.swift
   $ ./lab.exe --typecheck u3.swift
   1:9: error: cannot find 'a' in scope
+  let a = a
+          ^
   [1]
 
 An unknown name is found however deep it sits: `-(a * (a + y))`.
@@ -38,6 +44,8 @@ less means the walk stopped early:
   $ printf 'let a = 1\nprint(-(a * (a + y)) %% 2)\n' > deep.swift
   $ ./lab.exe --typecheck deep.swift
   2:18: error: cannot find 'y' in scope
+  print(-(a * (a + y)) % 2)
+                   ^
   [1]
 
 Several problems in one file are ALL reported, in source order, at their columns.
@@ -46,6 +54,12 @@ One run tells you everything it can see:
   $ printf 'print(p + q)\nlet a = 1\nfoo(a)\n' > multi.swift
   $ ./lab.exe --typecheck multi.swift
   1:7: error: cannot find 'p' in scope
+  print(p + q)
+        ^
   1:11: error: cannot find 'q' in scope
+  print(p + q)
+            ^
   3:1: error: cannot find 'foo' in scope
+  foo(a)
+  ^
   [1]

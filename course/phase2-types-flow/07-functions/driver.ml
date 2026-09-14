@@ -29,7 +29,7 @@ let bail_on_errors (diagnostics : Diagnostics.sink) : unit =
 
 let compile_file ~(src_path : string) ~(emit : emit) : unit =
   let source = read_file src_path in
-  let diagnostics = Diagnostics.create () in
+  let diagnostics = Diagnostics.create ~source () in
   match emit with
   | Tokens ->
       let tokens = Lexer.tokenize (Lexer.create source diagnostics) in

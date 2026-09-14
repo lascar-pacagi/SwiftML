@@ -27,6 +27,8 @@ is where that shows:
   > EOF
   $ ./lab.exe --typecheck barenil.swift
   1:14: error: 'nil' cannot be used with a non-optional type 'Int'
+  let n: Int = nil
+               ^
   [1]
 
 `!` unwraps an optional and nothing else — a plain `Int` has nothing to unwrap:
@@ -37,6 +39,8 @@ is where that shows:
   > EOF
   $ ./lab.exe --typecheck bang.swift
   2:7: error: cannot force-unwrap a non-optional value of type 'Int'
+  print(n!)
+        ^
   [1]
 
 `if let` binds an optional's payload, so its right-hand side must BE an optional; the binding
@@ -47,7 +51,11 @@ it would have made does not happen, so `v` is unknown in the body:
   > EOF
   $ ./lab.exe --typecheck iflet.swift
   1:1: error: initializer for conditional binding must have Optional type, not 'Int'
+  if let v = 3 { print(v) }
+  ^
   1:22: error: cannot find 'v' in scope
+  if let v = 3 { print(v) }
+                       ^
   [1]
 
 An `Int?` is NOT an `Int`: it does not convert on its own, and it does not do arithmetic. This
@@ -60,7 +68,11 @@ is the point of the type — you have to say what happens when it is `nil`:
   > EOF
   $ ./lab.exe --typecheck noconv.swift
   2:14: error: cannot convert value of type 'Int?' to specified type 'Int'
+  let n: Int = a
+               ^
   3:7: error: binary operator '+' cannot be applied to operands of type 'Int?' and 'Int'
+  print(a + 1)
+        ^
   [1]
 
 `??` has to produce ONE type: the default must match what the optional wraps:
@@ -71,7 +83,11 @@ is the point of the type — you have to say what happens when it is `nil`:
   > EOF
   $ ./lab.exe --typecheck coalty.swift
   2:20: error: cannot convert value of type 'Bool' to specified type 'Int'
+  let b: Bool = a ?? false
+                     ^
   2:15: error: cannot convert value of type 'Int' to specified type 'Bool'
+  let b: Bool = a ?? false
+                ^
   [1]
 
 The wrap is CHECKED, not blind: `Int?` accepts an `Int`, not a `String`, and `x = true` on an
@@ -84,7 +100,11 @@ The wrap is CHECKED, not blind: `Int?` accepts an `Int`, not a `String`, and `x 
   > EOF
   $ ./lab.exe --typecheck wrapty.swift
   1:15: error: cannot convert value of type 'String' to specified type 'Int'
+  let a: Int? = "s"
+                ^
   3:5: error: cannot convert value of type 'Bool' to specified type 'Int'
+  x = true
+      ^
   [1]
 
 A `-> Int?` function still checks what it returns — `return true` is not an `Int?`:
@@ -96,6 +116,8 @@ A `-> Int?` function still checks what it returns — `return true` is not an `I
   > EOF
   $ ./lab.exe --typecheck retty.swift
   2:10: error: cannot convert value of type 'Bool' to specified type 'Int'
+    return true
+           ^
   [1]
 
 `== nil` is the one comparison an optional gets; two optionals cannot be compared with each
@@ -109,6 +131,8 @@ compared with `nil`:
   > EOF
   $ ./lab.exe --typecheck cmp.swift
   3:7: error: binary operator '==' cannot be applied to two 'Int?' operands
+  print(a == b)
+        ^
   [1]
 
 `print` of an optional is refused up front (swiftc prints `Optional(5)` through reflection — a
@@ -120,4 +144,6 @@ documented divergence, §2) instead of crashing IRGen:
   > EOF
   $ ./lab.exe --typecheck printopt.swift
   2:7: error: cannot print a value of type 'Int?' (only Int, Double, Bool and String)
+  print(a)
+        ^
   [1]

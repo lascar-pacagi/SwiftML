@@ -8,6 +8,8 @@ That is `diag::lex_invalid_escape`, and swiftc puts its caret there too, at colu
   $ printf 'print("\\1")\n' > e1.swift
   $ ./lab.exe --emit-tokens e1.swift 2>&1; echo "exit=$?"
   1:9: error: invalid escape sequence in literal
+  print("\1")
+          ^
   exit=1
 
 `print("oops` reports an unterminated literal once, on the opening quote.
@@ -17,6 +19,8 @@ loop that errors on the way out *and* again after it will print the line twice:
   $ printf 'print("oops\n' > e2.swift
   $ ./lab.exe --emit-tokens e2.swift 2>&1; echo "exit=$?"
   1:7: error: unterminated string literal
+  print("oops
+        ^
   exit=1
 
 `"a\nb\tc\"d\\e"` decodes to real characters, no backslashes left.
@@ -38,7 +42,11 @@ a second, independent failure. swiftc prints the same two, in the same order:
   $ printf 'print("abc\\1\n' > e4.swift
   $ ./lab.exe --emit-tokens e4.swift 2>&1; echo "exit=$?"
   1:12: error: invalid escape sequence in literal
+  print("abc\1
+             ^
   1:7: error: unterminated string literal
+  print("abc\1
+        ^
   exit=1
 
 `print("")` is a valid empty string, not an unterminated one.

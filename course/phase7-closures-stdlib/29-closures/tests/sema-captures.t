@@ -13,6 +13,8 @@ context's no-op vtable does not have. swiftc accepts this program; we refuse it,
   > SWIFT
   $ ./lab.exe --typecheck k.swift
   4:24: error: cannot capture 'k' in this subset (closure captures are plain values)
+  let f = { () -> Int in k.v }
+                         ^
   [1]
 
 CALLING a captured function value is a capture too — the `{code, ctx}` pair goes into the
@@ -31,6 +33,8 @@ printed 8 where swiftc prints 14.
   > SWIFT
   $ ./lab.exe --typecheck compose.swift
   6:31: error: cannot capture 'inner' in this subset (closure captures are plain values)
+    return { (x: Int) -> Int in inner(x) * 2 }
+                                ^
   [1]
 
 A free variable that names nothing is an ordinary scope error, reported once — the closure body
@@ -41,6 +45,8 @@ is checked once, against its annotation:
   > SWIFT
   $ ./lab.exe --typecheck y.swift
   1:34: error: cannot find 'y' in scope
+  let f = { (x: Int) -> Int in x + y }
+                                   ^
   [1]
 
 A `let` stored property is written once, by the initializer that owns it — never through a
@@ -53,6 +59,8 @@ binding. This is swiftc's rule and its wording:
   > SWIFT
   $ ./lab.exe --typecheck letf.swift
   3:1: error: cannot assign to property: 'x' is a 'let' constant
+  p.x = 9
+  ^
   [1]
 
 Two aggregates cannot be compared: neither a struct nor a function value is Equatable here, and
@@ -67,6 +75,8 @@ IRGen, it used to emit `add i64 %struct` and die inside clang.
   > SWIFT
   $ ./lab.exe --typecheck eq.swift
   4:7: error: binary operator '==' cannot be applied to two 'P' operands
+  print(a == b)
+        ^
   [1]
 
 `print` takes the four scalar types. swiftc would print `P(x: 1, y: 2)` — printing an aggregate
@@ -78,6 +88,8 @@ needs reflection, which we do not have — so this is a divergence we STATE rath
   > SWIFT
   $ ./lab.exe --typecheck pr.swift
   2:7: error: cannot print a value of type 'P' (only Int, Double, Bool and String)
+  print(P(x: 1, y: 2))
+        ^
   [1]
 
 An optional class reference is refused up front (concept 26's v0 guard): a bitwise-copied
@@ -91,4 +103,6 @@ used to skip this check and produce a function the ownership verifier then rejec
   > SWIFT
   $ ./lab.exe --typecheck ok.swift
   3:1: error: optional class references are not supported in this subset
+  let k: K? = K(1)
+  ^
   [1]

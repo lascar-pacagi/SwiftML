@@ -14,6 +14,8 @@ One case of a two-case enum, no `default`: `switch must be exhaustive`, swiftc's
   > EOF
   $ ./lab.exe --typecheck one.swift
   3:1: error: switch must be exhaustive
+  switch e {
+  ^
   [1]
 
 Two of three is still not all three — the missing case is `dot`:
@@ -32,6 +34,8 @@ Two of three is still not all three — the missing case is `dot`:
   > EOF
   $ ./lab.exe --typecheck two.swift
   7:1: error: switch must be exhaustive
+  switch s {
+  ^
   [1]
 
 Listing the SAME case twice covers one case, not two:
@@ -46,6 +50,8 @@ Listing the SAME case twice covers one case, not two:
   > EOF
   $ ./lab.exe --typecheck dup.swift
   3:1: error: switch must be exhaustive
+  switch e {
+  ^
   [1]
 
 An empty switch over a non-empty enum covers nothing:
@@ -58,6 +64,8 @@ An empty switch over a non-empty enum covers nothing:
   > EOF
   $ ./lab.exe --typecheck empty.swift
   3:1: error: switch must be exhaustive
+  switch e {
+  ^
   [1]
 
 The check runs inside a function body too, on a switch that is the function's only statement:
@@ -74,4 +82,6 @@ The check runs inside a function body too, on a switch that is the function's on
   > EOF
   $ ./lab.exe --typecheck infn.swift
   3:3: error: switch must be exhaustive
+    switch e {
+    ^
   [1]

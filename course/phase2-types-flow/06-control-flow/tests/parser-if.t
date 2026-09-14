@@ -38,6 +38,8 @@ A missing `{` after the condition is "expected '{'", reported at the token found
   $ printf 'if true\n  print(1)\n}\n' > e1.swift
   $ timeout 5 ./lab.exe --emit-if e1.swift; echo "exit=$?"
   1:8: error: expected '{'
+  if true
+         ^
   exit=1
 
 The condition is a full expression, including the new logical operators, and needs no parentheses:
@@ -72,7 +74,11 @@ A missing `{` after `else` is reported there:
   $ printf 'if c {\n  print(1)\n} else print(2)\n' > e2.swift
   $ timeout 5 ./lab.exe --emit-if e2.swift; echo "exit=$?"
   3:8: error: expected '{'
+  } else print(2)
+         ^
   4:1: error: expected '}'
+  
+  ^
   exit=1
 
 A blank line before `else` is fine too, and so is a comment-only line:

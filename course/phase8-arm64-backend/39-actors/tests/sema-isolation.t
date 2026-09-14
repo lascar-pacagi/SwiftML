@@ -16,6 +16,8 @@ top level is rejected, in swiftc's words (`diag::actor_isolated_call_decl`,
   > SWIFT
   $ ./lab.exe --typecheck bad.swift
   7:7: error: call to actor-isolated instance method 'get()' in a synchronous nonisolated context
+  print(c.get())
+        ^
   [1]
   $ swiftc -typecheck bad.swift 2>&1 | head -1
   bad.swift:7:9: error: call to actor-isolated instance method 'get()' in a synchronous nonisolated context [#ActorIsolatedCall]
@@ -66,6 +68,8 @@ same statement is still rejected, and an un-awaited call in the next statement i
   > SWIFT
   $ ./lab.exe --typecheck mixed.swift
   8:9: error: call to actor-isolated instance method 'get()' in a synchronous nonisolated context
+  let b = c.get()
+          ^
   [1]
 
 Condition 3 — we are outside the actor. Inside its own methods an actor is already on its
@@ -104,6 +108,8 @@ in an ordinary `func` is rejected too.
   > SWIFT
   $ ./lab.exe --typecheck infn.swift
   6:41: error: call to actor-isolated instance method 'get()' in a synchronous nonisolated context
+  func peek(_ c: Counter) -> Int { return c.get() }
+                                          ^
   [1]
 
 DOCUMENTED v0 DIVERGENCE: our third condition is per-TYPE, not per-INSTANCE. A method of `A`

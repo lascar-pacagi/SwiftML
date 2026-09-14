@@ -6,7 +6,11 @@ In source order, each at its own column:
   $ printf 'bar(z)\n' > call.swift
   $ ./lab.exe --typecheck call.swift
   1:1: error: cannot find 'bar' in scope
+  bar(z)
+  ^
   1:5: error: cannot find 'z' in scope
+  bar(z)
+      ^
   [1]
 
 `print(1, 2)` is "print(_:) expects exactly one argument", at the call.
@@ -15,6 +19,8 @@ Our wording: Swift's print is variadic, ours is not:
   $ printf 'print(1, 2)\n' > arity2.swift
   $ ./lab.exe --typecheck arity2.swift
   1:1: error: print(_:) expects exactly one argument
+  print(1, 2)
+  ^
   [1]
 
 `print()` with no argument is the same arity error:
@@ -22,6 +28,8 @@ Our wording: Swift's print is variadic, ours is not:
   $ printf 'print()\n' > arity0.swift
   $ ./lab.exe --typecheck arity0.swift
   1:1: error: print(_:) expects exactly one argument
+  print()
+  ^
   [1]
 
 A well-formed call with an arbitrary expression inside is silent:

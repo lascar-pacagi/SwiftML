@@ -40,6 +40,8 @@ swiftc accepts the same program, because its task contexts are real.
   $ printf 'func w(_ n: Int) async { print(n) }\nlet k = 7\nTask { await w(k) }\nprint(0)\n' > cap.swift
   $ ./lab.exe --typecheck cap.swift
   3:16: error: cannot capture 'k' in a task body in this subset (a task runs after the scope that spawned it; pass it to the function the task calls instead)
+  Task { await w(k) }
+                 ^
   [1]
   $ swiftc -typecheck cap.swift && echo "swiftc accepts it"
   swiftc accepts it

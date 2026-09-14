@@ -89,6 +89,8 @@ Redefining a superclass method without saying `override` is swiftc's
   > SWIFT
   $ ./lab.exe --typecheck c2.swift; echo "exit=$?"
   4:14: error: overriding declaration requires an 'override' keyword
+  class B: A { func f() -> Int { return 2 } }
+               ^
   exit=1
 
 Saying `override` when the superclass has no such method is the opposite error,
@@ -101,6 +103,8 @@ Saying `override` when the superclass has no such method is the opposite error,
   > SWIFT
   $ ./lab.exe --typecheck c3.swift; echo "exit=$?"
   3:23: error: method does not override any method from its superclass
+  class B: A { override func f() -> Int { return 2 } }
+                        ^
   exit=1
 
 A name that matches but a SIGNATURE that does not is not an override either — there is no slot
@@ -115,7 +119,11 @@ to replace, so it is the same diagnostic (swiftc agrees, for the same reason):
   > SWIFT
   $ ./lab.exe --typecheck c5.swift; echo "exit=$?"
   4:23: error: method does not override any method from its superclass
+  class B: A { override func f() -> Bool { return true } }
+                        ^
   5:23: error: method does not override any method from its superclass
+  class C: A { override func f(_ n: Int) -> Int { return n } }
+                        ^
   exit=1
 
 A method a class merely INHERITS is still overridable two levels down, and overriding it there

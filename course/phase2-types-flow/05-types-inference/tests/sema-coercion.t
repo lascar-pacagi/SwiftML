@@ -17,6 +17,8 @@ between numeric types implicitly:
   $ printf 'let i = 1\nlet d: Double = i\n' > y2.swift
   $ ./lab.exe --typecheck y2.swift 2>&1; echo "exit=$?"
   2:17: error: cannot convert value of type 'Int' to specified type 'Double'
+  let d: Double = i
+                  ^
   exit=1
 
 `-1` and `1 + 2 * 3` are still literals: the predicate recurses.
@@ -33,6 +35,8 @@ fixes the whole expression at Int:
   $ printf 'let i = 1\nlet d: Double = 1 + i\n' > y4.swift
   $ ./lab.exe --typecheck y4.swift 2>&1; echo "exit=$?"
   2:21: error: cannot convert value of type 'Int' to specified type 'Double'
+  let d: Double = 1 + i
+                      ^
   exit=1
 
 The same rule applies on assignment, not just on `let`: `x = 3` where `x: Double`.
@@ -50,4 +54,6 @@ too (there is no `%` on `Double`; Swift spells that `truncatingRemainder`):
   $ printf 'let d: Double = 1 %% 2\n' > y6.swift
   $ ./lab.exe --typecheck y6.swift 2>&1; echo "exit=$?"
   1:17: error: cannot convert value of type 'Int' to specified type 'Double'
+  let d: Double = 1 % 2
+                  ^
   exit=1

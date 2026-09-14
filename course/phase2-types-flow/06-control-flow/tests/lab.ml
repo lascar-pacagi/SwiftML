@@ -32,8 +32,9 @@ let read_file (path : string) : string =
 
 (* parse the file as ONE construct and print it, so the report is about that function alone *)
 let emit_one (file : string) (parse : Parser.t -> string) : unit =
-  let diags = Diagnostics.create () in
-  let toks = Lexer.tokenize (Lexer.create (read_file file) diags) in
+  let src = read_file file in
+  let diags = Diagnostics.create ~source:src () in
+  let toks = Lexer.tokenize (Lexer.create src diags) in
   let bail () =
     if Diagnostics.has_errors diags then (
       Diagnostics.print diags;

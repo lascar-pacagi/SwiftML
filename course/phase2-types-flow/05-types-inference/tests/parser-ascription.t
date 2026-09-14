@@ -27,5 +27,9 @@ second line is the parser recovering: it did not consume a type, so the statemen
   $ printf 'let y = 1 as 5\n' > r3.swift
   $ ./lab.exe --emit-ast r3.swift 2>&1; echo "exit=$?"
   1:14: error: expected type after 'as'
+  let y = 1 as 5
+               ^
   1:14: error: expected newline or end of statement
+  let y = 1 as 5
+               ^
   exit=1

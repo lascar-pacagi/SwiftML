@@ -74,6 +74,8 @@ A colon with nothing after it — `(a:)` — is "expected a parameter type", and
   $ printf '(a:)\n' > e3.swift
   $ ./lab.exe --emit-params e3.swift; echo "exit=$?"
   1:4: error: expected a parameter type
+  (a:)
+     ^
   exit=1
 
 A list that never closes — `(a: Int {` — is "expected ')'", at the `{`, and the run exits 1:
@@ -81,6 +83,8 @@ A list that never closes — `(a: Int {` — is "expected ')'", at the `{`, and 
   $ printf '(a: Int {\n' > e4.swift
   $ ./lab.exe --emit-params e4.swift; echo "exit=$?"
   1:9: error: expected ')'
+  (a: Int {
+          ^
   exit=1
 
 A trailing comma — `(a: Int,)` — is "expected a parameter name", at the `)`:
@@ -111,6 +115,8 @@ says "expected ',' separator" — it knows a list continues, we only know it sto
   $ printf '(_ a: Int _ b: Int)\n' > e8.swift
   $ ./lab.exe --emit-params e8.swift; echo "exit=$?"
   1:11: error: expected ')'
+  (_ a: Int _ b: Int)
+            ^
   exit=1
 
 A name and a type with no colon — `(a Int)` — is "expected ':'", at the `)`. This is the one
@@ -127,6 +133,8 @@ once. There is no token left to point at, so the span is the position after the 
   $ printf '(_ a: Int\n' > e10.swift
   $ ./lab.exe --emit-params e10.swift; echo "exit=$?"
   1:10: error: expected ')'
+  (_ a: Int
+           ^
   exit=1
 
 A keyword where a name goes — `(let a: Int)` — is rejected, and this is a DIVERGENCE we accept:

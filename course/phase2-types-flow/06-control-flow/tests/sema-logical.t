@@ -17,6 +17,8 @@ Comparisons feed them, since a comparison is a Bool:
   $ printf 'let b = 1 && true\n' > e1.swift
   $ timeout 5 ./lab.exe --typecheck e1.swift; echo "exit=$?"
   1:9: error: binary operator '&&' cannot be applied to operands of type 'Int' and 'Bool'
+  let b = 1 && true
+          ^
   exit=1
 
 `1 || 2` — both sides Int — gets the "two 'Int' operands" wording:
@@ -24,6 +26,8 @@ Comparisons feed them, since a comparison is a Bool:
   $ printf 'let b = 1 || 2\n' > e2.swift
   $ timeout 5 ./lab.exe --typecheck e2.swift; echo "exit=$?"
   1:9: error: binary operator '||' cannot be applied to two 'Int' operands
+  let b = 1 || 2
+          ^
   exit=1
 
 `let b: Int = true && false` types the operator fine and fails the annotation: ONE error,
@@ -32,6 +36,8 @@ the conversion, at the expression:
   $ printf 'let b: Int = true && false\n' > e3.swift
   $ timeout 5 ./lab.exe --typecheck e3.swift; echo "exit=$?"
   1:14: error: cannot convert value of type 'Bool' to specified type 'Int'
+  let b: Int = true && false
+               ^
   exit=1
 
 `&&` chains and mixes with `||`, and the whole thing is still one Bool:
@@ -52,6 +58,8 @@ A Double operand is rejected like any other non-Bool, naming both types:
   $ printf 'let b = 1.5 && true\n' > e4.swift
   $ timeout 5 ./lab.exe --typecheck e4.swift; echo "exit=$?"
   1:9: error: binary operator '&&' cannot be applied to operands of type 'Double' and 'Bool'
+  let b = 1.5 && true
+          ^
   exit=1
 
 A String pair gets the two-operands wording, since both sides agree:
@@ -59,6 +67,8 @@ A String pair gets the two-operands wording, since both sides agree:
   $ printf 'let b = "a" || "b"\n' > e5.swift
   $ timeout 5 ./lab.exe --typecheck e5.swift; echo "exit=$?"
   1:9: error: binary operator '||' cannot be applied to two 'String' operands
+  let b = "a" || "b"
+          ^
   exit=1
 
 Both operands are checked, so two bad ones report twice in one run:
@@ -66,7 +76,11 @@ Both operands are checked, so two bad ones report twice in one run:
   $ printf 'let b = 1 && 2\nlet c = "x" && true\n' > e6.swift
   $ timeout 5 ./lab.exe --typecheck e6.swift; echo "exit=$?"
   1:9: error: binary operator '&&' cannot be applied to two 'Int' operands
+  let b = 1 && 2
+          ^
   2:9: error: binary operator '&&' cannot be applied to operands of type 'String' and 'Bool'
+  let c = "x" && true
+          ^
   exit=1
 
 The result feeds a condition directly — that is the whole point of the operator:

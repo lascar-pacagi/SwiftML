@@ -27,7 +27,7 @@ let emit_of_flag : string -> Driver.emit option = function
    two tests agree character for character. *)
 let emit_params (src_path : string) : unit =
   let src = Driver.read_file src_path in
-  let diags = Diagnostics.create () in
+  let diags = Diagnostics.create ~source:src () in
   let toks = Lexer.tokenize (Lexer.create src diags) in
   let params = Parser.parse_params (Parser.create toks diags) in
   Driver.bail_on_errors diags;
@@ -39,7 +39,7 @@ let emit_params (src_path : string) : unit =
    and nothing else. *)
 let emit_returns (src_path : string) : unit =
   let src = Driver.read_file src_path in
-  let diags = Diagnostics.create () in
+  let diags = Diagnostics.create ~source:src () in
   let prog =
     Parser.parse_program
       (Parser.create (Lexer.tokenize (Lexer.create src diags)) diags)

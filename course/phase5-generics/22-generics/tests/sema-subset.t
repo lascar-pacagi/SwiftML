@@ -17,6 +17,8 @@ prints `P(x: 1)`, an honest divergence (§2); printing the field is fine:
   > PROG
   $ ./lab.exe --typecheck pr.swift
   6:7: error: cannot print a value of type 'P' (only Int, Double, Bool and String)
+  print(p)
+        ^
   [1]
 
 The same for an enum case and for an optional, the two other aggregates carried in from
@@ -33,7 +35,11 @@ phase 3 (the existential this concept adds is refused the same way — see sema-
   > PROG
   $ ./lab.exe --typecheck pr2.swift
   6:7: error: cannot print a value of type 'E' (only Int, Double, Bool and String)
+  print(e)
+        ^
   7:7: error: cannot print a value of type 'Int?' (only Int, Double, Bool and String)
+  print(o)
+        ^
   [1]
 
 `==` on two structs is refused in swiftc's own words — there is no aggregate compare in SIL,
@@ -49,6 +55,8 @@ and `P` has no `Equatable` conformance to synthesize one from:
   > PROG
   $ ./lab.exe --typecheck eq.swift
   6:7: error: binary operator '==' cannot be applied to two 'P' operands
+  print(a == b)
+        ^
   [1]
 
 `==` on two optionals is refused too, and here swiftc accepts (`Int?` is `Equatable`) — the
@@ -62,6 +70,8 @@ comparison we do support is against `nil`, which reads the tag:
   > PROG
   $ ./lab.exe --typecheck eqo.swift
   4:7: error: binary operator '==' cannot be applied to two 'Int?' operands
+  print(a == b)
+        ^
   [1]
 
 A `let` stored property cannot be assigned through any binding, however `var` the binding is —
@@ -78,6 +88,8 @@ the `var` property beside it can:
   > PROG
   $ ./lab.exe --typecheck lf.swift
   7:1: error: cannot assign to property: 'k' is a 'let' constant
+  c.k = 5
+  ^
   [1]
 
 And a `let` binding freezes every property, `var` ones included — swiftc names the binding, not
@@ -92,6 +104,8 @@ the field, which is why our message does too:
   > PROG
   $ ./lab.exe --typecheck lb.swift
   5:1: error: cannot assign to property: 'c' is a 'let' constant
+  c.n = 5
+  ^
   [1]
 
 The conformance CLAUSE is checked for shape before any requirement is looked at, so this last
@@ -101,7 +115,11 @@ name is "cannot find type" — both at the conforming type's name, where swiftc 
   $ printf 'struct D { var r: Int }\nstruct C: D { var r: Int }\nstruct E: Nope { var r: Int }\n' > notp.swift
   $ ./lab.exe --typecheck notp.swift; echo "exit=$?"
   2:8: error: inheritance from non-protocol type 'D'
+  struct C: D { var r: Int }
+         ^
   3:8: error: cannot find type 'Nope' in scope
+  struct E: Nope { var r: Int }
+         ^
   exit=1
 
 
@@ -119,6 +137,8 @@ parameter `T` exposes its CONSTRAINT's requirements and nothing else — `w()` i
   > PROG
   $ ./lab.exe --typecheck tmem.swift
   6:38: error: value of type 'T' has no member 'w'
+  func f<T: P>(_ a: T) -> Int { return a.w() }
+                                       ^
   [1]
 
 `==` on two `T`s is refused for the same reason it is refused on two existentials: the concrete
@@ -130,6 +150,8 @@ type is not known here, and `P` does not require `==`:
   > PROG
   $ ./lab.exe --typecheck teq.swift
   2:47: error: binary operator '==' cannot be applied to two 'T' operands
+  func f<T: P>(_ a: T, _ b: T) -> Bool { return a == b }
+                                                ^
   [1]
 
 And v0 needs the constraint. An unconstrained `<T>` would have to carry runtime type metadata —
@@ -140,6 +162,12 @@ swiftc's route, and concept 23's — so we refuse the declaration outright, in o
   > PROG
   $ ./lab.exe --typecheck tbare.swift
   1:1: error: type parameter 'T' needs a protocol constraint in this subset (write '<T: SomeProtocol>')
+  func f<T>(_ a: T) -> T { return a }
+  ^
   1:1: error: cannot find type 'T' in scope
+  func f<T>(_ a: T) -> T { return a }
+  ^
   1:1: error: cannot find type 'T' in scope
+  func f<T>(_ a: T) -> T { return a }
+  ^
   [1]

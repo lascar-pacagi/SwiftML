@@ -37,7 +37,7 @@ let () =
       Driver.compile_file ~out ~src_path:file ~emit:Driver.Exe ()
   | _ :: "--emit-llvm-instrs" :: [ file ] ->
       let source = Driver.read_file file in
-      let diagnostics = Diagnostics.create () in
+      let diagnostics = Diagnostics.create ~source () in
       print_string
         (Driver.to_llvm
            ~should_emit_terminator:(fun _ -> false)
@@ -54,7 +54,7 @@ let () =
         | _ -> usage ()
       in
       let source = Driver.read_file file in
-      let diagnostics = Diagnostics.create () in
+      let diagnostics = Diagnostics.create ~source () in
       print_string (Driver.to_llvm ~should_emit_terminator source diagnostics)
   | _ :: flag :: [ file ] when emit_of_flag flag <> None ->
       Driver.compile_file ~src_path:file

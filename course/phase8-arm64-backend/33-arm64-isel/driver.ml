@@ -66,7 +66,7 @@ let run_clang ~(opt : bool) ~(ll_path : string) ~(out : string) : unit =
 let compile_file ?(out = "a.out") ?(opt = false) ?(native = false) ~(src_path : string)
     ~(emit : emit) () : unit =
   let src = read_file src_path in
-  let diags = Diagnostics.create () in
+  let diags = Diagnostics.create ~source:src () in
   match emit with
   | Asm -> print_string (emit_asm src diags)
   | Tokens ->
