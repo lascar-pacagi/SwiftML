@@ -37,9 +37,12 @@ cat <<'MSG'
 
 Nothing was committed. Options:
   git restore --staged <file>        keep your work out of this commit
-  git add -p <file> && SKELETON_FIX=1 git commit
-                                     commit only a correction to the GIVEN part
   make save                          snapshot your work into course/work/ (gitignored)
   make unclaim C=<dir>               stop guarding a concept
+
+A course correction that lands inside a claimed file is the one exception:
+stage only those hunks (git add -p <file>), then NAME the files you mean --
+a blanket bypass is what lets a stray `git add -A` sweep everything in:
 MSG
+printf '\n  SKELETON_FIX="%s" \\\n    git commit ...\n' "${blocked[*]}"
 exit 1
