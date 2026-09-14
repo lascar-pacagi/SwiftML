@@ -34,8 +34,7 @@ let expect (p : t) (k : Token.kind) (what : string) : Token.t =
     Diagnostics.error p.diags tok.Token.span (Printf.sprintf "expected %s" what);
     tok)
 
-(* Newlines separate declarations and statements in several grammar productions. Keeping the
-   cursor movement here prevents each parser from inventing a slightly different loop. *)
+(* Newlines separate declarations and statements in several grammar productions. *)
 let skip_newlines (p : t) : unit =
   while peek_kind p = Token.Newline do
     ignore (advance p)
