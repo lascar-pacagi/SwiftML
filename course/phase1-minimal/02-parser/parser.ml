@@ -46,6 +46,13 @@ let expect (parser : t) (k : Token.kind) (description : string) : Token.t =
       (Printf.sprintf "expected %s" description);
     token)
 
+(* Newlines separate declarations and statements in several grammar productions. Keeping the
+   cursor movement here prevents each parser from inventing a slightly different loop. *)
+let skip_newlines (parser : t) : unit =
+  while peek_kind parser = Token.Newline do
+    ignore (advance parser)
+  done
+
 (* Pratt binding powers: higher binds tighter. (Phase 1 levels.) *)
 let infix_bp : Token.kind -> int option = function
   | Token.Plus | Token.Minus -> Some 10

@@ -374,7 +374,8 @@ machinery is the natural place to generalize), and `print` of a `Double` goes th
   all later separator logic stays shared.
 - **`parser.ml`, TODO(10b)** — consume `struct Name { ... }`, accumulating stored properties in
   source order. Each field records its name, written type, and whether its introducer was `var`.
-  Newlines and semicolons are already the same token by this point.
+  Newlines and semicolons are already the same token by this point, and `skip_newlines parser`
+  (given, beside `expect`) walks past a run of them.
 - **`parser.ml`, TODO(10c)** — after a primary, repeatedly consume `.field`; before parsing a call
   argument, recognize the two-token `label:` prefix; and recognize `name.field = expr` before the
   ordinary expression-statement fallback.

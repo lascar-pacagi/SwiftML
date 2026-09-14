@@ -33,6 +33,13 @@ let expect (parser : t) (k : Token.kind) (description : string) : Token.t =
       (Printf.sprintf "expected %s" description);
     token)
 
+(* Newlines separate declarations and statements in several grammar productions. Keeping the
+   cursor movement here prevents each parser from inventing a slightly different loop. *)
+let skip_newlines (parser : t) : unit =
+  while peek_kind parser = Token.Newline do
+    ignore (advance parser)
+  done
+
 (* `as` sits at Swift's CastingPrecedence: above the comparisons, below arithmetic. *)
 let cast_bp = 7
 
@@ -205,13 +212,8 @@ let parse_stmt (parser : t) : Ast.stmt =
       Ast.Expr_stmt (expression, Ast.expr_span expression)
 
 let parse_program (parser : t) : Ast.program =
-  let rec skip_newlines () =
-    if peek_kind parser = Token.Newline then (
-      ignore (advance parser);
-      skip_newlines ())
-  in
   let rec loop accumulator =
-    skip_newlines ();
+    skip_newlines parser;
     match peek_kind parser with
     | Token.Eof -> { Ast.stmts = List.rev accumulator }
     | _ ->

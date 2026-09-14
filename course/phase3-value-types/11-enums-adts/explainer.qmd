@@ -360,7 +360,8 @@ through every compiler stage in nine holes:
 
 2. **`parser.ml`, `TODO(11b)` — parse enum declarations.** `parse_enum` begins on `Kw_enum` and
    returns an `Ast.enum_decl`. Parse the name, an optional `: RawType`, and the braces. Its body has
-   a declaration loop like `parse_struct`, but only `case` is legal. A single `case` keyword may
+   a declaration loop like `parse_struct`, but only `case` is legal — `skip_newlines p` (given,
+   beside `expect`) moves past the blank lines between them. A single `case` keyword may
    introduce several comma-separated cases. Each case may then have a parenthesized,
    comma-separated list of *type names*. Preserve both case order and payload-type order. Consume
    the closing brace, and make every recovery branch advance or finish so malformed input cannot
@@ -595,9 +596,7 @@ let parse_enum (p : t) : Ast.enum_decl =
       loop [])
   in
   let rec loop accumulator =
-    while peek_kind p = Token.Newline do
-      ignore (advance p)
-    done;
+    skip_newlines p;
     match peek_kind p with
     | Token.RBrace ->
         ignore (advance p);

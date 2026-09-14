@@ -44,6 +44,13 @@ let expect (parser : t) (expected_kind : Token.kind) (description : string) :
       (Printf.sprintf "expected %s" description);
     token)
 
+(* Newlines separate declarations and statements in several grammar productions. Keeping the
+   cursor movement here prevents each parser from inventing a slightly different loop. *)
+let skip_newlines (parser : t) : unit =
+  while peek_kind parser = Token.Newline do
+    ignore (advance parser)
+  done
+
 (* binding powers: arithmetic > comparison > && > || (Swift's precedence groups) *)
 let infix_binding_power : Token.kind -> int option = function
   | Token.Star | Token.Slash | Token.Percent -> Some 20
@@ -202,13 +209,6 @@ let parse_type_annotation (parser : t) : string option =
     let name, _ = parse_ident parser "a type name" in
     Some name)
   else None
-
-(* Newlines separate declarations and statements in several grammar productions. Keeping the
-   cursor movement here prevents each parser from inventing a slightly different loop. *)
-let skip_newlines (parser : t) : unit =
-  while peek_kind parser = Token.Newline do
-    ignore (advance parser)
-  done
 
 (* a brace-delimited block, with `nl` one or more Newlines:
      block ::= "{" [ nl ] [ statement { nl statement } ] [ nl ] "}"

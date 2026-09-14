@@ -34,6 +34,13 @@ let expect (p : t) (k : Token.kind) (what : string) : Token.t =
     Diagnostics.error p.diags tok.Token.span (Printf.sprintf "expected %s" what);
     tok)
 
+(* Newlines separate declarations and statements in several grammar productions. Keeping the
+   cursor movement here prevents each parser from inventing a slightly different loop. *)
+let skip_newlines (p : t) : unit =
+  while peek_kind p = Token.Newline do
+    ignore (advance p)
+  done
+
 (* binding powers: arithmetic > comparison > && > || (Swift's precedence groups) *)
 let infix_bp : Token.kind -> int option = function
   | Token.Star | Token.Slash | Token.Percent -> Some 20
@@ -384,7 +391,7 @@ let parse_pattern (p : t) : Ast.pattern =
 let rec parse_block (p : t) : Ast.stmt list =
   ignore (expect p Token.LBrace "'{'");
   let rec loop acc =
-    while peek_kind p = Token.Newline do ignore (advance p) done;
+    skip_newlines p;
     match peek_kind p with
     | Token.RBrace ->
         ignore (advance p);
@@ -427,7 +434,7 @@ and parse_if (p : t) : Ast.stmt =
   (* `else` may start a later line — look past the newlines for it, and put the cursor back if
      what follows is not an `else`. *)
   let saved = mark p in
-  while peek_kind p = Token.Newline do ignore (advance p) done;
+  skip_newlines p;
   if peek_kind p <> Token.Kw_else then put_back p saved;
   let else_blk =
     if peek_kind p = Token.Kw_else then (
@@ -444,10 +451,9 @@ and parse_switch (p : t) : Ast.stmt =
   let kw = advance p (* switch *) in
   let subject = parse_expr p in
   ignore (expect p Token.LBrace "'{'");
-  let skipnl () = while peek_kind p = Token.Newline do ignore (advance p) done in
   let parse_case_body () =
     let rec loop acc =
-      skipnl ();
+      skip_newlines p;
       match peek_kind p with
       | Token.Kw_case | Token.Kw_default | Token.RBrace | Token.Eof -> List.rev acc
       | _ ->
@@ -463,7 +469,7 @@ and parse_switch (p : t) : Ast.stmt =
     loop []
   in
   let rec arms cs default =
-    skipnl ();
+    skip_newlines p;
     match peek_kind p with
     | Token.RBrace -> ignore (advance p); (List.rev cs, default)
     | Token.Eof -> ignore (expect p Token.RBrace "'}'"); (List.rev cs, default)
@@ -542,7 +548,7 @@ and parse_stmt (p : t) : Ast.stmt =
          catch actually follows (else the statement separator after the do is left intact) *)
       let rec catches acc =
         let saved = p.pos in
-        while peek_kind p = Token.Newline do ignore (advance p) done;
+        skip_newlines p;
         if peek_kind p <> Token.Kw_catch then (p.pos <- saved; List.rev acc)
         else begin
           ignore (advance p (* catch *));
@@ -675,7 +681,7 @@ let parse_struct (p : t) : Ast.struct_decl =
   in
   ignore (expect p Token.LBrace "'{'");
   let rec loop flds meths =
-    while peek_kind p = Token.Newline do ignore (advance p) done;
+    skip_newlines p;
     match peek_kind p with
     | Token.RBrace -> ignore (advance p); (List.rev flds, List.rev meths)
     | Token.Eof -> ignore (expect p Token.RBrace "'}'"); (List.rev flds, List.rev meths)
@@ -721,7 +727,7 @@ let parse_class (p : t) : Ast.class_decl =
   ignore (expect p Token.LBrace "'{'");
   let fields = ref [] and init = ref None and methods = ref [] and dei = ref None in
   let rec loop () =
-    while peek_kind p = Token.Newline do ignore (advance p) done;
+    skip_newlines p;
     match peek_kind p with
     | Token.RBrace -> ignore (advance p)
     | Token.Eof -> ignore (expect p Token.RBrace "'}'")
@@ -805,7 +811,7 @@ let parse_proto (p : t) : Ast.proto_decl =
   let pname, _ = parse_ident p "a protocol name" in
   ignore (expect p Token.LBrace "'{'");
   let rec loop acc =
-    while peek_kind p = Token.Newline do ignore (advance p) done;
+    skip_newlines p;
     match peek_kind p with
     | Token.RBrace -> ignore (advance p); List.rev acc
     | Token.Eof -> ignore (expect p Token.RBrace "'}'"); List.rev acc
@@ -854,7 +860,7 @@ let parse_enum (p : t) : Ast.enum_decl =
       loop [])
   in
   let rec loop acc =
-    while peek_kind p = Token.Newline do ignore (advance p) done;
+    skip_newlines p;
     match peek_kind p with
     | Token.RBrace -> ignore (advance p); List.rev acc
     | Token.Eof -> ignore (expect p Token.RBrace "'}'"); List.rev acc
@@ -887,9 +893,8 @@ let parse_enum (p : t) : Ast.enum_decl =
 
 (* A program is a sequence of top-level items: function declarations and statements. *)
 let parse_program (p : t) : Ast.program =
-  let skip_newlines () = while peek_kind p = Token.Newline do ignore (advance p) done in
   let rec loop acc =
-    skip_newlines ();
+    skip_newlines p;
     match peek_kind p with
     | Token.Eof -> { Ast.items = List.rev acc }
     | Token.Kw_func ->

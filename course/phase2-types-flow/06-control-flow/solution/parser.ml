@@ -42,6 +42,13 @@ let expect (parser : t) (k : Token.kind) (description : string) : Token.t =
       (Printf.sprintf "expected %s" description);
     token)
 
+(* Newlines separate declarations and statements in several grammar productions. Keeping the
+   cursor movement here prevents each parser from inventing a slightly different loop. *)
+let skip_newlines (parser : t) : unit =
+  while peek_kind parser = Token.Newline do
+    ignore (advance parser)
+  done
+
 (* binding powers: arithmetic > comparison > && > || (Swift's precedence groups) *)
 let infix_bp : Token.kind -> int option = function
   | Token.Star | Token.Slash | Token.Percent -> Some 20
@@ -196,9 +203,7 @@ let parse_annot (parser : t) : string option =
 let rec parse_block (parser : t) : Ast.stmt list =
   ignore (expect parser Token.LBrace "'{'");
   let rec loop accumulator =
-    while peek_kind parser = Token.Newline do
-      ignore (advance parser)
-    done;
+    skip_newlines parser;
     match peek_kind parser with
     | Token.RBrace ->
         ignore (advance parser);
@@ -228,20 +233,11 @@ and parse_if (parser : t) : Ast.stmt =
   in
   let cond = parse_expr parser in
   let then_blk = parse_block parser in
-  (* `else` may start the next LINE — swiftc accepts that, so look past
-     newlines for it, and put them back when what follows is not an `else`
-     (they are the separator the caller needs). *)
-  let saved = parser.pos in
-  while peek_kind parser = Token.Newline do
-    ignore (advance parser)
-  done;
-  if peek_kind parser <> Token.Kw_else then parser.pos <- saved;
-  (* `else` may start a later line — look past the newlines for it, and put the cursor back if
-     description follows is not an `else`. *)
+  (* `else` may start the next LINE — swiftc accepts that, so look past the newlines for it, and
+     put the cursor back when what follows is not an `else` (they are the separator the caller
+     needs). `mark`/`put_back` rather than `parser.pos` directly: the cursor is the parser's. *)
   let saved = mark parser in
-  while peek_kind parser = Token.Newline do
-    ignore (advance parser)
-  done;
+  skip_newlines parser;
   if peek_kind parser <> Token.Kw_else then put_back parser saved;
   let else_blk =
     if peek_kind parser = Token.Kw_else then (
@@ -302,13 +298,8 @@ and parse_stmt (parser : t) : Ast.stmt =
       Ast.Expr_stmt (expression, Ast.expr_span expression)
 
 let parse_program (parser : t) : Ast.program =
-  let rec skip_newlines () =
-    if peek_kind parser = Token.Newline then (
-      ignore (advance parser);
-      skip_newlines ())
-  in
   let rec loop accumulator =
-    skip_newlines ();
+    skip_newlines parser;
     match peek_kind parser with
     | Token.Eof -> { Ast.stmts = List.rev accumulator }
     | _ ->

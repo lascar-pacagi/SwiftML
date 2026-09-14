@@ -162,8 +162,10 @@ message name the token it found.
 
 ## 3. Build it, step by step
 
-Open `parser.ml` in this directory. Helpers `peek`, `peek_kind`, `advance`, `expect`, `infix_bp`,
-`binop_of_kind` are written.
+Open `parser.ml` in this directory. Helpers `peek`, `peek_kind`, `advance`, `expect`,
+`skip_newlines`, `infix_bp`, `binop_of_kind` are written. `skip_newlines p` walks the cursor past a
+run of `Newline`s; every production that allows blank lines calls it rather than writing the loop
+again.
 
 1. **`parse_prefix`** (write it as a local function or inline at the top of `parse_expr_bp`):
    match `peek_kind p`:
@@ -222,8 +224,9 @@ Open `parser.ml` in this directory. Helpers `peek`, `peek_kind`, `advance`, `exp
    it's a reassignment ⇒ consume both, parse the expression, return `Ast.Assign {…}`.
    Otherwise parse an expression and wrap it in `Ast.Expr_stmt`. (`Ident` carries a string, so read
    the name by matching `peek_kind` rather than `expect`, which compares whole kinds.)
-4. **`parse_program`:** skip leading `Newline`s; loop until `Eof`: parse a statement, then consume
-   the terminating `Newline` (or stop at `Eof`); collect into `Ast.program`.
+4. **`parse_program`:** skip leading `Newline`s (`skip_newlines p`, given); loop until `Eof`: parse
+   a statement, then consume the terminating `Newline` (or stop at `Eof`); collect into
+   `Ast.program`.
 
 ## 4. Test it
 
@@ -286,7 +289,8 @@ type-check it.
 ## 8. Appendix — full solution
 
 Mirrors `solution/parser.ml`. `type t`, `create`, `peek`/`peek_kind`, `advance`, `expect`,
-`infix_bp`, `binop_of_kind` are the given scaffolding; below are the helpers and functions you add.
+`skip_newlines`, `infix_bp`, `binop_of_kind` are the given scaffolding; below are the helpers and
+functions you add.
 **Try §3 first — this is the answer.**
 
 ```ocaml
@@ -385,11 +389,8 @@ let parse_stmt (p : t) : Ast.stmt =
       Ast.Expr_stmt (e, Ast.expr_span e)
 
 let parse_program (p : t) : Ast.program =
-  let rec skip_newlines () =
-    if peek_kind p = Token.Newline then (ignore (advance p); skip_newlines ())
-  in
   let rec loop acc =
-    skip_newlines ();
+    skip_newlines p;
     match peek_kind p with
     | Token.Eof -> { Ast.stmts = List.rev acc }
     | _ ->
