@@ -419,8 +419,8 @@ your code here. In the order you fill the holes:
 - `lexer-enums.t` — exact keyword matching for `enum` and `case`; nearby identifiers stay intact.
 - `parser-enum-decls.t` — enum names, raw types, ordered case lists, associated-value type lists,
   declaration errors, and a missing `}`. Every invocation has a two-second timeout.
-- `parser-enum-uses.t` — payload arguments and continued postfix chaining, plus the missing `)`
-  diagnostic. It has the same timeout guard.
+- `parser-enum-uses.t` — payload and empty argument lists, precedence, continued postfix member
+  and call chaining, plus the missing `)` diagnostic. It has the same timeout guard.
 - `sema-enum-decls.t` — forward use of an enum type, the Int-only payload/raw-type boundary,
   unknown payload types, and the shared struct/enum namespace.
 - `sema-enum-cases.t` — case lookup, required payloads, arity, and payload expression types.

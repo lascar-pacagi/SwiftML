@@ -120,6 +120,24 @@ let test_parse_payload_case () =
     "(. (.call Shape circle 5) rawValue)"
     (ast "Shape.circle(5).rawValue")
 
+let test_parse_empty_postfix_call () =
+  Alcotest.(check string)
+    "empty argument list"
+    "(.call Factory make )"
+    (ast "Factory.make()")
+
+let test_parse_payload_precedence () =
+  Alcotest.(check string)
+    "call binds before equality"
+    "(== (.call Shape circle 1) (.call Shape circle 2))"
+    (ast "Shape.circle(1) == Shape.circle(2)")
+
+let test_parse_chained_calls () =
+  Alcotest.(check string)
+    "call followed by call"
+    "(.call (.call Factory make ) finish 1)"
+    (ast "Factory.make().finish(1)")
+
 (* TODO(11d): registry and layouts. *)
 
 let test_enum_registry () =
@@ -214,8 +232,16 @@ let () =
         [ Alcotest.test_case "ordered cases and payloads" `Quick
             test_parse_enum_decl ] );
       ( "parser-enum-uses",
-        [ Alcotest.test_case "payload call and chain" `Quick
-            test_parse_payload_case ] );
+        [
+          Alcotest.test_case "payload call and member" `Quick
+            test_parse_payload_case;
+          Alcotest.test_case "empty postfix call" `Quick
+            test_parse_empty_postfix_call;
+          Alcotest.test_case "call before equality" `Quick
+            test_parse_payload_precedence;
+          Alcotest.test_case "chained postfix calls" `Quick
+            test_parse_chained_calls;
+        ] );
       ( "sema-enum-decls",
         [ Alcotest.test_case "names first, then case layouts" `Quick
             test_enum_registry ] );
