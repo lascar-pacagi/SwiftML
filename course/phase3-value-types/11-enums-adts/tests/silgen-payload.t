@@ -13,7 +13,7 @@ file can go green on its own.
   > }
   > let s = Shape.rect(3, 4)
   > EOF
-  $ ./lab.exe --emit-sil rect.swift
+  $ python3 timeout.py 2 ./lab.exe --emit-sil rect.swift
   enum Shape { circle(Int); rect(Int, Int); dot }
   
   sil @main() -> $() {
@@ -36,7 +36,7 @@ A one-value case is the same shape with one payload operand — `circle(5)` is `
   > }
   > let s = Shape.circle(5)
   > EOF
-  $ ./lab.exe --emit-sil circle.swift | grep -E 'integer_literal|enum'
+  $ python3 timeout.py 2 ./lab.exe --emit-sil circle.swift | grep -E 'integer_literal|enum'
   enum Shape { circle(Int); rect(Int, Int); dot }
     %0 = integer_literal $Int, 5
     %1 = enum #0 (%0) $Shape
@@ -51,7 +51,7 @@ An associated value is an ARBITRARY expression: `circle(2 + 3)` computes it, the
   > let n = 2
   > let s = Shape.circle(n + 3)
   > EOF
-  $ ./lab.exe --emit-sil expr.swift | grep -E 'binop|enum'
+  $ python3 timeout.py 2 ./lab.exe --emit-sil expr.swift | grep -E 'binop|enum'
   enum Shape { circle(Int); rect(Int, Int) }
     %5 = binop "+" %3, %4 $Int
     %6 = enum #0 (%5) $Shape
@@ -66,7 +66,7 @@ The tag counts EVERY case, payload or not: `wide` is #2 even though #0 and #1 ca
   > }
   > let k = K.wide(7, 8)
   > EOF
-  $ ./lab.exe --emit-sil tags.swift | grep enum
+  $ python3 timeout.py 2 ./lab.exe --emit-sil tags.swift | grep enum
   enum K { none; one; wide(Int, Int) }
     %2 = enum #2 (%0, %1) $K
 
@@ -81,7 +81,7 @@ A payload case's value can be a call result, and it can be passed on to another 
   > func take(_ s: Shape) -> Bool { return true }
   > print(take(Shape.circle(twice(4))))
   > EOF
-  $ ./lab.exe --emit-sil fn.swift | sed -n '/sil @main/,/^}/p'
+  $ python3 timeout.py 2 ./lab.exe --emit-sil fn.swift | sed -n '/sil @main/,/^}/p'
   sil @main() -> $() {
   bb0:
     %0 = integer_literal $Int, 4

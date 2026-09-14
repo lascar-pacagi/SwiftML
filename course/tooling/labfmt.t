@@ -59,3 +59,29 @@ An unexpected Alcotest exception keeps the first compiler frames but drops the l
            at:   Irgen.emit_llvm.lookup_operand in file "irgen.ml", line 62
            at:   Irgen.emit_llvm.gen_instruction in file "irgen.ml", line 191
   0 passing, 1 failing
+
+An interrupted Dune run never turns silent, unfinished tests into passes.
+
+  $ : > interrupted.raw
+  $ awk -v interrupted=1 -v cram_files='tests/sample.t tests/later.t' -v alcotest_suites='enums' -f labfmt.awk interrupted.raw | sed '/^$/d'
+  ── enums: 0 of 1 passing
+  SKIP enums (alcotest) — test run interrupted
+  ── later: 0 of 1 passing
+  SKIP tests/later.t (cram) — test run interrupted
+  ── sample: 0 of 1 passing
+  SKIP tests/sample.t (cram) — test run interrupted
+  no tests ran
+
+A failed stage marks a later Alcotest suite as unrun too.
+
+  $ awk -v skipped_alcotest='enums' -v alcotest_suites='enums' -f labfmt.awk interrupted.raw | sed '/^$/d'
+  ── enums: 0 of 1 passing
+  SKIP enums (alcotest) — an earlier stage failed
+  no tests ran
+
+A runner failure with no test output is not evidence that its roster passed.
+
+  $ awk -v run_failed=1 -v cram_files='tests/sample.t' -f labfmt.awk interrupted.raw | sed '/^$/d'
+  ── sample: 0 of 1 passing
+  SKIP tests/sample.t (cram) — test runner stopped before results
+  no tests ran

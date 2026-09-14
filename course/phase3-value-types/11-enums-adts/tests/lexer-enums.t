@@ -4,7 +4,7 @@ identifiers. `--emit-tokens` stops before the parser.
 The two declaration words are keywords.
 
   $ printf 'enum Direction { case north }\n' > keywords.swift
-  $ ./lab.exe --emit-tokens keywords.swift
+  $ python3 timeout.py 2 ./lab.exe --emit-tokens keywords.swift
   enum
   ident(Direction)
   {
@@ -17,7 +17,7 @@ The two declaration words are keywords.
 Keyword matching is exact, so nearby identifiers keep their full spelling.
 
   $ printf 'enumerated suitcase enumValue caseValue\n' > identifiers.swift
-  $ ./lab.exe --emit-tokens identifiers.swift
+  $ python3 timeout.py 2 ./lab.exe --emit-tokens identifiers.swift
   ident(enumerated)
   ident(suitcase)
   ident(enumValue)

@@ -9,6 +9,34 @@
   (:standard -warn-error -a)))
 
 (cram
+ (applies_to lexer-enums)
+ (deps lab.exe timeout.py))
+
+; Run each compiler stage only after the preceding stage is green. Besides making
+; progress easier to read, this prevents a parser loop from delaying every lowering test.
+(cram
+ (applies_to parser-enum-decls parser-enum-uses)
+ (runtest_alias false)
+ (deps lab.exe timeout.py))
+
+(cram
+ (applies_to sema-enum-decls sema-enum-cases sema-enum-observation)
+ (runtest_alias false)
+ (deps lab.exe timeout.py))
+
+(cram
+ (applies_to silgen-case silgen-payload)
+ (runtest_alias false)
+ (deps lab.exe timeout.py))
+
+(cram
+ (applies_to irgen-enums)
+ (runtest_alias false)
+ (deps lab.exe timeout.py))
+
+(cram
+ (applies_to oracle)
+ (runtest_alias false)
  (deps lab.exe oracle-corpus.txt typecheck-corpus.txt timeout.py))
 
 (executable
@@ -20,6 +48,6 @@
 
 ; A non-advancing parser recovery branch must fail the lab instead of hanging it.
 (rule
- (alias runtest)
+ (alias unit)
  (deps test_enums.exe timeout.py)
- (action (run python3 timeout.py 15 %{exe:test_enums.exe})))
+ (action (run python3 timeout.py 3 %{exe:test_enums.exe})))

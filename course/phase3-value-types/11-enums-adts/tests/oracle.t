@@ -15,16 +15,18 @@ the case name through reflection, we refuse it — the divergence of §2.)
   >   [ -n "$prog" ] || continue; n=$((n+1))
   >   printf '%b\n' "$prog" > p$n.swift
   >   if ! swiftc -Onone p$n.swift -o sw$n >/dev/null 2>&1; then printf 'swiftc REFUSED: %s\n' "$prog"; continue; fi
-  >   if ! ./lab.exe build p$n.swift -o ml$n >/dev/null 2>err.txt; then
+  >   if ! python3 timeout.py 2 ./lab.exe build p$n.swift -o ml$n >/dev/null 2>err.txt; then
   >     printf 'ours REFUSED: %s\n' "$prog"; head -1 err.txt
   >     if grep -q 'TODO(' err.txt; then echo "(stopping: the hole above is not started)"; break; fi
+  >     if grep -q '^timeout after ' err.txt; then echo "(stopping: our compiler did not finish)"; break; fi
   >     continue
   >   fi
   >   ./sw$n > sw$n.out 2>&1; swrc=$?
-  >   ./ml$n > ml$n.out 2>&1; mlrc=$?
+  >   python3 timeout.py 2 ./ml$n > ml$n.out 2>&1; mlrc=$?
   >   if [ $swrc -ne $mlrc ] || ! cmp -s sw$n.out ml$n.out; then
   >     printf 'DIVERGE (swiftc exit=%s ours exit=%s): %s\n' "$swrc" "$mlrc" "$prog"; diff sw$n.out ml$n.out
   >   fi
+  >   if [ $mlrc -eq 124 ]; then echo "(stopping: our program did not finish)"; break; fi
   > done < oracle-corpus.txt
   $ echo done
   done
@@ -41,9 +43,10 @@ reads that as the case's constructor *function*, a value our subset has no type 
   >   [ -n "$prog" ] || continue
   >   printf '%b\n' "$prog" > t.swift
   >   if swiftc -typecheck t.swift >/dev/null 2>&1; then sw=accept; else sw=reject; fi
-  >   ./lab.exe --typecheck t.swift >/dev/null 2>err.txt; rc=$?
+  >   python3 timeout.py 2 ./lab.exe --typecheck t.swift >/dev/null 2>err.txt; rc=$?
   >   case $rc in 0) ml=accept;; 1) ml=reject;; *) ml="crash($rc)";; esac
   >   [ "$sw" = "$ml" ] || { printf 'DISAGREE  swiftc=%s ours=%s  %s\n' "$sw" "$ml" "$prog"; [ $rc -eq 0 ] || { head -1 err.txt; grep -q 'TODO(' err.txt && break; }; }
+  >   if [ $rc -eq 124 ]; then echo "(stopping: our compiler did not finish)"; break; fi
   > done < typecheck-corpus.txt
   $ echo done
   done

@@ -20,6 +20,8 @@ BEGIN {
   if (color) { B = "\033[1m"; R = "\033[31m"; G = "\033[32m"; C = "\033[36m"; D = "\033[2m"; Y = "\033[33m"; Z = "\033[0m" }
   ns = split(skipped_cram, sf, " ")
   for (i = 1; i <= ns; i++) if (sf[i] != "") explicitly_skipped[sf[i]] = 1
+  ns = split(skipped_alcotest, sf, " ")
+  for (i = 1; i <= ns; i++) if (sf[i] != "") explicitly_skipped_alcotest[sf[i]] = 1
 }
 
 { clean = $0; gsub(/\033\[[0-9;]*m/, "", clean) }   # ANSI-free copy, for the matchers below
@@ -289,7 +291,14 @@ END {
         if (failing && kind == "cram") unstarted = all_failed_are_todo(si, tf)
         else if (failing) unstarted = (nbad[si] > 0 && nok[si] == 0 && alctodo[si])
         total++
-        if (kind == "cram" && part[2] in explicitly_skipped && !si) {
+        if ((interrupted || (run_failed && n == 0)) && !failing) {
+          why = (interrupted ? "test run interrupted" : "test runner stopped before results")
+          out = out sprintf("%sSKIP%s %s (%s) — %s\n", D, Z, part[2], kind, why)
+          nskip++; continue
+        } else if (kind == "cram" && part[2] in explicitly_skipped && !si) {
+          out = out sprintf("%sSKIP%s %s (%s) — an earlier stage failed\n", D, Z, part[2], kind)
+          nskip++; continue
+        } else if (kind == "alcotest" && part[2] in explicitly_skipped_alcotest && !si) {
           out = out sprintf("%sSKIP%s %s (%s) — an earlier stage failed\n", D, Z, part[2], kind)
           nskip++; continue
         } else if (optional) {

@@ -9,7 +9,7 @@ hole), so it can go green on its own.
   > enum Color { case red, green, blue }
   > let c = Color.green
   > EOF
-  $ ./lab.exe --emit-sil green.swift
+  $ python3 timeout.py 2 ./lab.exe --emit-sil green.swift
   enum Color { red; green; blue }
   
   sil @main() -> $() {
@@ -28,7 +28,7 @@ red is #0, blue is #2:
   > let a = Color.red
   > let b = Color.blue
   > EOF
-  $ ./lab.exe --emit-sil order.swift | grep enum
+  $ python3 timeout.py 2 ./lab.exe --emit-sil order.swift | grep enum
   enum Color { red; green; blue }
     %0 = enum #0 () $Color
     %3 = enum #2 () $Color
@@ -43,7 +43,7 @@ One case per line gives the same numbering — the line breaks are not what the 
   > }
   > let b = Color.blue
   > EOF
-  $ ./lab.exe --emit-sil lines.swift | grep enum
+  $ python3 timeout.py 2 ./lab.exe --emit-sil lines.swift | grep enum
   enum Color { red; green; blue }
     %0 = enum #2 () $Color
 
@@ -54,7 +54,7 @@ One case per line gives the same numbering — the line breaks are not what the 
   > let c = Color.green
   > print(c == Color.red)
   > EOF
-  $ ./lab.exe --emit-sil eq.swift
+  $ python3 timeout.py 2 ./lab.exe --emit-sil eq.swift
   enum Color { red; green }
   
   sil @main() -> $() {
@@ -77,7 +77,7 @@ One case per line gives the same numbering — the line breaks are not what the 
   > enum Dir: Int { case north, south, east, west }
   > print(Dir.west.rawValue)
   > EOF
-  $ ./lab.exe --emit-sil raw.swift
+  $ python3 timeout.py 2 ./lab.exe --emit-sil raw.swift
   enum Dir { north; south; east; west }
   
   sil @main() -> $() {
@@ -96,7 +96,7 @@ An enum in a `var` is a slot like any other value: the reassignment stores a new
   > c = Color.green
   > print(c == Color.green)
   > EOF
-  $ ./lab.exe --emit-sil reassign.swift | grep -E 'enum|store'
+  $ python3 timeout.py 2 ./lab.exe --emit-sil reassign.swift | grep -E 'enum|store'
   enum Color { red; green }
     %0 = enum #0 () $Color
     store %0 to %1
@@ -113,7 +113,7 @@ An enum crosses a function boundary by value — a parameter slot in, a tag out:
   > func isRed(_ c: Color) -> Bool { return c == Color.red }
   > print(isRed(Color.green))
   > EOF
-  $ ./lab.exe --emit-sil fn.swift | sed -n '/sil @isRed/,/^}/p'
+  $ python3 timeout.py 2 ./lab.exe --emit-sil fn.swift | sed -n '/sil @isRed/,/^}/p'
   sil @isRed(%0 : $Color) -> $Bool {
   bb0:
     %1 = alloc_stack $Color  // c

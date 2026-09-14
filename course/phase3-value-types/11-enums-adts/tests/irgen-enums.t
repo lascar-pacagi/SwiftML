@@ -9,7 +9,7 @@ A payload-free enum is a one-field aggregate — the tag alone — and a case is
   > enum Color { case red, green, blue }
   > let c = Color.green
   > EOF
-  $ ./lab.exe --emit-llvm color.swift | grep -E '= type|insertvalue'
+  $ python3 timeout.py 2 ./lab.exe --emit-llvm color.swift | grep -E '= type|insertvalue'
   %Color = type { i64 }
     %t1 = insertvalue %Color undef, i64 1, 0
 
@@ -24,7 +24,7 @@ and `circle(5)` leaves the second one undefined:
   > }
   > let s = Shape.circle(5)
   > EOF
-  $ ./lab.exe --emit-llvm shape.swift | grep -E '= type|insertvalue'
+  $ python3 timeout.py 2 ./lab.exe --emit-llvm shape.swift | grep -E '= type|insertvalue'
   %Shape = type { i64, i64, i64 }
     %t1 = insertvalue %Shape undef, i64 0, 0
     %t2 = insertvalue %Shape %t1, i64 5, 1
@@ -38,7 +38,7 @@ A two-value payload fills both slots, in order, after the tag at 0:
   > }
   > let s = Shape.rect(3, 4)
   > EOF
-  $ ./lab.exe --emit-llvm rect.swift | grep insertvalue
+  $ python3 timeout.py 2 ./lab.exe --emit-llvm rect.swift | grep insertvalue
     %t1 = insertvalue %Shape undef, i64 1, 0
     %t2 = insertvalue %Shape %t1, i64 3, 1
     %t3 = insertvalue %Shape %t2, i64 4, 2
@@ -50,7 +50,7 @@ freshly built value — no slot, no `load` in between:
   > enum Dir: Int { case north, south }
   > print(Dir.south.rawValue)
   > EOF
-  $ ./lab.exe --emit-llvm tag.swift | grep -E 'extractvalue|load'
+  $ python3 timeout.py 2 ./lab.exe --emit-llvm tag.swift | grep -E 'extractvalue|load'
     %t1 = extractvalue %Dir %t0, 0
 
 Runs: `==` on a payload-free enum is a tag compare — `green == green` is true, `green == red`
@@ -62,7 +62,7 @@ is false:
   > print(c == Color.green)
   > print(c == Color.red)
   > EOF
-  $ ./lab.exe build eq.swift -o eq && ./eq
+  $ python3 timeout.py 2 ./lab.exe build eq.swift -o eq && python3 timeout.py 2 ./eq
   true
   false
 
@@ -75,7 +75,7 @@ west 3:
   > print(Dir.south.rawValue)
   > print(Dir.west.rawValue)
   > EOF
-  $ ./lab.exe build raw.swift -o raw && ./raw
+  $ python3 timeout.py 2 ./lab.exe build raw.swift -o raw && python3 timeout.py 2 ./raw
   0
   1
   3
@@ -88,7 +88,7 @@ still compile and still pass every shape test, and only the raw values would sho
   > print(D.a.rawValue)
   > print(D.d.rawValue)
   > EOF
-  $ ./lab.exe build order.swift -o order && ./order
+  $ python3 timeout.py 2 ./lab.exe build order.swift -o order && python3 timeout.py 2 ./order
   0
   3
 
@@ -104,7 +104,7 @@ Runs: an enum lives in a `var`, is reassigned, and drives an `if` — the tag is
   > }
   > print(l == Light.green)
   > EOF
-  $ ./lab.exe build flow.swift -o flow && ./flow
+  $ python3 timeout.py 2 ./lab.exe build flow.swift -o flow && python3 timeout.py 2 ./flow
   true
 
 Runs: an enum goes into and out of a function BY VALUE, like a struct:
@@ -118,7 +118,7 @@ Runs: an enum goes into and out of a function BY VALUE, like a struct:
   > print(flip(Color.red) == Color.green)
   > print(flip(flip(Color.red)) == Color.red)
   > EOF
-  $ ./lab.exe build fn.swift -o fn && ./fn
+  $ python3 timeout.py 2 ./lab.exe build fn.swift -o fn && python3 timeout.py 2 ./fn
   true
   true
 
@@ -136,5 +136,5 @@ concept 12's `switch`, so all this program can observe is that it compiled and r
   > let b = Shape.rect(3, 4)
   > print(area(a) + area(b))
   > EOF
-  $ ./lab.exe build payload.swift -o payload && ./payload
+  $ python3 timeout.py 2 ./lab.exe build payload.swift -o payload && python3 timeout.py 2 ./payload
   0

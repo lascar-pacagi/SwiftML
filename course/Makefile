@@ -70,33 +70,38 @@ lab:
 	if [ -n "$(T)" ]; then ats=""; fi; \
 	show_stage() { \
 	  if [ -n "$(RAW)" ]; then cat $$out; \
-	  else awk -v color=$$col -v prefix="$(C)/" -v cram_files="$$1" -v alcotest_suites="$$2" -v skipped_cram="$$3" -v detail_all="$(DETAIL)" -f tooling/labfmt.awk $$out; fi; \
+	  else awk -v color=$$col -v prefix="$(C)/" -v cram_files="$$1" -v alcotest_suites="$$2" -v skipped_cram="$$3" -v skipped_alcotest="$$4" -v detail_all="$(DETAIL)" -v interrupted="$$interrupted" -v run_failed="$$run_failed" -f tooling/labfmt.awk $$out; fi; \
 	}; \
 	$(DUNE) build @$(C)/$(if $(T),tests/$(T),runtest) --force >$$out 2>&1; rc=$$?; \
+	run_failed=0; [ $$rc -ne 0 ] && run_failed=1; \
+	interrupted=0; case $$rc in 130|143) interrupted=1;; esac; \
 	ex=_build/default/$(C)/tests/test_exercises.exe; \
 	if [ -z "$(T)" ] && [ -x "$$ex" ]; then "$$ex" >>$$out 2>&1 || true; fi; \
-	if [ -n "$(T)" ] || [ ! -f "$$stages" ]; then show_stage "$$all_cts" "$$ats" ""; \
+	if [ -n "$(T)" ] || [ ! -f "$$stages" ]; then show_stage "$$all_cts" "$$ats" "" ""; \
 	else \
-	  staged=" "; while read -r alias files; do case "$$alias" in \#*|"") continue;; esac; \
-	    for f in $$files; do staged="$$staged tests/$$f.t "; done; done < "$$stages"; \
+	  staged=" "; staged_ats=""; while read -r alias files; do case "$$alias" in \#*|"") continue;; esac; \
+	    for f in $$files; do case "$$f" in @*) staged_ats="$$staged_ats $${f#@}";; *) staged="$$staged tests/$$f.t ";; esac; done; done < "$$stages"; \
 	  fast_cts=""; for f in $$all_cts; do case "$$staged" in *" $$f "*) ;; *) fast_cts="$$fast_cts $$f";; esac; done; \
-	  if [ $$rc -ne 0 ]; then show_stage "$$all_cts" "$$ats" "$$staged"; \
+	  fast_ats="$$ats"; [ -n "$$staged_ats" ] && fast_ats=""; \
+	  if [ $$rc -ne 0 ]; then show_stage "$$all_cts" "$$ats" "$$staged" "$$staged_ats"; \
 	  else \
-	    show_stage "$$fast_cts" "$$ats" ""; : >$$out; \
+	    show_stage "$$fast_cts" "$$fast_ats" "" ""; : >$$out; \
 	    while read -r alias files; do \
 	      case "$$alias" in \#*|"") continue;; esac; \
 	      echo "Running $$alias tests."; \
-	      targets=""; stage_cts=""; for f in $$files; do \
-	        targets="$$targets @$(C)/tests/$$f"; stage_cts="$$stage_cts tests/$$f.t"; done; \
+	      targets=""; stage_cts=""; stage_ats=""; for f in $$files; do \
+	        case "$$f" in @*) targets="@$(C)/tests/$$alias"; stage_ats="$$stage_ats|$${f#@}";; *) targets="$$targets @$(C)/tests/$$f"; stage_cts="$$stage_cts tests/$$f.t";; esac; done; \
 	      $(DUNE) build $$targets --force >$$out 2>&1; stage_rc=$$?; \
-	      if [ $$stage_rc -eq 0 ]; then show_stage "$$stage_cts" "" ""; : >$$out; \
+	      run_failed=0; [ $$stage_rc -ne 0 ] && run_failed=1; \
+	      case $$stage_rc in 130|143) interrupted=1;; esac; \
+	      if [ $$stage_rc -eq 0 ]; then show_stage "$$stage_cts" "$$stage_ats" "" ""; : >$$out; \
 	      else \
-	        rc=$$stage_rc; skipped=""; rest=0; \
+	        rc=$$stage_rc; skipped=""; skipped_ats=""; skipped_ats_roster=""; rest=0; \
 	        while read -r later_alias later_files; do case "$$later_alias" in \#*|"") continue;; esac; \
-	          if [ "$$rest" -eq 1 ]; then for f in $$later_files; do skipped="$$skipped tests/$$f.t"; done; fi; \
+	          if [ "$$rest" -eq 1 ]; then for f in $$later_files; do case "$$f" in @*) skipped_ats="$$skipped_ats $${f#@}"; skipped_ats_roster="$$skipped_ats_roster|$${f#@}";; *) skipped="$$skipped tests/$$f.t";; esac; done; fi; \
 	          [ "$$later_alias" = "$$alias" ] && rest=1; \
 	        done < "$$stages"; \
-	        show_stage "$$stage_cts $$skipped" "" "$$skipped"; break; \
+	        show_stage "$$stage_cts $$skipped" "$$stage_ats$$skipped_ats_roster" "$$skipped" "$$skipped_ats"; break; \
 	      fi; \
 	    done < "$$stages"; \
 	  fi; \
