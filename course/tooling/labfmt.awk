@@ -86,16 +86,22 @@ function trunc_utf8(s, n,   b) {
 # The Swift program a case runs on lives in its own setup command — a `printf '…' > x.swift`
 # or a `cat > x.swift <<'EOF'` heredoc. Keeping it is what lets a failure show the INPUT: two
 # AST dumps that differ tell you nothing until you can see the line of Swift that produced them.
-function note_src(file, blk, cmd,   s, q) {
-  if (cmd !~ /^printf '/) return
+function printf_body(cmd,   s, q) {
+  if (cmd !~ /^printf (-- )?'/) return ""
   s = substr(cmd, index(cmd, "'") + 1)
   q = index(s, "'")
   if (q > 0) s = substr(s, 1, q - 1)
   gsub(/\\n/, "\n", s); gsub(/\\t/, "\t", s)
   sub(/\n$/, "", s)
-  srcblk[file, blk] = s
+  return s
 }
-function load_t(file,   line, blk, prose, started, ln) {
+# the file a setup command writes to: `… > prog.swift`, never the `2>&1` of a run command
+function redirect_target(cmd,   t) {
+  if (!match(cmd, />[[:space:]]*[A-Za-z0-9_.\/-]+\.(swift|txt)/)) return ""
+  t = substr(cmd, RSTART, RLENGTH); sub(/^>[[:space:]]*/, "", t)
+  return t
+}
+function load_t(file,   line, blk, prose, started, ln, here, hereblk, cmd, cont, body, b, words, nw2, wa, i2) {
   if (loaded[file]++) return
   blk = 0; prose = ""; started = 0; ln = 0; here = 0
   while ((getline line < file) > 0) {
@@ -107,24 +113,41 @@ function load_t(file,   line, blk, prose, started, ln) {
       here = 0
       if (blk > 0) {
         cmd = substr(line, 5)
-        note_src(file, blk, cmd)
-        if (match(cmd, /<<[[:space:]]*'?[A-Za-z_]+'?/)) {      # a heredoc opens; its body follows
+        blkcmd[file, blk] = blkcmd[file, blk] " " cmd
+        body = printf_body(cmd)
+        if (body != "") {
+          srcblk[file, blk] = body; srcname[file, blk] = redirect_target(cmd)
+          if (srcname[file, blk] != "") srcfile[file, srcname[file, blk]] = body
+        } else if (match(cmd, /<<[[:space:]]*'?[A-Za-z_]+'?/)) {  # a heredoc opens; its body follows
           here = substr(cmd, RSTART, RLENGTH); gsub(/[<[:space:]']/, "", here)
-          srcblk[file, blk] = ""
+          srcblk[file, blk] = ""; hereblk = blk; srcname[file, blk] = redirect_target(cmd)
         }
       }
     } else if (line ~ /^  > / && blk > 0) {
       cmdblk[file, substr(line, 3)] = blk                # a continuation line of that command
       if (here != 0) {
         cont = substr(line, 5)
-        if (cont == here) here = 0
-        else srcblk[file, blk] = srcblk[file, blk] (srcblk[file, blk] == "" ? "" : "\n") cont
+        if (cont == here) {
+          here = 0
+          if (srcname[file, hereblk] != "") srcfile[file, srcname[file, hereblk]] = srcblk[file, hereblk]
+        } else srcblk[file, blk] = srcblk[file, blk] (srcblk[file, blk] == "" ? "" : "\n") cont
       }
     } else if (line !~ /^[[:space:]]/ && line != "") {
       if (started) prose = prose "\n" line; else { prose = line; started = 1 }
     } else if (line == "") started = 0
   }
   close(file)
+  # A case often runs against a file an earlier case created. Resolve those by name, so the
+  # report shows the program for every case, not only the one that happened to write it.
+  for (b = 1; b <= nblk[file]; b++) {
+    if ((file SUBSEP b) in srcblk && srcblk[file, b] != "") continue
+    words = blkcmd[file, b]; gsub(/[^A-Za-z0-9_.\/-]/, " ", words)
+    nw2 = split(words, wa, " ")
+    for (i2 = 1; i2 <= nw2; i2++)
+      if ((file SUBSEP wa[i2]) in srcfile) {
+        srcblk[file, b] = srcfile[file, wa[i2]]; srcname[file, b] = wa[i2]; break
+      }
+  }
 }
 
 # ---- section headers -------------------------------------------------------
@@ -410,10 +433,15 @@ function cases_str(si, file, unstarted,   b, key, out, nsl, sl, i) {
         out = out sprintf("         %sblocked by an unwritten hole: %s%s\n", D, todotext[key], Z)
       else {
         if ((file SUBSEP b) in srcblk && srcblk[file, b] != "") {
-          out = out sprintf("         %sthe program under test:%s\n", C, Z)
+          out = out sprintf("         %sthe program under test%s:%s\n", C,
+                            (srcname[file, b] != "" ? " (" srcname[file, b] ")" : ""), Z)
           nsl = split(srcblk[file, b], sl, "\n")
-          for (i = 1; i <= nsl; i++)
+          # A handful of programs run to ~25 lines; past a screenful the report stops being
+          # scannable and the .t is one `cat` away, so show the head and say what was cut.
+          for (i = 1; i <= nsl && i <= 16; i++)
             out = out sprintf("           %s%s%s\n", D, sl[i], Z)
+          if (nsl > 16)
+            out = out sprintf("           %s… %d more lines%s\n", D, nsl - 16, Z)
         }
         out = out detail[key]
       }
