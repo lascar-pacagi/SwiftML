@@ -22,6 +22,13 @@ BEGIN {
   for (i = 1; i <= ns; i++) if (sf[i] != "") explicitly_skipped[sf[i]] = 1
   ns = split(skipped_alcotest, sf, " ")
   for (i = 1; i <= ns; i++) if (sf[i] != "") explicitly_skipped_alcotest[sf[i]] = 1
+  # A staged run filters the unit suite to the groups belonging to this stage, and alcotest
+  # prints every case it did NOT select as [SKIP]. Those are not the suite declining to run a
+  # case — they are a later stage's work, so drop them. A group's cases are named after the cram
+  # file beside them, which is what makes this stage's own file list the filter.
+  ns = split(stage_groups, sf, " ")
+  for (i = 1; i <= ns; i++)
+    if (sf[i] != "") { g = sf[i]; sub(/^tests\//, "", g); sub(/\.t$/, "", g); this_stage[g] = 1; have_stage_groups = 1 }
 }
 
 { clean = $0; gsub(/\033\[[0-9;]*m/, "", clean) }   # ANSI-free copy, for the matchers below
@@ -38,6 +45,7 @@ function drop_pending() { pend = ""; pendfile = "" }
 # alcotest suite parser-types -> parser. Grouping by it is what lets the report say a whole
 # stage is finished, which a per-file list never quite does.
 function stage(kind, name,   b) {
+  if (kind == "alcotest" && stage_name != "") return stage_name   # the stage that ran it
   b = name; sub(/^.*\//, "", b); sub(/\.t$/, "", b)
   if (match(b, /-/)) b = substr(b, 1, RSTART - 1)
   return b
@@ -248,6 +256,7 @@ cram { dline++; next }
 /\[SKIP\]/ {                                            # a case that chose not to run (see the suite's note)
   line = clean; sub(/^[^[]*\[SKIP\][[:space:]]*/, "", line); sub(/[[:space:]]+$/, "", line)
   nf = split(line, a, /[[:space:]][[:space:]]+/)
+  if (have_stage_groups && nf >= 1 && !(a[1] in this_stage)) next   # a later stage's group
   if (nf >= 3) { desc = a[3]; for (k = 4; k <= nf; k++) desc = desc " " a[k]; line = a[1] " — " desc }
   sub(/\.$/, "", line)
   if (!seen[cur SUBSEP "skip" SUBSEP line]++) {

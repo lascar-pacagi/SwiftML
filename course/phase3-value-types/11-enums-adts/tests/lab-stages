@@ -1,7 +1,6 @@
 # alias       Cram files, or @Alcotest suite names
-parser        parser-enum-decls parser-enum-uses
-sema          sema-enum-decls sema-enum-cases sema-enum-observation
-silgen        silgen-case silgen-payload
-irgen         irgen-enums
-unit          @enums
+parser        parser-enum-decls parser-enum-uses @enums
+sema          sema-enum-decls sema-enum-cases sema-enum-observation @enums
+silgen        silgen-case silgen-payload @enums
+irgen         irgen-enums @enums
 oracle        oracle

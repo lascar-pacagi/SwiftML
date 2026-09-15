@@ -46,8 +46,26 @@
  (flags
   (:standard -warn-error -a)))
 
-; A non-advancing parser recovery branch must fail the lab instead of hanging it.
+; The unit suite runs WITH the stage it covers, filtered to that stage's groups, instead of once
+; at the end: a case that passes while a LATER stage is still a TODO is then visible, rather than
+; skipped behind the stage it is meant to report progress on. The timeout keeps a non-advancing
+; parser recovery branch failing the lab instead of hanging it.
 (rule
- (alias unit)
+ (alias parser)
  (deps test_enums.exe timeout.py)
- (action (run python3 timeout.py 3 %{exe:test_enums.exe})))
+ (action (run python3 timeout.py 3 %{exe:test_enums.exe} test "(lexer|parser)-.*")))
+
+(rule
+ (alias sema)
+ (deps test_enums.exe timeout.py)
+ (action (run python3 timeout.py 3 %{exe:test_enums.exe} test "sema-.*")))
+
+(rule
+ (alias silgen)
+ (deps test_enums.exe timeout.py)
+ (action (run python3 timeout.py 3 %{exe:test_enums.exe} test "silgen-.*")))
+
+(rule
+ (alias irgen)
+ (deps test_enums.exe timeout.py)
+ (action (run python3 timeout.py 3 %{exe:test_enums.exe} test "irgen-.*")))

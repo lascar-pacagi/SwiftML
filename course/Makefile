@@ -70,7 +70,7 @@ lab:
 	if [ -n "$(T)" ]; then ats=""; fi; \
 	show_stage() { \
 	  if [ -n "$(RAW)" ]; then cat $$out; \
-	  else awk -v color=$$col -v prefix="$(C)/" -v cram_files="$$1" -v alcotest_suites="$$2" -v skipped_cram="$$3" -v skipped_alcotest="$$4" -v detail_all="$(DETAIL)" -v interrupted="$$interrupted" -v run_failed="$$run_failed" -f tooling/labfmt.awk $$out; fi; \
+	  else awk -v color=$$col -v prefix="$(C)/" -v cram_files="$$1" -v alcotest_suites="$$2" -v skipped_cram="$$3" -v skipped_alcotest="$$4" -v stage_name="$$stage_name" -v stage_groups="$$stage_groups" -v detail_all="$(DETAIL)" -v interrupted="$$interrupted" -v run_failed="$$run_failed" -f tooling/labfmt.awk $$out; fi; \
 	}; \
 	$(DUNE) build @$(C)/$(if $(T),tests/$(T),runtest) --force >$$out 2>&1; rc=$$?; \
 	run_failed=0; [ $$rc -ne 0 ] && run_failed=1; \
@@ -83,14 +83,16 @@ lab:
 	    for f in $$files; do case "$$f" in @*) staged_ats="$$staged_ats $${f#@}";; *) staged="$$staged tests/$$f.t ";; esac; done; done < "$$stages"; \
 	  fast_cts=""; for f in $$all_cts; do case "$$staged" in *" $$f "*) ;; *) fast_cts="$$fast_cts $$f";; esac; done; \
 	  fast_ats="$$ats"; [ -n "$$staged_ats" ] && fast_ats=""; \
+	  stage_name=""; stage_groups=""; \
 	  if [ $$rc -ne 0 ]; then show_stage "$$all_cts" "$$ats" "$$staged" "$$staged_ats"; \
 	  else \
 	    show_stage "$$fast_cts" "$$fast_ats" "" ""; : >$$out; \
 	    while read -r alias files; do \
 	      case "$$alias" in \#*|"") continue;; esac; \
-	      echo "Running $$alias tests."; \
+	      echo "Running $$alias tests."; stage_name="$$alias"; \
 	      targets=""; stage_cts=""; stage_ats=""; for f in $$files; do \
-	        case "$$f" in @*) targets="@$(C)/tests/$$alias"; stage_ats="$$stage_ats|$${f#@}";; *) targets="$$targets @$(C)/tests/$$f"; stage_cts="$$stage_cts tests/$$f.t";; esac; done; \
+	        case "$$f" in @*) targets="$$targets @$(C)/tests/$$alias"; stage_ats="$$stage_ats|$${f#@}";; *) targets="$$targets @$(C)/tests/$$f"; stage_cts="$$stage_cts tests/$$f.t";; esac; done; \
+	      stage_groups="$$stage_cts"; \
 	      $(DUNE) build $$targets --force >$$out 2>&1; stage_rc=$$?; \
 	      run_failed=0; [ $$stage_rc -ne 0 ] && run_failed=1; \
 	      case $$stage_rc in 130|143) interrupted=1;; esac; \
