@@ -315,47 +315,26 @@ Color.red   =>   Member (Var "Color", "red")      an enum case
 p.x         =>   Member (Var "p",     "x")        a stored property
 ```
 
-Nothing in the shape says which — so Sema decides. Before it checks a single expression it walks
-the declarations once and records every enum name (§3 builds that registry), which is what lets it
-ask, on reaching `Color.red`, whether `Color` is one of them. That question is the arm's guard,
-and it is why the binding there is called `type_name`: by the time the body runs, the arm has
-*established* that the identifier names a type, so within it the name is a type name and not a
-variable.
-
-**swiftc hits the same wall and answers it once rather than at each use.** Its parser also emits
-an unresolved dotted expression over an unresolved name. A pre-check pass then runs unqualified
-lookup and REWRITES the base into a distinct node, `TypeExpr`
-(`swift/lib/Sema/PreCheckTarget.cpp`):
-
-```cpp
-// If we have an unambiguous reference to a type decl, form a TypeExpr.
-if (Lookup.size() == 1 && UDRE->getRefKind() == DeclRefKind::Ordinary &&
-    isa<TypeDecl>(Lookup[0].getValueDecl()))
-  return buildTypeExpr(cast<TypeDecl>(Lookup[0].getValueDecl()));
-```
-
-After that, "is this a type or a value" is recorded in the tree and never asked again. We keep
-one node and ask inline. That is sound *here*, and it stays sound. Enum-case construction is the
-only place a type appears in expression position in this subset: a struct's initializer is an
-`Ast.Call` holding the type's name as a string, and `e as T` keeps its name in `Ast.Ascribe`. The
-type syntax later phases add is read where a *type* is expected, never as an expression. There
-are no metatypes and no `T.self` anywhere in the course, and its one static-looking call is
-matched literally rather than through a registry. So the two shapes above are all of it, from
-here to the last concept — nothing you write later has to undo this.
-
-The guard must still ask the questions in Swift's order:
+Sema is what tells them apart, by asking whether the name is a registered enum. That is the
+guard on the arm, and it is why the binding there is called `type_name` — inside that arm the
+identifier has been established to name a type, not a variable:
 
 ```ocaml
 | Ast.Member (Ast.Var (type_name, _), _, _)
   when lookup type_name = None && Hashtbl.mem enums type_name -> …
 ```
 
-`lookup` first, because a local binding shadows a type name — `let Color = 7` inside a function
-makes `Color.red` a member lookup on `Int`, and swiftc says exactly that. Without the `lookup`
-test the enum reading would win and we would accept a program swiftc rejects. (At *file* scope
-the question does not arise: Swift puts a top-level value and a type in one namespace, so
-`enum Color` beside `let Color` is a redeclaration. We do not enforce that — a documented
-divergence of this subset.)
+`lookup` comes first because a local binding shadows a type name: with `let Color = 7` in scope,
+`Color.red` is a member lookup on `Int`, and swiftc says exactly that. (At *file* scope Swift
+gives a value and a type one namespace, making `enum Color` beside `let Color` a redeclaration.
+We accept it — a divergence of this subset.)
+
+swiftc asks the same question once instead of at every use: unqualified lookup rewrites the base
+into a separate `TypeExpr` node before type-checking (`swift/lib/Sema/PreCheckTarget.cpp`), so
+the answer is recorded in the tree. Asking inline is enough here because enum-case construction
+is the only place a type appears in expression position — a struct's initializer is an
+`Ast.Call` holding its name as a string, `e as T` keeps its name in `Ast.Ascribe` — and that
+stays true to the last concept, so nothing you write later has to undo it.
 
 ### The new SIL instructions (swiftc's shape)
 
