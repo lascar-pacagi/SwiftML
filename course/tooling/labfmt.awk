@@ -83,17 +83,43 @@ function trunc_utf8(s, n,   b) {
   if (length(s) && ord[substr(s, length(s), 1)] >= 192) s = substr(s, 1, length(s) - 1)  # lone lead
   return s
 }
+# The Swift program a case runs on lives in its own setup command — a `printf '…' > x.swift`
+# or a `cat > x.swift <<'EOF'` heredoc. Keeping it is what lets a failure show the INPUT: two
+# AST dumps that differ tell you nothing until you can see the line of Swift that produced them.
+function note_src(file, blk, cmd,   s, q) {
+  if (cmd !~ /^printf '/) return
+  s = substr(cmd, index(cmd, "'") + 1)
+  q = index(s, "'")
+  if (q > 0) s = substr(s, 1, q - 1)
+  gsub(/\\n/, "\n", s); gsub(/\\t/, "\t", s)
+  sub(/\n$/, "", s)
+  srcblk[file, blk] = s
+}
 function load_t(file,   line, blk, prose, started, ln) {
   if (loaded[file]++) return
-  blk = 0; prose = ""; started = 0; ln = 0
+  blk = 0; prose = ""; started = 0; ln = 0; here = 0
   while ((getline line < file) > 0) {
     lineblk[file, ++ln] = blk                          # which command's block owns this line
     if (line ~ /^  \$ /) {
       if (prose != "") { blk++; label[file, blk] = first_sentence(prose); prose = "" }
       if (blk > 0) cmdblk[file, substr(line, 3)] = blk   # keep "$ " so it matches the diff line
       nblk[file] = blk
+      here = 0
+      if (blk > 0) {
+        cmd = substr(line, 5)
+        note_src(file, blk, cmd)
+        if (match(cmd, /<<[[:space:]]*'?[A-Za-z_]+'?/)) {      # a heredoc opens; its body follows
+          here = substr(cmd, RSTART, RLENGTH); gsub(/[<[:space:]']/, "", here)
+          srcblk[file, blk] = ""
+        }
+      }
     } else if (line ~ /^  > / && blk > 0) {
       cmdblk[file, substr(line, 3)] = blk                # a continuation line of that command
+      if (here != 0) {
+        cont = substr(line, 5)
+        if (cont == here) here = 0
+        else srcblk[file, blk] = srcblk[file, blk] (srcblk[file, blk] == "" ? "" : "\n") cont
+      }
     } else if (line !~ /^[[:space:]]/ && line != "") {
       if (started) prose = prose "\n" line; else { prose = line; started = 1 }
     } else if (line == "") started = 0
@@ -372,7 +398,7 @@ function all_failed_are_todo(si, file,   b, key) {
 }
 # One OK/FAIL line per case, in file order. For an explicit untouched TODO, the repeated diffs
 # are noise — list what the file will check and leave it at that (DETAIL=1 expands).
-function cases_str(si, file, unstarted,   b, key, out) {
+function cases_str(si, file, unstarted,   b, key, out, nsl, sl, i) {
   load_t(file)
   unstarted = unstarted && !detail_all
   for (b = 1; b <= nblk[file]; b++) {
@@ -382,7 +408,15 @@ function cases_str(si, file, unstarted,   b, key, out) {
       out = out sprintf("  %sFAIL%s %s\n", R, Z, wrap_label(label[file, b], 84))
       if (key in todo)
         out = out sprintf("         %sblocked by an unwritten hole: %s%s\n", D, todotext[key], Z)
-      else out = out detail[key]
+      else {
+        if ((file SUBSEP b) in srcblk && srcblk[file, b] != "") {
+          out = out sprintf("         %sthe program under test:%s\n", C, Z)
+          nsl = split(srcblk[file, b], sl, "\n")
+          for (i = 1; i <= nsl; i++)
+            out = out sprintf("           %s%s%s\n", D, sl[i], Z)
+        }
+        out = out detail[key]
+      }
     } else out = out sprintf("  %sOK  %s %s\n", G, Z, wrap_label(label[file, b], 84))
   }
   if (unstarted) out = out sprintf("       %snothing here passes yet — DETAIL=1 to see the diffs%s\n", D, Z)
