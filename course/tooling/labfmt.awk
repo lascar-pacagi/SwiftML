@@ -303,7 +303,11 @@ END {
 
   nr = split(cram_files, cf, " "); na = split(alcotest_suites, af, "|")   # suite names may contain spaces
   for (k = 1; k <= nr; k++) if (cf[k] != "") roster[++nrost] = "cram" SUBSEP cf[k]
-  for (k = 1; k <= na; k++) if (af[k] != "") roster[++nrost] = "alcotest" SUBSEP af[k]
+  # One suite now runs in several stages, so a skipped-stage roster repeats its name; a section
+  # per repeat would print the same suite two or three times over.
+  for (k = 1; k <= na; k++)
+    if (af[k] != "" && !onroster["alcotest" SUBSEP af[k]]++)
+      roster[++nrost] = "alcotest" SUBSEP af[k]
   for (i = 1; i <= n; i++) {                            # failures not on the roster
     key = skind[i] SUBSEP sname[i]; if (body[i] == "" && !failedcram(i)) continue
     on = 0; for (k = 1; k <= nrost; k++) if (roster[k] == key) on = 1

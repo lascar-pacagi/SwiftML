@@ -186,6 +186,34 @@ let test_enum_names_registered () =
        (fun message -> contains message "cannot find type 'Level'")
        (errors_so_far "struct Task { var level: Level }\nenum Level { case low }"))
 
+(* Spans are invisible in the AST dump, so nothing else in the parser's groups can tell a
+   declaration that starts at its `enum` keyword from one that starts at its NAME. Every
+   diagnostic reported against a whole enum is positioned by this span, so pin it HERE, beside
+   the parser that produces it — otherwise the only thing that notices is a Sema golden, and the
+   red lands two stages away from the line that caused it. `parse_struct`, given in this file, is
+   the model: it keeps the introducer token rather than discarding it. *)
+let enum_decl_start (source : string) : int * int =
+  let rec first = function
+    | Ast.IEnum enum_declaration :: _ ->
+        ( enum_declaration.Ast.espan.Token.lo.Token.line,
+          enum_declaration.Ast.espan.Token.lo.Token.col )
+    | _ :: rest -> first rest
+    | [] -> Alcotest.fail "expected the program to contain an enum declaration"
+  in
+  first (parse source).Ast.items
+
+let test_enum_decl_span () =
+  Alcotest.(check (pair int int))
+    "an enum declaration starts at its `enum` keyword, not at its name" (1, 1)
+    (enum_decl_start "enum Flag { case value(Int) }");
+  (* indented, so a span that merely hard-codes column 1 is not mistaken for the keyword *)
+  Alcotest.(check (pair int int))
+    "and it follows the keyword when the declaration is indented" (1, 3)
+    (enum_decl_start "  enum Flag { case value(Int) }");
+  Alcotest.(check (pair int int))
+    "and onto the line the keyword is on" (2, 1)
+    (enum_decl_start "struct S { var x: Int }\nenum Flag { case value(Int) }")
+
 let test_enum_registry () =
   accepted
     "func identity(_ command: Command) -> Command { return command }\n\
@@ -276,7 +304,9 @@ let () =
         [ Alcotest.test_case "enum and case keywords" `Quick test_enum_tokens ] );
       ( "parser-enum-decls",
         [ Alcotest.test_case "ordered cases and payloads" `Quick
-            test_parse_enum_decl ] );
+            test_parse_enum_decl;
+          Alcotest.test_case "declaration span is the keyword" `Quick
+            test_enum_decl_span ] );
       ( "parser-enum-uses",
         [
           Alcotest.test_case "payload call and member" `Quick
