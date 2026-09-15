@@ -35,6 +35,25 @@ let errors (source : string) : string list =
   |> List.map (fun (diagnostic : Diagnostics.t) ->
          diagnostic.Diagnostics.message)
 
+(* The diagnostics a check reported BEFORE an unwritten hole stopped it. The sink collects as the
+   pass runs, so a `failwith` in a later walk never loses what an earlier one already found —
+   which is what lets PASS 0's name-registration walk be tested on its own, while the walk that
+   fills the layouts is still a TODO. *)
+let errors_so_far (source : string) : string list =
+  let diagnostics = Diagnostics.create () in
+  let program =
+    Parser.parse_program
+      (Parser.create
+         (Lexer.tokenize (Lexer.create source diagnostics))
+         diagnostics)
+  in
+  (try Sema.check program diagnostics with Failure _ -> ());
+  Diagnostics.all diagnostics
+  |> List.filter (fun (diagnostic : Diagnostics.t) ->
+         diagnostic.Diagnostics.severity = Diagnostics.Error)
+  |> List.map (fun (diagnostic : Diagnostics.t) ->
+         diagnostic.Diagnostics.message)
+
 let sil (source : string) : string =
   let program, _ = front source in
   Sil.string_of_module (Silgen.lower program)
@@ -140,6 +159,33 @@ let test_parse_chained_calls () =
 
 (* TODO(11d): registry and layouts. *)
 
+(* PASS 0's FIRST walk, isolated from the second. Registering the names is what makes a clash
+   detectable and what puts a name in scope for a declaration written above it; neither needs a
+   single case layout, so both hold while the layout walk is unwritten. *)
+let test_enum_names_registered () =
+  let clashes source =
+    List.mem "invalid redeclaration of 'A'" (errors_so_far source)
+  in
+  Alcotest.(check bool)
+    "enum then struct" true
+    (clashes "enum A { case one }\nstruct A { var x: Int }");
+  Alcotest.(check bool)
+    "struct then enum" true
+    (clashes "struct A { var x: Int }\nenum A { case one }");
+  Alcotest.(check bool)
+    "enum then enum" true
+    (clashes "enum A { case one }\nenum A { case two }");
+  Alcotest.(check bool)
+    "distinct names do not clash" false
+    (clashes "enum A { case one }\nstruct B { var x: Int }");
+  (* the namespace itself: the struct's field resolves against a name the first walk registered,
+     and it is read before the enum's own layout is built *)
+  Alcotest.(check bool)
+    "a later enum is in scope above itself" false
+    (List.exists
+       (fun message -> contains message "cannot find type 'Level'")
+       (errors_so_far "struct Task { var level: Level }\nenum Level { case low }"))
+
 let test_enum_registry () =
   accepted
     "func identity(_ command: Command) -> Command { return command }\n\
@@ -243,7 +289,9 @@ let () =
             test_parse_chained_calls;
         ] );
       ( "sema-enum-decls",
-        [ Alcotest.test_case "names first, then case layouts" `Quick
+        [ Alcotest.test_case "names registered before layouts" `Quick
+            test_enum_names_registered;
+          Alcotest.test_case "names first, then case layouts" `Quick
             test_enum_registry ] );
       ( "sema-enum-cases",
         [ Alcotest.test_case "lookup, arity, and types" `Quick
