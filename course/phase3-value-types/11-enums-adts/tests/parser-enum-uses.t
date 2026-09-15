@@ -36,5 +36,7 @@ Postfix parsing can continue with another call as well as a member read.
 The closing parenthesis is required before postfix parsing continues.
 
   $ printf 'Shape.circle(5\n' > bad-close.swift
-  $ python3 timeout.py 0.5 ./lab.exe --emit-ast bad-close.swift 2>&1 | head -1
+  $ python3 timeout.py 0.5 ./lab.exe --emit-ast bad-close.swift 2>&1 | head -3
   1:15: error: expected ')'
+  Shape.circle(5
+                ^

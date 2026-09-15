@@ -22,53 +22,71 @@ Cases on separate lines may carry zero, one, or several associated-value types.
 An enum declaration without a name reports at its opening brace.
 
   $ printf 'enum { case a }\n' > bad-name.swift
-  $ python3 timeout.py 0.5 ./lab.exe --emit-ast bad-name.swift 2>&1 | head -1
+  $ python3 timeout.py 0.5 ./lab.exe --emit-ast bad-name.swift 2>&1 | head -3
   1:6: error: expected an enum name
+  enum { case a }
+       ^
 
 A colon after the enum name requires a written raw type.
 
   $ printf 'enum E: { case a }\n' > bad-raw-type.swift
-  $ python3 timeout.py 0.5 ./lab.exe --emit-ast bad-raw-type.swift 2>&1 | head -1
+  $ python3 timeout.py 0.5 ./lab.exe --emit-ast bad-raw-type.swift 2>&1 | head -3
   1:9: error: expected a raw type
+  enum E: { case a }
+          ^
 
 The enum name must be followed by its opening brace.
 
   $ printf 'enum E case a }\n' > bad-open.swift
-  $ python3 timeout.py 0.5 ./lab.exe --emit-ast bad-open.swift 2>&1 | head -1
+  $ python3 timeout.py 0.5 ./lab.exe --emit-ast bad-open.swift 2>&1 | head -3
   1:8: error: expected '{'
+  enum E case a }
+         ^
 
 Only `case` introduces a declaration inside an enum body.
 
   $ printf 'enum E { value }\n' > bad-member.swift
-  $ python3 timeout.py 0.5 ./lab.exe --emit-ast bad-member.swift 2>&1 | head -1
+  $ python3 timeout.py 0.5 ./lab.exe --emit-ast bad-member.swift 2>&1 | head -3
   1:10: error: expected a 'case' declaration
+  enum E { value }
+           ^
 
 Each `case` keyword must be followed by a case name.
 
   $ printf 'enum E { case (Int) }\n' > bad-case-name.swift
-  $ python3 timeout.py 0.5 ./lab.exe --emit-ast bad-case-name.swift 2>&1 | head -1
+  $ python3 timeout.py 0.5 ./lab.exe --emit-ast bad-case-name.swift 2>&1 | head -3
   1:15: error: expected a case name
+  enum E { case (Int) }
+                ^
 
 An associated-value list cannot be empty in this subset.
 
   $ printf 'enum E { case value() }\n' > bad-payload-type.swift
-  $ python3 timeout.py 0.5 ./lab.exe --emit-ast bad-payload-type.swift 2>&1 | head -1
+  $ python3 timeout.py 0.5 ./lab.exe --emit-ast bad-payload-type.swift 2>&1 | head -3
   1:21: error: expected an associated-value type
+  enum E { case value() }
+                      ^
 
 An associated-value list requires its closing parenthesis.
 
   $ printf 'enum E { case value(Int }\n' > bad-payload-close.swift
-  $ python3 timeout.py 0.5 ./lab.exe --emit-ast bad-payload-close.swift 2>&1 | head -1
+  $ python3 timeout.py 0.5 ./lab.exe --emit-ast bad-payload-close.swift 2>&1 | head -3
   1:25: error: expected ')'
+  enum E { case value(Int }
+                          ^
 
 Two case declarations require a newline or semicolon between them.
 
   $ printf 'enum E { case a case b }\n' > bad-separator.swift
-  $ python3 timeout.py 0.5 ./lab.exe --emit-ast bad-separator.swift 2>&1 | head -1
+  $ python3 timeout.py 0.5 ./lab.exe --emit-ast bad-separator.swift 2>&1 | head -3
   1:17: error: expected newline or end of declaration
+  enum E { case a case b }
+                  ^
 
 An enum that reaches end of input without `}` reports the missing delimiter.
 
   $ printf 'enum E { case a' > bad-close.swift
-  $ python3 timeout.py 0.5 ./lab.exe --emit-ast bad-close.swift 2>&1 | head -1
+  $ python3 timeout.py 0.5 ./lab.exe --emit-ast bad-close.swift 2>&1 | head -3
   1:16: error: expected '}'
+  enum E { case a
+                 ^

@@ -11,6 +11,8 @@ A plain enum has no `rawValue` member.
   $ printf 'enum Color { case red }\nprint(Color.red.rawValue)\n' > no-raw.swift
   $ python3 timeout.py 2 ./lab.exe --typecheck no-raw.swift
   2:7: error: value of type 'Color' has no member 'rawValue'
+  print(Color.red.rawValue)
+        ^
   [1]
 
 A payload-free enum is implicitly Equatable.
@@ -23,4 +25,6 @@ An enum with associated values needs an Equatable conformance that this subset c
   $ printf 'enum E { case value(Int); case empty }\nprint(E.value(1) == E.value(1))\n' > not-equal.swift
   $ python3 timeout.py 2 ./lab.exe --typecheck not-equal.swift
   2:7: error: type 'E' does not conform to protocol 'Equatable'
+  print(E.value(1) == E.value(1))
+        ^
   [1]

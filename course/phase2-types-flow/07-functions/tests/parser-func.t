@@ -65,8 +65,10 @@ A declaration without a body — `func f() -> Int` then a newline — is "expect
 newline (first diagnostic only: the block parser then runs on to the end of input):
 
   $ printf 'func f() -> Int\nprint(1)\n' > e3.swift
-  $ ./lab.exe --emit-ast e3.swift 2>&1 | head -1
+  $ ./lab.exe --emit-ast e3.swift 2>&1 | head -3
   1:16: error: expected '{'
+  func f() -> Int
+                 ^
 
 A body that never closes is "expected '}'", reported at end of input:
 

@@ -25,5 +25,7 @@ normal expression that may read a member.
 A dot without a following identifier reports that a member name is missing.
 
   $ printf 'p.\n' > bad-member.swift
-  $ python3 timeout.py 2 ./lab.exe --emit-ast bad-member.swift 2>&1 | head -1
+  $ python3 timeout.py 2 ./lab.exe --emit-ast bad-member.swift 2>&1 | head -3
   1:3: error: expected a member name
+  p.
+    ^

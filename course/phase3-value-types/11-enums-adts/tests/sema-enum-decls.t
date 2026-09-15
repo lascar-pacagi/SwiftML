@@ -20,6 +20,8 @@ rejected before it reaches IRGen.
   $ printf 'enum Flag { case value(Bool) }\n' > payload-type.swift
   $ python3 timeout.py 2 ./lab.exe --typecheck payload-type.swift
   1:1: error: associated value type 'Bool' is not supported (only Int)
+  enum Flag { case value(Bool) }
+  ^
   [1]
 
 Only `Int` is implemented as a raw type in this concept.
@@ -27,6 +29,8 @@ Only `Int` is implemented as a raw type in this concept.
   $ printf 'enum Flag: Bool { case off, on }\n' > raw-type.swift
   $ python3 timeout.py 2 ./lab.exe --typecheck raw-type.swift
   1:1: error: raw type 'Bool' is not supported (only Int)
+  enum Flag: Bool { case off, on }
+  ^
   [1]
 
 An unknown associated-value type and a type-name redeclaration are both reported.
@@ -37,5 +41,9 @@ An unknown associated-value type and a type-name redeclaration are both reported
   > EOF
   $ python3 timeout.py 2 ./lab.exe --typecheck invalid.swift
   2:1: error: invalid redeclaration of 'A'
+  struct A { var x: Int }
+  ^
   1:1: error: cannot find type 'Missing' in scope
+  enum A { case value(Missing) }
+  ^
   [1]

@@ -19,8 +19,10 @@ top level is rejected, in swiftc's words (`diag::actor_isolated_call_decl`,
   print(c.get())
         ^
   [1]
-  $ swiftc -typecheck bad.swift 2>&1 | head -1
+  $ swiftc -typecheck bad.swift 2>&1 | head -3
   bad.swift:7:9: error: call to actor-isolated instance method 'get()' in a synchronous nonisolated context [#ActorIsolatedCall]
+  2 |   var value: Int
+  3 |   init() { value = 0 }
 
 Drop condition 1 and a plain `class` starts failing too. It must not: a class has no isolation,
 and every class program from concept 25 onwards still type-checks.
@@ -129,5 +131,7 @@ too — "a synchronous actor-isolated context", since the caller is itself isola
   > SWIFT
   $ ./lab.exe --typecheck peer.swift && echo "we accept it (v0)"
   we accept it (v0)
-  $ swiftc -typecheck peer.swift 2>&1 | head -1
+  $ swiftc -typecheck peer.swift 2>&1 | head -3
   peer.swift:5:33: error: call to actor-isolated instance method 'step()' in a synchronous actor-isolated context [#ActorIsolatedCall]
+  2 |   var v: Int
+  3 |   init() { v = 0 }
