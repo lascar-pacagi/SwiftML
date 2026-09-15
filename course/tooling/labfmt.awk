@@ -193,8 +193,14 @@ function load_t(file,   line, blk, prose, started, ln, here, hereblk, cmd, cont,
 }
 !cram && clean ~ /^\[(exception|failure)\]/ {
   line = clean; sub(/^\[[a-z]*\] */, "", line)
-  if (line ~ /TODO\([^)]*\)/) alctodo[cur] = 1
   trace_left = (clean ~ /^\[exception\]/ ? 2 : 0)
+  # An unwritten hole is not this case being wrong, and it reads the same whichever runner met
+  # it: give it the wording the cram side gives it, and drop the frames — the hole IS the answer.
+  if (line ~ /TODO\([^)]*\)/) {
+    alctodo[cur] = 1; trace_left = 0
+    match(line, /TODO\([^)]*\)[^"]*/)
+    put("         " D "blocked by an unwritten hole: " substr(line, RSTART, RLENGTH) Z); next
+  }
   put("         " R "error:" Z " " line); next
 }
 # Keep the first two compiler frames after an unexpected exception. Alcotest's full trace is
