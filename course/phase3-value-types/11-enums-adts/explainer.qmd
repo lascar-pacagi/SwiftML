@@ -315,9 +315,12 @@ Color.red   =>   Member (Var "Color", "red")      an enum case
 p.x         =>   Member (Var "p",     "x")        a stored property
 ```
 
-Nothing in the shape says which. Sema decides, with a guard on the enum registry PASS 0 just
-built, and that is why the binding in that arm is called `type_name`: the arm has *established*
-that the identifier names a type, so within it the name is a type name, not a variable.
+Nothing in the shape says which — so Sema decides. Before it checks a single expression it walks
+the declarations once and records every enum name (§3 builds that registry), which is what lets it
+ask, on reaching `Color.red`, whether `Color` is one of them. That question is the arm's guard,
+and it is why the binding there is called `type_name`: by the time the body runs, the arm has
+*established* that the identifier names a type, so within it the name is a type name and not a
+variable.
 
 **swiftc hits the same wall and answers it once rather than at each use.** Its parser also emits
 an unresolved dotted expression over an unresolved name. A pre-check pass then runs unqualified
@@ -332,11 +335,13 @@ if (Lookup.size() == 1 && UDRE->getRefKind() == DeclRefKind::Ordinary &&
 ```
 
 After that, "is this a type or a value" is recorded in the tree and never asked again. We keep
-one node and ask inline. That is sound *here* because enum-case construction is the only place a
-type appears in expression position in this subset — struct and class construction is a `Call`
-carrying the type's name as a string, a cast carries it in `Ast.Cast`, and `any P`, `[Int]`, `T?`
-are written *types*, never expressions. The subset has no metatypes, no `T.self` and no static
-members, so the two shapes above are all of it, unchanged through concept 40.
+one node and ask inline. That is sound *here*, and it stays sound. Enum-case construction is the
+only place a type appears in expression position in this subset: a struct's initializer is an
+`Ast.Call` holding the type's name as a string, and `e as T` keeps its name in `Ast.Ascribe`. The
+type syntax later phases add is read where a *type* is expected, never as an expression. There
+are no metatypes and no `T.self` anywhere in the course, and its one static-looking call is
+matched literally rather than through a registry. So the two shapes above are all of it, from
+here to the last concept — nothing you write later has to undo this.
 
 The guard must still ask the questions in Swift's order:
 
