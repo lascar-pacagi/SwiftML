@@ -95,7 +95,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             infer e0)
     (* `E.case` — a no-payload enum case names a value of the enum type (concept 11) *)
     | Ast.Member (Ast.Var (type_name, _), case_name, span)
-      when Hashtbl.mem enums type_name -> (
+      when lookup type_name = None && Hashtbl.mem enums type_name -> (
         let layout = Hashtbl.find enums type_name in
         match Types.case_payload layout case_name with
         | Some [] -> Types.TEnum type_name
@@ -134,7 +134,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             Types.TInt)
     (* `E.case(args)` — a payload-carrying enum case (concept 11) *)
     | Ast.Method_call (Ast.Var (type_name, _), case_name, args, span)
-      when Hashtbl.mem enums type_name -> (
+      when lookup type_name = None && Hashtbl.mem enums type_name -> (
         let layout = Hashtbl.find enums type_name in
         match Types.case_payload layout case_name with
         | Some expected_types ->

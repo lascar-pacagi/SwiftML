@@ -96,7 +96,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
     (* TODO(11e): type `E.case`, including lookup and the missing-payload
        diagnostic. See explainer §3, "Type enum construction". *)
     | Ast.Member (Ast.Var (type_name, _), _, _)
-      when Hashtbl.mem enums type_name ->
+      when lookup type_name = None && Hashtbl.mem enums type_name ->
         failwith "TODO(11e): type a payload-free enum case"
     | Ast.Member (e0, fld, span) -> (
         match infer e0 with
@@ -119,7 +119,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
     (* TODO(11e): type `E.case(arguments)`, checking the case, arity, and
        every associated value. *)
     | Ast.Method_call (Ast.Var (type_name, _), _, _, _)
-      when Hashtbl.mem enums type_name ->
+      when lookup type_name = None && Hashtbl.mem enums type_name ->
         failwith "TODO(11e): type a payload-carrying enum case"
     | Ast.Method_call (e0, _, _, span) ->
         ignore (infer e0);

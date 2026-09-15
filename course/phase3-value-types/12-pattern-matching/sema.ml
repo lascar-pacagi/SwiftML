@@ -95,7 +95,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             err span (Printf.sprintf "cannot find type '%s' in scope" tyname);
             infer e0)
     (* `E.case` — a no-payload enum case names a value of the enum type (concept 11) *)
-    | Ast.Member (Ast.Var (tn, _), case, span) when Hashtbl.mem enums tn -> (
+    | Ast.Member (Ast.Var (tn, _), case, span) when lookup tn = None && Hashtbl.mem enums tn -> (
         let el = Hashtbl.find enums tn in
         match Types.case_payload el case with
         | Some [] -> Types.TEnum tn
@@ -120,7 +120,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             err span (Printf.sprintf "value of type '%s' has no member '%s'" (Types.string_of_ty t) fld);
             Types.TInt)
     (* `E.case(args)` — a payload-carrying enum case (concept 11) *)
-    | Ast.Method_call (Ast.Var (tn, _), case, args, span) when Hashtbl.mem enums tn -> (
+    | Ast.Method_call (Ast.Var (tn, _), case, args, span) when lookup tn = None && Hashtbl.mem enums tn -> (
         let el = Hashtbl.find enums tn in
         match Types.case_payload el case with
         | Some tys ->

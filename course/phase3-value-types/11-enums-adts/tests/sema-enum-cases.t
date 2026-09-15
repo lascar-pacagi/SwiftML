@@ -19,6 +19,21 @@ An unknown case is reported on the enum type.
           ^
   [1]
 
+A local binding SHADOWS the enum name, as it does in Swift: inside `f` the name is a value, so
+`Color.red` is a member lookup on `Int` rather than an enum case.
+
+  $ cat > shadow.swift <<'EOF'
+  > enum Color { case red, green }
+  > func f() -> Bool {
+  >   let Color = 7
+  >   return Color.red == Color.red
+  > }
+  > EOF
+  $ python3 timeout.py 2 ./lab.exe --typecheck shadow.swift 2>&1 | head -3
+  4:10: error: value of type 'Int' has no member 'red'
+    return Color.red == Color.red
+           ^
+
 A payload case requires its arguments.
 
   $ printf 'enum E { case value(Int) }\nlet e = E.value\n' > missing.swift
