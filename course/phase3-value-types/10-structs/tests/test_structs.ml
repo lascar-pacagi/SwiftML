@@ -108,6 +108,33 @@ let test_struct_tokens () =
 
 (* --- TODO(10b): declarations --- *)
 
+(* Spans are invisible in the dump above, so nothing else here can tell a declaration that starts
+   at its `struct` keyword from one that starts at its NAME. Every diagnostic reported against a
+   whole struct is positioned by this span, so pin it beside the parser that produces it —
+   otherwise the only thing that notices a wrong one is a Sema golden, and the red lands a stage
+   away from the line that caused it. *)
+let struct_decl_start (src : string) : int * int =
+  let rec first = function
+    | Ast.IStruct struct_declaration :: _ ->
+        ( struct_declaration.Ast.sspan.Token.lo.Token.line,
+          struct_declaration.Ast.sspan.Token.lo.Token.col )
+    | _ :: rest -> first rest
+    | [] -> Alcotest.fail "expected the program to contain a struct declaration"
+  in
+  first (parse src).Ast.items
+
+let test_struct_decl_span () =
+  Alcotest.(check (pair int int))
+    "a struct declaration starts at its `struct` keyword, not at its name" (1, 1)
+    (struct_decl_start "struct Box { var value: Int }");
+  (* indented, so a span that merely hard-codes column 1 is not mistaken for the keyword *)
+  Alcotest.(check (pair int int))
+    "and it follows the keyword when the declaration is indented" (1, 3)
+    (struct_decl_start "  struct Box { var value: Int }");
+  Alcotest.(check (pair int int))
+    "and onto the line the keyword is on" (2, 1)
+    (struct_decl_start "let n = 1\nstruct Box { var value: Int }")
+
 let test_parse_struct_decl () =
   Alcotest.(check string)
     "ordered fields retain var/let and written types"
@@ -346,6 +373,8 @@ let () =
         [
           Alcotest.test_case "stored properties in source order" `Quick
             test_parse_struct_decl;
+          Alcotest.test_case "declaration span is the keyword" `Quick
+            test_struct_decl_span;
         ] );
       ( "parser-struct-uses",
         [
