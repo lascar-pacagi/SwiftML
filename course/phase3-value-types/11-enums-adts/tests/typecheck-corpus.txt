@@ -16,3 +16,4 @@ enum Color { case red, green }\nprint(Color.red + Color.green)
 enum Color { case red, green }\nlet c = Color.red\nprint(c.x)
 enum Shape { case circle(Nope) }
 enum Color { case red, green }\nlet c = Color.red\nc = Color.green
+struct Task {\n  var level: Level\n}\nenum Level {\n  case low\n  case high\n}\nlet t = Task(level: Level.high)\nprint(t.level == Level.high)

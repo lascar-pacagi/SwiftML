@@ -14,6 +14,39 @@ An enum type may appear in a function signature before its declaration.
   > EOF
   $ python3 timeout.py 2 ./lab.exe --typecheck forward.swift
 
+A struct field may be typed by an enum declared LATER in the file. The first walk registers
+every name before any layout is read, so a declaration written above an enum can still name it.
+
+  $ cat > later.swift <<'EOF'
+  > struct Task {
+  >   var level: Level
+  > }
+  > enum Level {
+  >   case low
+  >   case high
+  > }
+  > let t = Task(level: Level.high)
+  > EOF
+  $ python3 timeout.py 2 ./lab.exe --typecheck later.swift
+
+A case the enum does not declare is reported against it, not accepted by the empty placeholder.
+Registering the name is only half of PASS 0; the case list arrives in the second walk.
+
+  $ cat > unknown-later.swift <<'EOF'
+  > struct Task {
+  >   var level: Level
+  > }
+  > enum Level {
+  >   case low
+  > }
+  > let t = Task(level: Level.high)
+  > EOF
+  $ python3 timeout.py 2 ./lab.exe --typecheck unknown-later.swift
+  7:21: error: type 'Level' has no member 'high'
+  let t = Task(level: Level.high)
+                      ^
+  [1]
+
 This concept's runtime layout has Int payload slots, so another associated-value type is
 rejected before it reaches IRGen.
 
