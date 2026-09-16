@@ -268,6 +268,16 @@ let test_tag_compare_sil () =
 
 (* TODO(11h): payload SIL construction. *)
 
+(* TODO(11i): `.rawValue` is the tag read — one instruction on the enum value, typed Int. *)
+let test_rawvalue_sil () =
+  let out = sil "enum Dir: Int { case north, south, east }\nprint(Dir.east.rawValue)\n" in
+  Alcotest.(check int) "exactly one tag read" 1 (count out "enum_tag");
+  Alcotest.(check bool)
+    "reads the enum value itself, nothing in between" true
+    (contains out "%1 = enum_tag %0");
+  Alcotest.(check bool)
+    "no payload extraction involved" false (contains out "enum_payload")
+
 let test_payload_sil () =
   sil_has (shape ^ "let s = Shape.rect(3, 4)")
     "enum #1 (%0, %1) $Shape";
@@ -284,7 +294,7 @@ let test_payload_order_sil () =
   Alcotest.(check int)
     "both operands are literals" 2 (count output "integer_literal")
 
-(* TODO(11i): LLVM tagged unions. *)
+(* TODO(11j): LLVM tagged unions. *)
 
 let test_llvm_shape () =
   ir_has (color ^ "let c = Color.green") "%Color = type { i64 }";
@@ -335,6 +345,8 @@ let () =
           Alcotest.test_case "== is two enum_tag reads" `Quick
             test_tag_compare_sil;
         ] );
+      ( "silgen-rawvalue",
+        [ Alcotest.test_case "rawValue is the tag read" `Quick test_rawvalue_sil ] );
       ( "silgen-payload",
         [
           Alcotest.test_case "rect(3,4) is enum #1 (a,b)" `Quick

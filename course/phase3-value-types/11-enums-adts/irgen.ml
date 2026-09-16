@@ -1,5 +1,5 @@
 (* IRGen — concept 11 skeleton. Carries the struct compiler complete; you add the enum
-   instructions (TODO(11i)). Lower a SIL module to LLVM IR text.
+   instructions (TODO(11j)). Lower a SIL module to LLVM IR text.
 
    The mapping is almost one-to-one because raw SIL is already memory-based with basic
    blocks, just like LLVM: alloc_stack -> alloca, load/store -> load/store, a SIL block ->
@@ -156,10 +156,10 @@ let emit_llvm (m : Sil.modul) : string =
           bind_operand v r
       (* enums — concept 11: a tagged union { tag at #0, payload at #1.. } *)
       | Sil.Enum _ | Sil.Enum_tag _ ->
-          (* TODO(11i): lower the two enum instructions. The tag occupies
+          (* TODO(11j): lower the two enum instructions. The tag occupies
              field #0 and payload operands start at field #1. See explainer §3. *)
           ignore (v, i);
-          failwith "TODO(11i): lower enum and enum_tag"
+          failwith "TODO(11j): lower enum and enum_tag"
     in
     let gen_term (t : Sil.term) =
       match t with

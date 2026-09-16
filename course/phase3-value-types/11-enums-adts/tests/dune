@@ -25,7 +25,7 @@
  (deps lab.exe timeout.py))
 
 (cram
- (applies_to silgen-case silgen-payload)
+ (applies_to silgen-case silgen-payload silgen-rawvalue)
  (runtest_alias false)
  (deps lab.exe timeout.py))
 

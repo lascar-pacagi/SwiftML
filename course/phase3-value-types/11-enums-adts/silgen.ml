@@ -159,7 +159,11 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
           let sl = Hashtbl.find b.structs sn in
           emit b (Sil.Struct_extract (sv, Option.get (Types.field_index sl fld)))
             (Option.get (Types.field_type sl fld))
-      | Types.TEnum _ -> emit b (Sil.Enum_tag sv) Types.TInt (* `.rawValue` = the tag *)
+      (* TODO(11i): `.rawValue` on an enum. Sema has already established that the
+         enum was declared `: Int`, so there is nothing to CHECK here — only the
+         read. §2's SIL table names the instruction that yields the case index,
+         and says what type that index has. See explainer §3. *)
+      | Types.TEnum _ -> failwith "TODO(11i): lower `.rawValue` to the tag read"
       | _ -> assert false)
   (* `E.case(args)` — a payload-carrying enum case (concept 11) *)
   | Ast.Method_call (Ast.Var (tn, _), case, args, _) when (not (Hashtbl.mem b.vars tn)) && Hashtbl.mem b.enums tn ->
