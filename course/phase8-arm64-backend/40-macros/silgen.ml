@@ -505,7 +505,8 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
      yields inside), so it lowers to just the awaited expression *)
   | Ast.Await (e0, _) -> gen_expr b e0
   (* `Task.yield()` — concept 38: cooperatively yield to the executor (a runtime call) *)
-  | Ast.Method_call (Ast.Var ("Task", _), "yield", [], _) ->
+  | Ast.Method_call (Ast.Var ("Task", _), "yield", [], _)
+    when not (Hashtbl.mem b.vars "Task") ->
       let fr = emit b (Sil.Func_ref "rt_async_yield") Types.TVoid in
       emit b (Sil.Apply (fr, [])) Types.TVoid
   (* `E.case(args)` — a payload-carrying enum case (concept 11) *)

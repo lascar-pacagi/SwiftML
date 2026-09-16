@@ -1,0 +1,2 @@
+func f() -> Int {\n  let Task = 5\n  return Task + 1\n}\nprint(f())
+func f() -> Int {\n  let Task = 5\n  Task.yield()\n  return Task\n}\nprint(f())

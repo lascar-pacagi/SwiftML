@@ -264,7 +264,8 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         | None -> err span (Printf.sprintf "type '%s' has no member '%s'" tn case); Types.TEnum tn)
     (* `super.init(args)` — only inside a subclass initializer (concept 25) *)
     (* `Task.yield()` — concept 38: the cooperative-yield suspension primitive (Task is contextual) *)
-    | Ast.Method_call (Ast.Var ("Task", _), "yield", [], _) -> Types.TVoid
+    | Ast.Method_call (Ast.Var ("Task", _), "yield", [], _) when lookup "Task" = None ->
+        Types.TVoid
     | Ast.Method_call (Ast.Var ("super", _), "init", args, span) -> (
         let exprs = List.map snd args in
         match (!current_class, !in_init) with
