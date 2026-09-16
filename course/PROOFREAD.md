@@ -163,7 +163,28 @@ block bodies disagree about the same rule. Present from concept 06 onward (every
   productions were the other half of the bug — they read `{ statement NEWLINE }`, forcing a newline
   before the closing brace — and are now `{ statement NEWLINE } [ statement ]`.
 
-### 10. Smaller S1s
+### 10. A local binding does not shadow an enum name  **[FIXED 2026-09-16]** *(found by a learner reading `sema.ml`)*
+`E.case` and `p.x` parse to the same tree, `Ast.Member (Ast.Var …, …)`, so name resolution decides
+which one it is. Both Sema and SILGen decided by asking the enum registry **only** — never whether
+the name was bound as a value — so the type reading always won. Swift's rule is the opposite: a
+local binding shadows a type name, and the value wins.
+
+Two bugs, one root cause, and the second is only reachable once the first is fixed:
+- **Sema, wrong verdict.** `enum Color { case red }` with `let Color = 7` in scope accepted
+  `Color.red` as an enum case. swiftc: `value of type 'Int' has no member 'red'`.
+- **SILGen, miscompile.** With Sema corrected, `let E = S(a: 42); return E.a` types as `Int` and
+  then lowered as enum construction — `%E` where `i64` was wanted, surfacing as an IRGen type
+  error. swiftc prints 42.
+- *Fix:* ask the value scope first — `when lookup tn = None && Hashtbl.mem enums tn` in sema
+  (86 guards, 37 files), `when (not (Hashtbl.mem b.vars tn)) && Hashtbl.mem b.enums tn` in silgen
+  (88 guards, 44 files). The existing member arm already emits swiftc's wording for a non-struct
+  receiver, so only the lookup ORDER was wrong; no new diagnostic.
+- *Pinned by:* concept 11's `oracle-corpus.txt` (both programs) and
+  `comparisons/programs/33_shadowing.swift`, which covers struct-shadowed, unshadowed and
+  Int-shadowed through `swiftml9` at both optimisation levels.
+- *Still open, same cause:* the `Ast.Call` form — see S3's first entry.
+
+### 11. Smaller S1s
 - **Integer-literal overflow crashes the lexer** (uncaught `Failure` from `int_of_string` on
   `> 2^62`) instead of swiftc's clean "integer literal overflows" diagnostic.
   `phase1/01-lexer/solution/lexer.ml:106`. *(phase 0–1 & 2 reviews)*
@@ -217,7 +238,7 @@ block bodies disagree about the same rule. Present from concept 06 onward (every
 - **A local binding does not shadow a struct or function name when it is CALLED** *(found
   2026-09-16, while fixing the enum half of the same bug)* — `let S = 7` followed by `S(x: 1)` is
   accepted and builds the struct, where swiftc reports `cannot call value of non-function type
-  'Int'`. Same root cause as the two enum fixes recorded underneath: name resolution asks the
+  'Int'`. Same root cause as S1 #10: name resolution asks the
   type/function tables without first asking the value scope. `infer_call` in `sema.ml`, every
   concept from 10 on.
   **[OPEN]** — deliberately. It is the mildest of the three (we accept a program swiftc rejects;
@@ -226,11 +247,7 @@ block bodies disagree about the same rule. Present from concept 06 onward (every
   binding has a function type, else diagnose", i.e. two different correct behaviours in a function
   carried through ~30 files. Concept 29 is where it gets cheap, because the callable-or-not
   question has to be answered there anyway for closures.
-  - *The two that were fixed:* the same blindness in `Ast.Member`/`Ast.Method_call` was a wrong
-    verdict in Sema (`let Color = 7; Color.red` accepted) and then a miscompile in SILGen
-    (`let E = S(a: 42); E.a` lowered as enum construction, IRGen type error). Both now ask the
-    value scope first — `lookup` in sema, `b.vars` in silgen — and are pinned by concept 11's
-    `oracle-corpus.txt` and `comparisons/programs/33_shadowing.swift`.
+  - *The two that were fixed,* the `Ast.Member` / `Ast.Method_call` forms, are S1 #10.
 
 - **Newline before `else`** is rejected (`if c { } \n else { }`) though swiftc accepts it; the
   parser is newline-tolerant before `catch` but not `else`. *Caught by 03/20 in the suite.*
