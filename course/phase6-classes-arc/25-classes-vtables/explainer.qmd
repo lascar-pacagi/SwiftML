@@ -142,6 +142,10 @@ postfix     ::= primary { "." ident [ "(" [ arg { "," arg } ] ")" ] | "!"
 nl          ::= NEWLINE { NEWLINE }   # one or more: a run of blank lines is one separator
 ```
 
+*Productions named but not shown — `func_decl`, `param`, `block`, `statement`, `primary`, `arg`,
+`struct_decl`, `enum_decl`, `proto_decl` — are unchanged from the concepts that introduced them
+(07, 10, 11, 21); this block recalls only what this concept adds or alters.*
+
 Four things to notice. A class body is a *different* production from a struct body — it admits
 `init` and `override`, which a struct body does not, and it admits no conformance clause (class
 conformance to a protocol is an exercise). `super.init` is parsed in `parse_primary`, not as a

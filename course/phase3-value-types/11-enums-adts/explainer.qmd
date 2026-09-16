@@ -205,6 +205,11 @@ enum_decl   ::= "enum" ident [ ":" ident ] "{"                     <-- new (the 
                   [ nl ] [ case_line { nl case_line } ] [ nl ] "}"
 case_line   ::= "case" case { "," case }                           <-- new (several per line)
 case        ::= ident [ "(" ident { "," ident } ")" ]              <-- new (associated values)
+struct_decl ::= "struct" ident "{" [ nl ] [ field { nl field } ] [ nl ] "}"
+field       ::= ("var" | "let") ident ":" type
+func_decl   ::= "func" ident "(" [ param { "," param } ] ")" [ "->" type ] block
+param       ::= [ label ] ident ":" type
+block       ::= "{" [ nl ] [ statement { nl statement } ] [ nl ] "}"
 
 statement   ::= ("let" | "var") ident [ ":" type ] "=" expr
               | ident "=" expr

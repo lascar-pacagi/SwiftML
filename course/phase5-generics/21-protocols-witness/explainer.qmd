@@ -112,6 +112,10 @@ postfix     ::= primary { "." ident [ "(" [ arg { "," arg } ] ")" ] | "!" }
 nl          ::= NEWLINE { NEWLINE }   # one or more: a run of blank lines is one separator
 ```
 
+*Productions named but not shown — `func_decl`, `param`, `statement`, `primary`, `arg`,
+`enum_decl` — are unchanged from the concepts that introduced them (07, 10, 11); this block
+recalls only what this concept adds or alters.*
+
 Three things to notice. A requirement is a `func` header with **no body** — the parser reuses
 `parse_func` and stops at the newline, and the *order* of the requirements is the witness table's
 slot numbering, so it is load-bearing syntax. A conformance clause is a comma-separated list of
