@@ -180,8 +180,12 @@ Two bugs, one root cause, and the second is only reachable once the first is fix
   (88 guards, 44 files). The existing member arm already emits swiftc's wording for a non-struct
   receiver, so only the lookup ORDER was wrong; no new diagnostic.
 - *Pinned by:* concept 11's `oracle-corpus.txt` (both programs) and
-  `comparisons/programs/33_shadowing.swift`, which covers struct-shadowed, unshadowed and
-  Int-shadowed through `swiftml9` at both optimisation levels.
+  `comparisons/programs/33_shadowing.swift`, which covers struct-shadowed, unshadowed,
+  Int-shadowed and class-method-shadowed through `swiftml9` at both optimisation levels.
+- *Where each half bites:* the `Ast.Member` guard matters from concept 11, the `Ast.Method_call`
+  one only from concept 25. Before then a method call on a shadowed name is a Sema error, so
+  SILGen never sees it; once classes add methods, Sema accepts `E.a()` as a method call and the
+  guard is all that stops it lowering as enum construction (`%E` where `i64` was wanted).
 - *Still open, same cause:* the `Ast.Call` form — see S3's first entry.
 
 ### 11. Smaller S1s

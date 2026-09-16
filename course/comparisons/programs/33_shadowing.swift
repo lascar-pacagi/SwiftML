@@ -19,6 +19,20 @@ func shadowedByInt(_ n: Int) -> Int {
   return Color + 1              // the value, plainly
 }
 
+// From concept 25 on, methods exist, so a shadowed name can legitimately be a method RECEIVER.
+// Sema resolves `E.a()` to C's method; SILGen must not read it as `E.a` the enum case.
+class Counter {
+  var v: Int
+  init(_ n: Int) { v = n }
+  func red() -> Int { return v }
+}
+
+func shadowedByClass() -> Int {
+  let Color = Counter(7)
+  return Color.red()            // a method call, not Color.red the enum case
+}
+
 print(shadowedByStruct())
+print(shadowedByClass())
 print(notShadowed())
 print(shadowedByInt(7))
