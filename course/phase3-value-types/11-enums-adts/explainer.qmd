@@ -367,21 +367,33 @@ the last concept.
 | `enum #t (payload…)` | build a value of case `t` | `insertvalue` (tag at #0, payload at #1…) |
 | `%tag = enum_tag %enum` | read the enum's numeric case index as an `Int` | `%tag = extractvalue %E %enum, 0` |
 
-`%enum` is the whole value, not its payload: the tag first, then the payload slots. The type
-carries one tag slot plus as many payload slots as the *widest* case needs, so every value of
-`enum Shape { case circle(Int), rect(Int, Int), dot }` has the same shape,
-`%Shape = type { i64, i64, i64 }`, however little a particular case uses. That is what IRGen emits
-for `Shape.rect(3, 4)` and then for `Shape.dot`:
+Both are easiest to read as real output. With `enum Shape { case circle(Int), rect(Int, Int),
+dot }` and `enum Dir: Int { case north, south }` in scope, `--emit-sil` prints:
+
+```
+%2 = enum #1 (%0, %1) $Shape   ; Shape.rect(3, 4) — case index 1, then its two values
+%5 = enum #2 () $Shape         ; Shape.dot — an index, and no payload
+%8 = enum #1 () $Dir           ; Dir.south
+%9 = enum_tag %8               ; reads that index back out, as an Int
+```
+
+A case is an **index**, not a name: `#1` means *the one declared second*. That is why the layout
+built in `TODO(11d)` must preserve declaration order, and why `.rawValue` on an enum with implicit
+raw values is simply this index.
+
+`%enum` is the whole value, not its payload. The LLVM type carries one tag slot plus as many
+payload slots as the *widest* case needs, so every `Shape` has the same shape,
+`%Shape = type { i64, i64, i64 }`, however little a particular case uses:
 
 ```llvm
-%t2 = insertvalue %Shape undef, i64 1, 0   ; rect is case index 1 …
-%t3 = insertvalue %Shape %t2,   i64 3, 1   ; … then its two payload values
+%t2 = insertvalue %Shape undef, i64 1, 0   ; the tag …
+%t3 = insertvalue %Shape %t2,   i64 3, 1   ; … then the payload values
 %t4 = insertvalue %Shape %t3,   i64 4, 2
 %t5 = insertvalue %Shape undef, i64 2, 0   ; dot writes a tag and nothing else
 ```
 
-`enum_tag` reads slot 0, so on `%t4` it gives `1`. That result is an `Int` in SwiftML and an `i64`
-in LLVM. `%E` in the table above is a placeholder for the enum's named type — `%Shape` here.
+`enum_tag` becomes `extractvalue`, reading slot 0. Its result is an `Int` in SwiftML and an `i64`
+in LLVM; `%E` in the table above stands for the enum's named type — `%Shape` here.
 
 Real Swift SIL uses `enum` to construct a case. To inspect it, Swift normally uses `switch_enum`
 to branch by case or `select_enum` to choose a value by case; it does not first turn the case into
