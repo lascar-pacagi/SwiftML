@@ -1,5 +1,6 @@
 TODO(11i) `.rawValue` lowering — an enum declared `: Int` reads its case index. Sema has already
 decided the read is legal, so SILGen only emits the instruction that produces the index.
+`--emit-sil` stops at this stage; the built program's OUTPUT is `irgen-enums.t`'s business.
 
 A raw-value read is one instruction on the enum value, and its result is an `Int`.
 
@@ -15,8 +16,3 @@ The value it reads is the whole enum, not a payload, so no extract or load stand
 
   $ python3 timeout.py 2 ./lab.exe --emit-sil raw.swift | grep -c 'enum_tag'
   1
-
-With implicit raw values the index IS the raw value, so the program prints the case's position.
-
-  $ python3 timeout.py 2 ./lab.exe build raw.swift -o raw && python3 timeout.py 2 ./raw
-  2
