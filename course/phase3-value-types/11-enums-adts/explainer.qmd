@@ -158,7 +158,8 @@ Without pattern matching you still have two useful operations, and both reduce t
 
 - **`.rawValue`** on a `: Int` raw-value enum is the case's raw integer. With Swift's implicit raws
   (`north = 0, south = 1, …`) the raw value *is* the tag, so `Dir.south.rawValue` is just the tag, `1`.
-- **`==`** on a payload-free enum compares the tags: `Color.green == Color.green` is `tag == tag`.
+- **`==`** on an enum where *no* case carries a payload compares the tags:
+  `Color.green == Color.green` is `tag == tag`.
 
 There's a real parity subtlety here, and we match swiftc on both sides of it: a payload-free enum is
 **implicitly `Equatable`**, so `==` just works; but an **associated-value** enum's `==` has to compare
@@ -166,6 +167,10 @@ payloads *per case*, which Swift only synthesizes when you declare `: Equatable`
 Equatable). Without that conformance, swiftc **rejects** `Shape.circle(5) == …` — and so do we
 ("type 'Shape' does not conform to protocol 'Equatable'"). Tag-only equality would be *wrong*
 (`circle(5)` would equal `circle(6)`), so refusing it is the correct, faithful behaviour.
+
+Conformance belongs to the *type*, not to the case in hand. So in `enum E { case a(Int), b }` even
+`E.b == E.b` is refused, though both operands are payload-free: the type being compared is `E`, and
+`E` has an associated value in it. Your check reads the layout, not the operands.
 
 ### Why you can't read a payload yet
 
