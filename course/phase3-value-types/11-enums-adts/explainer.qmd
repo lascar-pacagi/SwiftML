@@ -411,11 +411,20 @@ through every compiler stage in nine holes:
    concept accepts only `Int` payloads and `Int` raw types; diagnose other resolved types before
    they reach the fixed `i64` LLVM payload slots.
 
-5. **`sema.ml`, `TODO(11e)` — type enum construction.** For `E.case`, find `E`, then find the case
-   in its layout. It is a value only when its payload list is empty. For `E.case(args)`, check the
-   case exists, compare the two list lengths, then check each argument against the corresponding
-   payload type. Both forms have type `Types.TEnum E`, including after a diagnostic so later
-   checking can continue.
+5. **`sema.ml`, `TODO(11e)` — type enum construction.** The parser has already separated the two
+   spellings, so this is two arms, and each owns one of the two arity diagnostics:
+
+   | the arm you are in | what can be wrong | the message |
+   |---|---|---|
+   | `Ast.Member` — `E.case`, no argument list written | the case declares a payload | `enum case 'E.a' requires arguments` |
+   | `Ast.Method_call` — `E.case(args)` | the list is the wrong length | `enum case 'S.pair' expects 2 associated value(s) but 1 given` |
+
+   In other words `Member` asks *should there have been parentheses?* and `Method_call` asks *were
+   there the right number of things inside them?* — you never have to choose between the messages,
+   the node you matched decides. Otherwise both arms do the same thing: find `E`, find the case in
+   its layout (absent ⇒ `type 'E' has no member 'x'`), and in the call form check each argument
+   against its declared payload type. Both produce `Types.TEnum E`, including after a diagnostic,
+   so later checking can continue.
 
 6. **`sema.ml`, `TODO(11f)` — type enum observation.** A `.rawValue` read produces `Int` only when
    the enum layout records a raw type; otherwise use the normal missing-member diagnostic. For
