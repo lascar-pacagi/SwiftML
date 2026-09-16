@@ -147,7 +147,7 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
         emit b (Sil.Apply (fr, argvs)) ret)
       else emit b (Sil.Print (List.hd argvs)) Types.TVoid
   (* `E.case` — a no-payload enum case (concept 11) *)
-  | Ast.Member (Ast.Var (tn, _), case, _) when Hashtbl.mem b.enums tn ->
+  | Ast.Member (Ast.Var (tn, _), case, _) when (not (Hashtbl.mem b.vars tn)) && Hashtbl.mem b.enums tn ->
       (* TODO(11g): a case with no payload — its tag is its index in the
          declaration. See explainer §3. *)
       ignore (tn, case);
@@ -162,7 +162,7 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       | Types.TEnum _ -> emit b (Sil.Enum_tag sv) Types.TInt (* `.rawValue` = the tag *)
       | _ -> assert false)
   (* `E.case(args)` — a payload-carrying enum case (concept 11) *)
-  | Ast.Method_call (Ast.Var (tn, _), case, args, _) when Hashtbl.mem b.enums tn ->
+  | Ast.Method_call (Ast.Var (tn, _), case, args, _) when (not (Hashtbl.mem b.vars tn)) && Hashtbl.mem b.enums tn ->
       (* TODO(11h): the same instruction, carrying the evaluated arguments
          as its payload. See explainer §3. *)
       ignore (tn, case, args);

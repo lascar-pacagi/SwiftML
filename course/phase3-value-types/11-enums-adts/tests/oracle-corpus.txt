@@ -15,3 +15,4 @@ enum Tri: Int { case lo, mid, hi }\nlet t = Tri.mid\nif t.rawValue > 0 {\n  prin
 enum Color { case red, green }\nvar hits = 0\nvar i = 0\nwhile i < 10 {\n  var c = Color.green\n  if i % 2 == 0 { c = Color.red }\n  if c == Color.red { hits = hits + 1 }\n  i = i + 1\n}\nprint(hits)
 enum Kind: Int { case a, b, c, d, e }\nprint(Kind.e.rawValue - Kind.a.rawValue)\nprint(Kind.c.rawValue == 2)
 enum E: Int { case a, rawValue }\nprint(E.rawValue.rawValue)\nprint(E.a.rawValue)\nprint(E.rawValue == E.rawValue)\nprint(E.a == E.rawValue)
+enum E { case a }\nstruct S { var a: Int }\nfunc f() -> Int {\n  let E = S(a: 42)\n  return E.a\n}\nprint(f())

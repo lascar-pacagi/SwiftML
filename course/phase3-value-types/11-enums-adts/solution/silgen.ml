@@ -147,7 +147,7 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       else emit b (Sil.Print (List.hd argvs)) Types.TVoid
   (* `E.case` — a no-payload enum case (concept 11) *)
   | Ast.Member (Ast.Var (type_name, _), case_name, _)
-    when Hashtbl.mem b.enums type_name ->
+    when (not (Hashtbl.mem b.vars type_name)) && Hashtbl.mem b.enums type_name ->
       let layout = Hashtbl.find b.enums type_name in
       let case_index = Option.get (Types.case_index layout case_name) in
       emit b (Sil.Enum (case_index, [])) (Types.TEnum type_name)
@@ -162,7 +162,7 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       | _ -> assert false)
   (* `E.case(args)` — a payload-carrying enum case (concept 11) *)
   | Ast.Method_call (Ast.Var (type_name, _), case_name, args, _)
-    when Hashtbl.mem b.enums type_name ->
+    when (not (Hashtbl.mem b.vars type_name)) && Hashtbl.mem b.enums type_name ->
       let layout = Hashtbl.find b.enums type_name in
       let argument_values = List.map (fun (_, e) -> gen_expr b e) args in
       let case_index = Option.get (Types.case_index layout case_name) in
