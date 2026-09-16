@@ -329,17 +329,31 @@ identifier has been established to name a type, not a variable:
   when lookup type_name = None && Hashtbl.mem enums type_name -> …
 ```
 
-`lookup` comes first because a local binding shadows a type name: with `let Color = 7` in scope,
-`Color.red` is a member lookup on `Int`, and swiftc says exactly that. (At *file* scope Swift
-gives a value and a type one namespace, making `enum Color` beside `let Color` a redeclaration.
-We accept it — a divergence of this subset.)
+Two things about that arm are forced rather than stylistic. It has to match the **syntax** —
+`Ast.Var` — because the type-directed route is not open to it. `Color` lives in the enum registry
+and never in `env`, so `infer` on the receiver would emit `cannot find 'Color' in scope` for every
+correct enum-case expression in the file, then return `TInt` and send you off down the
+struct-field path: one wrong question, two wrong answers. For the same reason the arm must come
+**before** the general `Ast.Member` arm, which is the one that infers its receiver. Swap them and
+every `E.case` breaks.
+
+It is also why the guard asks `lookup` and not `infer`. Both answer *is this name bound?*, but
+`lookup` returns an option silently while `infer` **reports** — and a guard runs on arms that may
+not match, so it must not be able to emit anything. When the name is bound the arm simply
+declines, and the general arm re-asks with `infer`, legitimately this time, reporting against the
+binding's real type.
+
+That is the shadowing case: with `let Color = 7` in scope, `Color.red` is a member lookup on
+`Int`, and swiftc says exactly that. (At *file* scope Swift gives a value and a type one
+namespace, making `enum Color` beside `let Color` a redeclaration. We accept it — a divergence of
+this subset.)
 
 swiftc asks the same question once instead of at every use: unqualified lookup rewrites the base
 into a separate `TypeExpr` node before type-checking (`swift/lib/Sema/PreCheckTarget.cpp`), so
 the answer is recorded in the tree. Asking inline is enough here because enum-case construction
-is the only place a type appears in expression position — a struct's initializer is an
-`Ast.Call` holding its name as a string, `e as T` keeps its name in `Ast.Ascribe` — and that
-stays true to the last concept, so nothing you write later has to undo it.
+is the only place a type appears in expression position — a struct's initializer is an `Ast.Call`
+holding its name as a string, `e as T` keeps its name in `Ast.Ascribe` — and that stays true to
+the last concept.
 
 ### The new SIL instructions (swiftc's shape)
 
