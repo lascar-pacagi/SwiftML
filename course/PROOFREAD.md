@@ -214,6 +214,24 @@ block bodies disagree about the same rule. Present from concept 06 onward (every
 
 ## S3 — parity divergences (mostly documented v0 limits)
 
+- **A local binding does not shadow a struct or function name when it is CALLED** *(found
+  2026-09-16, while fixing the enum half of the same bug)* — `let S = 7` followed by `S(x: 1)` is
+  accepted and builds the struct, where swiftc reports `cannot call value of non-function type
+  'Int'`. Same root cause as the two enum fixes recorded underneath: name resolution asks the
+  type/function tables without first asking the value scope. `infer_call` in `sema.ml`, every
+  concept from 10 on.
+  **[OPEN]** — deliberately. It is the mildest of the three (we accept a program swiftc rejects;
+  no correct program misbehaves) and by far the riskiest to change: from concept 29 a bound name
+  CAN be callable, so the fix is not "reject a shadowed call" but "call it indirectly when the
+  binding has a function type, else diagnose", i.e. two different correct behaviours in a function
+  carried through ~30 files. Concept 29 is where it gets cheap, because the callable-or-not
+  question has to be answered there anyway for closures.
+  - *The two that were fixed:* the same blindness in `Ast.Member`/`Ast.Method_call` was a wrong
+    verdict in Sema (`let Color = 7; Color.red` accepted) and then a miscompile in SILGen
+    (`let E = S(a: 42); E.a` lowered as enum construction, IRGen type error). Both now ask the
+    value scope first — `lookup` in sema, `b.vars` in silgen — and are pinned by concept 11's
+    `oracle-corpus.txt` and `comparisons/programs/33_shadowing.swift`.
+
 - **Newline before `else`** is rejected (`if c { } \n else { }`) though swiftc accepts it; the
   parser is newline-tolerant before `catch` but not `else`. *Caught by 03/20 in the suite.*
 - **Multi-line collection literals** are rejected — a newline inside `[ … ]` was treated as a
