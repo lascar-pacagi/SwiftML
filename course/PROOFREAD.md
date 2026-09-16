@@ -183,9 +183,16 @@ Two bugs, one root cause, and the second is only reachable once the first is fix
   `comparisons/programs/33_shadowing.swift`, which covers struct-shadowed, unshadowed,
   Int-shadowed and class-method-shadowed through `swiftml9` at both optimisation levels.
 - *Where each half bites:* the `Ast.Member` guard matters from concept 11, the `Ast.Method_call`
-  one only from concept 25. Before then a method call on a shadowed name is a Sema error, so
-  SILGen never sees it; once classes add methods, Sema accepts `E.a()` as a method call and the
-  guard is all that stops it lowering as enum construction (`%E` where `i64` was wanted).
+  one from concept **21** — where methods on structs arrive, "a prerequisite we owed from concept
+  10", not concept 25 where classes get theirs. Before 21 a method call on a shadowed name is a
+  Sema error, so SILGen never sees it; from 21 Sema accepts `E.a()` as a method call on the
+  binding and the guard is all that stops it lowering as enum construction. Checked against the
+  pre-fix tree at 21: `%E` where `i64` was wanted.
+- *Why the list of vulnerable arms is closed:* only an arm that matches a bare `Ast.Var` in
+  RECEIVER position and then looks that name up in a table can be fooled. Ordinary method
+  dispatch is safe at any concept because it resolves through `infer e0` — the receiver's type,
+  not its spelling. A `static func` would reintroduce the problem, and the subset never adds one:
+  `static` is not a keyword, is never parsed, and appears in no explainer or in `PLAN.md`.
 - *Still open, same cause:* the `Ast.Call` form — see S3's first entry.
 
 ### 11. Smaller S1s
