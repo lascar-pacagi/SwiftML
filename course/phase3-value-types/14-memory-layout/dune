@@ -2,7 +2,7 @@
 (library
  (name swiftml_layout)
  (wrapped false)
- (modules token diagnostics types lexer ast parser sema sil silgen irgen driver layout)
+ (modules token diagnostics types lexer ast tast parser sema sil silgen irgen driver layout)
  (flags
   (:standard -warn-error -a)))
 
