@@ -1,5 +1,5 @@
 (* Sema — concept 12 (skeleton). Carries 05–11 complete; you add the switch
-   EXHAUSTIVENESS check (the TODO(12-sema) hole in check_switch).
+   EXHAUSTIVENESS check (the TODO(12e) hole in check_switch).
 
    New vs 11: `switch` — each pattern checked against the subject, an enum-case pattern
    binding the case's associated values into that arm's scope, and (your hole) the
@@ -334,33 +334,19 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
     | Types.TEnum en ->
         let el = Hashtbl.find enums en in
         let covered = ref [] in
+        (* TODO(12d): type each arm's pattern against the enum, and check its body in a scope
+           where the payload BINDINGS are visible. A `.case` must exist on this enum; the number
+           of bindings must equal the case's payload arity; each `Ast.Bind x` enters the scope
+           with that payload's type and is immutable, while `Ast.Ignore` binds nothing. Record
+           the case name in `covered` — TODO(12e) needs it. An `Ast.PInt` cannot match an enum.
+           `in_scope` gives you a scope that is popped again; §2's table has the wording. §3. *)
         List.iter
           (fun (pat, body) ->
-            match pat with
-            | Ast.PEnumCase (cname, bindings) -> (
-                match Types.case_payload el cname with
-                | Some tys ->
-                    covered := cname :: !covered;
-                    let nb = List.length bindings and nt = List.length tys in
-                    if nb <> nt then
-                      err span
-                        (Printf.sprintf "pattern '.%s' binds %d value(s) but case '%s' has %d associated value(s)"
-                           cname nb cname nt);
-                    in_scope (fun () ->
-                        if nb = nt then
-                          List.iter2
-                            (fun b t -> match b with Ast.Bind x -> bind x (t, false) | Ast.Ignore -> ())
-                            bindings tys;
-                        List.iter check_stmt body)
-                | None ->
-                    err span (Printf.sprintf "type '%s' has no member '%s'" en cname);
-                    check_block body)
-            | Ast.PInt _ ->
-                err span (Printf.sprintf "expression pattern of type 'Int' cannot match values of type '%s'" en);
-                check_block body)
+            ignore (pat, body, el, covered, in_scope);
+            failwith "TODO(12d): type a switch arm and bind its payload")
           cases;
         Option.iter check_block default;
-        (* TODO(12-sema): EXHAUSTIVENESS — without a `default`, every case of the enum must be
+        (* TODO(12e): EXHAUSTIVENESS — without a `default`, every case of the enum must be
            matched, or it is an error in swiftc's words. §2. *)
         ignore covered
     | Types.TInt ->

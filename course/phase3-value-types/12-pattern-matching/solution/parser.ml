@@ -186,23 +186,38 @@ let parse_annot (p : t) : string option =
   else None
 
 (* `( (let name | _) , … )` — the bindings of an enum-case pattern (concept 12) *)
-(* `( let a, _, let b )` — what a case pattern binds out of a payload. `Ast.Bind name` keeps the
-   value under a name, `Ast.Ignore` drops it. The opening `(` is still the current token. *)
 let parse_bindings (p : t) : Ast.pat_binding list =
-  (* TODO(12b): consume the parenthesised, comma-separated binding list. Swift writes each
-     binding `let x`; `_` discards that position. Report `expected 'let name' or '_'` on
-     anything else and keep parsing. See explainer §3. *)
-  ignore p;
-  failwith "TODO(12b): parse a pattern's binding list"
+  ignore (advance p (* '(' *));
+  if peek_kind p = Token.RParen then (ignore (advance p); [])
+  else
+    let rec loop acc =
+      let b =
+        match peek_kind p with
+        | Token.Kw_let -> ignore (advance p); Ast.Bind (fst (parse_ident p "a binding name"))
+        | Token.Ident "_" -> ignore (advance p); Ast.Ignore
+        | Token.Ident _ -> Ast.Bind (fst (parse_ident p "a binding name")) (* lenient: bare name *)
+        | _ -> Diagnostics.error p.diags (peek p).Token.span "expected 'let name' or '_'"; Ast.Ignore
+      in
+      if peek_kind p = Token.Comma then (ignore (advance p); loop (b :: acc))
+      else (ignore (expect p Token.RParen "')'"); List.rev (b :: acc))
+    in
+    loop []
 
 (* a `case` pattern: `.name`, `.name(bindings)`, or an Int literal (concept 12) *)
 let parse_pattern (p : t) : Ast.pattern =
-  (* TODO(12b): three shapes — `.name` with or without bindings is an `Ast.PEnumCase`, an Int
-     literal is an `Ast.PInt`, and a leading `-` negates the literal that follows. Anything else
-     is `expected a 'case' pattern`; return a pattern anyway so checking continues. §3. *)
-  ignore (parse_bindings);
-  ignore p;
-  failwith "TODO(12b): parse a case pattern"
+  match peek_kind p with
+  | Token.Dot ->
+      ignore (advance p);
+      let name, _ = parse_ident p "an enum case name" in
+      let bindings = if peek_kind p = Token.LParen then parse_bindings p else [] in
+      Ast.PEnumCase (name, bindings)
+  | Token.Int n -> ignore (advance p); Ast.PInt n
+  | Token.Minus -> (
+      ignore (advance p);
+      match peek_kind p with
+      | Token.Int n -> ignore (advance p); Ast.PInt (-n)
+      | _ -> Diagnostics.error p.diags (peek p).Token.span "expected a pattern"; Ast.PInt 0)
+  | _ -> Diagnostics.error p.diags (peek p).Token.span "expected a 'case' pattern"; Ast.PInt 0
 
 (* a brace-delimited block, with `nl` one or more Newlines:
      block ::= "{" [ nl ] [ statement { nl statement } ] [ nl ] "}"
@@ -253,16 +268,47 @@ and parse_if (p : t) : Ast.stmt =
 (* `switch subject { case <pat>: <stmts> … [default: <stmts>] }` — concept 12. A case body runs
    until the next `case`/`default`/`}` (Swift cases don't fall through). *)
 and parse_switch (p : t) : Ast.stmt =
-  (* TODO(12c): `switch subject { case <pat>: <body> … [default: <body>] }`.
-     The subject is an ordinary expression; `parse_expr` already stops at the `{`. Each arm is
-     `case` + a pattern, or `default`, then `:`, then statements until the next `case`/`default`
-     or the closing `}` — an arm body is NOT brace-delimited, which is what makes its end a
-     lookahead rather than a token. Keep arm order; `default` is separate from the case list.
-     Report `expected 'case' or 'default'` on anything else, and ADVANCE past it so malformed
-     input cannot spin. Build `Ast.Switch { subject; cases; default; span }`. See explainer §3. *)
-  ignore (parse_pattern);
-  ignore p;
-  failwith "TODO(12c): parse a switch statement"
+  let kw = advance p (* switch *) in
+  let subject = parse_expr p in
+  ignore (expect p Token.LBrace "'{'");
+  let parse_case_body () =
+    let rec loop acc =
+      skip_newlines p;
+      match peek_kind p with
+      | Token.Kw_case | Token.Kw_default | Token.RBrace | Token.Eof -> List.rev acc
+      | _ ->
+          let s = parse_stmt p in
+          (* a declaration ends at a newline or at the body's `}` — `{ var x: Int var y: Int }`
+           is an error here as in Swift (`consecutive declarations on a line …`) *)
+        (match peek_kind p with
+        | Token.Newline -> ignore (advance p)
+        | Token.RBrace | Token.Eof -> ()
+        | _ -> Diagnostics.error p.diags (peek p).Token.span "expected newline or end of declaration");
+          loop (s :: acc)
+    in
+    loop []
+  in
+  let rec arms cs default =
+    skip_newlines p;
+    match peek_kind p with
+    | Token.RBrace -> ignore (advance p); (List.rev cs, default)
+    | Token.Eof -> ignore (expect p Token.RBrace "'}'"); (List.rev cs, default)
+    | Token.Kw_case ->
+        ignore (advance p);
+        let pat = parse_pattern p in
+        ignore (expect p Token.Colon "':'");
+        arms ((pat, parse_case_body ()) :: cs) default
+    | Token.Kw_default ->
+        ignore (advance p);
+        ignore (expect p Token.Colon "':'");
+        arms cs (Some (parse_case_body ()))
+    | _ ->
+        Diagnostics.error p.diags (peek p).Token.span "expected 'case' or 'default'";
+        ignore (advance p);
+        arms cs default
+  in
+  let cases, default = arms [] None in
+  Ast.Switch { subject; cases; default; span = kw.Token.span }
 
 and parse_stmt (p : t) : Ast.stmt =
   match peek_kind p with

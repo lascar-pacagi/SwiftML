@@ -1,5 +1,5 @@
 (* SILGen — concept 12 (skeleton). Carries the enum compiler complete; you add the SWITCH
-   dispatch (the TODO(12) hole). Lower the (checked) AST to raw, memory-based SIL.
+   dispatch (the TODO(12f) hole). Lower the (checked) AST to raw, memory-based SIL.
 
    Each variable becomes an `alloc_stack` slot, read with `load`, written with `store` (no
    SSA — Phase-4 mem2reg does that). Control flow becomes basic blocks: `if`/`while`/`for`
@@ -284,13 +284,13 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       terminate b (Sil.Br header.Sil.bid);
       switch_to b exit_b
   | Ast.Switch { subject; cases; default; _ } ->
-      (* TODO(12): lower the switch to a DISPATCH CHAIN — evaluate the subject once, compare its
+      (* TODO(12f): lower the switch to a DISPATCH CHAIN — evaluate the subject once, compare its
          discriminant against each pattern's key in turn, and let every arm branch to one merge
          block. Two details worth getting right: a pattern's bindings are the payload, extracted
          and bound in that arm's block like a `let`; and an exhaustive enum switch with no
          `default` ends in `Unreachable`, not a fallthrough. §2 and its figure draw the chain. *)
       ignore (subject, cases, default);
-      failwith "TODO(12-silgen): lower the switch dispatch + payload binding"
+      failwith "TODO(12f): lower the switch dispatch + payload binding"
   | Ast.Break _ -> ( match break_target b with Some ex -> terminate b (Sil.Br ex) | None -> ())
   | Ast.Continue _ -> ( match continue_target b with Some c -> terminate b (Sil.Br c) | None -> ())
 

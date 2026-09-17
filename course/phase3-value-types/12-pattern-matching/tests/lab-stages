@@ -1,0 +1,7 @@
+# alias       Cram files covered by that alias — the pipeline order, so a failing stage
+# stops the run instead of burying its diff under every later stage's noise.
+parser        parser-switch
+sema          sema-switch sema-exhaustive
+silgen        silgen-switch
+irgen         run-switch
+oracle        oracle

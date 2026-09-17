@@ -128,9 +128,6 @@ let keyword_or_ident (s : string) : kind =
   | "struct" -> Kw_struct
   | "enum" -> Kw_enum
   | "case" -> Kw_case
-  (* TODO(12a): classify the two words that introduce a `switch` and its catch-all arm.
-     Longer names such as `switchboard` stay identifiers — this table matches whole words,
-     so there is nothing to do for them. See explainer §3. *)
-  | "switch" | "default" ->
-      failwith "TODO(12a): classify the switch keywords"
+  | "switch" -> Kw_switch
+  | "default" -> Kw_default
   | _ -> Ident s

@@ -164,25 +164,57 @@ linear chain is the honest, readable starting point, and turning it into a `swit
 
 ## 3. Build it, step by step
 
-The parser is given (patterns, arms, `default`), and so is the pattern *typing* — by the time your
-code runs, every pattern names a real case with the right number of bindings. Two holes:
+`switch` is the first construct this course builds through the WHOLE pipeline in one concept:
+a keyword, a new kind of syntax, a scope rule, a control-flow lowering, and a field read. Seven
+holes, in the order the compiler meets them.
 
-- **`sema.ml`, `TODO(12-sema)` in `check_switch`** — EXHAUSTIVENESS. The enum branch already
-  collects the case names the patterns matched into `covered`, and `el.Types.el_cases` is what the
-  enum declares. When there is no `default` and something is left over, report it with swiftc's
-  sentence, `switch must be exhaustive`, at the switch's own span. (The `Int` branch already does
-  its half: an `Int` switch always needs a `default`.) `sema-exhaustive.t` is five programs swiftc
-  refuses and the skeleton accepts.
-- **`silgen.ml`, `TODO(12)`, the `Switch` arm of `gen_stmt`** — the DISPATCH CHAIN. Evaluate the
-  subject **once**; the discriminant is its tag for an enum (`Sil.Enum_tag`) and the value itself
-  for an `Int`. Then, per case: compare the discriminant with that pattern's key (the case's
-  `Types.case_index`, or the literal), and `Cond_br` to a fresh block for the arm or to a fresh
-  block that carries on testing. Inside an arm, a binding is an ordinary local — read the payload
-  with `Sil.Enum_payload (subj, i)`, give it an `alloc_stack`, `store` it, and register it in
-  `b.vars` — then generate the body and branch to the ONE merge block every arm shares. When the
-  chain runs out: the `default` body if there is one, and otherwise `Sil.Unreachable`, because
-  sema has just proved no case is left. End by switching to the merge block, so whatever follows
-  the switch is generated there. `silgen-switch.t` prints the CFG you built.
+1. **`token.ml`, `TODO(12a)` — recognize the arm keywords.** Extend `keyword_or_ident` so the
+   exact words `switch` and `default` produce `Kw_switch` and `Kw_default`. Longer words that
+   merely begin the same way — `switchboard`, `defaults` — stay identifiers, which the table
+   gives you for free. No character rule changes: the scanner already routes every
+   identifier-shaped word here.
+
+2. **`parser.ml`, `TODO(12b)` — parse a pattern.** `parse_pattern` returns an `Ast.pattern` and
+   has three shapes: `.name` optionally followed by a parenthesised binding list
+   (`Ast.PEnumCase`), an integer literal, and a `-` followed by one (both `Ast.PInt`).
+   `parse_bindings` reads the list: `let x` keeps the value under a name (`Ast.Bind`), `_`
+   discards that position (`Ast.Ignore`). Neither function decides whether the case EXISTS — the
+   parser records syntax, Sema checks it in step 4. Report and keep going, as everywhere else.
+
+3. **`parser.ml`, `TODO(12c)` — parse the statement.** `switch expr { arm… }`. The subject is an
+   ordinary expression — `parse_expr` already stops at `{`, exactly as it does for `if`. Then
+   each arm is `case <pattern>` or `default`, a `:`, and a body. The body is the part with teeth:
+   it is **not** brace-delimited, so it runs until the next `case`, the next `default`, or the
+   closing `}`, which makes its end a lookahead rather than a token you can `expect`. Keep the
+   arms in source order, hold `default` separately, and make the recovery branch advance so
+   malformed input cannot spin.
+
+4. **`sema.ml`, `TODO(12d)` — type the arms and bind the payloads.** For a `switch` over an enum,
+   each `.case` pattern must name a case of THAT enum, and bind exactly as many values as the
+   case declares. Then check the arm's body in a scope where those bindings are visible: an
+   `Ast.Bind x` enters as that payload's type and is immutable — `let x` really is a `let` —
+   while `Ast.Ignore` binds nothing. Record which cases were matched into `covered`; step 5 needs
+   it. An `Ast.PInt` cannot match an enum, and `in_scope` is the given helper that pops the scope
+   again afterwards. §2's table has every message.
+
+5. **`sema.ml`, `TODO(12e)` — exhaustiveness.** With no `default`, every case the enum declares
+   must be covered, or it is `switch must be exhaustive` at the switch's own span. `covered` is
+   what step 4 collected; `el.Types.el_cases` is what the enum declares. (The `Int` branch does
+   its half already: an `Int` switch always needs a `default`, since you cannot enumerate `Int`.)
+
+6. **`silgen.ml`, `TODO(12f)` — the dispatch chain.** Evaluate the subject **once**; the
+   discriminant is its tag for an enum (`Sil.Enum_tag`) and the value itself for an `Int`. Per
+   case: compare the discriminant with that pattern's key (`Types.case_index`, or the literal)
+   and `Cond_br` either to a fresh block for the arm or to a fresh block that carries on testing.
+   Inside an arm a binding is an ordinary local — read the payload with
+   `Sil.Enum_payload (subj, i)`, `alloc_stack`, `store`, and register it in `b.vars` — then
+   generate the body and branch to the ONE merge block every arm shares. When the chain runs out:
+   the `default` body, or `Sil.Unreachable`, because step 5 has just proved nothing is left. End
+   positioned on the merge block, so whatever follows the switch is generated there.
+
+7. **`irgen.ml`, `TODO(12g)` — lower `enum_payload`.** One `extractvalue`. The tag is field #0,
+   so associated value #i is field #(i+1) — concept 11's `Enum_tag` is the same instruction at
+   field 0 and sits directly above you.
 
 Reference: `solution/` — after you have tried it.
 
@@ -195,10 +227,16 @@ make lab C=phase3-value-types/12-pattern-matching
 Every `.t` file calls `./lab.exe`, built from **this directory's** library, so the report is about
 your code here. In the order you fill the holes:
 
-- `sema-switch.t` — `--typecheck`: the given pattern rules (binding arity, an unknown case, an
+- `lexer-switch.t` — `--emit-tokens`, the token hole: `switch` and `default` are keywords, and
+  `switchboard`/`defaults`/`switching` are not.
+- `parser-switch.t` — `--emit-ast`, the two parser holes: a case pattern with bindings and a `_`,
+  Int patterns including a negative one, an arm body that runs to the next arm, and the two
+  recovery messages — a pattern that is neither `.case` nor a literal, and a line that is not an
+  arm at all.
+- `sema-switch.t` — `--typecheck`, the arm-typing hole: binding arity, an unknown case, an
   `Int` pattern against an enum and the reverse, a `Bool` subject, a binding's arm-local scope and
-  its type). Green from the start; it is the contract your lowering may rely on.
-- `sema-exhaustive.t` — `--typecheck`, the sema hole: five enum switches that leave a case
+  its type.
+- `sema-exhaustive.t` — `--typecheck`, the exhaustiveness hole: five enum switches that leave a case
   uncovered — one of two, two of three, the same case listed twice, an empty switch, and one
   inside a function. Every one of them is accepted by the skeleton, so the file is `TODO` until
   the check exists.
@@ -206,7 +244,7 @@ your code here. In the order you fill the holes:
   switch, the single `enum_tag`, `enum_payload … #0`/`#1` per arm, `_` extracting nothing, a
   switch used as a statement (the arms `br` to the merge), an `Int` switch with a `default`, and
   a `default` replacing the trailing `unreachable`.
-- `run-switch.t` — `build` and run: destructuring, an `Op` interpreter, a switch as a statement,
+- `run-switch.t` — `build` and run, and the IRGen hole with it: destructuring, an `Op` interpreter, a switch as a statement,
   an `Int` switch with `default`, a switch in a loop, and a `default` arm. It needs the silgen
   hole only — the sema hole adds a rejection, not a behaviour.
 - `test_switch.ml` (alcotest `switch`) — the same three groups in-process: `sema-switch` (given —

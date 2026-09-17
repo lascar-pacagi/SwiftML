@@ -171,12 +171,10 @@ let emit_llvm (m : Sil.modul) : string =
           p (Printf.sprintf "  %s = extractvalue %s %s, 0\n" r (llty (vty a)) (lookup_operand a));
           bind_operand v r
       | Sil.Enum_payload (a, idx) ->
-          (* TODO(12g): read associated value #idx out of the enum aggregate. Field #0 is the
-             tag, so the payload slots start one later — concept 11's `Enum_tag` is the same
-             instruction at field 0, and is right above you. Bind a fresh register as the SIL
-             result. See explainer §3. *)
-          ignore (a, idx, v);
-          failwith "TODO(12g): lower enum_payload"
+          (* payload slot #i lives at aggregate field #(i+1) — field #0 is the tag *)
+          let r = fresh () in
+          p (Printf.sprintf "  %s = extractvalue %s %s, %d\n" r (llty (vty a)) (lookup_operand a) (idx + 1));
+          bind_operand v r
     in
     let gen_term (t : Sil.term) =
       match t with
