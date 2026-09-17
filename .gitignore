@@ -20,3 +20,6 @@ course/.tools/
 .DS_Store
 **/.DS_Store
 *.swp
+
+# Claude Code local settings + leftover agent worktrees
+.claude/
