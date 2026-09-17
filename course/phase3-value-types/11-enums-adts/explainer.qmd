@@ -550,6 +550,10 @@ stage. Later stages are reported as `SKIP`, never as passing. In the order you f
   programs **run** — tag equality, the raw values 0/1/3, the left-to-right case order, an enum
   driving a loop, an enum through a function, and an associated-value enum built and passed on.
 - `test_enums.ml` (alcotest `enums`) — ten in-process groups with the same stage boundaries.
+- `test_exercises.ml` (Alcotest `exercises-11`) — explicit raw values, `Equatable` for
+  associated values, and indirect enums. Each §6 group PROBES first and reports
+  `TODO … (optional)` until you start it, so an untouched exercise is never a failure; a
+  half-finished one does not skip, and shows up red.
 - `oracle.t` — **the headline**, in two halves. The runtime half compiles the 16 programs of
   `oracle-corpus.txt` with `swiftc -Onone` and with `./lab.exe build`, runs both binaries, and
   demands identical stdout and exit code; when ours refuses with a `TODO(` the loop stops, so it

@@ -352,6 +352,10 @@ your code here. In the order you fill the holes:
   hole only — the sema hole adds a rejection, not a behaviour.
 - `test_switch.ml` (alcotest `switch`) — the same three groups in-process: `sema-switch` (given —
   its three cases pass on the skeleton), `sema-exhaustive`, `silgen-switch`.
+- `test_exercises.ml` (Alcotest `exercises-12`) — `where` clauses, `if case`, tuple patterns,
+  and the jump table. Each §6 group PROBES first and reports `TODO … (optional)` until you start
+  it; the jump-table probe looks for a `switch i64` in the IR, since that exercise changes the
+  lowering rather than the language.
 - `oracle.t` — **the headline**, in two halves. The runtime half compiles the 16 programs of
   `oracle-corpus.txt` with `swiftc -Onone` and with `./lab.exe build`, runs both binaries, and
   demands identical stdout and exit code. The front-end half asks `swiftc -typecheck` and

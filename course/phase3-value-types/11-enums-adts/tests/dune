@@ -69,3 +69,16 @@
  (alias irgen)
  (deps test_enums.exe timeout.py)
  (action (run python3 timeout.py 3 %{exe:test_enums.exe} test "irgen-.*")))
+
+(test
+ (name test_exercises)
+ (modules test_exercises)
+ (libraries alcotest exercise_tests)
+ (deps lab.exe)
+ (flags
+  (:standard -warn-error -a)))
+
+(rule
+ (alias exercises)
+ (deps lab.exe)
+ (action (run ./test_exercises.exe)))
