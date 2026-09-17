@@ -173,8 +173,22 @@ let rec gen_expression (builder : builder) (expression : Ast.expr) : Sil.value =
       switch_to builder merge_block;
       emit builder (Sil.Load slot) Types.TBool
   | Ast.Binary (op, left_expression, right_expression, _) ->
-      let left_value = gen_expression builder left_expression
-      and right_value = gen_expression builder right_expression in
+      (* sema's unification lets an Int-literal tree adopt the other side's Double (`d * 2`,
+         `2 * d`): that side must be generated AT Double, or IRGen emits `fmul double %d, 2`
+         and clang rejects it. Re-generating a literal tree is safe — it has no side effects. *)
+      let left_value = gen_expression builder left_expression in
+      let right_value =
+        if value_type builder left_value = Types.TDouble then
+          gen_expression_as builder right_expression Types.TDouble
+        else gen_expression builder right_expression
+      in
+      let left_value =
+        if
+          value_type builder right_value = Types.TDouble
+          && value_type builder left_value = Types.TInt
+        then gen_expression_as builder left_expression Types.TDouble
+        else left_value
+      in
       let operand =
         if
           value_type builder left_value = Types.TDouble

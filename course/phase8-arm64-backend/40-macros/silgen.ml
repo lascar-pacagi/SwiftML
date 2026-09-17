@@ -346,20 +346,26 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       switch_to b merge;
       emit b (Sil.Load slot) Types.TBool
   | Ast.Binary (op, l, r, _) ->
-      let lv = gen_expr b l and rv = gen_expr b r in
+      let lv = gen_expr b l in
       (match vty b lv with
       | Types.TEnum _ when op = Ast.Eq || op = Ast.Ne ->
           (* enum equality is tag comparison (payload-free enums only — see sema) *)
+          let rv = gen_expr b r in
           let lt = emit b (Sil.Enum_tag lv) Types.TInt in
           let rt = emit b (Sil.Enum_tag rv) Types.TInt in
           emit b (Sil.Binop (op, lt, rt)) Types.TBool
       (* `s + t` on Strings — concatenation via the runtime (a fresh malloc'd C string) — 31 *)
       | Types.TString when op = Ast.Add ->
+          let rv = gen_expr b r in
           let fr = emit b (Sil.Func_ref "rt.str_concat") Types.TString in
           emit b (Sil.Apply (fr, [ lv; rv ])) Types.TString
       | _ ->
-          let operand = if vty b lv = Types.TDouble || vty b rv = Types.TDouble then Types.TDouble else vty b lv in
-          emit b (Sil.Binop (op, lv, rv)) (result_ty op operand))
+          (* sema's `unify` lets an Int-literal tree adopt the other side's Double (`d * 2`,
+             `2 * d`): that side must be generated AT Double, or IRGen emits `fmul double %d, 2`
+             and clang rejects it. Re-generating a literal tree is safe — it has no side effects. *)
+          let rv = if vty b lv = Types.TDouble then gen_expr_as b r Types.TDouble else gen_expr b r in
+          let lv = if vty b rv = Types.TDouble && vty b lv = Types.TInt then gen_expr_as b l Types.TDouble else lv in
+          emit b (Sil.Binop (op, lv, rv)) (result_ty op (vty b lv)))
   (* `fatalError()` — an unconditional runtime trap (exit 133), the target of `#assert` (concept 40) *)
   | Ast.Call ("fatalError", _, _) ->
       terminate b (Sil.Trap "Fatal error");

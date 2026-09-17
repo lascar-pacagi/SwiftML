@@ -27,3 +27,4 @@ func collatz(_ start: Int) -> Int {\n  var n = start\n  var steps = 0\n  while n
 func sign(_ n: Int) -> Int {\n  if n > 0 {\n    return 1\n  } else if n < 0 {\n    return -1\n  } else {\n    return 0\n  }\n}\nprint(sign(9))\nprint(sign(-9))\nprint(sign(0))
 var count = 0\nfor i in 0 ..< 30 {\n  var d = 2\n  var prime = true\n  while d < i {\n    if i % d == 0 {\n      prime = false\n    }\n    d = d + 1\n  }\n  if prime {\n    if i > 1 {\n      count = count + 1\n    }\n  }\n}\nprint(count)
 print(4611686018427387903)\nprint(-4611686018427387903)\nprint(0)\nprint(0 * 5)\nprint(0 / 7)
+let d = 1.5\nprint(d * 2 == 3.0)\nprint(2 * d == 3.0)\nprint(2 * d + 1 == 4.0)\nprint(d / 2 == 0.75)
