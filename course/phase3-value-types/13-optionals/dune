@@ -4,7 +4,7 @@
 (library
  (name swiftml_optionals)
  (wrapped false)
- (modules token diagnostics types lexer ast parser sema sil silgen irgen driver)
+ (modules token diagnostics types lexer ast tast parser sema sil silgen irgen driver)
  (flags
   (:standard -warn-error -a)))
 
