@@ -16,7 +16,7 @@ let parse (source : string) : Ast.program =
 
 let ast (source : string) : string = Ast.dump_program (parse source)
 
-let front (source : string) : Ast.program * Diagnostics.sink =
+let front (source : string) : Tast.program option * Diagnostics.sink =
   let diagnostics = Diagnostics.create () in
   let program =
     Parser.parse_program
@@ -24,8 +24,8 @@ let front (source : string) : Ast.program * Diagnostics.sink =
          (Lexer.tokenize (Lexer.create source diagnostics))
          diagnostics)
   in
-  Sema.check program diagnostics;
-  (program, diagnostics)
+  (* the front end now yields the TYPE-CHECKED tree; `None` when the program had errors *)
+  (Sema.check program diagnostics, diagnostics)
 
 let errors (source : string) : string list =
   let _, diagnostics = front source in
@@ -47,7 +47,7 @@ let errors_so_far (source : string) : string list =
          (Lexer.tokenize (Lexer.create source diagnostics))
          diagnostics)
   in
-  (try Sema.check program diagnostics with Failure _ -> ());
+  (try ignore (Sema.check program diagnostics) with Failure _ -> ());
   Diagnostics.all diagnostics
   |> List.filter (fun (diagnostic : Diagnostics.t) ->
          diagnostic.Diagnostics.severity = Diagnostics.Error)
@@ -56,11 +56,11 @@ let errors_so_far (source : string) : string list =
 
 let sil (source : string) : string =
   let program, _ = front source in
-  Sil.string_of_module (Silgen.lower program)
+  Sil.string_of_module (Silgen.lower (Option.get program))
 
 let llvm (source : string) : string =
   let program, _ = front source in
-  Irgen.emit_llvm (Silgen.lower program)
+  Irgen.emit_llvm (Silgen.lower (Option.get program))
 
 let color = "enum Color { case red, green, blue }\n"
 

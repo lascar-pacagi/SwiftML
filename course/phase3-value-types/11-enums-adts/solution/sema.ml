@@ -18,7 +18,11 @@
      - functions are self-contained (params + the function table only — no top-level capture)
      - print and Void functions yield () (Types.TVoid) *)
 
-let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
+(* As from 05, the checker PRODUCES a `Tast.program`. Enums are the sharpest case: `E.red` and
+   `p.x` parse to the SAME tree, so a NAME decides which is which, and Swift's rule is that a
+   value binding shadows a type name. The answer is recorded as a `Tast.Enum_case` carrying the
+   TAG. PLAN.md §0.1 is the miscompile that came of asking that question twice. *)
+let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option =
   let env : (string * (Types.ty * bool)) list ref = ref [] in
   let loop_depth = ref 0 in
   let current_ret : Types.ty option ref = ref None in
@@ -48,10 +52,12 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         Types.TInt
   in
 
+  let mk (e : Tast.expr_kind) (ty : Types.ty) (span : Token.span) : Tast.expr = { Tast.e; ty; span } in
+  (* `%` is absent: Swift has no `%` on Double, so a tree containing one can never take it *)
   let rec is_int_literal = function
     | Ast.Int_lit _ -> true
     | Ast.Unary (Ast.Neg, e, _) -> is_int_literal e
-    | Ast.Binary ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod), a, b, _) ->
+    | Ast.Binary ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div), a, b, _) ->
         is_int_literal a && is_int_literal b
     | _ -> false
   in
@@ -61,103 +67,99 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
     else if is_int_literal r && tl = Types.TDouble then Some Types.TDouble
     else None
   in
-  let rec infer (e : Ast.expr) : Types.ty =
+  let rec infer (e : Ast.expr) : Tast.expr =
     match e with
-    | Ast.Int_lit _ -> Types.TInt
-    | Ast.Double_lit _ -> Types.TDouble
-    | Ast.Bool_lit _ -> Types.TBool
-    | Ast.String_lit _ -> Types.TString
+    | Ast.Int_lit (n, span) -> mk (Tast.Int_lit n) Types.TInt span
+    | Ast.Double_lit (f, span) -> mk (Tast.Double_lit f) Types.TDouble span
+    | Ast.Bool_lit (b, span) -> mk (Tast.Bool_lit b) Types.TBool span
+    | Ast.String_lit (t, span) -> mk (Tast.String_lit t) Types.TString span
     | Ast.Var (x, span) -> (
         match lookup x with
-        | Some (t, _) -> t
+        | Some (t, _) -> mk (Tast.Local x) t span
         | None ->
             err span (Printf.sprintf "cannot find '%s' in scope" x);
-            Types.TInt)
+            mk (Tast.Local x) Types.TInt span)
     | Ast.Unary (Ast.Neg, e0, span) ->
-        let t = infer e0 in
-        if Types.is_numeric t then t
-        else (
+        let n = infer e0 in
+        if not (Types.is_numeric n.Tast.ty) then
           err span
             (Printf.sprintf "unary operator '-' cannot be applied to an operand of type '%s'"
-               (Types.string_of_ty t));
-          t)
+               (Types.string_of_ty n.Tast.ty));
+        mk (Tast.Unary (Ast.Neg, n)) n.Tast.ty span
     | Ast.Binary (op, l, r, span) -> infer_binary op l r span
     | Ast.Call (f, args, span) -> infer_call f args span
     (* `e as T`: the type is written, so there is nothing to synthesise — CHECK the
        operand against it. The one arm where `infer` calls `check_expr`. *)
     | Ast.Ascribe (e0, tyname, span) -> (
         match Types.of_name tyname with
-        | Some t ->
-            check_expr e0 t;
-            t
+        | Some t -> mk (Tast.Coerce (check_expr e0 t)) t span
         | None ->
             err span (Printf.sprintf "cannot find type '%s' in scope" tyname);
-            infer e0)
-    (* `E.case` — a no-payload enum case names a value of the enum type (concept 11) *)
+            let n = infer e0 in
+            mk (Tast.Coerce n) n.Tast.ty span)
+    (* `E.case` — a no-payload enum case names a value of the enum type (concept 11).
+       The guard asks the VALUE SCOPE FIRST: a local binding shadows a type name, so
+       `let Color = 7` makes `Color.red` a member access on an Int, not an enum case. Getting
+       that order wrong is PLAN.md §0.1's bug; recording the answer is what stops SILGen from
+       having to get it right a second time. *)
     | Ast.Member (Ast.Var (type_name, _), case_name, span)
       when lookup type_name = None && Hashtbl.mem enums type_name -> (
         let layout = Hashtbl.find enums type_name in
+        let tag = Option.value (Types.case_index layout case_name) ~default:0 in
         match Types.case_payload layout case_name with
-        | Some [] -> Types.TEnum type_name
+        | Some [] -> mk (Tast.Enum_case (type_name, tag, [])) (Types.TEnum type_name) span
         | Some _ ->
-            err span
-              (Printf.sprintf "enum case '%s.%s' requires arguments"
-                 type_name case_name);
-            Types.TEnum type_name
+            err span (Printf.sprintf "enum case '%s.%s' requires arguments" type_name case_name);
+            mk (Tast.Enum_case (type_name, tag, [])) (Types.TEnum type_name) span
         | None ->
-            err span
-              (Printf.sprintf "type '%s' has no member '%s'" type_name
-                 case_name);
-            Types.TEnum type_name)
+            err span (Printf.sprintf "type '%s' has no member '%s'" type_name case_name);
+            mk (Tast.Enum_case (type_name, tag, [])) (Types.TEnum type_name) span)
     | Ast.Member (receiver, field, span) -> (
-        match infer receiver with
+        let base = infer receiver in
+        let unresolved t =
+          err span (Printf.sprintf "value of type '%s' has no member '%s'" t field);
+          mk (Tast.Field (base, 0, field)) Types.TInt span
+        in
+        match base.Tast.ty with
         | Types.TStruct sn -> (
             match Hashtbl.find_opt structs sn with
             | Some sl -> (
-                match Types.field_type sl field with
-                | Some ft -> ft
-                | None ->
-                    err span
-                      (Printf.sprintf "value of type '%s' has no member '%s'" sn
-                         field);
-                    Types.TInt)
-            | None -> Types.TInt)
+                match (Types.field_type sl field, Types.field_index sl field) with
+                | Some ft, Some i -> mk (Tast.Field (base, i, field)) ft span
+                | _ -> unresolved sn)
+            | None -> mk (Tast.Field (base, 0, field)) Types.TInt span)
         (* `e.rawValue` on a raw-value enum yields its Int raw value (concept 11) *)
         | Types.TEnum enum_name
-          when field = "rawValue"
-               && (Hashtbl.find enums enum_name).Types.el_raw ->
-            Types.TInt
-        | t ->
-            err span
-              (Printf.sprintf "value of type '%s' has no member '%s'"
-                 (Types.string_of_ty t) field);
-            Types.TInt)
-    (* `E.case(args)` — a payload-carrying enum case (concept 11) *)
+          when field = "rawValue" && (Hashtbl.find enums enum_name).Types.el_raw ->
+            mk (Tast.Raw_value base) Types.TInt span
+        | t -> unresolved (Types.string_of_ty t))
+    (* `E.case(args)` — a payload-carrying enum case. Same shadowing rule as `E.case` above. *)
     | Ast.Method_call (Ast.Var (type_name, _), case_name, args, span)
       when lookup type_name = None && Hashtbl.mem enums type_name -> (
         let layout = Hashtbl.find enums type_name in
+        let tag = Option.value (Types.case_index layout case_name) ~default:0 in
+        let ety = Types.TEnum type_name in
         match Types.case_payload layout case_name with
         | Some expected_types ->
             let expressions = List.map snd args in
-            if List.length expected_types <> List.length expressions then
+            if List.length expected_types <> List.length expressions then (
               err span
-                (Printf.sprintf
-                   "enum case '%s.%s' expects %d associated value(s) but %d given"
-                   type_name case_name (List.length expected_types)
-                   (List.length expressions))
-            else List.iter2 check_expr expressions expected_types;
-            Types.TEnum type_name
+                (Printf.sprintf "enum case '%s.%s' expects %d associated value(s) but %d given"
+                   type_name case_name (List.length expected_types) (List.length expressions));
+              mk (Tast.Enum_case (type_name, tag, List.map infer expressions)) ety span)
+            else
+              mk (Tast.Enum_case (type_name, tag, List.map2 check_expr expressions expected_types))
+                ety span
         | None ->
-            err span
-              (Printf.sprintf "type '%s' has no member '%s'" type_name
-                 case_name);
-            Types.TEnum type_name)
+            err span (Printf.sprintf "type '%s' has no member '%s'" type_name case_name);
+            mk (Tast.Enum_case (type_name, tag, [])) ety span)
     | Ast.Method_call (e0, _, _, span) ->
-        ignore (infer e0);
+        let n = infer e0 in
         err span "methods are not supported in this subset (Phase 3 v0)";
-        Types.TInt
-  and infer_binary op l r span : Types.ty =
-    let tl = infer l and tr = infer r in
+        mk (Tast.Field (n, 0, "?")) Types.TInt span
+  and infer_binary op l r span : Tast.expr =
+    let ln = infer l and rn = infer r in
+    let tl = ln.Tast.ty and tr = rn.Tast.ty in
     let bad () =
       (* swiftc has two wordings and picks by whether the operands agree:
            1 < "a"      -> cannot be applied to operands of type 'Int' and 'String'
@@ -171,38 +173,50 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
              (Ast.string_of_binop op) (Types.string_of_ty tl) (Types.string_of_ty tr));
       Types.TInt
     in
-    match op with
-    | Ast.Add -> (
-        match unify l tl r tr with
-        | Some ((Types.TInt | Types.TDouble) as t) -> t
-        | Some Types.TString -> Types.TString
-        | _ -> bad ())
-    | Ast.Sub | Ast.Mul | Ast.Div -> (
-        match unify l tl r tr with Some ((Types.TInt | Types.TDouble) as t) -> t | _ -> bad ())
-    | Ast.Mod -> ( match unify l tl r tr with Some Types.TInt -> Types.TInt | _ -> bad ())
-    | Ast.Eq | Ast.Ne -> (
-        match unify l tl r tr with
-        (* a payload-free enum is implicitly Equatable; an associated-value enum needs an explicit
-           `: Equatable` conformance (deferred), so swiftc — and we — reject `==` on it *)
-        | Some (Types.TEnum enum_name) ->
-            if Types.has_payload (Hashtbl.find enums enum_name) then
-              err span
-                (Printf.sprintf
-                   "type '%s' does not conform to protocol 'Equatable'"
-                   enum_name);
-            Types.TBool
-        (* a struct would need an Equatable conformance too (concept 10, Exercise 3), and the
-           back end has no aggregate compare — swiftc's two-operands wording, from `bad ()` *)
-        | Some (Types.TInt | Types.TDouble | Types.TBool | Types.TString) ->
-            Types.TBool
-        | _ -> ignore (bad ()); Types.TBool)
-    | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge -> (
-        match unify l tl r tr with
-        | Some (Types.TInt | Types.TDouble | Types.TString) -> Types.TBool
-        | _ -> ignore (bad ()); Types.TBool)
-    | Ast.And | Ast.Or ->
-        if tl = Types.TBool && tr = Types.TBool then Types.TBool else (ignore (bad ()); Types.TBool)
-  and infer_call f args span : Types.ty =
+    let u = unify l tl r tr in
+    (* APPLY the solution: a side that flexed is re-checked AT the common type *)
+    let ln, rn =
+      match u with
+      | Some t ->
+          ((if Types.equal tl t then ln else check_expr l t),
+           if Types.equal tr t then rn else check_expr r t)
+      | None -> (ln, rn)
+    in
+    let result =
+      match op with
+      | Ast.Add -> (
+          match u with
+          | Some ((Types.TInt | Types.TDouble) as t) -> t
+          | Some Types.TString -> Types.TString
+          | _ -> bad ())
+      | Ast.Sub | Ast.Mul | Ast.Div -> (
+          match u with Some ((Types.TInt | Types.TDouble) as t) -> t | _ -> bad ())
+      | Ast.Mod -> ( match u with Some Types.TInt -> Types.TInt | _ -> bad ())
+      | Ast.Eq | Ast.Ne -> (
+          match u with
+          (* a payload-free enum is implicitly Equatable; an associated-value enum needs an
+             explicit `: Equatable` conformance (deferred), so swiftc — and we — reject it *)
+          | Some (Types.TEnum enum_name) ->
+              if Types.has_payload (Hashtbl.find enums enum_name) then
+                err span
+                  (Printf.sprintf "type '%s' does not conform to protocol 'Equatable'" enum_name);
+              Types.TBool
+          (* a struct would need an Equatable conformance too (concept 10, Exercise 3), and the
+             back end has no aggregate compare — swiftc's two-operands wording, from `bad ()` *)
+          | Some (Types.TInt | Types.TDouble | Types.TBool | Types.TString) -> Types.TBool
+          | _ -> ignore (bad ()); Types.TBool)
+      | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge -> (
+          match u with
+          | Some (Types.TInt | Types.TDouble | Types.TString) -> Types.TBool
+          | _ -> ignore (bad ()); Types.TBool)
+      | Ast.And | Ast.Or ->
+          if tl = Types.TBool && tr = Types.TBool then Types.TBool
+          else (ignore (bad ()); Types.TBool)
+    in
+    mk (Tast.Binary (op, ln, rn)) result span
+  and infer_call f args span : Tast.expr =
+    (* RESOLUTION: initializer, declared function, print, or unknown — decided once, recorded *)
+    let first ns = match ns with n :: _ -> n | [] -> mk (Tast.Int_lit 0) Types.TInt span in
     match Hashtbl.find_opt structs f with
     | Some sl -> infer_init f sl args span (* `Point(x: 1, y: 2)` — memberwise initializer *)
     | None -> (
@@ -210,70 +224,81 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         match Hashtbl.find_opt funcs f with
         | Some (ptypes, ret) ->
             let np = List.length ptypes and na = List.length exprs in
-            if np <> na then
-              err span (Printf.sprintf "function '%s' expects %d argument(s) but %d given" f np na)
-            else List.iter2 (fun a t -> check_expr a t) exprs ptypes;
-            ret
+            if np <> na then (
+              err span (Printf.sprintf "function '%s' expects %d argument(s) but %d given" f np na);
+              mk (Tast.Fn_call (f, List.map infer exprs)) ret span)
+            else mk (Tast.Fn_call (f, List.map2 check_expr exprs ptypes)) ret span
         | None ->
-            if f = "print" then (
-              (match exprs with
-              | [ a ] -> (
+            if f = "print" then
+              match exprs with
+              | [ a ] ->
                   (* IRGen prints the scalar types only; swiftc would print `Point(x: 1, y: 2)`
                      for a struct and `red` for an enum case — a divergence, stated in §2 *)
-                  match infer a with
+                  let n = infer a in
+                  (match n.Tast.ty with
                   | Types.TInt | Types.TDouble | Types.TBool | Types.TString -> ()
                   | t ->
                       err (Ast.expr_span a)
-                        (Printf.sprintf "cannot print a value of type '%s' (only Int, Double, Bool and String)"
-                           (Types.string_of_ty t)))
+                        (Printf.sprintf
+                           "cannot print a value of type '%s' (only Int, Double, Bool and String)"
+                           (Types.string_of_ty t)));
+                  mk (Tast.Print n) Types.TVoid span
               | _ ->
                   err span "print(_:) expects exactly one argument";
-                  List.iter (fun a -> ignore (infer a)) exprs);
-              Types.TVoid)
+                  mk (Tast.Print (first (List.map infer exprs))) Types.TVoid span
             else (
               err span (Printf.sprintf "cannot find '%s' in scope" f);
-              List.iter (fun a -> ignore (infer a)) exprs;
-              Types.TInt))
-  (* the memberwise initializer: one labeled argument per stored property, in order *)
-  and infer_init sn (sl : Types.struct_layout) (args : Ast.arg list) span : Types.ty =
+              mk (Tast.Print (first (List.map infer exprs))) Types.TInt span))
+  (* the memberwise initializer: one labeled argument per stored property, in order. The labels
+     are checked and then DISCHARGED — the resolved node keeps the values in layout order. *)
+  and infer_init sn (sl : Types.struct_layout) (args : Ast.arg list) span : Tast.expr =
     let fields = sl.Types.sl_fields in
-    if List.length args <> List.length fields then
-      err span
-        (Printf.sprintf "'%s' initializer expects %d argument(s) but %d given" sn (List.length fields)
-           (List.length args))
-    else
-      List.iter2
-        (fun (label, value) (fname, ftype) ->
-          (match label with
-          | Some l when l <> fname ->
-              err (Ast.expr_span value)
-                (Printf.sprintf "incorrect argument label in call (have '%s:', expected '%s:')" l fname)
-          | None -> err (Ast.expr_span value) (Printf.sprintf "missing argument label '%s:' in call" fname)
-          | _ -> ());
-          check_expr value ftype)
-        args fields;
-    Types.TStruct sn
-  and check_expr (e : Ast.expr) (expected : Types.ty) : unit =
+    let values =
+      if List.length args <> List.length fields then (
+        err span
+          (Printf.sprintf "'%s' initializer expects %d argument(s) but %d given" sn
+             (List.length fields) (List.length args));
+        List.map (fun (_, value) -> infer value) args)
+      else
+        List.map2
+          (fun (label, value) (fname, ftype) ->
+            (match label with
+            | Some l when l <> fname ->
+                err (Ast.expr_span value)
+                  (Printf.sprintf "incorrect argument label in call (have '%s:', expected '%s:')"
+                     l fname)
+            | None ->
+                err (Ast.expr_span value)
+                  (Printf.sprintf "missing argument label '%s:' in call" fname)
+            | _ -> ());
+            check_expr value ftype)
+          args fields
+    in
+    mk (Tast.Struct_init (sn, values)) (Types.TStruct sn) span
+  and check_expr (e : Ast.expr) (expected : Types.ty) : Tast.expr =
     match e with
-    | Ast.Int_lit _ ->
-        if expected = Types.TInt || expected = Types.TDouble then ()
-        else
-          err (Ast.expr_span e)
+    | Ast.Int_lit (n, span) ->
+        (* the coercion, RECORDED: the node keeps its kind and takes the expected type *)
+        if expected = Types.TInt || expected = Types.TDouble then mk (Tast.Int_lit n) expected span
+        else (
+          err span
             (Printf.sprintf "cannot convert value of type 'Int' to specified type '%s'"
-               (Types.string_of_ty expected))
-    | Ast.Binary ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div), l, r, _) when Types.is_numeric expected ->
-        check_expr l expected;
-        check_expr r expected
-    | Ast.Binary (Ast.Mod, l, r, _) when expected = Types.TInt ->
-        check_expr l Types.TInt;
-        check_expr r Types.TInt
-    | Ast.Unary (Ast.Neg, e0, _) when Types.is_numeric expected -> check_expr e0 expected
+               (Types.string_of_ty expected));
+          mk (Tast.Int_lit n) Types.TInt span)
+    | Ast.Binary (((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div) as op), l, r, span)
+      when Types.is_numeric expected ->
+        mk (Tast.Binary (op, check_expr l expected, check_expr r expected)) expected span
+    | Ast.Binary (Ast.Mod, l, r, span) when expected = Types.TInt ->
+        mk (Tast.Binary (Ast.Mod, check_expr l Types.TInt, check_expr r Types.TInt)) Types.TInt span
+    | Ast.Unary (Ast.Neg, e0, span) when Types.is_numeric expected ->
+        mk (Tast.Unary (Ast.Neg, check_expr e0 expected)) expected span
     | _ ->
-        let t = infer e in
-        if not (Types.equal t expected) then
+        let n = infer e in
+        if not (Types.equal n.Tast.ty expected) then
           err (Ast.expr_span e)
             (Printf.sprintf "cannot convert value of type '%s' to specified type '%s'"
-               (Types.string_of_ty t) (Types.string_of_ty expected))
+               (Types.string_of_ty n.Tast.ty) (Types.string_of_ty expected));
+        n
   in
   (* does a block definitely return on every path? (the "missing return" check) *)
   let rec stmt_returns = function
@@ -281,87 +306,128 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
     | Ast.If { then_blk; else_blk = Some e; _ } -> block_returns then_blk && block_returns e
     | _ -> false
   and block_returns stmts = List.exists stmt_returns stmts (* the rest is unreachable *) in
-  let rec check_stmt (s : Ast.stmt) : unit =
+  let rec check_stmt (s : Ast.stmt) : Tast.stmt =
     match s with
     | Ast.Let { name; is_var; annot; value; span } ->
-        let t =
+        let n =
           match annot with
           | None -> infer value
           | Some tyname -> (
               match resolve_opt tyname with
-              | Some t -> check_expr value t; t
-              | None -> err span (Printf.sprintf "cannot find type '%s' in scope" tyname); infer value)
+              | Some t -> check_expr value t
+              | None ->
+                  err span (Printf.sprintf "cannot find type '%s' in scope" tyname);
+                  infer value)
         in
-        bind name (t, is_var)
+        bind name (n.Tast.ty, is_var);
+        Tast.Let { name; is_var; value = n; span }
     | Ast.Assign { name; value; span } -> (
         match lookup name with
-        | None -> err span (Printf.sprintf "cannot find '%s' in scope" name); ignore (infer value)
+        | None ->
+            err span (Printf.sprintf "cannot find '%s' in scope" name);
+            Tast.Assign { name; value = infer value; span }
         | Some (t, is_var) ->
             if not is_var then
               err span (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" name);
-            check_expr value t)
+            Tast.Assign { name; value = check_expr value t; span })
     | Ast.Set_member { obj; field; value; span } -> (
+        let unresolved t =
+          err span (Printf.sprintf "value of type '%s' has no member '%s'" t field);
+          Tast.Set_member { obj; field = 0; field_name = field; value = infer value; span }
+        in
         match lookup obj with
-        | None -> err span (Printf.sprintf "cannot find '%s' in scope" obj); ignore (infer value)
+        | None ->
+            err span (Printf.sprintf "cannot find '%s' in scope" obj);
+            Tast.Set_member { obj; field = 0; field_name = field; value = infer value; span }
         | Some (Types.TStruct sn, is_var) -> (
-            match Option.bind (Hashtbl.find_opt structs sn) (fun sl -> Types.field_type sl field) with
-            | Some ft ->
+            let sl = Hashtbl.find_opt structs sn in
+            match
+              ( Option.bind sl (fun l -> Types.field_type l field),
+                Option.bind sl (fun l -> Types.field_index l field) )
+            with
+            | Some ft, Some i ->
                 (* swiftc's `diag::assignment_lhs_is_immutable_property`: the binding first, then
                    the field — a `let` field is immutable through every binding *)
-                if not is_var then err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" obj)
+                if not is_var then
+                  err span
+                    (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" obj)
                 else if Hashtbl.mem let_fields (sn, field) then
-                  err span (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" field);
-                check_expr value ft
-            | None ->
-                err span (Printf.sprintf "value of type '%s' has no member '%s'" sn field);
-                ignore (infer value))
-        | Some (t, _) ->
-            err span (Printf.sprintf "value of type '%s' has no member '%s'" (Types.string_of_ty t) field);
-            ignore (infer value))
-    | Ast.Expr_stmt (e, _) -> ignore (infer e)
-    | Ast.If { cond; then_blk; else_blk; _ } ->
-        check_expr cond Types.TBool;
-        check_block then_blk;
-        Option.iter check_block else_blk
-    | Ast.While { cond; body; _ } ->
-        check_expr cond Types.TBool;
-        incr loop_depth; check_block body; decr loop_depth
-    | Ast.For { var; lo; hi; body; _ } ->
-        check_expr lo Types.TInt;
-        check_expr hi Types.TInt;
+                  err span
+                    (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant" field);
+                Tast.Set_member
+                  { obj; field = i; field_name = field; value = check_expr value ft; span }
+            | _ -> unresolved sn)
+        | Some (t, _) -> unresolved (Types.string_of_ty t))
+    | Ast.Expr_stmt (e, _) -> Tast.Expr_stmt (infer e)
+    | Ast.If { cond; then_blk; else_blk; span } ->
+        let cond = check_expr cond Types.TBool in
+        let then_blk = check_block then_blk in
+        let else_blk = Option.map check_block else_blk in
+        Tast.If { cond; then_blk; else_blk; span }
+    | Ast.While { cond; body; span } ->
+        let cond = check_expr cond Types.TBool in
         incr loop_depth;
-        in_scope (fun () -> bind var (Types.TInt, false); List.iter check_stmt body);
-        decr loop_depth
-    | Ast.Break span -> if !loop_depth = 0 then err span "'break' is only allowed inside a loop"
-    | Ast.Continue span -> if !loop_depth = 0 then err span "'continue' is only allowed inside a loop"
+        let body = check_block body in
+        decr loop_depth;
+        Tast.While { cond; body; span }
+    | Ast.For { var; lo; hi; body; span } ->
+        let lo = check_expr lo Types.TInt in
+        let hi = check_expr hi Types.TInt in
+        incr loop_depth;
+        let body' = ref [] in
+        in_scope (fun () ->
+            bind var (Types.TInt, false);
+            body' := List.map check_stmt body);
+        decr loop_depth;
+        Tast.For { var; lo; hi; body = !body'; span }
+    | Ast.Break span ->
+        if !loop_depth = 0 then err span "'break' is only allowed inside a loop";
+        Tast.Break span
+    | Ast.Continue span ->
+        if !loop_depth = 0 then err span "'continue' is only allowed inside a loop";
+        Tast.Continue span
     | Ast.Return (eo, span) -> (
         match !current_ret with
-        | None -> err span "return invalid outside of a func"
+        | None ->
+            err span "return invalid outside of a func";
+            Tast.Return (None, span)
         | Some rt -> (
             match eo with
             | Some e ->
-                if rt = Types.TVoid then
-                  err span "unexpected non-void return value in void function"
-                else check_expr e rt
+                if rt = Types.TVoid then (
+                  err span "unexpected non-void return value in void function";
+                  Tast.Return (None, span))
+                else Tast.Return (Some (check_expr e rt), span)
             | None ->
-                if rt <> Types.TVoid then err span "non-void function should return a value"))
-  and check_block (stmts : Ast.stmt list) : unit = in_scope (fun () -> List.iter check_stmt stmts) in
+                if rt <> Types.TVoid then err span "non-void function should return a value";
+                Tast.Return (None, span)))
+  and check_block (stmts : Ast.stmt list) : Tast.stmt list =
+    let out = ref [] in
+    in_scope (fun () -> out := List.map check_stmt stmts);
+    !out
+  in
 
-  (* check one function body: a fresh scope with the parameters; then "missing return" *)
-  let check_func (f : Ast.func_decl) : unit =
+  let check_func (f : Ast.func_decl) : Tast.func_decl =
     let ret = match f.Ast.ret with None -> Types.TVoid | Some n -> resolve_ty f.Ast.fspan n in
     let saved_env = !env and saved_ret = !current_ret in
     env := [];
     current_ret := Some ret;
-    List.iter
-      (fun (pr : Ast.param) -> bind pr.Ast.pname (resolve_ty f.Ast.fspan pr.Ast.ptype, false))
-      f.Ast.params;
-    List.iter check_stmt f.Ast.body;
+    let params =
+      List.map
+        (fun (pr : Ast.param) ->
+          let pty = resolve_ty f.Ast.fspan pr.Ast.ptype in
+          bind pr.Ast.pname (pty, false);
+          { Tast.pname = pr.Ast.pname; pty })
+        f.Ast.params
+    in
+    let body = List.map check_stmt f.Ast.body in
     env := saved_env;
     current_ret := saved_ret;
     if ret <> Types.TVoid && not (block_returns f.Ast.body) then
       err f.Ast.fspan
-        (Printf.sprintf "missing return in %s expected to return '%s'" "global function" (Types.string_of_ty ret))
+        (Printf.sprintf "missing return in %s expected to return '%s'" "global function"
+           (Types.string_of_ty ret));
+    { Tast.fname = f.Ast.fname; params; ret; body; fspan = f.Ast.fspan }
   in
 
   (* PASS 0: register struct and enum names (so declarations can reference each other), then
@@ -427,10 +493,15 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
           Hashtbl.replace funcs f.Ast.fname (ptypes, ret)
       | _ -> ())
     prog.Ast.items;
-  (* PASS 2: check bodies and top-level statements, in order. *)
-  List.iter
-    (function
-      | Ast.IFunc f -> check_func f
-      | Ast.IStmt s -> check_stmt s
-      | Ast.IStruct _ | Ast.IEnum _ -> ())
-    prog.Ast.items
+  (* PASS 2: check bodies and top-level statements, in order — producing the typed program. The
+     struct and enum LAYOUTS travel with it, so SILGen lowers what the checker checked. *)
+  let items =
+    List.map
+      (function
+        | Ast.IFunc f -> Tast.IFunc (check_func f)
+        | Ast.IStmt s -> Tast.IStmt (check_stmt s)
+        | Ast.IStruct sd -> Tast.IStruct (Hashtbl.find structs sd.Ast.sname)
+        | Ast.IEnum ed -> Tast.IEnum (Hashtbl.find enums ed.Ast.ename))
+      prog.Ast.items
+  in
+  if Diagnostics.has_errors diags then None else Some { Tast.items }
