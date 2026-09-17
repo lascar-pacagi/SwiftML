@@ -12,7 +12,7 @@ let diags (src : string) : Diagnostics.t list =
        Parser.parse_program
          (Parser.create (Lexer.tokenize (Lexer.create src d)) d)
      in
-     Sema.check p d
+     ignore (Sema.check p d)
    with _ -> ());
   Diagnostics.all d
 
