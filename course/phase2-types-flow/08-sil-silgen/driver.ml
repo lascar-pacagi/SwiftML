@@ -6,6 +6,7 @@ type emit =
   | Tokens
   | Ast
   | Check (* lex -> parse -> sema, then stop *)
+  | Typed_ast (* the TYPE-CHECKED tree sema produced — compare with `swiftc -dump-ast` *)
   | Sil (* + SILGen, print the SIL module *)
 
 let read_file (path : string) : string =
@@ -15,11 +16,12 @@ let read_file (path : string) : string =
     (fun () ->
       really_input_string input_channel (in_channel_length input_channel))
 
-let frontend (source : string) (diagnostics : Diagnostics.sink) : Ast.program =
+(* The front end's result is the TYPE-CHECKED tree: SILGen consumes what Sema produced,
+   never the parsed tree. `None` means the program had errors and has no typed form. *)
+let frontend (source : string) (diagnostics : Diagnostics.sink) : Tast.program option =
   let tokens = Lexer.tokenize (Lexer.create source diagnostics) in
   let program = Parser.parse_program (Parser.create tokens diagnostics) in
-  Sema.check program diagnostics;
-  program
+  Sema.check program diagnostics
 
 let bail_on_errors (diagnostics : Diagnostics.sink) : unit =
   if Diagnostics.has_errors diagnostics then (
@@ -47,12 +49,16 @@ let compile_file ~(src_path : string) ~(emit : emit) : unit =
       bail_on_errors diagnostics;
       print_endline (Ast.dump_program program)
   | Check ->
-      let (_ : Ast.program) = frontend source diagnostics in
+      let (_ : Tast.program option) = frontend source diagnostics in
       bail_on_errors diagnostics
+  | Typed_ast ->
+      let typed = frontend source diagnostics in
+      bail_on_errors diagnostics;
+      Option.iter (fun p -> print_endline (Tast.dump_program p)) typed
   | Sil ->
       let program = frontend source diagnostics in
       bail_on_errors diagnostics;
-      let sil_module = Silgen.lower program in
+      let sil_module = Silgen.lower (Option.get program) in
       (match Sil.verify sil_module with
       | [] -> ()
       | errors ->

@@ -1,4 +1,11 @@
-(* FROZEN SOLUTION — concept 08 SILGen: lower the (checked) AST to raw, memory-based SIL.
+(* FROZEN SOLUTION — concept 08 SILGen: lower the TYPE-CHECKED tree (`Tast`) to raw,
+   memory-based SIL.
+
+   SILGen consumes what Sema produced, and that is the whole reason this file is as short as
+   it is. Every node arrives carrying its type and every name arrives resolved, so there is
+   nothing here that asks "what did the checker decide?" — no second type system, no registry
+   lookups, no coercion logic. PLAN.md §0.1 records what this file looked like when it did
+   have to ask, and the bugs that came of it.
 
    Each variable becomes an `alloc_stack` slot, read with `load`, written with `store` (no
    SSA — Phase-4 mem2reg does that). Control flow becomes basic blocks: `if`/`while`/`for`
@@ -102,12 +109,6 @@ let continue_target (builder : builder) : int option =
   | (continue_target_id, _) :: _ -> Some continue_target_id
   | [] -> None
 
-let result_type (op : Ast.binop) (operand : Types.ty) : Types.ty =
-  match op with
-  | Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge | Ast.And | Ast.Or ->
-      Types.TBool
-  | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod -> operand
-
 (* --- lowering expressions: returns the SIL value holding the result --- *)
 
 (* A block is a SCOPE for names. Without this, an inner `var x` would overwrite the outer `x`
@@ -121,36 +122,34 @@ let restore_variables (builder : builder)
     (fun k value -> Hashtbl.replace builder.variables k value)
     saved_variables
 
-let rec gen_expression (builder : builder) (expression : Ast.expr) : Sil.value =
-  match expression with
-  | Ast.Int_lit (n, _) -> emit builder (Sil.Int_lit n) Types.TInt
-  | Ast.Double_lit (number, _) ->
-      emit builder (Sil.Float_lit number) Types.TDouble
-  | Ast.Bool_lit (boolean, _) -> emit builder (Sil.Bool_lit boolean) Types.TBool
-  | Ast.String_lit (text, _) -> emit builder (Sil.String_lit text) Types.TString
-  (* `e as T`: generate the operand AT the written type (see
-     gen_expression_as). The `None` arm cannot
-     be reached today — sema resolved this same name through `Types.of_name` and rejected it if it
-     failed — but it is not dead weight either: an ascription with nothing to coerce lowers to its
-     operand, which is what it does. Widening `as` to name a struct would start using it. *)
-  | Ast.Ascribe (operand_expression, tyname, _) -> (
-      match Types.of_name tyname with
-      | Some t -> gen_expression_as builder operand_expression t
-      | None -> gen_expression builder operand_expression)
-  | Ast.Var (name, _) ->
+let rec gen_expression (builder : builder) (expression : Tast.expr) : Sil.value =
+  (* `ty` is the type Sema concluded for this node. Reading it is the whole of what used to be
+     `gen_expression_as` plus a re-generation dance — see the literal arm below. *)
+  let ty = expression.Tast.ty in
+  match expression.Tast.e with
+  (* THE COERCION, already decided. An integer literal that checked at Double carries Double, so
+     it is BORN a Double here. Nothing in this file has to notice that `2` sits beside a `d`. *)
+  | Tast.Int_lit n when ty = Types.TDouble ->
+      emit builder (Sil.Float_lit (float_of_int n)) Types.TDouble
+  | Tast.Int_lit n -> emit builder (Sil.Int_lit n) Types.TInt
+  | Tast.Double_lit number -> emit builder (Sil.Float_lit number) Types.TDouble
+  | Tast.Bool_lit boolean -> emit builder (Sil.Bool_lit boolean) Types.TBool
+  | Tast.String_lit text -> emit builder (Sil.String_lit text) Types.TString
+  (* `e as T` — the operand was already checked AT T, so the coercion has nothing left to do *)
+  | Tast.Coerce operand_expression -> gen_expression builder operand_expression
+  | Tast.Local name ->
       let addr = address_of builder name in
       emit builder (Sil.Load addr) (value_type builder addr)
       (* the slot's element type *)
-  | Ast.Unary (op, operand_expression, _) ->
+  | Tast.Unary (op, operand_expression) ->
       let value = gen_expression builder operand_expression in
-      emit builder (Sil.Unop (op, value)) (value_type builder value)
+      emit builder (Sil.Unop (op, value)) ty
   (* SHORT-CIRCUIT `&&` / `||` (concept 06 semantics, lowered here) — NOT
      bitwise: the right operand is evaluated only on the deciding edge, so its
      side effects (a trapping `a[i]` in `i < n && a[i]`,
      a force-unwrap, a throwing call) never run on the short path. Lowered to a cond_br diamond, the
      result merged through a stack slot (mem2reg promotes it to a phi). *)
-  | Ast.Binary (((Ast.And | Ast.Or) as op), left_expression, right_expression, _)
-    ->
+  | Tast.Binary (((Ast.And | Ast.Or) as op), left_expression, right_expression) ->
       let left_value = gen_expression builder left_expression in
       (* the slot the two answers meet in — named for the operator it serves, since this arm
          lowers both. mem2reg turns it into a phi in Phase 4. *)
@@ -172,70 +171,25 @@ let rec gen_expression (builder : builder) (expression : Ast.expr) : Sil.value =
       terminate builder (Sil.Br merge_block.Sil.bid);
       switch_to builder merge_block;
       emit builder (Sil.Load slot) Types.TBool
-  | Ast.Binary (op, left_expression, right_expression, _) ->
-      (* sema's unification lets an Int-literal tree adopt the other side's Double (`d * 2`,
-         `2 * d`): that side must be generated AT Double, or IRGen emits `fmul double %d, 2`
-         and clang rejects it. Re-generating a literal tree is safe — it has no side effects. *)
+  | Tast.Binary (op, left_expression, right_expression) ->
+      (* Both operands already carry their final type, and so does this node. Compare what this
+         arm used to be: generate the left, notice the right was a Double, generate the right AT
+         Double, then RE-generate the left at Double — leaving the abandoned first copy in the
+         block, where at -Onone it still ran. That is PLAN.md §0.1's bug, and it is not fixed
+         here so much as made impossible to write. *)
       let left_value = gen_expression builder left_expression in
-      let right_value =
-        if value_type builder left_value = Types.TDouble then
-          gen_expression_as builder right_expression Types.TDouble
-        else gen_expression builder right_expression
-      in
-      let left_value =
-        if
-          value_type builder right_value = Types.TDouble
-          && value_type builder left_value = Types.TInt
-        then gen_expression_as builder left_expression Types.TDouble
-        else left_value
-      in
-      let operand =
-        if
-          value_type builder left_value = Types.TDouble
-          || value_type builder right_value = Types.TDouble
-        then Types.TDouble
-        else value_type builder left_value
-      in
-      emit builder
-        (Sil.Binop (op, left_value, right_value))
-        (result_type op operand)
-  | Ast.Call (function_name, arguments, _) ->
+      let right_value = gen_expression builder right_expression in
+      emit builder (Sil.Binop (op, left_value, right_value)) ty
+  (* RESOLVED calls: Sema already decided whether this was print or a declared function, so
+     there is no `Hashtbl.mem builder.functions` guess to get wrong. *)
+  | Tast.Print argument -> emit builder (Sil.Print (gen_expression builder argument)) Types.TVoid
+  | Tast.Fn_call (function_name, arguments) ->
       let argument_values = List.map (gen_expression builder) arguments in
-      if Hashtbl.mem builder.functions function_name then
-        let _, ret = Hashtbl.find builder.functions function_name in
-        let function_reference =
-          emit builder (Sil.Func_ref function_name) ret
-        in
-        emit builder (Sil.Apply (function_reference, argument_values)) ret
-      else emit builder (Sil.Print (List.hd argument_values)) Types.TVoid
-
-(* Generate [expression] AT an expected type. The only coercion this early is
-   the integer literal that
-   checks at Double: it must be BORN a Double, or the slot receives an i64 bit-pattern and
-   `let d: Double = 1` reads back as 4.94e-324. The recursion mirrors sema's `is_int_literal`. *)
-and gen_expression_as (builder : builder) (expression : Ast.expr)
-    (expected : Types.ty) : Sil.value =
-  match (expression, expected) with
-  | Ast.Int_lit (n, _), Types.TDouble ->
-      emit builder (Sil.Float_lit (float_of_int n)) Types.TDouble
-  | Ast.Unary (op, operand_expression, _), Types.TDouble ->
-      let value = gen_expression_as builder operand_expression Types.TDouble in
-      emit builder (Sil.Unop (op, value)) Types.TDouble
-  | ( Ast.Binary
-        ( ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div) as op),
-          left_expression,
-          right_expression,
-          _ ),
-      Types.TDouble ) ->
-      let left_value = gen_expression_as builder left_expression Types.TDouble
-      and right_value =
-        gen_expression_as builder right_expression Types.TDouble
-      in
-      emit builder (Sil.Binop (op, left_value, right_value)) Types.TDouble
-  | _ -> gen_expression builder expression
+      let function_reference = emit builder (Sil.Func_ref function_name) ty in
+      emit builder (Sil.Apply (function_reference, argument_values)) ty
 
 (* --- lowering statements; gen_block stops after a terminator (dead code) --- *)
-let rec gen_block (builder : builder) (statements : Ast.stmt list) : unit =
+let rec gen_block (builder : builder) (statements : Tast.stmt list) : unit =
   let saved_variables = Hashtbl.copy builder.variables in
   let rec go statements =
     match statements with
@@ -247,34 +201,26 @@ let rec gen_block (builder : builder) (statements : Ast.stmt list) : unit =
   go statements;
   restore_variables builder saved_variables
 
-and gen_statement (builder : builder) (s : Ast.stmt) : unit =
+and gen_statement (builder : builder) (s : Tast.stmt) : unit =
   match s with
-  | Ast.Let { name; annot; value; _ } ->
-      (* an annotation makes the slot that type, and the value is generated AT it *)
-      let value =
-        match annot with
-        | Some n -> (
-            match Types.of_name n with
-            | Some t -> gen_expression_as builder value t
-            | None -> gen_expression builder value)
-        | None -> gen_expression builder value
-      in
-      let addr =
-        emit builder (Sil.Alloc_stack name) (value_type builder value)
-      in
+  | Tast.Let { name; value; _ } ->
+      (* the slot takes the value's type, which Sema recorded — an annotated `let d: Double = 1`
+         arrives with the literal already carrying Double, so there is nothing to coerce *)
+      let value = gen_expression builder value in
+      let addr = emit builder (Sil.Alloc_stack name) (value_type builder value) in
       bind_variable builder name addr;
       emit_void builder (Sil.Store (value, addr))
-  | Ast.Assign { name; value; _ } ->
+  | Tast.Assign { name; value; _ } ->
       let value = gen_expression builder value in
       emit_void builder (Sil.Store (value, address_of builder name))
-  | Ast.Expr_stmt (expression, _) -> ignore (gen_expression builder expression)
-  | Ast.Return (eo, _) -> (
+  | Tast.Expr_stmt expression -> ignore (gen_expression builder expression)
+  | Tast.Return (eo, _) -> (
       match eo with
       | Some expression ->
           let value = gen_expression builder expression in
           terminate builder (Sil.Return (Some value))
       | None -> terminate builder (Sil.Return None))
-  | Ast.If { cond; then_blk; else_blk; _ } ->
+  | Tast.If { cond; then_blk; else_blk; _ } ->
       let condition_value = gen_expression builder cond in
       let then_block = new_block builder in
       let merge_block = new_block builder in
@@ -293,7 +239,7 @@ and gen_statement (builder : builder) (s : Ast.stmt) : unit =
           terminate builder (Sil.Br merge_block.Sil.bid)
       | None -> ());
       switch_to builder merge_block
-  | Ast.While { cond; body; _ } ->
+  | Tast.While { cond; body; _ } ->
       let header = new_block builder
       and body_block = new_block builder
       and exit_block = new_block builder in
@@ -309,7 +255,7 @@ and gen_statement (builder : builder) (s : Ast.stmt) : unit =
       terminate builder (Sil.Br header.Sil.bid);
       leave_loop builder;
       switch_to builder exit_block
-  | Ast.For { var; lo; hi; body; _ } ->
+  | Tast.For { var; lo; hi; body; _ } ->
       (* desugar `for v in lo ..< hi { body }` into a counted while loop *)
       let lower_value = gen_expression builder lo in
       let upper_value = gen_expression builder hi in
@@ -344,18 +290,18 @@ and gen_statement (builder : builder) (s : Ast.stmt) : unit =
       emit_void builder (Sil.Store (incremented_value, addr));
       terminate builder (Sil.Br header.Sil.bid);
       switch_to builder exit_block
-  | Ast.Break _ -> (
+  | Tast.Break _ -> (
       match break_target builder with
       | Some exit_target -> terminate builder (Sil.Br exit_target)
       | None -> ())
-  | Ast.Continue _ -> (
+  | Tast.Continue _ -> (
       match continue_target builder with
       | Some condition_value -> terminate builder (Sil.Br condition_value)
       | None -> ())
 
 (* --- lowering a function: params get slots; then the body --- *)
 let lower_func functions (name : string) (params : (string * Types.ty) list)
-    (ret : Types.ty) (body : Ast.stmt list) : Sil.func =
+    (ret : Types.ty) (body : Tast.stmt list) : Sil.func =
   let value_types = Hashtbl.create 16 in
   let entry = { Sil.bid = 0; instrs = []; term = Sil.Unreachable } in
   let builder =
@@ -398,48 +344,40 @@ let lower_func functions (name : string) (params : (string * Types.ty) list)
     val_ty = value_types;
   }
 
-(* --- the entry point: a checked program -> a SIL module --- *)
-let lower (program : Ast.program) : Sil.modul =
-  let type_of_name n = Option.value (Types.of_name n) ~default:Types.TInt in
-  let return_type_of function_decl =
-    match function_decl.Ast.ret with
-    | None -> Types.TVoid
-    | Some n -> type_of_name n
-  in
+(* --- the entry point: a type-checked program -> a SIL module ---
+   Note what is NOT here: no `Types.of_name`. A `Tast.func_decl`'s parameter and return types are
+   already types, not written names, so there is nothing left to resolve. *)
+let lower (program : Tast.program) : Sil.modul =
   let functions = Hashtbl.create 16 in
   List.iter
     (function
-      | Ast.IFunc function_decl ->
+      | Tast.IFunc function_decl ->
           let parameter_types =
-            List.map
-              (fun (parameter : Ast.param) -> type_of_name parameter.Ast.ptype)
-              function_decl.Ast.params
+            List.map (fun (p : Tast.param) -> p.Tast.pty) function_decl.Tast.params
           in
-          Hashtbl.replace functions function_decl.Ast.fname
-            (parameter_types, return_type_of function_decl)
-      | Ast.IStmt _ -> ())
-    program.Ast.items;
+          Hashtbl.replace functions function_decl.Tast.fname
+            (parameter_types, function_decl.Tast.ret)
+      | Tast.IStmt _ -> ())
+    program.Tast.items;
   let function_definitions =
     List.filter_map
       (function
-        | Ast.IFunc function_decl ->
+        | Tast.IFunc function_decl ->
             let params =
               List.map
-                (fun (parameter : Ast.param) ->
-                  (parameter.Ast.pname, type_of_name parameter.Ast.ptype))
-                function_decl.Ast.params
+                (fun (p : Tast.param) -> (p.Tast.pname, p.Tast.pty))
+                function_decl.Tast.params
             in
             Some
-              (lower_func functions function_decl.Ast.fname params
-                 (return_type_of function_decl)
-                 function_decl.Ast.body)
-        | Ast.IStmt _ -> None)
-      program.Ast.items
+              (lower_func functions function_decl.Tast.fname params
+                 function_decl.Tast.ret function_decl.Tast.body)
+        | Tast.IStmt _ -> None)
+      program.Tast.items
   in
   let main_statements =
     List.filter_map
-      (function Ast.IStmt s -> Some s | Ast.IFunc _ -> None)
-      program.Ast.items
+      (function Tast.IStmt s -> Some s | Tast.IFunc _ -> None)
+      program.Tast.items
   in
   let main = lower_func functions "main" [] Types.TVoid main_statements in
   { Sil.funcs = function_definitions @ [ main ] }
