@@ -1,5 +1,7 @@
-(* SILGen — concept 10 (skeleton). Carries Phase-2 SILGen complete; you add the STRUCT
-   lowering (TODO(10g) member read, TODO(10h) member write). Lower the checked AST to SIL.
+(* SILGen — concept 10 (skeleton): lower the TYPE-CHECKED tree (`Tast`) — Phase-2 +
+   structs. Sema resolved every field to an INDEX and every call to what it actually was, so
+   this file performs no lookups of its own. PLAN.md §0.1. Original note: lower
+   the (checked) AST to raw, memory-based SIL.
 
    Each variable becomes an `alloc_stack` slot, read with `load`, written with `store` (no
    SSA — Phase-4 mem2reg does that). Control flow becomes basic blocks: `if`/`while`/`for`
@@ -106,39 +108,25 @@ let restore_variables (builder : builder)
     (fun name address -> Hashtbl.replace builder.variables name address)
     saved_variables
 
-let rec gen_expr (builder : builder) (expression : Ast.expr) : Sil.value =
-  match expression with
-  | Ast.Int_lit (integer, _) -> emit builder (Sil.Int_lit integer) Types.TInt
-  | Ast.Double_lit (number, _) ->
-      emit builder (Sil.Float_lit number) Types.TDouble
-  | Ast.Bool_lit (boolean, _) -> emit builder (Sil.Bool_lit boolean) Types.TBool
-  | Ast.String_lit (text, _) -> emit builder (Sil.String_lit text) Types.TString
-  (* `expression as T`: generate the operand AT the written type (see
-     gen_expr_as). The `None` arm cannot be reached today — sema resolved this
-     same name through `Types.of_name` and rejected it if it failed — but it is
-     not dead weight either: an ascription with nothing to coerce lowers to its
-     operand, which is what it does. Widening `as` to name a struct would start
-     using it. *)
-  | Ast.Ascribe (operand_expression, type_name, _) -> (
-      match Types.of_name type_name with
-      | Some resolved_type ->
-          gen_expr_as builder operand_expression resolved_type
-      | None -> gen_expr builder operand_expression)
-  | Ast.Var (variable_name, _) ->
+let rec gen_expr (builder : builder) (expression : Tast.expr) : Sil.value =
+  (* `ty` is what Sema concluded for this node — the whole of what used to be `gen_expr_as` *)
+  let ty = expression.Tast.ty in
+  match expression.Tast.e with
+  (* THE COERCION, already decided: a literal that checked at Double is BORN a Double *)
+  | Tast.Int_lit integer when ty = Types.TDouble ->
+      emit builder (Sil.Float_lit (float_of_int integer)) Types.TDouble
+  | Tast.Int_lit integer -> emit builder (Sil.Int_lit integer) Types.TInt
+  | Tast.Double_lit number -> emit builder (Sil.Float_lit number) Types.TDouble
+  | Tast.Bool_lit boolean -> emit builder (Sil.Bool_lit boolean) Types.TBool
+  | Tast.String_lit text -> emit builder (Sil.String_lit text) Types.TString
+  | Tast.Coerce operand_expression -> gen_expr builder operand_expression
+  | Tast.Local variable_name ->
       let address = address_of builder variable_name in
       emit builder (Sil.Load address) (value_type builder address)
-      (* the slot's element type *)
-  | Ast.Unary (operator, operand_expression, _) ->
+  | Tast.Unary (operator, operand_expression) ->
       let value = gen_expr builder operand_expression in
-      emit builder (Sil.Unop (operator, value)) (value_type builder value)
-  (* SHORT-CIRCUIT `&&` / `||` (concept 06 semantics, lowered here) — NOT
-     bitwise: the right operand is evaluated only on the deciding edge, so its
-     side effects (a trapping `a[i]` in `i < n && a[i]`, a force-unwrap, a
-     throwing call) never run on the short path. Lowered to a cond_br diamond,
-     the result is merged through a stack slot (mem2reg promotes it to a phi). *)
-  | Ast.Binary
-      (((Ast.And | Ast.Or) as operator), left_expression, right_expression, _)
-    ->
+      emit builder (Sil.Unop (operator, value)) ty
+  | Tast.Binary (((Ast.And | Ast.Or) as operator), left_expression, right_expression) ->
       let left_value = gen_expr builder left_expression in
       (* the slot the two answers meet in — named for the operator it serves, since this arm
          lowers both. mem2reg turns it into a phi in Phase 4. *)
@@ -160,74 +148,31 @@ let rec gen_expr (builder : builder) (expression : Ast.expr) : Sil.value =
       terminate builder (Sil.Br merge_block.Sil.bid);
       switch_to builder merge_block;
       emit builder (Sil.Load slot) Types.TBool
-  | Ast.Binary (operator, left_expression, right_expression, _) ->
-      (* sema's `common_operand_type` lets an Int-literal tree adopt the other
-         side's Double (`d * 2`, `2 * d`): that side must be generated AT
-         Double, or IRGen emits `fmul double %d, 2` and clang rejects it.
-         Re-generating a literal tree is safe — it has no side effects. *)
+  | Tast.Binary (operator, left_expression, right_expression) ->
+      (* Both operands already carry their final type, and so does this node. The version that
+         had to work this out for itself re-generated the left operand and left the dead copy
+         in the block — PLAN.md §0.1. *)
       let left_value = gen_expr builder left_expression in
-      let right_value =
-        if value_type builder left_value = Types.TDouble then
-          gen_expr_as builder right_expression Types.TDouble
-        else gen_expr builder right_expression
-      in
-      let left_value =
-        if
-          value_type builder right_value = Types.TDouble
-          && value_type builder left_value = Types.TInt
-        then gen_expr_as builder left_expression Types.TDouble
-        else left_value
-      in
-      emit builder
-        (Sil.Binop (operator, left_value, right_value))
-        (result_type operator (value_type builder left_value))
-  | Ast.Call (function_name, arguments, _) ->
-      let argument_values =
-        List.map (fun (_, expression) -> gen_expr builder expression) arguments
-      in
-      if Hashtbl.mem builder.struct_layouts function_name then
-        emit builder (Sil.Struct argument_values) (Types.TStruct function_name)
-        (* memberwise init *)
-      else if Hashtbl.mem builder.functions function_name then
-        let _, return_type = Hashtbl.find builder.functions function_name in
-        let function_reference =
-          emit builder (Sil.Func_ref function_name) return_type
-        in
-        emit builder
-          (Sil.Apply (function_reference, argument_values))
-          return_type
-      else emit builder (Sil.Print (List.hd argument_values)) Types.TVoid
-  | Ast.Member (operand_expression, field_name, _) ->
-      (* TODO(10g): read a field out of a struct VALUE. The layout in
-         [builder.struct_layouts] turns the field NAME into an index. §2. *)
-      ignore (operand_expression, field_name);
+      let right_value = gen_expr builder right_expression in
+      emit builder (Sil.Binop (operator, left_value, right_value)) ty
+  (* RESOLVED calls — Sema already decided initializer vs. function vs. print *)
+  | Tast.Struct_init (_, arguments) ->
+      (* the arguments are already in LAYOUT ORDER, labels discharged by the checker *)
+      emit builder (Sil.Struct (List.map (gen_expr builder) arguments)) ty
+  | Tast.Fn_call (function_name, arguments) ->
+      let argument_values = List.map (gen_expr builder) arguments in
+      let function_reference = emit builder (Sil.Func_ref function_name) ty in
+      emit builder (Sil.Apply (function_reference, argument_values)) ty
+  | Tast.Print argument -> emit builder (Sil.Print (gen_expr builder argument)) Types.TVoid
+  | Tast.Field (operand_expression, index, _) ->
+      ignore (operand_expression, index);
+      (* TODO(10g): read a field out of a struct VALUE with `struct_extract`. Note what you are
+         NOT given to do: Sema already turned the field NAME into the `index` you are handed, and
+         `ty` is the field's type, so there is no layout here to consult. §2. *)
       failwith "TODO(10g): lower member read (struct_extract)"
 
-(* Generate [expression] AT an expected type. The only coercion this early is
-   the integer literal that checks at Double: it must be BORN a Double, or the
-   slot receives an i64 bit-pattern and `let d: Double = 1` reads back as
-   4.94e-324. The recursion mirrors sema's `is_int_literal`. *)
-and gen_expr_as (builder : builder) (expression : Ast.expr)
-    (expected : Types.ty) : Sil.value =
-  match (expression, expected) with
-  | Ast.Int_lit (integer, _), Types.TDouble ->
-      emit builder (Sil.Float_lit (float_of_int integer)) Types.TDouble
-  | Ast.Unary (operator, operand_expression, _), Types.TDouble ->
-      let value = gen_expr_as builder operand_expression Types.TDouble in
-      emit builder (Sil.Unop (operator, value)) Types.TDouble
-  | ( Ast.Binary
-        ( ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div) as operator),
-          left_expression,
-          right_expression,
-          _ ),
-      Types.TDouble ) ->
-      let left_value = gen_expr_as builder left_expression Types.TDouble
-      and right_value = gen_expr_as builder right_expression Types.TDouble in
-      emit builder (Sil.Binop (operator, left_value, right_value)) Types.TDouble
-  | _ -> gen_expr builder expression
-
 (* --- lowering statements; gen_block stops after a terminator (dead code) --- *)
-let rec gen_block (builder : builder) (statements : Ast.stmt list) : unit =
+let rec gen_block (builder : builder) (statements : Tast.stmt list) : unit =
   let saved_variables = Hashtbl.copy builder.variables in
   let rec go statements =
     match statements with
@@ -239,40 +184,32 @@ let rec gen_block (builder : builder) (statements : Ast.stmt list) : unit =
   go statements;
   restore_variables builder saved_variables
 
-and gen_stmt (builder : builder) (statement : Ast.stmt) : unit =
+and gen_stmt (builder : builder) (statement : Tast.stmt) : unit =
   match statement with
-  | Ast.Let { name; annot; value; _ } ->
-      (* an annotation makes the slot that type, and the value is generated AT it *)
-      let value =
-        match annot with
-        | Some type_name -> (
-            match Types.of_name type_name with
-            | Some resolved_type -> gen_expr_as builder value resolved_type
-            | None -> gen_expr builder value)
-        | None -> gen_expr builder value
-      in
-      let address =
-        emit builder (Sil.Alloc_stack name) (value_type builder value)
-      in
+  | Tast.Let { name; value; _ } ->
+      (* the slot takes the value's recorded type — an annotated `let d: Double = 1` arrives
+         with its literal already carrying Double, so there is nothing to coerce *)
+      let value = gen_expr builder value in
+      let address = emit builder (Sil.Alloc_stack name) (value_type builder value) in
       bind_variable builder name address;
       emit_void builder (Sil.Store (value, address))
-  | Ast.Assign { name; value; _ } ->
+  | Tast.Assign { name; value; _ } ->
       let value = gen_expr builder value in
       emit_void builder (Sil.Store (value, address_of builder name))
-  | Ast.Set_member { obj = object_name; field = field_name; value; _ } ->
-      (* TODO(10h): `p.x = expression` — where VALUE SEMANTICS lives. Write
-         THROUGH p's own slot (address of the field, then store), which is why
-         assigning to p.x can never be observed through a copy q. §2. *)
-      ignore (object_name, field_name, value);
+  | Tast.Set_member { obj = object_name; field = index; value; _ } ->
+      ignore (object_name, index, value);
+      (* TODO(10h): `p.x = expression` — where VALUE SEMANTICS lives. Write THROUGH p's own slot
+         (`struct_element_addr` for the field's address, then `store`), which is why assigning to
+         p.x can never be observed through a copy q. The `index` is Sema's. §2. *)
       failwith "TODO(10h): lower member write (struct_element_addr + store)"
-  | Ast.Expr_stmt (expression, _) -> ignore (gen_expr builder expression)
-  | Ast.Return (return_expression, _) -> (
+  | Tast.Expr_stmt expression -> ignore (gen_expr builder expression)
+  | Tast.Return (return_expression, _) -> (
       match return_expression with
       | Some expression ->
           let value = gen_expr builder expression in
           terminate builder (Sil.Return (Some value))
       | None -> terminate builder (Sil.Return None))
-  | Ast.If
+  | Tast.If
       {
         cond = condition;
         then_blk = then_block_statements;
@@ -299,7 +236,7 @@ and gen_stmt (builder : builder) (statement : Ast.stmt) : unit =
           terminate builder (Sil.Br merge_block.Sil.bid)
       | None -> ());
       switch_to builder merge_block
-  | Ast.While { cond = condition; body; _ } ->
+  | Tast.While { cond = condition; body; _ } ->
       let header = new_block builder
       and body_block = new_block builder
       and exit_block = new_block builder in
@@ -315,7 +252,7 @@ and gen_stmt (builder : builder) (statement : Ast.stmt) : unit =
       terminate builder (Sil.Br header.Sil.bid);
       leave_loop builder;
       switch_to builder exit_block
-  | Ast.For { var = loop_variable; lo = lower_bound; hi = upper_bound; body; _ }
+  | Tast.For { var = loop_variable; lo = lower_bound; hi = upper_bound; body; _ }
     ->
       (* desugar `for value in lo ..< hi { body }` into a counted while loop *)
       let lower_bound_value = gen_expr builder lower_bound in
@@ -351,11 +288,11 @@ and gen_stmt (builder : builder) (statement : Ast.stmt) : unit =
       emit_void builder (Sil.Store (incremented_value, address));
       terminate builder (Sil.Br header.Sil.bid);
       switch_to builder exit_block
-  | Ast.Break _ -> (
+  | Tast.Break _ -> (
       match break_target builder with
       | Some exit_target -> terminate builder (Sil.Br exit_target)
       | None -> ())
-  | Ast.Continue _ -> (
+  | Tast.Continue _ -> (
       match continue_target builder with
       | Some target -> terminate builder (Sil.Br target)
       | None -> ())
@@ -363,7 +300,7 @@ and gen_stmt (builder : builder) (statement : Ast.stmt) : unit =
 (* --- lowering a function: params get slots; then the body --- *)
 let lower_func struct_layouts functions (name : string)
     (parameters : (string * Types.ty) list) (return_type : Types.ty)
-    (body : Ast.stmt list) : Sil.func =
+    (body : Tast.stmt list) : Sil.func =
   let value_types = Hashtbl.create 16 in
   let entry_block = { Sil.bid = 0; instrs = []; term = Sil.Unreachable } in
   let builder =
@@ -410,91 +347,44 @@ let lower_func struct_layouts functions (name : string)
   }
 
 (* --- the entry point: a checked program -> a SIL module --- *)
-let lower (program : Ast.program) : Sil.modul =
-  (* struct registry first (names, then layouts) so any type name resolves *)
-  let struct_layouts : (string, Types.struct_layout) Hashtbl.t =
-    Hashtbl.create 16
-  in
-  List.iter
-    (function
-      | Ast.IStruct struct_decl ->
-          Hashtbl.replace struct_layouts struct_decl.Ast.sname
-            { Types.sl_name = struct_decl.Ast.sname; sl_fields = [] }
-      | _ -> ())
-    program.Ast.items;
-  let type_of_name name =
-    match Types.of_name name with
-    | Some resolved_type -> resolved_type
-    | None ->
-        if Hashtbl.mem struct_layouts name then Types.TStruct name
-        else Types.TInt
-  in
-  List.iter
-    (function
-      | Ast.IStruct struct_decl ->
-          let fields =
-            List.map
-              (fun (field : Ast.field) ->
-                (field.Ast.fld_name, type_of_name field.Ast.fld_ty))
-              struct_decl.Ast.sfields
-          in
-          Hashtbl.replace struct_layouts struct_decl.Ast.sname
-            { Types.sl_name = struct_decl.Ast.sname; sl_fields = fields }
-      | _ -> ())
-    program.Ast.items;
-  let return_type_of function_decl =
-    match function_decl.Ast.ret with
-    | None -> Types.TVoid
-    | Some type_name -> type_of_name type_name
+let lower (program : Tast.program) : Sil.modul =
+  (* Nothing is resolved here. The layouts were built by Sema and travel with the tree, so the
+     field order lowered is exactly the one the program was type-checked against; and a
+     `Tast.func_decl`'s parameter and return types are types, not written names. *)
+  let struct_layouts : (string, Types.struct_layout) Hashtbl.t = Hashtbl.create 16 in
+  let ordered_struct_layouts =
+    List.filter_map
+      (function
+        | Tast.IStruct layout ->
+            Hashtbl.replace struct_layouts layout.Types.sl_name layout;
+            Some layout
+        | _ -> None)
+      program.Tast.items
   in
   let functions = Hashtbl.create 16 in
   List.iter
     (function
-      | Ast.IFunc function_decl ->
-          let parameter_types =
-            List.map
-              (fun (parameter : Ast.param) -> type_of_name parameter.Ast.ptype)
-              function_decl.Ast.params
-          in
-          Hashtbl.replace functions function_decl.Ast.fname
-            (parameter_types, return_type_of function_decl)
+      | Tast.IFunc function_decl ->
+          Hashtbl.replace functions function_decl.Tast.fname
+            ( List.map (fun (p : Tast.param) -> p.Tast.pty) function_decl.Tast.params,
+              function_decl.Tast.ret )
       | _ -> ())
-    program.Ast.items;
+    program.Tast.items;
   let function_definitions =
     List.filter_map
       (function
-        | Ast.IFunc function_decl ->
+        | Tast.IFunc function_decl ->
             let parameters =
-              List.map
-                (fun (parameter : Ast.param) ->
-                  (parameter.Ast.pname, type_of_name parameter.Ast.ptype))
-                function_decl.Ast.params
+              List.map (fun (p : Tast.param) -> (p.Tast.pname, p.Tast.pty)) function_decl.Tast.params
             in
             Some
-              (lower_func struct_layouts functions function_decl.Ast.fname
-                 parameters
-                 (return_type_of function_decl)
-                 function_decl.Ast.body)
+              (lower_func struct_layouts functions function_decl.Tast.fname parameters
+                 function_decl.Tast.ret function_decl.Tast.body)
         | _ -> None)
-      program.Ast.items
+      program.Tast.items
   in
   let main_statements =
-    List.filter_map
-      (function Ast.IStmt statement -> Some statement | _ -> None)
-      program.Ast.items
+    List.filter_map (function Tast.IStmt statement -> Some statement | _ -> None) program.Tast.items
   in
-  let main =
-    lower_func struct_layouts functions "main" [] Types.TVoid main_statements
-  in
-  let ordered_struct_layouts =
-    List.filter_map
-      (function
-        | Ast.IStruct struct_decl ->
-            Some (Hashtbl.find struct_layouts struct_decl.Ast.sname)
-        | _ -> None)
-      program.Ast.items
-  in
-  {
-    Sil.funcs = function_definitions @ [ main ];
-    structs = ordered_struct_layouts;
-  }
+  let main = lower_func struct_layouts functions "main" [] Types.TVoid main_statements in
+  { Sil.funcs = function_definitions @ [ main ]; structs = ordered_struct_layouts }
