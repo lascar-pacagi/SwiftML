@@ -370,9 +370,76 @@ the alcotest `FAIL` and its three `sema-switch` cases `OK`.
 
 ## 5. Benchmark it
 
-Time a `switch` with many cases against swiftc. Our linear chain is O(cases); swiftc's jump table is
-O(1). For a hot interpreter loop that's a real gap — and exactly what Exercise 4 (a `switch_enum`
-terminator → LLVM `switch`) closes.
+This benchmark runs two eight-case switches per iteration, twenty million times — one to advance
+the operator, one to apply it, so 40 million dispatches in all:
+
+```swift
+enum Op {
+  case add, sub, mul, divi, modu, mini, maxi, neg
+}
+
+func next(_ op: Op) -> Op {
+  switch op {
+  case .add: return Op.sub
+  …
+  case .neg: return Op.add
+  }
+}
+
+func apply(_ op: Op, _ a: Int, _ b: Int) -> Int {
+  switch op {
+  case .add: return a + b
+  …
+  case .neg: return 0 - a
+  }
+}
+
+var op = Op.add
+var acc = 0
+for i in 0 ..< 20000000 {
+  op = next(op)
+  acc = acc + apply(op, i % 97 + 1, i % 13 + 1)
+}
+print(acc)
+```
+
+Run all four variants with:
+
+```bash
+make bench C=phase3-value-types/12-pattern-matching
+```
+
+The runner checks that all four binaries print the same thing before it times anything. On this
+machine:
+
+```text
+Switch benchmark -- 40,000,000 dispatches through an eight-case switch
+  compiling and checking four binaries... done
+  output: 1156475080 (all four binaries agree)
+  native runtime, best of 5 after one warm-up:
+    swiftml (clang default)     0.095 s
+    swiftml + clang -O2         0.034 s
+    swiftc -Onone               1.809 s
+    swiftc -O                   0.018 s
+  clang -O2 speedup: 2.74x
+  swiftc -O speedup: 97.81x
+  optimized gap: 1.86x (swiftml / swiftc)
+```
+
+**1.86× is the first real gap in this course**, and it is worth being careful about why. The
+tempting story is the obvious one: our dispatch is a linear chain, so an eight-case switch costs
+up to eight comparisons, while swiftc emits a jump table and pays one. Half of that is true —
+`--emit-llvm` on this program shows our **16** `icmp eq i64`, one per case per switch.
+
+The other half is not. `swiftc -O -emit-ir` on the same program contains **no `switch`
+instruction at all**: it keeps compare-and-branch too, and wins by inlining `next` and `apply`
+into the loop and laying the branches out well. So this measurement does *not* isolate the jump
+table, and you should not conclude from it that a jump table is worth 1.86×.
+
+That is exactly what makes Exercise 4 worth doing rather than assuming. Add the `switch_enum`
+terminator, lower it to LLVM's `switch`, re-run this benchmark, and let the number tell you how
+much of the gap it was actually holding. A benchmark that refutes a plausible explanation is more
+useful than one that confirms it.
 
 ## 6. Exercises
 

@@ -1,0 +1,6 @@
+; Runtime comparison for the switch-dispatch workload documented in §5.
+(executable
+ (name bench)
+ (libraries swiftml_match unix)
+ (flags
+  (:standard -warn-error -a)))
