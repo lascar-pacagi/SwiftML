@@ -2,13 +2,20 @@
 
    Concept 05 is filled in for you. Fill the TODO(06) holes:
      - logical && / || : both operands Bool, result Bool
-     - if / while conditions must be Bool; for v in lo ..< hi : lo, hi are Int and v is an
-       immutable Int in the body's scope; break / continue only inside a loop.
-   The scope helpers (bind/lookup/in_scope/check_block) and loop_depth are given.
+     - lexical block scopes: a binding made inside { … } is local to it (a scope stack)
+     - if / while conditions must be Bool
+     - for v in lo ..< hi : lo, hi must be Int; v is an immutable Int in the body's scope
+     - break / continue are only valid inside a loop (tracked with a depth counter)
+   The scope helpers (bind/lookup/in_scope/check_block), loop_depth and `mk` are given.
+
+   As in 05, the checker PRODUCES a `Tast.program` rather than returning a verdict: every node
+   carries its type and every resolved name is a node that can only mean that (PLAN.md §0.1).
+   So each hole below returns a `Tast` node, not a unit — a rule that type-checks something must
+   also say what it produced.
 
    Reference: solution/sema.ml. *)
 
-let check (program : Ast.program) (diagnostics : Diagnostics.sink) : unit =
+let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.program option =
   (* a scope stack: innermost binding first, so List.assoc_opt finds the closest one *)
   let environment : (string * (Types.ty * bool)) list ref = ref [] in
   let loop_depth = ref 0 in
@@ -20,11 +27,13 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : unit =
     f ();
     environment := saved
   in
+  let mk (e : Tast.expr_kind) (ty : Types.ty) (span : Token.span) : Tast.expr = { Tast.e; ty; span } in
 
+  (* `%` is absent: Swift has no `%` on Double, so a tree containing one can never take it *)
   let rec is_int_literal = function
     | Ast.Int_lit _ -> true
     | Ast.Unary (Ast.Neg, expression, _) -> is_int_literal expression
-    | Ast.Binary ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod), a, b, _) ->
+    | Ast.Binary ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div), a, b, _) ->
         is_int_literal a && is_int_literal b
     | _ -> false
   in
@@ -34,163 +43,167 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : unit =
     else if is_int_literal r && tl = Types.TDouble then Some Types.TDouble
     else None
   in
-  let rec infer (expression : Ast.expr) : Types.ty =
+  let rec infer (expression : Ast.expr) : Tast.expr =
     match expression with
-    | Ast.Int_lit _ -> Types.TInt
-    | Ast.Double_lit _ -> Types.TDouble
-    | Ast.Bool_lit _ -> Types.TBool
-    | Ast.String_lit _ -> Types.TString
+    | Ast.Int_lit (n, span) -> mk (Tast.Int_lit n) Types.TInt span
+    | Ast.Double_lit (f, span) -> mk (Tast.Double_lit f) Types.TDouble span
+    | Ast.Bool_lit (b, span) -> mk (Tast.Bool_lit b) Types.TBool span
+    | Ast.String_lit (s, span) -> mk (Tast.String_lit s) Types.TString span
     | Ast.Var (x, span) -> (
+        (* RESOLUTION: a name becomes a binding, or it is an error. Nothing downstream re-asks. *)
         match lookup x with
-        | Some (t, _) -> t
+        | Some (t, _) -> mk (Tast.Local x) t span
         | None ->
             report_error span (Printf.sprintf "cannot find '%s' in scope" x);
-            Types.TInt)
+            mk (Tast.Local x) Types.TInt span)
     | Ast.Unary (Ast.Neg, e0, span) ->
-        let t = infer e0 in
-        if Types.is_numeric t then t
-        else (
+        let n = infer e0 in
+        if not (Types.is_numeric n.Tast.ty) then
           report_error span
-            (Printf.sprintf
-               "unary operator '-' cannot be applied to an operand of type '%s'"
-               (Types.string_of_ty t));
-          t)
+            (Printf.sprintf "unary operator '-' cannot be applied to an operand of type '%s'"
+               (Types.string_of_ty n.Tast.ty));
+        mk (Tast.Unary (Ast.Neg, n)) n.Tast.ty span
     | Ast.Binary (op, l, r, span) -> infer_binary op l r span
     | Ast.Call (f, args, span) -> infer_call f args span
     (* `expression as T`: the type is written, so there is nothing to synthesise — CHECK the
        operand against it. The one arm where `infer` calls `check_expr`. *)
     | Ast.Ascribe (e0, tyname, span) -> (
         match Types.of_name tyname with
-        | Some t ->
-            check_expr e0 t;
-            t
+        | Some t -> mk (Tast.Coerce (check_expr e0 t)) t span
         | None ->
-            report_error span
-              (Printf.sprintf "cannot find type '%s' in scope" tyname);
-            infer e0)
-  and infer_binary op l r span : Types.ty =
-    let tl = infer l and tr = infer r in
+            report_error span (Printf.sprintf "cannot find type '%s' in scope" tyname);
+            let n = infer e0 in
+            mk (Tast.Coerce n) n.Tast.ty span)
+  and infer_binary op l r span : Tast.expr =
+    let ln = infer l and rn = infer r in
+    let tl = ln.Tast.ty and tr = rn.Tast.ty in
     let bad () =
       (* swiftc has two wordings and picks by whether the operands agree:
            1 < "a"      -> cannot be applied to operands of type 'Int' and 'String'
            true < false -> cannot be applied to two 'Bool' operands *)
       report_error span
         (if tl = tr then
-           Printf.sprintf
-             "binary operator '%s' cannot be applied to two '%s' operands"
+           Printf.sprintf "binary operator '%s' cannot be applied to two '%s' operands"
              (Ast.string_of_binop op) (Types.string_of_ty tl)
          else
            Printf.sprintf
-             "binary operator '%s' cannot be applied to operands of type '%s' \
-              and '%s'"
-             (Ast.string_of_binop op) (Types.string_of_ty tl)
-             (Types.string_of_ty tr));
+             "binary operator '%s' cannot be applied to operands of type '%s' and '%s'"
+             (Ast.string_of_binop op) (Types.string_of_ty tl) (Types.string_of_ty tr));
       Types.TInt
     in
-    match op with
-    | Ast.Add -> (
-        match unify l tl r tr with
-        | Some ((Types.TInt | Types.TDouble) as t) -> t
-        | Some Types.TString -> Types.TString
-        | _ -> bad ())
-    | Ast.Sub | Ast.Mul | Ast.Div -> (
-        match unify l tl r tr with
-        | Some ((Types.TInt | Types.TDouble) as t) -> t
-        | _ -> bad ())
-    | Ast.Mod -> (
-        match unify l tl r tr with Some Types.TInt -> Types.TInt | _ -> bad ())
-    | Ast.Eq | Ast.Ne -> (
-        match unify l tl r tr with
-        | Some _ -> Types.TBool
-        | None ->
-            ignore (bad ());
-            Types.TBool)
-    | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge -> (
-        match unify l tl r tr with
-        | Some (Types.TInt | Types.TDouble | Types.TString) -> Types.TBool
-        | _ ->
-            ignore (bad ());
-            Types.TBool)
-    | Ast.And | Ast.Or ->
-        ignore bad;
-        (* TODO(06): both operands must be Bool; result is Bool (else report via bad ()). *)
-        failwith "TODO(06): type && / ||"
-  and infer_call f args span : Types.ty =
-    if f = "print" then (
-      (match args with
-      | [ a ] -> ignore (infer a)
+    let unified = unify l tl r tr in
+    (* APPLY the solution: a side that flexed is re-checked AT the unified type, so its literal
+       nodes come back carrying it. swiftc's CSApply, in miniature. *)
+    let ln, rn =
+      match unified with
+      | Some t ->
+          ( (if Types.equal tl t then ln else check_expr l t),
+            if Types.equal tr t then rn else check_expr r t )
+      | None -> (ln, rn)
+    in
+    let result =
+      match op with
+      | Ast.Add -> (
+          match unified with
+          | Some ((Types.TInt | Types.TDouble) as t) -> t
+          | Some Types.TString -> Types.TString
+          | _ -> bad ())
+      | Ast.Sub | Ast.Mul | Ast.Div -> (
+          match unified with Some ((Types.TInt | Types.TDouble) as t) -> t | _ -> bad ())
+      | Ast.Mod -> ( match unified with Some Types.TInt -> Types.TInt | _ -> bad ())
+      | Ast.Eq | Ast.Ne -> (
+          match unified with
+          | Some _ -> Types.TBool
+          | None ->
+              ignore (bad ());
+              Types.TBool)
+      | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge -> (
+          match unified with
+          | Some (Types.TInt | Types.TDouble | Types.TString) -> Types.TBool
+          | _ ->
+              ignore (bad ());
+              Types.TBool)
+      | Ast.And | Ast.Or ->
+          (* TODO(06): both operands must be Bool; result is Bool (else report via bad ()). *)
+          failwith "TODO(06): type && / ||"
+    in
+    mk (Tast.Binary (op, ln, rn)) result span
+  and infer_call f args span : Tast.expr =
+    (* RESOLUTION: `print` is the only function this subset has *)
+    let some_arg ns = match ns with n :: _ -> n | [] -> mk (Tast.Int_lit 0) Types.TInt span in
+    if f = "print" then
+      match args with
+      | [ a ] -> mk (Tast.Print (infer a)) Types.TInt span
       | _ ->
           report_error span "print(_:) expects exactly one argument";
-          List.iter (fun a -> ignore (infer a)) args);
-      Types.TInt)
+          mk (Tast.Print (some_arg (List.map infer args))) Types.TInt span
     else (
       report_error span (Printf.sprintf "cannot find '%s' in scope" f);
-      List.iter (fun a -> ignore (infer a)) args;
-      Types.TInt)
-  and check_expr (expression : Ast.expr) (expected : Types.ty) : unit =
+      mk (Tast.Print (some_arg (List.map infer args))) Types.TInt span)
+  and check_expr (expression : Ast.expr) (expected : Types.ty) : Tast.expr =
     match expression with
-    | Ast.Int_lit _ ->
-        if expected = Types.TInt || expected = Types.TDouble then ()
-        else
-          report_error (Ast.expr_span expression)
-            (Printf.sprintf
-               "cannot convert value of type 'Int' to specified type '%s'"
-               (Types.string_of_ty expected))
-    | Ast.Binary ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div), l, r, _)
+    | Ast.Int_lit (n, span) ->
+        (* the coercion, RECORDED: the node keeps its kind and takes the expected type, exactly
+           as `swiftc -dump-ast` shows (`integer_literal_expr type="Double"`) *)
+        if expected = Types.TInt || expected = Types.TDouble then mk (Tast.Int_lit n) expected span
+        else (
+          report_error span
+            (Printf.sprintf "cannot convert value of type 'Int' to specified type '%s'"
+               (Types.string_of_ty expected));
+          mk (Tast.Int_lit n) Types.TInt span)
+    | Ast.Binary (((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div) as op), l, r, span)
       when Types.is_numeric expected ->
-        check_expr l expected;
-        check_expr r expected
-    | Ast.Binary (Ast.Mod, l, r, _) when expected = Types.TInt ->
-        check_expr l Types.TInt;
-        check_expr r Types.TInt
-    | Ast.Unary (Ast.Neg, e0, _) when Types.is_numeric expected ->
-        check_expr e0 expected
+        mk (Tast.Binary (op, check_expr l expected, check_expr r expected)) expected span
+    | Ast.Binary (Ast.Mod, l, r, span) when expected = Types.TInt ->
+        mk (Tast.Binary (Ast.Mod, check_expr l Types.TInt, check_expr r Types.TInt)) Types.TInt span
+    | Ast.Unary (Ast.Neg, e0, span) when Types.is_numeric expected ->
+        mk (Tast.Unary (Ast.Neg, check_expr e0 expected)) expected span
     | _ ->
-        let t = infer expression in
-        if not (Types.equal t expected) then
+        let n = infer expression in
+        if not (Types.equal n.Tast.ty expected) then
           report_error (Ast.expr_span expression)
-            (Printf.sprintf
-               "cannot convert value of type '%s' to specified type '%s'"
-               (Types.string_of_ty t)
-               (Types.string_of_ty expected))
+            (Printf.sprintf "cannot convert value of type '%s' to specified type '%s'"
+               (Types.string_of_ty n.Tast.ty) (Types.string_of_ty expected));
+        n
   in
-  let rec check_stmt (s : Ast.stmt) : unit =
+  let rec check_stmt (s : Ast.stmt) : Tast.stmt =
     match s with
     | Ast.Let { name; is_var; annot; value; span } ->
-        let t =
+        let n =
           match annot with
           | None -> infer value
           | Some tyname -> (
               match Types.of_name tyname with
-              | Some t ->
-                  check_expr value t;
-                  t
+              | Some t -> check_expr value t
               | None ->
-                  report_error span
-                    (Printf.sprintf "cannot find type '%s' in scope" tyname);
+                  report_error span (Printf.sprintf "cannot find type '%s' in scope" tyname);
                   infer value)
         in
-        bind name (t, is_var)
+        bind name (n.Tast.ty, is_var);
+        Tast.Let { name; is_var; value = n; span }
     | Ast.Assign { name; value; span } -> (
         match lookup name with
         | None ->
             report_error span (Printf.sprintf "cannot find '%s' in scope" name);
-            ignore (infer value)
+            Tast.Assign { name; value = infer value; span }
         | Some (t, is_var) ->
             if not is_var then
               report_error span
-                (Printf.sprintf
-                   "cannot assign to value: '%s' is a 'let' constant" name);
-            check_expr value t)
-    | Ast.Expr_stmt (expression, _) -> ignore (infer expression)
+                (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" name);
+            Tast.Assign { name; value = check_expr value t; span })
+    | Ast.Expr_stmt (expression, _) -> Tast.Expr_stmt (infer expression)
     | Ast.If _ | Ast.While _ | Ast.For _ | Ast.Break _ | Ast.Continue _ ->
         ignore loop_depth;
         ignore check_block;
         (* TODO(06): the control-flow rules — conditions are Bool; `for` binds an IMMUTABLE Int over
            an Int range in a fresh scope; `break`/`continue` need an enclosing loop (loop_depth).
+           Each arm returns the matching `Tast` statement, with its checked parts inside.
            The tests pin swiftc's wording for each rejection. §3. *)
         failwith "TODO(06): check control-flow statements"
-  and check_block (statements : Ast.stmt list) : unit =
-    in_scope (fun () -> List.iter check_stmt statements)
+  and check_block (statements : Ast.stmt list) : Tast.stmt list =
+    let out = ref [] in
+    in_scope (fun () -> out := List.map check_stmt statements);
+    !out
   in
-  List.iter check_stmt program.Ast.stmts
+  let stmts = List.map check_stmt program.Ast.stmts in
+  if Diagnostics.has_errors diagnostics then None else Some { Tast.stmts }
