@@ -26,20 +26,20 @@ type kind =
   | Kw_func
   | Kw_return
   | Kw_struct
-  | Kw_enum (* concept 11 *)
-  | Kw_protocol (* concept 21 *)
-  | Kw_where (* concept 22 *)
-  | Kw_as (* concept 23 *)
-  | Kw_class (* concept 25 *)
+  | Kw_enum
+  | Kw_protocol
+  | Kw_where
+  | Kw_as
+  | Kw_class
   | Kw_init
   | Kw_override
   | Kw_super
-  | Kw_deinit (* concept 26 *)
-  | At (* `@` — attributes like `@escaping` (parsed and accepted; concept 29) *)
-  | Kw_case (* concept 11 *)
-  | Kw_switch (* concept 12 *)
-  | Kw_default (* concept 12 *)
-  | Kw_nil (* concept 13 *)
+  | Kw_deinit
+  | At (* NEW: `@` — attributes like `@escaping` (parsed and accepted) *)
+  | Kw_case
+  | Kw_switch
+  | Kw_default
+  | Kw_nil
   | Question (* ? — optional type / nil-coalescing *)
   | Bang (* ! — force unwrap *)
   | Plus
@@ -58,7 +58,7 @@ type kind =
   | PipePipe
   | DotDotLt
   | Arrow
-  | Dot (* . member access — concept 10 *)
+  | Dot (* . member access *)
   | Colon
   | LParen
   | RParen
@@ -97,8 +97,8 @@ let string_of_kind = function
   | Kw_init -> "init"
   | Kw_override -> "override"
   | Kw_super -> "super"
-  | Kw_deinit (* concept 26 *) -> "deinit"
-  | At (* `@` — attributes like `@escaping` (parsed and accepted; concept 29) *) -> "@"
+  | Kw_deinit -> "deinit"
+  | At (* NEW: `@` — attributes like `@escaping` (parsed and accepted) *) -> "@"
   | Kw_case -> "case"
   | Kw_switch -> "switch"
   | Kw_default -> "default"

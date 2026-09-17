@@ -16,7 +16,7 @@ type kind =
   | Kw_var
   | Kw_true
   | Kw_false
-  | Kw_as (* concept 05: the `e as T` coercion *)
+  | Kw_as (* the `e as T` coercion *)
   | Kw_if
   | Kw_else
   | Kw_while
@@ -27,13 +27,13 @@ type kind =
   | Kw_func
   | Kw_return
   | Kw_struct
-  | Kw_enum (* concept 11 *)
-  | Kw_protocol (* concept 21 *)
-  | Kw_where (* NEW (concept 22) *)
-  | Kw_case (* concept 11 *)
-  | Kw_switch (* concept 12 *)
-  | Kw_default (* concept 12 *)
-  | Kw_nil (* concept 13 *)
+  | Kw_enum
+  | Kw_protocol
+  | Kw_where (* NEW *)
+  | Kw_case
+  | Kw_switch
+  | Kw_default
+  | Kw_nil
   | Question (* ? — optional type / nil-coalescing *)
   | Bang (* ! — force unwrap *)
   | Plus
@@ -52,7 +52,7 @@ type kind =
   | PipePipe
   | DotDotLt
   | Arrow
-  | Dot (* . member access — concept 10 *)
+  | Dot (* . member access *)
   | Colon
   | LParen
   | RParen

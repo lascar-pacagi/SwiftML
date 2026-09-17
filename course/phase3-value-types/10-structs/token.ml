@@ -26,7 +26,7 @@ type kind =
   | Kw_continue
   | Kw_func
   | Kw_return
-  | Kw_struct (* NEW (concept 10) *)
+  | Kw_struct (* NEW *)
   | Plus
   | Minus
   | Star
@@ -43,7 +43,7 @@ type kind =
   | PipePipe
   | DotDotLt
   | Arrow
-  | Dot (* . member access — NEW (concept 10) *)
+  | Dot (* NEW: . member access *)
   | Colon
   | LParen
   | RParen

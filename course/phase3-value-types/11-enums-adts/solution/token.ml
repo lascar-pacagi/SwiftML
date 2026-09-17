@@ -15,7 +15,7 @@ type kind =
   | Kw_var
   | Kw_true
   | Kw_false
-  | Kw_as (* the `e as T` coercion, introduced in concept 05 *)
+  | Kw_as (* the `e as T` coercion *)
   | Kw_if
   | Kw_else
   | Kw_while
@@ -44,7 +44,7 @@ type kind =
   | PipePipe
   | DotDotLt
   | Arrow
-  | Dot (* member access, introduced in concept 10 *)
+  | Dot (* member access *)
   | Colon
   | LParen
   | RParen
