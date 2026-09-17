@@ -136,6 +136,109 @@ instead of on a `}`. A pattern starts with a **leading dot** and no type name (`
 `.` alone and sema resolves the case. And a `binding` is `let x` or `_`, never a bare expression —
 Swift's `case let x` and `case x where …` forms, and tuple and nested patterns, are the exercises.
 
+### The new AST contract
+
+```ocaml
+type pat_binding = Bind of string | Ignore     (* `let x` keeps it, `_` drops it *)
+
+type pattern =
+  | PEnumCase of string * pat_binding list      (* `.circle(let r)` / `.dot` *)
+  | PInt of int                                 (* a literal: `0`, `-1` *)
+
+type stmt =
+  | (* earlier cases *)
+  | Switch of {
+      subject : expr;
+      cases   : (pattern * stmt list) list;     (* in source order *)
+      default : stmt list option;
+      span    : Token.span;
+    }
+```
+
+Two things are worth noticing before you write the parser. A `pattern` is **not** an `expr`:
+`.circle(let r)` looks like a call and is nothing of the kind — it binds rather than evaluates,
+which is why it gets its own type rather than reusing `Member`/`Method_call`. And an arm's body is
+a `stmt list`, not a `block`: Swift's arms have no braces, so there is no `{` to parse and the
+body's end is a lookahead.
+
+The dump prints a switch as `(switch subj (case <pat> (body…))… (default (body…)))`, so the
+example above is:
+
+```
+(func area (s:Shape) -> Int ((switch s
+   (case .circle(let r) ((return (* r r))))
+   (case .rect(let w,let h) ((return (* w h))))
+   (case .dot ((return 0))))))
+```
+
+### The new SIL instruction, and the CFG it builds
+
+Construction gave concept 11 `enum`; reading a payload back needs one more instruction, and the
+rest is control flow you already have.
+
+| SIL | meaning | LLVM |
+|---|---|---|
+| `%v = enum_payload %e, #i` | associated value #i of the enum value | `extractvalue %E %e, i+1` (the tag is #0) |
+
+Nothing here branches. `switch` is not one instruction — it *compiles away* into the `cond_br`
+diamond concept 06 already built. Take:
+
+```swift
+enum Shape { case circle(Int), rect(Int, Int), dot }
+func area(_ s: Shape) -> Int {
+  switch s {
+  case .circle(let r): return r * r
+  case .rect(let w, let h): return w * h
+  case .dot: return 0
+  }
+}
+```
+
+`--emit-sil` gives one tag read, then a chain of comparisons:
+
+```
+bb0:
+  …                                   ; the parameter is spilled to its slot, as always
+  %4 = enum_tag %3                    ; read the tag ONCE
+  %5 = integer_literal $Int, 0
+  %6 = binop "==" %4, %5 $Bool
+  cond_br %6, bb2, bb3                ; matched? -> the arm. else -> keep testing
+bb1:
+  unreachable                         ; exhaustive: sema proved nothing reaches here
+bb2:
+  %7 = enum_payload %3, #0 $Int       ; `let r` — read from the SUBJECT, not from the tag
+  %8 = alloc_stack $Int  // r
+  store %7 to %8
+  …                                   ; the arm's body, then `return`
+bb3:
+  %13 = integer_literal $Int, 1
+  %14 = binop "==" %4, %13 $Bool
+  cond_br %14, bb4, bb5
+bb4:
+  %15 = enum_payload %3, #0 $Int      ; `let w`
+  %18 = enum_payload %3, #1 $Int      ; `let h`
+  …
+```
+
+(Block order is as printed: `bb1` is allocated when the chain is built, before the arms that
+follow it, which is why the unreachable tail appears second rather than last.)
+
+A binding is an ordinary local — `enum_payload`, `alloc_stack`, `store` — which is why `let r`
+behaves like every other `let` and why the register allocator, much later, needs no special case
+for it. And IRGen has almost nothing to do, because both halves are already aggregate reads:
+
+```llvm
+bb0:
+  %t5 = extractvalue %Shape %t4, 0    ; enum_tag  — field 0
+  %t6 = icmp eq i64 %t5, 0
+  br i1 %t6, label %bb2, label %bb3
+  %t7 = extractvalue %Shape %t4, 1    ; enum_payload #0 — field 1
+  %t12 = extractvalue %Shape %t4, 1   ; `let w`
+  %t13 = extractvalue %Shape %t4, 2   ; `let h`
+```
+
+`print(area(Shape.rect(3, 4)))` prints `12`, under swiftc too.
+
 ### The diagnostics you emit (and the ones you are given)
 
 One of these is yours: `switch must be exhaustive`, the `TODO(12-sema)` hole. The rest are given
