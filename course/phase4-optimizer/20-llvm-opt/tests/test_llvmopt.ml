@@ -8,8 +8,8 @@
 let emit (src : string) : string =
   let d = Diagnostics.create () in
   let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
-  Sema.check p d;
-  Irgen.emit_llvm (Silgen.lower p)
+  (* SILGen consumes the TYPE-CHECKED tree *)
+  Irgen.emit_llvm (Silgen.lower (Option.get (Sema.check p d)))
 
 (* every alloca must appear in the entry block (between "bb0:" and the next "bbN:" label) *)
 let allocas_outside_entry (ir : string) : int =
@@ -42,8 +42,8 @@ let test_opt_pipeline_end_to_end () =
   let d = Diagnostics.create () in
   let src = "func sq(_ x: Int) -> Int { return x * x }\nvar s = 0\nfor i in 0 ..< 10 { s = s + sq(i) }\nprint(s)" in
   let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
-  Sema.check p d;
-  let m = Opt.optimize (Silgen.lower p) in
+  (* SILGen consumes the TYPE-CHECKED tree *)
+  let m = Opt.optimize (Silgen.lower (Option.get (Sema.check p d))) in
   Alcotest.(check (list string)) "optimized SIL verifies" [] (Sil.verify m);
   let mem =
     List.fold_left

@@ -1,4 +1,4 @@
-(* The driver. Full pipeline:
+(* The driver — concept 20 (skeleton): the only hole is wiring -O through to clang. Full pipeline:
    lex -> parse -> sema -> SILGen -> SIL -> [optimizer] -> IRGen -> LLVM -> clang -> native.
    `-O` runs `Opt.optimize` on the SIL before IRGen — and (concept 20) hands the emitted LLVM IR
    to LLVM's own optimizer by compiling with `clang -O2`. Two optimizers, two levels: our SIL
@@ -7,6 +7,7 @@
 type emit =
   | Tokens
   | Ast
+  | Typed_ast (* the TYPE-CHECKED tree sema produced *)
   | Check
   | Sil (* raw SIL (no optimization) *)
   | Sil_opt (* optimized SIL (`--sil-opt`) *)
@@ -17,11 +18,10 @@ let read_file (path : string) : string =
   let ic = open_in_bin path in
   Fun.protect ~finally:(fun () -> close_in ic) (fun () -> really_input_string ic (in_channel_length ic))
 
-let frontend (src : string) (diags : Diagnostics.sink) : Ast.program =
+let frontend (src : string) (diags : Diagnostics.sink) : Tast.program option =
   let toks = Lexer.tokenize (Lexer.create src diags) in
   let prog = Parser.parse_program (Parser.create toks diags) in
-  Sema.check prog diags;
-  prog
+  Sema.check prog diags
 
 let bail_on_errors (diags : Diagnostics.sink) : unit =
   if Diagnostics.has_errors diags then (
@@ -32,7 +32,7 @@ let bail_on_errors (diags : Diagnostics.sink) : unit =
 let lower_sil ?(opt = false) (src : string) (diags : Diagnostics.sink) : Sil.modul =
   let prog = frontend src diags in
   bail_on_errors diags;
-  let m = Silgen.lower prog in
+  let m = Silgen.lower (Option.get prog) in
   (match Sil.verify m with
   | [] -> ()
   | errs ->
@@ -51,6 +51,9 @@ let lower_sil ?(opt = false) (src : string) (diags : Diagnostics.sink) : Sil.mod
         exit 1
 
 let run_clang ~(opt : bool) ~(ll_path : string) ~(out : string) : unit =
+  (* concept 20: `-O` also engages LLVM's optimizer — clang runs the full -O2 pass pipeline
+     (instcombine, GVN, LICM, SCEV/indvars, vectorizer, …) and an optimizing backend (isel,
+     register allocation, scheduling) on the IR we emit. `-Onone` compiles at -O0: fast, naive. *)
   (* TODO(20): hand the IR to LLVM's optimizer — "-O2" when [opt], "-O0" otherwise. §2 lists what
      -O2 adds on top of our own SIL passes, and §5 measures it. *)
   let oflag = if opt then failwith "TODO(20): pass -O2 to clang when -O is on" else "-O0" in
@@ -70,8 +73,12 @@ let compile_file ?(out = "a.out") ?(opt = false) ~(src_path : string) ~(emit : e
       bail_on_errors diags;
       print_endline (Ast.dump_program prog)
   | Check ->
-      let (_ : Ast.program) = frontend src diags in
+      let (_ : Tast.program option) = frontend src diags in
       bail_on_errors diags
+  | Typed_ast ->
+        let typed = frontend src diags in
+        bail_on_errors diags;
+        Option.iter (fun p -> print_endline (Tast.dump_program p)) typed
   | Sil -> print_endline (Sil.string_of_module (lower_sil ~opt:false src diags))
   | Sil_opt -> print_endline (Sil.string_of_module (lower_sil ~opt:true src diags))
   | Llvm -> print_string (Irgen.emit_llvm (lower_sil ~opt src diags))
