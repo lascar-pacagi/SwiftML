@@ -7,6 +7,7 @@
 type emit =
   | Tokens
   | Ast
+  | Typed_ast (* the TYPE-CHECKED tree sema produced — compare with `swiftc -dump-ast` *)
   | Check (* lex -> parse -> sema, then stop (no codegen yet) *)
 
 let read_file (path : string) : string =
@@ -16,11 +17,10 @@ let read_file (path : string) : string =
     (fun () ->
       really_input_string input_channel (in_channel_length input_channel))
 
-let frontend (source : string) (diagnostics : Diagnostics.sink) : Ast.program =
+let frontend (source : string) (diagnostics : Diagnostics.sink) : Tast.program option =
   let tokens = Lexer.tokenize (Lexer.create source diagnostics) in
   let program = Parser.parse_program (Parser.create tokens diagnostics) in
-  Sema.check program diagnostics;
-  program
+  Sema.check program diagnostics
 
 let bail_on_errors (diagnostics : Diagnostics.sink) : unit =
   if Diagnostics.has_errors diagnostics then (
@@ -48,5 +48,9 @@ let compile_file ~(src_path : string) ~(emit : emit) : unit =
       bail_on_errors diagnostics;
       print_endline (Ast.dump_program program)
   | Check ->
-      let (_ : Ast.program) = frontend source diagnostics in
+      let (_ : Tast.program option) = frontend source diagnostics in
       bail_on_errors diagnostics
+  | Typed_ast ->
+        let typed = frontend source diagnostics in
+        bail_on_errors diagnostics;
+        Option.iter (fun p -> print_endline (Tast.dump_program p)) typed
