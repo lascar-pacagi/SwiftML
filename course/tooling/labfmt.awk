@@ -253,9 +253,12 @@ cram && /^(diff --git|index |--- |\+\+\+ )/ { next }
 # command a `-`/`+` line belongs to even when the `$` line itself is outside the hunk's context
 cram && /^@@ / { flush(); match($0, /-[0-9]+/); dline = substr($0, RSTART + 1, RLENGTH - 1) + 0; pendblk = ""; next }
 cram && /^[[:space:]]+\$ / { flush(); sub(/^[[:space:]]+/, ""); pendblk = cmdblk[tfile, $0]; dline++; next }
-cram && /^-/  { if (pendblk == "") pendblk = lineblk[tfile, dline]; sub(/^-[[:space:]]*/,  ""); want[++nw] = $0; dline++; next }
-cram && /^\+/ { if (pendblk == "") pendblk = lineblk[tfile, dline - 1]; sub(/^\+[[:space:]]*/, ""); got[++ng] = $0; next }
-cram && substr($0, 1, 3) == "   " { if (pendblk == "") pendblk = lineblk[tfile, dline]; sub(/^[[:space:]]+/, ""); want[++nw] = $0; got[++ng] = $0; dline++; next }
+# Strip the diff marker and the cram body's two-space indent, and NO MORE: eating the rest of the
+# leading space made a whitespace-only difference compare equal, so a test dune had failed was
+# reported PASS. Emitted IR is indented, so that is a difference worth seeing.
+cram && /^-/  { if (pendblk == "") pendblk = lineblk[tfile, dline]; sub(/^-/, ""); sub(/^  /, ""); want[++nw] = $0; dline++; next }
+cram && /^\+/ { if (pendblk == "") pendblk = lineblk[tfile, dline - 1]; sub(/^\+/, ""); sub(/^  /, ""); got[++ng] = $0; next }
+cram && substr($0, 1, 3) == "   " { if (pendblk == "") pendblk = lineblk[tfile, dline]; sub(/^   /, ""); want[++nw] = $0; got[++ng] = $0; dline++; next }
 cram { dline++; next }
 
 # ---- alcotest: it lists every case in a failing suite, [FAIL] and [OK] alike -

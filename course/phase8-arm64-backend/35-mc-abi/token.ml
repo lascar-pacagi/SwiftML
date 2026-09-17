@@ -26,23 +26,23 @@ type kind =
   | Kw_func
   | Kw_return
   | Kw_struct
-  | Kw_enum (* NEW (concept 11) *)
-  | Kw_protocol (* NEW (concept 21) *)
-  | Kw_where (* NEW (concept 22) *)
-  | Kw_as (* NEW (concept 23) *)
-  | Kw_class (* NEW (concept 25) *)
+  | Kw_enum (* concept 11 *)
+  | Kw_protocol (* concept 21 *)
+  | Kw_where (* concept 22 *)
+  | Kw_as (* concept 23 *)
+  | Kw_class (* concept 25 *)
   | Kw_init
   | Kw_override
   | Kw_super
-  | Kw_deinit (* NEW (concept 26) *)
+  | Kw_deinit (* concept 26 *)
   | At (* `@` — attributes like `@escaping` (parsed and accepted; concept 29) *)
   | LBracket | RBracket (* `[` `]` — concept 31 *)
   (* error handling — concept 30 *)
   | Kw_throws | Kw_throw | Kw_try | Kw_do | Kw_catch | Kw_defer
-  | Kw_case (* NEW (concept 11) *)
-  | Kw_switch (* NEW (concept 12) *)
-  | Kw_default (* NEW (concept 12) *)
-  | Kw_nil (* NEW (concept 13) *)
+  | Kw_case (* concept 11 *)
+  | Kw_switch (* concept 12 *)
+  | Kw_default (* concept 12 *)
+  | Kw_nil (* concept 13 *)
   | Question (* ? — optional type / nil-coalescing *)
   | Bang (* ! — force unwrap *)
   | Plus
@@ -61,7 +61,7 @@ type kind =
   | PipePipe
   | DotDotLt
   | Arrow
-  | Dot (* . member access — NEW (concept 10) *)
+  | Dot (* . member access — concept 10 *)
   | Colon
   | LParen
   | RParen
@@ -100,7 +100,7 @@ let string_of_kind = function
   | Kw_init -> "init"
   | Kw_override -> "override"
   | Kw_super -> "super"
-  | Kw_deinit (* NEW (concept 26) *) -> "deinit"
+  | Kw_deinit (* concept 26 *) -> "deinit"
   | At (* `@` — attributes like `@escaping` (parsed and accepted; concept 29) *)
   | LBracket | RBracket (* `[` `]` — concept 31 *) -> "@"
   (* error handling — concept 30 *)

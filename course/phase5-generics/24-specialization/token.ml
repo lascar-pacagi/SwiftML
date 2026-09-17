@@ -26,14 +26,14 @@ type kind =
   | Kw_func
   | Kw_return
   | Kw_struct
-  | Kw_enum (* NEW (concept 11) *)
-  | Kw_protocol (* NEW (concept 21) *)
-  | Kw_where (* NEW (concept 22) *)
-  | Kw_as (* NEW (concept 23) *)
-  | Kw_case (* NEW (concept 11) *)
-  | Kw_switch (* NEW (concept 12) *)
-  | Kw_default (* NEW (concept 12) *)
-  | Kw_nil (* NEW (concept 13) *)
+  | Kw_enum (* concept 11 *)
+  | Kw_protocol (* concept 21 *)
+  | Kw_where (* concept 22 *)
+  | Kw_as (* concept 23 *)
+  | Kw_case (* concept 11 *)
+  | Kw_switch (* concept 12 *)
+  | Kw_default (* concept 12 *)
+  | Kw_nil (* concept 13 *)
   | Question (* ? — optional type / nil-coalescing *)
   | Bang (* ! — force unwrap *)
   | Plus
@@ -52,7 +52,7 @@ type kind =
   | PipePipe
   | DotDotLt
   | Arrow
-  | Dot (* . member access — NEW (concept 10) *)
+  | Dot (* . member access — concept 10 *)
   | Colon
   | LParen
   | RParen
