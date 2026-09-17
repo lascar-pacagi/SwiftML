@@ -11,8 +11,9 @@ let llvm ?(should_emit_terminator = fun _ -> true) (src : string) : string =
   let p =
     Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d)
   in
-  Sema.check p d;
-  llvm_module ~should_emit_terminator (Silgen.lower p)
+  (* SILGen consumes the TYPE-CHECKED tree, so lower what Sema returned *)
+  let typed = Option.get (Sema.check p d) in
+  llvm_module ~should_emit_terminator (Silgen.lower typed)
 
 let instruction_llvm = llvm ~should_emit_terminator:(fun _ -> false)
 let terminator_llvm should_emit_terminator = llvm ~should_emit_terminator

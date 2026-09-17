@@ -5,6 +5,7 @@
 type emit =
   | Tokens
   | Ast
+  | Typed_ast (* the TYPE-CHECKED tree sema produced *)
   | Check
   | Sil
   | Llvm (* + IRGen, print LLVM IR *)
@@ -17,11 +18,10 @@ let read_file (path : string) : string =
     (fun () ->
       really_input_string input_channel (in_channel_length input_channel))
 
-let frontend (source : string) (diagnostics : Diagnostics.sink) : Ast.program =
+let frontend (source : string) (diagnostics : Diagnostics.sink) : Tast.program option =
   let tokens = Lexer.tokenize (Lexer.create source diagnostics) in
   let program = Parser.parse_program (Parser.create tokens diagnostics) in
-  Sema.check program diagnostics;
-  program
+  Sema.check program diagnostics
 
 let bail_on_errors (diagnostics : Diagnostics.sink) : unit =
   if Diagnostics.has_errors diagnostics then (
@@ -33,7 +33,7 @@ let to_llvm ?(should_emit_terminator = fun _ -> true) (source : string)
     (diagnostics : Diagnostics.sink) : string =
   let program = frontend source diagnostics in
   bail_on_errors diagnostics;
-  let sil_module = Silgen.lower program in
+  let sil_module = Silgen.lower (Option.get program) in
   (match Sil.verify sil_module with
   | [] -> ()
   | errors ->
@@ -73,12 +73,16 @@ let compile_file ?(out = "a.out") ~(src_path : string) ~(emit : emit) () : unit
       bail_on_errors diagnostics;
       print_endline (Ast.dump_program program)
   | Check ->
-      let (_ : Ast.program) = frontend source diagnostics in
+      let (_ : Tast.program option) = frontend source diagnostics in
       bail_on_errors diagnostics
+  | Typed_ast ->
+        let typed = frontend source diagnostics in
+        bail_on_errors diagnostics;
+        Option.iter (fun p -> print_endline (Tast.dump_program p)) typed
   | Sil ->
       let program = frontend source diagnostics in
       bail_on_errors diagnostics;
-      let sil_module = Silgen.lower program in
+      let sil_module = Silgen.lower (Option.get program) in
       bail_on_errors diagnostics;
       print_endline (Sil.string_of_module sil_module)
   | Llvm -> print_string (to_llvm source diagnostics)
