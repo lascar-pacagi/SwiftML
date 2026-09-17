@@ -40,6 +40,62 @@ discipline.
    reference implementation; `swiftc` (the installed toolchain) is the **behavioral oracle** we
    differentially test against. Both are **read-only**.
 
+
+### 0.1 Recorded design decision — the checker produces a **typed AST** (2026-09-18)
+
+**Decision.** `Sema.check` returns a type-checked tree, not `unit`. Name resolution and every
+implicit conversion are **materialised as nodes** by the checker; SILGen consumes that tree and
+re-derives nothing. Applies to concepts **05–40**.
+
+**Why.** The original shape — `check : Ast.program -> sink -> unit` — threw the whole typing away
+and handed SILGen the same untyped tree the parser produced. SILGen therefore grew a second,
+informal type system to cope: at concept 40 that is 45 `vty` reads, 23 `ty_of_name` calls, 18
+registry lookups redoing name resolution, and 28 `gen_expr_as` sites inventing conversions. Two
+type systems that must agree, with nothing forcing them to.
+
+They drifted, and the drift is measurable. `8c909b8` fixed the Int-literal/Double lowering at
+concept 10, during the per-concept review pass; `233ae1e`, `51221a2`, `00d6284`, `4f499d6` carried
+it forward to 11, 12, 13, 14 and onward to 32. It never travelled **backward** to 08 and 09, where
+the bug actually begins (`TDouble` exists from 05, SILGen from 08), and it never reached 33–40, a
+different branch of the carry-forward chain. The fix reached 23 of 44 copies. Nobody was careless:
+with the decision duplicated 44 times, "which copies need this?" is not a computable question.
+Bugs of the same family: PROOFREAD #3, #4, #10 (SILGen half), S3's open `Ast.Call`.
+
+**How swiftc does it.** `Expr::Ty` with `getType()`/`setType()` (`include/swift/AST/Expr.h:406`);
+the parser emits `UnresolvedDeclRefExpr`/`UnresolvedDotExpr` and `lib/Sema/CSApply.cpp` replaces
+them ("application of a solution … resulting in a fully-type-checked expression"); implicit
+conversions become real nodes — `LoadExpr`, `InjectIntoOptionalExpr`, `ErasureExpr`,
+`DerivedToBaseExpr`, `FunctionConversionExpr` — inserted by CSApply (22 sites) and merely lowered
+by SILGen (17 visit sites). `grep UnresolvedDotExpr lib/SILGen/` returns nothing: that is the
+invariant we are buying.
+
+**Deliberate departure: two AST types, not one.** swiftc keeps unresolved and resolved nodes in a
+single `Expr` hierarchy and guards the invariant at runtime with `llvm_unreachable`. We split
+`Ast` (parser output) from `Tast` (checker output), so SILGen's match is exhaustive and the
+invariant is a *type*, not a convention. swiftc's single hierarchy is driven by constraints we do
+not share — C++ has no cheap sum types, and its AST is shared with IDE/refactoring tooling that
+must handle partially-typed trees. We mirror the *architecture*; one-type-or-two is a host-language
+detail, and this conversation began because a convention failed silently for months.
+
+**Scope.** Phase 1 is exempt on evidence, not convenience: `03-sema/` has no `types.ml` at all and
+`04-codegen/irgen.ml` has zero type-re-derivation sites, so there is nothing to hand forward. The
+type system begins at **05** (`types.ml`, `TDouble`), which is also the first implicit conversion;
+the duplication becomes real at **08**, the first SILGen.
+
+**Rejected alternatives.** (a) A span-keyed side table — that is Rust's `TypeckResults`, not
+Swift's design. (b) Wrapping `expr` in a `{ kind; mutable ty }` record to mirror `Expr`'s base
+class — forces every nested pattern (`Ast.Member (Ast.Var …)`) to be rewritten, fighting OCaml for
+no gain. (c) A standalone concept `09b-typed-ast` teaching the fix after the fact — dissolved: the
+SSA precedent (§0.4 naive-then-climb) applies to *performance* ladders, where the naive rung must
+be measured to be appreciated. This is correctness, and the "why" is stronger as evidence (the
+commit history above) than as thirty concepts of lived breakage. The lesson lives where each piece
+is used: **05** (a checker's output is a typing), **08** (the back end never re-derives), and
+**13/21/25** (each new conversion arrives as a node).
+
+**Verified before starting.** Tag `pre-tast-retrofit`; a proof of the architecture on concept 11
+(resolution + literal conversion) passed that concept's full suite and matched `swiftc` on all four
+shadowing orders, deleting both of SILGen's guesses.
+
 ---
 
 ## 1. The two oracles (READ-ONLY)
