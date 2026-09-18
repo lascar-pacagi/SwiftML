@@ -296,9 +296,13 @@ which is the degenerate case of what swiftc's constraint solver does with conver
 ### What the checker produces
 
 Look again at what just happened in `let d: Double = 1 + 2`. The checker **decided** something: it
-decided that the `1` and the `2` are `Double` literals, not `Int` ones. That decision is not in the
-source — the source says `1` — and it cannot be recovered later by looking at the text. So where
-does it get written down?
+decided that the `1` and the `2` are `Double` literals, not `Int` ones.
+
+Nothing in the program text says that. It says `1`, and `1` on its own is an `Int` — only the
+annotation, three tokens away, makes it anything else, and connecting those two is the checker's
+whole job. So the decision exists inside the checker and nowhere else. Unless it writes the answer
+down, the answer is gone the moment `check` returns, and whoever needs it next has to do that work
+again. So where does it go?
 
 The answer is the point of this section, and it shapes every concept after this one: **a type
 checker does not return a verdict, it returns a program.** `Sema.check` hands back a `Tast.program`
