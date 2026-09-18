@@ -31,9 +31,9 @@ type kind =
   | Kw_where
   | Kw_as
   | Kw_class (* NEW *)
-  | Kw_init
-  | Kw_override
-  | Kw_super
+  | Kw_init (* NEW *)
+  | Kw_override (* NEW *)
+  | Kw_super (* NEW *)
   | Kw_case
   | Kw_switch
   | Kw_default

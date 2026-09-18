@@ -37,7 +37,7 @@ type kind =
   | Kw_deinit
   | At (* `@` — attributes like `@escaping` (parsed and accepted) *)
   (* NEW: error handling *)
-  | Kw_throws | Kw_throw | Kw_try | Kw_do | Kw_catch | Kw_defer
+  | Kw_throws | Kw_throw | Kw_try | Kw_do | Kw_catch | Kw_defer (* NEW *)
   | Kw_case
   | Kw_switch
   | Kw_default

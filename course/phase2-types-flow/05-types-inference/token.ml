@@ -20,14 +20,14 @@ let dummy_span = { lo = dummy_pos; hi = dummy_pos }
 type kind =
   (* literals *)
   | Int of int (* 123 *)
-  | Float of float (* 3.14 — a Double literal *)
-  | String of string (* "hello" (contents, unescaped) *)
+  | Float of float (* NEW: 3.14 — a Double literal *)
+  | String of string (* NEW: "hello" (contents, unescaped) *)
   (* identifiers & keywords *)
   | Ident of string
   | Kw_let
   | Kw_var
   | Kw_true (* NEW: Bool literals are keywords *)
-  | Kw_false
+  | Kw_false (* NEW *)
   | Kw_as (* NEW: the `e as T` coercion *)
   (* arithmetic operators *)
   | Plus
@@ -37,14 +37,14 @@ type kind =
   | Percent
   (* assignment / comparison *)
   | Eq (* =  *)
-  | EqEq (* == *)
-  | Ne (* != *)
-  | Lt (* <  *)
-  | Le (* <= *)
-  | Gt (* >  *)
-  | Ge (* >= *)
+  | EqEq (* NEW: == *)
+  | Ne (* NEW: != *)
+  | Lt (* NEW: < *)
+  | Le (* NEW: <= *)
+  | Gt (* NEW: > *)
+  | Ge (* NEW: >= *)
   (* punctuation *)
-  | Colon (* :  — for type annotations *)
+  | Colon (* NEW: :  — for type annotations *)
   | LParen
   | RParen
   | Comma
@@ -88,6 +88,9 @@ let keyword_or_ident (text : string) : kind =
   match text with
   | "let" -> Kw_let
   | "var" -> Kw_var
+  | "true" -> Kw_true
+  | "false" -> Kw_false
+  | "as" -> Kw_as
   (* TODO(05): the keywords this concept adds — `true` and `false` (Bool literals are KEYWORDS
      in Swift, not identifiers that happen to spell them: a program can't rebind `true`) and `as`
      (the coercion `e as T`). Three arms, and `truely` must stay an `Ident`. §2. *)

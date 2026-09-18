@@ -18,14 +18,14 @@ let dummy_span = { lo = dummy_pos; hi = dummy_pos }
 type kind =
   (* literals *)
   | Int of int (* 123 *)
-  | Float of float (* 3.14 — a Double literal *)
-  | String of string (* "hello" (contents, unescaped) *)
+  | Float of float (* NEW: 3.14 — a Double literal *)
+  | String of string (* NEW: "hello" (contents, unescaped) *)
   (* identifiers & keywords *)
   | Ident of string
   | Kw_let
   | Kw_var
   | Kw_true (* NEW: Bool literals are keywords *)
-  | Kw_false
+  | Kw_false (* NEW *)
   | Kw_as (* NEW: the `e as T` coercion *)
   (* arithmetic operators *)
   | Plus
@@ -35,14 +35,14 @@ type kind =
   | Percent
   (* assignment / comparison *)
   | Eq (* =  *)
-  | EqEq (* == *)
-  | Ne (* != *)
-  | Lt (* <  *)
-  | Le (* <= *)
-  | Gt (* >  *)
-  | Ge (* >= *)
+  | EqEq (* NEW: == *)
+  | Ne (* NEW: != *)
+  | Lt (* NEW: < *)
+  | Le (* NEW: <= *)
+  | Gt (* NEW: > *)
+  | Ge (* NEW: >= *)
   (* punctuation *)
-  | Colon (* :  — for type annotations *)
+  | Colon (* NEW: :  — for type annotations *)
   | LParen
   | RParen
   | Comma

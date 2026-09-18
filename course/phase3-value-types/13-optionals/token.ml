@@ -32,8 +32,8 @@ type kind =
   | Kw_switch
   | Kw_default
   | Kw_nil (* NEW *)
-  | Question (* ? — optional type / nil-coalescing *)
-  | Bang (* ! — force unwrap *)
+  | Question (* NEW: ? — optional type / nil-coalescing *)
+  | Bang (* NEW: ! — force unwrap *)
   | Plus
   | Minus
   | Star

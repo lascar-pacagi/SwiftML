@@ -27,8 +27,8 @@ type kind =
   | Kw_func
   | Kw_return
   | Kw_struct
-  | Kw_enum (* an enum declaration, introduced here *)
-  | Kw_case (* an enum case, introduced here *)
+  | Kw_enum (* NEW: an enum declaration, introduced here *)
+  | Kw_case (* NEW: an enum case, introduced here *)
   | Plus
   | Minus
   | Star
@@ -124,6 +124,7 @@ let keyword_or_ident (s : string) : kind =
   | "struct" -> Kw_struct
   (* TODO(11a): classify the two words that introduce an enum and its cases.
      See explainer §3, "Recognize the enum keywords". *)
-  | "enum" | "case" ->
-      failwith "TODO(11a): classify the enum and case keywords"
+  | "enum" -> Kw_enum
+  | "case" -> Kw_case
+      (* failwith "TODO(11a): classify the enum and case keywords" *)
   | _ -> Ident s

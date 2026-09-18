@@ -26,8 +26,8 @@ type kind =
   | Kw_func
   | Kw_return
   | Kw_struct
-  | Kw_enum (* an enum declaration, introduced here *)
-  | Kw_case (* an enum case, introduced here *)
+  | Kw_enum (* NEW: an enum declaration, introduced here *)
+  | Kw_case (* NEW: an enum case, introduced here *)
   | Plus
   | Minus
   | Star

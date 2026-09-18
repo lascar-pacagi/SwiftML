@@ -22,12 +22,12 @@ type kind =
   | Kw_false
   | Kw_as
   | Kw_if (* NEW *)
-  | Kw_else
-  | Kw_while
-  | Kw_for
-  | Kw_in
-  | Kw_break
-  | Kw_continue
+  | Kw_else (* NEW *)
+  | Kw_while (* NEW *)
+  | Kw_for (* NEW *)
+  | Kw_in (* NEW *)
+  | Kw_break (* NEW *)
+  | Kw_continue (* NEW *)
   (* arithmetic *)
   | Plus
   | Minus
@@ -43,10 +43,10 @@ type kind =
   | Gt
   | Ge
   (* logical (NEW) *)
-  | AmpAmp (* && *)
-  | PipePipe (* || *)
+  | AmpAmp (* NEW: && *)
+  | PipePipe (* NEW: || *)
   (* range (NEW) *)
-  | DotDotLt (* ..< *)
+  | DotDotLt (* NEW: ..< *)
   (* punctuation *)
   | Colon
   | LParen
