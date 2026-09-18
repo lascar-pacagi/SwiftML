@@ -354,11 +354,30 @@ namespace, making `enum Color` beside `let Color` a redeclaration. We accept it 
 this subset.)
 
 swiftc asks the same question once instead of at every use: unqualified lookup rewrites the base
-into a separate `TypeExpr` node before type-checking (`swift/lib/Sema/PreCheckTarget.cpp`), so
-the answer is recorded in the tree. Asking inline is enough here because enum-case construction
-is the only place a type appears in expression position — a struct's initializer is an `Ast.Call`
-holding its name as a string, `e as T` keeps its name in `Ast.Ascribe` — and that stays true to
-the last concept.
+into a separate `TypeExpr` node before type-checking (`swift/lib/Sema/PreCheckTarget.cpp`), so the
+answer is **recorded in the tree**. We do the same, and this is the concept where it stops being
+optional. The arm above returns a `Tast.Enum_case` carrying the case's **tag**:
+
+```bash
+$ printf 'enum Color { case red, green }\nlet c = Color.green\nprint(c == Color.green)\n' > c.swift
+$ ./lab.exe --emit-tast c.swift | head -2
+(enum Color red/0 green/0)
+(let c (case Color #1 : Color))
+```
+
+`#1` is green's position in the declaration, and it is all SILGen needs — so SILGen does not repeat
+the question. It is worth knowing what happened when it did. The guard above used to exist **twice**:
+once here, and once in silgen.ml written in that file's vocabulary —
+
+```ocaml
+when (not (Hashtbl.mem b.vars tn)) && Hashtbl.mem b.enums tn    (* SILGen's copy *)
+```
+
+— two statements of one rule that had to agree by hand. They did not. With Sema corrected to ask the
+value scope first, `let E = S(a: 42); return E.a` type-checked as a struct field access and then
+**lowered as enum construction**, because SILGen's copy still asked the registry first; IRGen saw
+`%E` where an `i64` was wanted. `PLAN.md` §0.1 has the full account. There is now one copy, and it
+is in the tree.
 
 ### The new SIL instructions (swiftc's shape)
 
@@ -754,43 +773,46 @@ The Sema solution first fills the registry, then uses it in the expression rules
 file remains in `solution/sema.ml`; these are the enum-specific branches:
 
 ```ocaml
-| Ast.Member (Ast.Var (type_name, _), case_name, span)
-  when Hashtbl.mem enums type_name -> (
-    let layout = Hashtbl.find enums type_name in
-    match Types.case_payload layout case_name with
-    | Some [] -> Types.TEnum type_name
-    | Some _ ->
-        err span
-          (Printf.sprintf "enum case '%s.%s' requires arguments"
-             type_name case_name);
-        Types.TEnum type_name
-    | None ->
-        err span
-          (Printf.sprintf "type '%s' has no member '%s'"
-             type_name case_name);
-        Types.TEnum type_name)
+    (* `E.case` — a no-payload enum case names a value of the enum type (concept 11).
+       The guard asks the VALUE SCOPE FIRST: a local binding shadows a type name, so
+       `let Color = 7` makes `Color.red` a member access on an Int, not an enum case. Getting
+       that order wrong is PLAN.md §0.1's bug; recording the answer is what stops SILGen from
+       having to get it right a second time. *)
+    | Ast.Member (Ast.Var (type_name, _), case_name, span)
+      when lookup type_name = None && Hashtbl.mem enums type_name -> (
+        let layout = Hashtbl.find enums type_name in
+        let tag = Option.value (Types.case_index layout case_name) ~default:0 in
+        match Types.case_payload layout case_name with
+        | Some [] -> mk (Tast.Enum_case (type_name, tag, [])) (Types.TEnum type_name) span
+        | Some _ ->
+            err span (Printf.sprintf "enum case '%s.%s' requires arguments" type_name case_name);
+            mk (Tast.Enum_case (type_name, tag, [])) (Types.TEnum type_name) span
+        | None ->
+            err span (Printf.sprintf "type '%s' has no member '%s'" type_name case_name);
+            mk (Tast.Enum_case (type_name, tag, [])) (Types.TEnum type_name) span)
 ```
 
 ```ocaml
-| Ast.Method_call (Ast.Var (type_name, _), case_name, args, span)
-  when Hashtbl.mem enums type_name -> (
-    let layout = Hashtbl.find enums type_name in
-    match Types.case_payload layout case_name with
-    | Some expected_types ->
-        let expressions = List.map snd args in
-        if List.length expected_types <> List.length expressions then
-          err span
-            (Printf.sprintf
-               "enum case '%s.%s' expects %d associated value(s) but %d given"
-               type_name case_name (List.length expected_types)
-               (List.length expressions))
-        else List.iter2 check_expr expressions expected_types;
-        Types.TEnum type_name
-    | None ->
-        err span
-          (Printf.sprintf "type '%s' has no member '%s'"
-             type_name case_name);
-        Types.TEnum type_name)
+    (* `E.case(args)` — a payload-carrying enum case. Same shadowing rule as `E.case` above. *)
+    | Ast.Method_call (Ast.Var (type_name, _), case_name, args, span)
+      when lookup type_name = None && Hashtbl.mem enums type_name -> (
+        let layout = Hashtbl.find enums type_name in
+        let tag = Option.value (Types.case_index layout case_name) ~default:0 in
+        let ety = Types.TEnum type_name in
+        match Types.case_payload layout case_name with
+        | Some expected_types ->
+            let expressions = List.map snd args in
+            if List.length expected_types <> List.length expressions then (
+              err span
+                (Printf.sprintf "enum case '%s.%s' expects %d associated value(s) but %d given"
+                   type_name case_name (List.length expected_types) (List.length expressions));
+              mk (Tast.Enum_case (type_name, tag, List.map infer expressions)) ety span)
+            else
+              mk (Tast.Enum_case (type_name, tag, List.map2 check_expr expressions expected_types))
+                ety span
+        | None ->
+            err span (Printf.sprintf "type '%s' has no member '%s'" type_name case_name);
+            mk (Tast.Enum_case (type_name, tag, [])) ety span)
 ```
 
 The remaining enum work is the raw-value member arm, the enum case in equality, and the two-pass
@@ -862,18 +884,12 @@ The first registry walk reserves names; the second resolves and validates layout
 From `solution/silgen.ml` (construction) and `solution/irgen.ml` (LLVM lowering):
 
 ```ocaml
-(* SILGen — an enum case is a tag + payload values *)
-| Ast.Member (Ast.Var (type_name, _), case_name, _)
-  when Hashtbl.mem b.enums type_name ->
-    let layout = Hashtbl.find b.enums type_name in
-    let case_index = Option.get (Types.case_index layout case_name) in
-    emit b (Sil.Enum (case_index, [])) (Types.TEnum type_name)
-| Ast.Method_call (Ast.Var (type_name, _), case_name, args, _)
-  when Hashtbl.mem b.enums type_name ->
-    let layout = Hashtbl.find b.enums type_name in
-    let argument_values = List.map (fun (_, e) -> gen_expr b e) args in
-    let case_index = Option.get (Types.case_index layout case_name) in
-    emit b (Sil.Enum (case_index, argument_values)) (Types.TEnum type_name)
+(* SILGen — an enum case is a tag + payload values. ONE arm now: `Tast.Enum_case` covers both,
+   because a payload-free case is the same node with an empty list — and the TAG came from Sema. *)
+  (* An enum case — construction, with the TAG supplied by Sema. The guard this replaces asked
+     `(not (Hashtbl.mem b.vars tn)) && Hashtbl.mem b.enums tn`: SILGen restating Sema's shadowing
+     rule in its own vocabulary, and having to agree with it by hand. *)
+  | Tast.Enum_case (_, tag, payload) -> emit b (Sil.Enum (tag, List.map (gen_expr b) payload)) ty
 ```
 
 ```ocaml

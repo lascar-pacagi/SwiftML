@@ -67,6 +67,23 @@ location that can be written; an **rvalue** produces a value that can be read or
 
 That read-uses-a-value / write-uses-an-address split makes the distinction concrete.
 
+Both halves need one more thing, and it is this concept's contribution to the typed tree: **which**
+field. The source writes a *name*; what it means is a *position* in the layout, and the position is
+what both SIL instructions take. So the checker resolves it, once, and the tree records it —
+`Tast.Field (base, index, name)` for the read, an index on `Tast.Set_member` for the write. The name
+survives only for printing.
+
+```bash
+$ printf 'struct P { var x: Int\n  var y: Int }\nlet p = P(x: 1, y: 2)\nprint(p.y)\n' > p.swift
+$ ./lab.exe --emit-tast p.swift | tail -1
+(print (field (local p : P) #1 y : Int) : ())
+```
+
+`#1` is the answer SILGen consumes. It performs no lookup of its own, which also means it cannot
+disagree with the layout the program was type-checked against — the two can no longer drift apart.
+The memberwise initializer resolves the same way: its labels are checked here and then **discharged**,
+leaving `Tast.Struct_init` with the values in layout order, because that is all a label ever meant.
+
 ### The memberwise initializer
 
 `Point(x: 1, y: 2)` is the initializer Swift synthesizes from the stored properties — one labelled
@@ -620,36 +637,24 @@ argument list with `sl_fields` in order. Member writes use the binding's `is_var
 in `solution/sema.ml`.
 
 ```ocaml
-(* SILGen — member read is a value; member write is an address *)
-| Ast.Member (operand_expression, field_name, _) ->
-    let struct_value = gen_expr builder operand_expression in
-    let struct_name =
-      match value_type builder struct_value with
-      | Types.TStruct struct_name -> struct_name
-      | _ -> assert false
-    in
-    let layout = Hashtbl.find builder.struct_layouts struct_name in
-    emit builder
-      (Sil.Struct_extract
-         (struct_value, Option.get (Types.field_index layout field_name)))
-      (Option.get (Types.field_type layout field_name))
+(* SILGen — member read is a value; member write is an address. Sema supplied the INDEX,
+   so neither arm looks anything up. *)
+  (* read a field out of a struct VALUE with struct_extract. The INDEX came from Sema, so there
+     is no layout to look up and no name to match — and no way to disagree about either. *)
+  | Tast.Field (operand_expression, index, _) ->
+      let struct_value = gen_expr builder operand_expression in
+      emit builder (Sil.Struct_extract (struct_value, index)) ty
 
-| Ast.Set_member { obj = object_name; field = field_name; value; _ } ->
-    let value = gen_expr builder value in
-    let object_address = Hashtbl.find builder.variables object_name in
-    let struct_name =
-      match value_type builder object_address with
-      | Types.TStruct struct_name -> struct_name
-      | _ -> assert false
-    in
-    let layout = Hashtbl.find builder.struct_layouts struct_name in
-    let field_address =
-      emit builder
-        (Sil.Struct_element_addr
-           (object_address, Option.get (Types.field_index layout field_name)))
-        (Option.get (Types.field_type layout field_name))
-    in
-    emit_void builder (Sil.Store (value, field_address))
+  | Tast.Set_member { obj = object_name; field = index; value; _ } ->
+      (* `p.x = expression`: take the field's ADDRESS in p's slot, then store — this is what
+         makes a struct a value type, since p has its own slot distinct from any copy. The index
+         is Sema's; SILGen looks nothing up. *)
+      let stored = gen_expr builder value in
+      let object_address = Hashtbl.find builder.variables object_name in
+      let field_address =
+        emit builder (Sil.Struct_element_addr (object_address, index)) (value_type builder stored)
+      in
+      emit_void builder (Sil.Store (stored, field_address))
 ```
 
 ```ocaml
