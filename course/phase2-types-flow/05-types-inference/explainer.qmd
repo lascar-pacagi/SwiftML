@@ -88,11 +88,6 @@ type is *written down rather than deduced* — here, the coercion `e as T`:
         mk (Tast.Coerce n) n.Tast.ty span)
 ```
 
-There is nothing to synthesise from `1 as Double`: the type is right there in the source, and the
-only question is whether the operand can *be* that type — a check, not an inference. Try writing
-that arm with `check_expr` defined separately from `infer` and OCaml stops you with `Unbound value
-check_expr`; the knot is not a stylistic choice, it is what the rule requires.
-
 The general shape is the same for every **elimination form** — the classic application rule
 
 ```
