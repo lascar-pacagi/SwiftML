@@ -261,14 +261,10 @@ We capture this in two places:
 That `is_int_literal` predicate (recurse through `Unary`/`Binary` to a leaf `Int_lit`) is the seam
 where our simplified model meets Swift's general one.
 
-**Which operators may appear in that tree.** `1 % 2` is made of integer literals, so answering
-*yes* and letting the operator table refuse `%` at `Double` afterwards also works: `1 % 2 + 1.5`
-is rejected either way. But then `unify` has returned a solution that the walk after it must
-reject — and that walk is the *apply* step, which writes the solver's decision into the tree and
-does not re-judge it (swiftc's `CSApply`; **What the checker produces**, below). Keeping `%` out
-of the predicate keeps the refusal in the solver, where a refusal belongs. It costs the better
-caret — we blame the `+`, swiftc blames the `%` — and neither of us matches Swift's wording
-anyway, since its complaint comes from the standard library marking the operator unavailable.
+**Which operators may appear in that tree.** `1 % 2` does not count, because it cannot be
+*upgraded* to `Double`: Swift has no `%` there, so that subtree has no `Double` reading to flex
+to. A strange corner, admittedly — folding it to `1` first would make `1 % 2 + 1.5` perfectly
+acceptable. Type checking runs before any folding, in swiftc as here.
 
 **The helper both rules share — what `unify` is for.** One function answers a single question:
 *given two operands, is there a type they can both have?*
