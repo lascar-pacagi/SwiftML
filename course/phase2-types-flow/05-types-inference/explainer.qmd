@@ -328,7 +328,8 @@ Three things are different from `Ast`, and each is a decision being made once in
   instruction by them — but they now *read* the answer off the node instead of working it out
   again.
 - **Names are resolved.** `Ast.Var "x"` might be a local or a typo; `Tast.Local "x"` can only be a
-  local. `Ast.Call ("print", _)` might be anything; `Tast.Print` is `print`.
+  local. `Ast.Call (f, args)` is `print` or a name that means nothing — and from concept 07, a
+  declared function too; `Tast.Print` is `print` and nothing else.
 - **The annotation is gone.** `let d: Double = …` wrote a type *name*; `value.ty` is the resolved
   answer, and the name has no further use.
 

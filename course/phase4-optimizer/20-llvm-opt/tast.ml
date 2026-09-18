@@ -3,12 +3,14 @@
    `Ast` is what the PARSER produces: a faithful record of what was written, with no types and
    no names resolved. `Tast` is what SEMA produces, and it is a different type on purpose:
 
-     - **every node carries its type.** Nothing downstream ever asks "what type is this?" —
-       the checker already answered, and wrote the answer down.
+     - **every node carries its type.** Later stages need those types constantly — SILGen picks
+       a SIL instruction by them — but they read the answer here instead of deriving it again.
      - **names are resolved.** `Ast.Var "x"` could be a local or an unknown; `Tast.Local "x"`
-       can only be a local. `Ast.Call ("print", _)` could be anything; `Tast.Print` is print.
-     - **implicit conversions are explicit nodes.** There are none yet in this subset — they
-       arrive with optionals (13), protocols (21) and classes (25) — but the shape is here.
+       can only be a local. `Ast.Call (f, args)` is a name still to be resolved; `Tast.Print`
+       is print and nothing else.
+     - **implicit conversions are explicit nodes.** `Inject_optional` is the first: Swift wraps
+       a `T` where a `T?` is expected, invisibly in the source, and the checker says so here.
+       Protocols (21) and classes (25) each add one more.
 
    The point of the split is that it makes a class of bug UNREPRESENTABLE. SILGen (concept 08)
    matches on `Tast`, whose constructors are all resolved, so it cannot re-derive a decision the
