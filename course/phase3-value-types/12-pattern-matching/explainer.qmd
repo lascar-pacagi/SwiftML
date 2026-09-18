@@ -46,6 +46,21 @@ Each `let x` lowers exactly like a local binding: `enum_payload subj #i` reads t
 That safety — you can only read a payload *after* the tag check routes you into the case — is the whole
 reason associated values live behind `switch` and not behind plain field access.
 
+A pattern needs two things resolved before it can be lowered, and both are decided here rather than
+in the dispatch: **which case** it names, and **what type** each binding has. So the checked pattern
+carries the tag and the binding types, not the names the source wrote:
+
+```ocaml
+type pat_binding = Bind of string * Types.ty | Ignore
+type pattern     = PEnumCase of int * pat_binding list | PInt of int
+                            (*  ^ the TAG *)
+```
+
+That matters more here than elsewhere. The exhaustiveness check below reasons about *which cases are
+covered*; the dispatch chain decides *which case a value is*. If those two worked from separate
+answers they could disagree — a switch proven exhaustive could still fall through. Resolving once
+means they cannot.
+
 ### Exhaustiveness — the check that makes it safe
 
 A `switch` over an enum **must handle every case** (or have a `default`). swiftc rejects a switch that
@@ -468,38 +483,52 @@ on the enum + pattern-matching machinery you now have. The sugar is new; the eng
 From `solution/silgen.ml` (dispatch) and `solution/sema.ml` (exhaustiveness):
 
 ```ocaml
-| Ast.Switch { subject; cases; default; _ } ->
-    let subj = gen_expr b subject in
-    let enum_name = match vty b subj with Types.TEnum en -> Some en | _ -> None in
-    let disc = match enum_name with Some _ -> emit b (Sil.Enum_tag subj) Types.TInt | None -> subj in
-    let merge = new_block b in
-    let key_of = function
-      | Ast.PEnumCase (cn, _) ->
-          let el = Hashtbl.find b.enums (Option.get enum_name) in
-          Option.get (Types.case_index el cn)
-      | Ast.PInt n -> n in
-    let bind_payload = function
-      | Ast.PEnumCase (cn, bindings) when enum_name <> None ->
-          let tys = Option.get (Types.case_payload (Hashtbl.find b.enums (Option.get enum_name)) cn) in
-          List.iteri (fun i bnd -> match bnd with
-            | Ast.Bind x ->
-                let pv = emit b (Sil.Enum_payload (subj, i)) (List.nth tys i) in
-                let addr = emit b (Sil.Alloc_stack x) (vty b pv) in
-                Hashtbl.replace b.vars x addr; ignore (emit b (Sil.Store (pv, addr)) Types.TVoid)
-            | Ast.Ignore -> ()) bindings
-      | _ -> () in
-    let rec dispatch = function
-      | [] -> (match default with
-          | Some body -> gen_block b body; terminate b (Sil.Br merge.Sil.bid)
-          | None -> terminate b Sil.Unreachable)
-      | (pat, body) :: rest ->
-          let k = emit b (Sil.Int_lit (key_of pat)) Types.TInt in
-          let c = emit b (Sil.Binop (Ast.Eq, disc, k)) Types.TBool in
-          let case_b = new_block b and next_b = new_block b in
-          terminate b (Sil.Cond_br (c, case_b.Sil.bid, next_b.Sil.bid));
-          switch_to b case_b; bind_payload pat; gen_block b body; terminate b (Sil.Br merge.Sil.bid);
-          switch_to b next_b; dispatch rest in
-    dispatch cases; switch_to b merge
+  | Tast.Switch { subject; cases; default; _ } ->
+      (* evaluate the subject once; the discriminant is the enum tag (enum) or the value (Int).
+         Then a chain of `tag == k ? caseBlock : nextTest`, each case binding its payload.
+
+         Every pattern already carries its TAG and every binding its type — Sema resolved them —
+         so this lowering does no registry lookups and cannot pick a different case than the one
+         the exhaustiveness check reasoned about. *)
+      let subj = gen_expr b subject in
+      let is_enum = match subject.Tast.ty with Types.TEnum _ -> true | _ -> false in
+      let disc = if is_enum then emit b (Sil.Enum_tag subj) Types.TInt else subj in
+      let merge = new_block b in
+      let key_of = function Tast.PEnumCase (tag, _) -> tag | Tast.PInt n -> n in
+      let bind_payload pat =
+        match pat with
+        | Tast.PEnumCase (_, bindings) ->
+            List.iteri
+              (fun i binding ->
+                match binding with
+                | Tast.Bind (x, t) ->
+                    let pv = emit b (Sil.Enum_payload (subj, i)) t in
+                    let addr = emit b (Sil.Alloc_stack x) (vty b pv) in
+                    Hashtbl.replace b.vars x addr;
+                    emit_void b (Sil.Store (pv, addr))
+                | Tast.Ignore -> ())
+              bindings
+        | Tast.PInt _ -> ()
+      in
+      let rec dispatch = function
+        | [] -> (
+            match default with
+            | Some body -> gen_block b body; terminate b (Sil.Br merge.Sil.bid)
+            | None -> terminate b Sil.Unreachable (* an exhaustive enum switch: no case left *))
+        | (pat, body) :: rest ->
+            let k = emit b (Sil.Int_lit (key_of pat)) Types.TInt in
+            let c = emit b (Sil.Binop (Ast.Eq, disc, k)) Types.TBool in
+            let case_b = new_block b and next_b = new_block b in
+            terminate b (Sil.Cond_br (c, case_b.Sil.bid, next_b.Sil.bid));
+            switch_to b case_b;
+            bind_payload pat;
+            gen_block b body;
+            terminate b (Sil.Br merge.Sil.bid);
+            switch_to b next_b;
+            dispatch rest
+      in
+      dispatch cases;
+      switch_to b merge
 ```
 
 ```ocaml
