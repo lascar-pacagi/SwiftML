@@ -384,7 +384,9 @@ self-detecting suite. They also appear in `make lab` as `TODO (optional)` until 
 
 Phase 2 is complete. In 05–07, you extended every front-end layer — the lexer, parser, AST, and Sema
 — to support types, control flow, and functions. This included bidirectional type checking and the
-semantic rules that make those constructs sound. SILGen then added the **SIL** middle (08), and
+semantic rules that make those constructs sound — and, just as importantly, the discipline that the
+checker **produces a typed tree** rather than a verdict, so that every stage after it consumes
+decisions instead of re-deriving them. SILGen then added the **SIL** middle (08), and
 **IRGen** now lowers SIL to LLVM and runs the result (09). The core pipeline follows swiftc's:
 `Parse → Sema → SILGen → SIL → IRGen → LLVM → native`. On the
 `Int`/`Bool`/control-flow/functions corpus, the output matches `swiftc` byte-for-byte (`Double`
