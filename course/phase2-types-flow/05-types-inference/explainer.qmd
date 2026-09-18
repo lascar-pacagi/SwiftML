@@ -324,8 +324,9 @@ and expr_kind =
 
 Three things are different from `Ast`, and each is a decision being made once instead of twice:
 
-- **Every node carries its type.** Nothing downstream asks "what type is this?" — the checker
-  already answered.
+- **Every node carries its type.** Later stages need those types constantly — SILGen picks a SIL
+  instruction by them — but they now *read* the answer off the node instead of working it out
+  again.
 - **Names are resolved.** `Ast.Var "x"` might be a local or a typo; `Tast.Local "x"` can only be a
   local. `Ast.Call ("print", _)` might be anything; `Tast.Print` is `print`.
 - **The annotation is gone.** `let d: Double = …` wrote a type *name*; `value.ty` is the resolved
