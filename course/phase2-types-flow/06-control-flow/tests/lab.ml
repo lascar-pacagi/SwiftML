@@ -22,6 +22,7 @@ let emit_of_flag : string -> Driver.emit option = function
   | "--emit-tokens" -> Some Driver.Tokens
   | "--emit-ast" -> Some Driver.Ast
   | "--typecheck" -> Some Driver.Check
+  | "--emit-tast" -> Some Driver.Typed_ast
   | _ -> None
 
 let read_file (path : string) : string =

@@ -2,11 +2,10 @@
    sema-switch (given: pattern typing, binding scope), sema-exhaustive (the TODO(12-sema)
    hole), and silgen-switch (the TODO(12) dispatch chain) read off the SIL text. *)
 
-let front (src : string) : Ast.program * Diagnostics.sink =
+let front (src : string) : Tast.program option * Diagnostics.sink =
   let d = Diagnostics.create () in
   let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
-  Sema.check p d;
-  (p, d)
+  (Sema.check p d, d)
 
 let errors (src : string) : string list =
   let _, d = front src in
@@ -16,7 +15,7 @@ let errors (src : string) : string list =
 
 let sil (src : string) : string =
   let p, _ = front src in
-  Sil.string_of_module (Silgen.lower p)
+  Sil.string_of_module (Silgen.lower (Option.get p))
 
 let accepted src = Alcotest.(check (list string)) (Printf.sprintf "accept %S" src) [] (errors src)
 let has_error src msg = Alcotest.(check bool) (Printf.sprintf "%S => %S" src msg) true (List.mem msg (errors src))

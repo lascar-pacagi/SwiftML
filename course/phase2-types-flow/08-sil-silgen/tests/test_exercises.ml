@@ -8,7 +8,7 @@ let errors source =
        Parser.parse_program
          (Parser.create (Lexer.tokenize (Lexer.create source sink)) sink)
      in
-     Sema.check program sink
+     ignore (Sema.check program sink)
    with _ -> ());
   Diagnostics.all sink
   |> List.filter (fun (diagnostic : Diagnostics.t) ->
@@ -20,7 +20,7 @@ let sil source =
   let sink = Diagnostics.create () in
   let program = Driver.frontend source sink in
   if Diagnostics.has_errors sink then None
-  else try Some (Sil.string_of_module (Silgen.lower program)) with _ -> None
+  else try Some (Sil.string_of_module (Silgen.lower (Option.get program))) with _ -> None
 
 let base_ready () =
   match sil "var n = 0\nwhile n < 2 { n = n + 1 }\nprint(n)" with

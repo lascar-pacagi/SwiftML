@@ -1,7 +1,7 @@
 (* The concept `lab` CLI — linked against THIS concept's library, so the cram tests in this
    directory exercise YOUR code here (the phase binary links the phase's FINAL concept and would
    not see your work in this directory):
-     ./lab.exe --emit-tokens|--emit-ast|--emit-params|--emit-returns|--typecheck <file.swift>
+     ./lab.exe --emit-tokens|--emit-ast|--emit-params|--emit-returns|--typecheck|--emit-tast <file.swift>
 
    Two of those modes exist so a hole can report on its own rather than waiting for the one after
    it. `--emit-params` parses ONE parameter list and stops, reaching `parse_params` directly
@@ -20,6 +20,7 @@ let emit_of_flag : string -> Driver.emit option = function
   | "--emit-tokens" -> Some Driver.Tokens
   | "--emit-ast" -> Some Driver.Ast
   | "--typecheck" -> Some Driver.Check
+  | "--emit-tast" -> Some Driver.Typed_ast
   | _ -> None
 
 (* lex, then `parse_params` on the whole file: the source IS a parameter list, `(a: Int, …)`.

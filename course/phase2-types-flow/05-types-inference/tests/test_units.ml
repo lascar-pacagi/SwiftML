@@ -65,16 +65,16 @@ let test_unify () =
 let test_infer () =
   let cx = Sema.create (Diagnostics.create ()) in
   Hashtbl.replace cx.Sema.environment "i" (Types.TInt, false);
-  Alcotest.(check ty) "a bound name" Types.TInt (Sema.infer cx (var_ "i"));
+  Alcotest.(check ty) "a bound name" Types.TInt (Sema.infer cx (var_ "i")).Tast.ty;
   Alcotest.(check ty)
     "int + int" Types.TInt
-    (Sema.infer cx (add_ (int_ 1) (int_ 2)));
+    (Sema.infer cx (add_ (int_ 1) (int_ 2))).Tast.ty;
   Alcotest.(check ty)
     "literal + double" Types.TDouble
-    (Sema.infer cx (add_ (int_ 1) (dbl_ 2.0)));
+    (Sema.infer cx (add_ (int_ 1) (dbl_ 2.0))).Tast.ty;
   Alcotest.(check ty)
     "comparison is Bool" Types.TBool
-    (Sema.infer cx (Ast.Binary (Ast.Lt, int_ 1, int_ 2, sp)))
+    (Sema.infer cx (Ast.Binary (Ast.Lt, int_ 1, int_ 2, sp))).Tast.ty
 
 (* Every arm that can fail must REPORT, not just return a plausible type — and inference keeps
    going, so one bad name does not hide the rest of the file. One case per failing arm: a silent
@@ -121,18 +121,18 @@ let test_unknown_function () =
 let test_check_expr () =
   let d = Diagnostics.create () in
   let cx = Sema.create d in
-  Sema.check_expr cx (int_ 1) Types.TDouble;
+  ignore @@ Sema.check_expr cx (int_ 1) Types.TDouble;
   (* the coercion: silent *)
-  Sema.check_expr cx (add_ (int_ 1) (int_ 2)) Types.TDouble;
+  ignore @@ Sema.check_expr cx (add_ (int_ 1) (int_ 2)) Types.TDouble;
   (* A comparison does NOT receive the expectation: its result is Bool whatever the operands
      are, so pushing Bool into `1` and `2` would reject a legal program. It must reach the
      fall-through instead. *)
-  Sema.check_expr cx (Ast.Binary (Ast.Lt, int_ 1, int_ 2, sp)) Types.TBool;
-  Sema.check_expr cx
+  ignore @@ Sema.check_expr cx (Ast.Binary (Ast.Lt, int_ 1, int_ 2, sp)) Types.TBool;
+  ignore @@ Sema.check_expr cx
     (Ast.Binary (Ast.Eq, Ast.Bool_lit (true, sp), Ast.Bool_lit (false, sp), sp))
     Types.TBool;
   Alcotest.(check int) "no diagnostics yet" 0 (List.length (Diagnostics.all d));
-  Sema.check_expr cx (Ast.String_lit ("s", sp)) Types.TInt;
+  ignore @@ Sema.check_expr cx (Ast.String_lit ("s", sp)) Types.TInt;
   match Diagnostics.all d with
   | [ x ] ->
       Alcotest.(check string)
@@ -146,7 +146,7 @@ let test_check_expr () =
 let test_check_stmt () =
   let d = Diagnostics.create () in
   let cx = Sema.create d in
-  Sema.check_stmt cx
+  ignore @@ Sema.check_stmt cx
     (Ast.Let
        { name = "x"; is_var = false; annot = None; value = int_ 1; span = sp });
   (match Hashtbl.find_opt cx.Sema.environment "x" with
@@ -154,7 +154,7 @@ let test_check_stmt () =
       Alcotest.(check ty) "bound type" Types.TInt t;
       Alcotest.(check bool) "let is not a var" false is_var
   | None -> Alcotest.fail "x was not bound");
-  Sema.check_stmt cx (Ast.Assign { name = "x"; value = int_ 2; span = sp });
+  ignore @@ Sema.check_stmt cx (Ast.Assign { name = "x"; value = int_ 2; span = sp });
   match Diagnostics.all d with
   | [ x ] ->
       Alcotest.(check string)

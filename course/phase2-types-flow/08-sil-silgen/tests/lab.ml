@@ -1,7 +1,7 @@
 (* The concept `lab` CLI — linked against THIS concept's library, so the cram tests in this
    directory exercise YOUR code here (the phase binary links the phase's FINAL concept and would
    not see your work in this directory):
-     ./lab.exe --emit-tokens|--emit-ast|--typecheck|--emit-sil|--emit-sil-canon <file.swift>
+     ./lab.exe --emit-tokens|--emit-ast|--typecheck|--emit-tast|--emit-sil|--emit-sil-canon <file.swift>
 
    `--emit-sil-canon` prints the SIL in CANONICAL form — see `canon` below. The control-flow
    tests compare against it, because two lowerings can build the same graph and still print
@@ -18,6 +18,7 @@ let emit_of_flag : string -> Driver.emit option = function
   | "--emit-tokens" -> Some Driver.Tokens
   | "--emit-ast" -> Some Driver.Ast
   | "--typecheck" -> Some Driver.Check
+  | "--emit-tast" -> Some Driver.Typed_ast
   | "--emit-sil" -> Some Driver.Sil
   | _ -> None
 
@@ -26,7 +27,7 @@ let emit_sil_canon (src_path : string) : unit =
   let diags = Diagnostics.create ~source:src () in
   let prog = Driver.frontend src diags in
   Driver.bail_on_errors diags;
-  print_string (Sil.string_of_module (Canon.canon (Silgen.lower prog)))
+  print_string (Sil.string_of_module (Canon.canon (Silgen.lower (Option.get prog))))
 
 let () =
   match Array.to_list Sys.argv with

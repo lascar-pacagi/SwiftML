@@ -1,10 +1,10 @@
 ; Concept 08 — front-end (given, complete) + SIL + SILGen.
-; Contracts: token diagnostics types ast sil driver. Given front-end: lexer parser sema.
+; Contracts: token diagnostics types ast tast sil driver. Given front-end: lexer parser sema.
 ; Skeleton (you edit): silgen.
 (library
  (name swiftml_sil)
  (wrapped false)
- (modules token diagnostics types lexer ast parser sema sil silgen driver)
+ (modules token diagnostics types lexer ast tast parser sema sil silgen driver)
  (flags
   (:standard -warn-error -a)))
 

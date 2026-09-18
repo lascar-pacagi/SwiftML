@@ -7,7 +7,7 @@ let diagnostics source =
        Parser.parse_program
          (Parser.create (Lexer.tokenize (Lexer.create source sink)) sink)
      in
-     Sema.check program sink
+     ignore (Sema.check program sink)
    with _ -> ());
   Diagnostics.all sink
 

@@ -1,5 +1,7 @@
-(* SILGen — concept 11 skeleton. Carries the struct compiler complete; you add enum
-   construction (TODO(11g–h)). Lower the checked AST to raw, memory-based SIL.
+(* SILGen — concept 11 (skeleton). Reference: solution/silgen.ml. Original note: lowers the TYPE-CHECKED tree (`Tast`). Sema resolved
+   every enum case to a TAG and every field to an index, so nothing here looks anything up —
+   and the shadowing question (`E.red` vs `p.x`) is not asked a second time. PLAN.md §0.1.
+   Original note (+ enums): lower the (checked) AST to raw, memory-based SIL.
 
    Each variable becomes an `alloc_stack` slot, read with `load`, written with `store` (no
    SSA — Phase-4 mem2reg does that). Control flow becomes basic blocks: `if`/`while`/`for`
@@ -81,31 +83,28 @@ let restore_vars (b : builder) (saved : (string, Sil.value) Hashtbl.t) : unit =
   Hashtbl.reset b.vars;
   Hashtbl.iter (fun k v -> Hashtbl.replace b.vars k v) saved
 
-let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
-  match e with
-  | Ast.Int_lit (n, _) -> emit b (Sil.Int_lit n) Types.TInt
-  | Ast.Double_lit (f, _) -> emit b (Sil.Float_lit f) Types.TDouble
-  | Ast.Bool_lit (x, _) -> emit b (Sil.Bool_lit x) Types.TBool
-  | Ast.String_lit (s, _) -> emit b (Sil.String_lit s) Types.TString
-  (* `e as T`: generate the operand AT the written type (see gen_expr_as). The `None` arm cannot
-     be reached today — sema resolved this same name through `Types.of_name` and rejected it if it
-     failed — but it is not dead weight either: an ascription with nothing to coerce lowers to its
-     operand, which is what it does. Widening `as` to name a struct would start using it. *)
-  | Ast.Ascribe (e0, tyname, _) -> (
-      match Types.of_name tyname with
-      | Some t -> gen_expr_as b e0 t
-      | None -> gen_expr b e0)
-  | Ast.Var (x, _) ->
+let rec gen_expr (b : builder) (e : Tast.expr) : Sil.value =
+  (* `ty` is what Sema concluded — the whole of what used to be `gen_expr_as` *)
+  let ty = e.Tast.ty in
+  match e.Tast.e with
+  (* THE COERCION, already decided: a literal that checked at Double is BORN a Double *)
+  | Tast.Int_lit n when ty = Types.TDouble -> emit b (Sil.Float_lit (float_of_int n)) Types.TDouble
+  | Tast.Int_lit n -> emit b (Sil.Int_lit n) Types.TInt
+  | Tast.Double_lit f -> emit b (Sil.Float_lit f) Types.TDouble
+  | Tast.Bool_lit x -> emit b (Sil.Bool_lit x) Types.TBool
+  | Tast.String_lit str -> emit b (Sil.String_lit str) Types.TString
+  | Tast.Coerce e0 -> gen_expr b e0
+  | Tast.Local x ->
       let addr = addr_of b x in
       emit b (Sil.Load addr) (vty b addr) (* the slot's element type *)
-  | Ast.Unary (op, e0, _) ->
+  | Tast.Unary (op, e0) ->
       let v = gen_expr b e0 in
-      emit b (Sil.Unop (op, v)) (vty b v)
+      emit b (Sil.Unop (op, v)) ty
   (* SHORT-CIRCUIT `&&` / `||` (concept 06 semantics, lowered here) — NOT bitwise: the right operand
      is evaluated only on the deciding edge, so its side effects (a trapping `a[i]` in `i < n && a[i]`,
      a force-unwrap, a throwing call) never run on the short path. Lowered to a cond_br diamond, the
      result merged through a stack slot (mem2reg promotes it to a phi). *)
-  | Ast.Binary ((Ast.And | Ast.Or) as op, l, r, _) ->
+  | Tast.Binary (((Ast.And | Ast.Or) as op), l, r) ->
       let lv = gen_expr b l in
       (* the slot the two answers meet in — named for the operator it serves, since this arm
          lowers both. mem2reg turns it into a phi in Phase 4. *)
@@ -122,73 +121,48 @@ let rec gen_expr (b : builder) (e : Ast.expr) : Sil.value =
       terminate b (Sil.Br merge.Sil.bid);
       switch_to b merge;
       emit b (Sil.Load slot) Types.TBool
-  | Ast.Binary (op, l, r, _) ->
-      let lv = gen_expr b l in
-      (match vty b lv with
+  | Tast.Binary (op, l, r) -> (
+      match l.Tast.ty with
       | Types.TEnum _ when op = Ast.Eq || op = Ast.Ne ->
           (* enum equality is tag comparison (payload-free enums only — see sema) *)
-          let rv = gen_expr b r in
+          let lv = gen_expr b l and rv = gen_expr b r in
           let lt = emit b (Sil.Enum_tag lv) Types.TInt in
           let rt = emit b (Sil.Enum_tag rv) Types.TInt in
           emit b (Sil.Binop (op, lt, rt)) Types.TBool
       | _ ->
-          (* sema's `unify` lets an Int-literal tree adopt the other side's Double (`d * 2`,
-             `2 * d`): that side must be generated AT Double, or IRGen emits `fmul double %d, 2`
-             and clang rejects it. Re-generating a literal tree is safe — it has no side effects. *)
-          let rv = if vty b lv = Types.TDouble then gen_expr_as b r Types.TDouble else gen_expr b r in
-          let lv = if vty b rv = Types.TDouble && vty b lv = Types.TInt then gen_expr_as b l Types.TDouble else lv in
-          emit b (Sil.Binop (op, lv, rv)) (result_ty op (vty b lv)))
-  | Ast.Call (f, args, _) ->
-      let argvs = List.map (fun (_, e) -> gen_expr b e) args in
-      if Hashtbl.mem b.structs f then emit b (Sil.Struct argvs) (Types.TStruct f) (* memberwise init *)
-      else if Hashtbl.mem b.funcs f then (
-        let _, ret = Hashtbl.find b.funcs f in
-        let fr = emit b (Sil.Func_ref f) ret in
-        emit b (Sil.Apply (fr, argvs)) ret)
-      else emit b (Sil.Print (List.hd argvs)) Types.TVoid
-  (* `E.case` — a no-payload enum case (concept 11) *)
-  | Ast.Member (Ast.Var (tn, _), case, _) when (not (Hashtbl.mem b.vars tn)) && Hashtbl.mem b.enums tn ->
-      (* TODO(11g): a case with no payload — its tag is its index in the
-         declaration. See explainer §3. *)
-      ignore (tn, case);
-      failwith "TODO(11g): construct a no-payload enum case"
-  | Ast.Member (e0, fld, _) -> (
-      let sv = gen_expr b e0 in
-      match vty b sv with
-      | Types.TStruct sn ->
-          let sl = Hashtbl.find b.structs sn in
-          emit b (Sil.Struct_extract (sv, Option.get (Types.field_index sl fld)))
-            (Option.get (Types.field_type sl fld))
-      (* TODO(11i): `.rawValue` on an enum. Sema has already established that the
-         enum was declared `: Int`, so there is nothing to CHECK here — only the
-         read. §2's SIL table names the instruction that yields the case index,
-         and says what type that index has. See explainer §3. *)
-      | Types.TEnum _ -> failwith "TODO(11i): lower `.rawValue` to the tag read"
-      | _ -> assert false)
-  (* `E.case(args)` — a payload-carrying enum case (concept 11) *)
-  | Ast.Method_call (Ast.Var (tn, _), case, args, _) when (not (Hashtbl.mem b.vars tn)) && Hashtbl.mem b.enums tn ->
-      (* TODO(11h): the same instruction, carrying the evaluated arguments
-         as its payload. See explainer §3. *)
-      ignore (tn, case, args);
-      failwith "TODO(11h): construct a payload-carrying enum case"
-  | Ast.Method_call _ -> assert false (* sema rejected non-enum method calls *)
-
-(* Generate [e] AT an expected type. The only coercion this early is the integer literal that
-   checks at Double: it must be BORN a Double, or the slot receives an i64 bit-pattern and
-   `let d: Double = 1` reads back as 4.94e-324. The recursion mirrors sema's `is_int_literal`. *)
-and gen_expr_as (b : builder) (e : Ast.expr) (expected : Types.ty) : Sil.value =
-  match (e, expected) with
-  | Ast.Int_lit (n, _), Types.TDouble -> emit b (Sil.Float_lit (float_of_int n)) Types.TDouble
-  | Ast.Unary (op, e0, _), Types.TDouble ->
-      let v = gen_expr_as b e0 Types.TDouble in
-      emit b (Sil.Unop (op, v)) Types.TDouble
-  | Ast.Binary (((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div) as op), l, r, _), Types.TDouble ->
-      let lv = gen_expr_as b l Types.TDouble and rv = gen_expr_as b r Types.TDouble in
-      emit b (Sil.Binop (op, lv, rv)) Types.TDouble
-  | _ -> gen_expr b e
+          (* Both operands already carry their final type, and so does this node. The version
+             that worked this out for itself re-generated the left operand and left the dead
+             copy in the block — PLAN.md §0.1. *)
+          let lv = gen_expr b l in
+          let rv = gen_expr b r in
+          emit b (Sil.Binop (op, lv, rv)) ty)
+  (* RESOLVED calls — Sema decided initializer vs. function vs. print *)
+  | Tast.Struct_init (_, args) -> emit b (Sil.Struct (List.map (gen_expr b) args)) ty
+  | Tast.Fn_call (f, args) ->
+      let argvs = List.map (gen_expr b) args in
+      let fr = emit b (Sil.Func_ref f) ty in
+      emit b (Sil.Apply (fr, argvs)) ty
+  | Tast.Print a -> emit b (Sil.Print (gen_expr b a)) Types.TVoid
+  (* An enum case — construction, with the TAG supplied by Sema. The guard this replaces asked
+     `(not (Hashtbl.mem b.vars tn)) && Hashtbl.mem b.enums tn`: SILGen restating Sema's shadowing
+     rule in its own vocabulary, and having to agree with it by hand. *)
+  | Tast.Enum_case (_, tag, payload) ->
+      ignore (tag, payload);
+      (* TODO(11g/11h): construct the enum value. Sema hands you the TAG and, for a case with
+         associated values, the checked payload — so the shadowing question is already settled
+         and there is no registry to consult. §2's SIL table names the instruction; lowering it
+         by hand is the point of this concept. *)
+      failwith "TODO(11g): construct an enum case"
+  | Tast.Raw_value e0 ->
+      ignore e0;
+      (* TODO(11i): `.rawValue` — sema already established the enum was declared `: Int`, so
+         there is nothing to CHECK here, only the read. §2's SIL table names the instruction
+         that yields the case index, and says what type that index has. §3. *)
+      failwith "TODO(11i): lower `.rawValue` to the tag read"
+  | Tast.Field (e0, i, _) -> emit b (Sil.Struct_extract (gen_expr b e0, i)) ty
 
 (* --- lowering statements; gen_block stops after a terminator (dead code) --- *)
-let rec gen_block (b : builder) (stmts : Ast.stmt list) : unit =
+let rec gen_block (b : builder) (stmts : Tast.stmt list) : unit =
   let saved = Hashtbl.copy b.vars in
   let rec go stmts =
     match stmts with
@@ -200,41 +174,31 @@ let rec gen_block (b : builder) (stmts : Ast.stmt list) : unit =
   go stmts;
   restore_vars b saved
 
-and gen_stmt (b : builder) (s : Ast.stmt) : unit =
+and gen_stmt (b : builder) (s : Tast.stmt) : unit =
   match s with
-  | Ast.Let { name; annot; value; _ } ->
-      (* an annotation makes the slot that type, and the value is generated AT it *)
-      let v =
-        match annot with
-        | Some n -> ( match Types.of_name n with Some t -> gen_expr_as b value t | None -> gen_expr b value)
-        | None -> gen_expr b value
-      in
+  | Tast.Let { name; value; _ } ->
+      let v = gen_expr b value in
       let addr = emit b (Sil.Alloc_stack name) (vty b v) in
       bind_var b name addr;
       emit_void b (Sil.Store (v, addr))
-  | Ast.Assign { name; value; _ } ->
+  | Tast.Assign { name; value; _ } ->
       let v = gen_expr b value in
       emit_void b (Sil.Store (v, addr_of b name))
-  | Ast.Set_member { obj; field; value; _ } ->
+  | Tast.Set_member { obj; field = i; value; _ } ->
       (* `p.x = e`: take the field's ADDRESS in p's slot, then store — this is what makes a
-         struct a value type, since p has its own slot distinct from any copy *)
+         struct a value type. The index is Sema's. *)
       let v = gen_expr b value in
       let slot = Hashtbl.find b.vars obj in
-      let sn = match vty b slot with Types.TStruct sn -> sn | _ -> assert false in
-      let sl = Hashtbl.find b.structs sn in
-      let faddr =
-        emit b (Sil.Struct_element_addr (slot, Option.get (Types.field_index sl field)))
-          (Option.get (Types.field_type sl field))
-      in
+      let faddr = emit b (Sil.Struct_element_addr (slot, i)) (vty b v) in
       emit_void b (Sil.Store (v, faddr))
-  | Ast.Expr_stmt (e, _) -> ignore (gen_expr b e)
-  | Ast.Return (eo, _) -> (
+  | Tast.Expr_stmt e -> ignore (gen_expr b e)
+  | Tast.Return (eo, _) -> (
       match eo with
       | Some e ->
           let v = gen_expr b e in
           terminate b (Sil.Return (Some v))
       | None -> terminate b (Sil.Return None))
-  | Ast.If { cond; then_blk; else_blk; _ } ->
+  | Tast.If { cond; then_blk; else_blk; _ } ->
       let c = gen_expr b cond in
       let then_b = new_block b in
       let merge = new_block b in
@@ -250,7 +214,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
           terminate b (Sil.Br merge.Sil.bid)
       | None -> ());
       switch_to b merge
-  | Ast.While { cond; body; _ } ->
+  | Tast.While { cond; body; _ } ->
       let header = new_block b and body_b = new_block b and exit_b = new_block b in
       terminate b (Sil.Br header.Sil.bid);
       switch_to b header;
@@ -262,7 +226,7 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       terminate b (Sil.Br header.Sil.bid);
       leave_loop b;
       switch_to b exit_b
-  | Ast.For { var; lo; hi; body; _ } ->
+  | Tast.For { var; lo; hi; body; _ } ->
       (* desugar `for v in lo ..< hi { body }` into a counted while loop *)
       let lov = gen_expr b lo in
       let hiv = gen_expr b hi in
@@ -290,12 +254,12 @@ and gen_stmt (b : builder) (s : Ast.stmt) : unit =
       emit_void b (Sil.Store (inc, addr));
       terminate b (Sil.Br header.Sil.bid);
       switch_to b exit_b
-  | Ast.Break _ -> ( match break_target b with Some ex -> terminate b (Sil.Br ex) | None -> ())
-  | Ast.Continue _ -> ( match continue_target b with Some c -> terminate b (Sil.Br c) | None -> ())
+  | Tast.Break _ -> ( match break_target b with Some ex -> terminate b (Sil.Br ex) | None -> ())
+  | Tast.Continue _ -> ( match continue_target b with Some c -> terminate b (Sil.Br c) | None -> ())
 
 (* --- lowering a function: params get slots; then the body --- *)
 let lower_func structs enums funcs (name : string) (params : (string * Types.ty) list) (ret : Types.ty)
-    (body : Ast.stmt list) : Sil.func =
+    (body : Tast.stmt list) : Sil.func =
   let val_ty = Hashtbl.create 16 in
   let entry = { Sil.bid = 0; instrs = []; term = Sil.Unreachable } in
   let b =
@@ -323,58 +287,37 @@ let lower_func structs enums funcs (name : string) (params : (string * Types.ty)
   { Sil.fname = name; params = sil_params; ret; blocks = b.blocks; val_ty }
 
 (* --- the entry point: a checked program -> a SIL module --- *)
-let lower (prog : Ast.program) : Sil.modul =
-  (* struct + enum registries first (names, then layouts) so any type name resolves *)
+let lower (prog : Tast.program) : Sil.modul =
+  (* Nothing is resolved here: the layouts were built by Sema and travel with the tree. *)
   let structs : (string, Types.struct_layout) Hashtbl.t = Hashtbl.create 16 in
   let enums : (string, Types.enum_layout) Hashtbl.t = Hashtbl.create 16 in
-  List.iter
-    (function
-      | Ast.IStruct s -> Hashtbl.replace structs s.Ast.sname { Types.sl_name = s.Ast.sname; sl_fields = [] }
-      | Ast.IEnum e -> Hashtbl.replace enums e.Ast.ename { Types.el_name = e.Ast.ename; el_cases = []; el_raw = e.Ast.eraw <> None }
-      | _ -> ())
-    prog.Ast.items;
-  let ty_of_name n =
-    match Types.of_name n with
-    | Some t -> t
-    | None ->
-        if Hashtbl.mem structs n then Types.TStruct n
-        else if Hashtbl.mem enums n then Types.TEnum n
-        else Types.TInt
+  let struct_layouts =
+    List.filter_map
+      (function Tast.IStruct l -> Hashtbl.replace structs l.Types.sl_name l; Some l | _ -> None)
+      prog.Tast.items
   in
-  List.iter
-    (function
-      | Ast.IStruct s ->
-          let fs = List.map (fun (fl : Ast.field) -> (fl.Ast.fld_name, ty_of_name fl.Ast.fld_ty)) s.Ast.sfields in
-          Hashtbl.replace structs s.Ast.sname { Types.sl_name = s.Ast.sname; sl_fields = fs }
-      | Ast.IEnum e ->
-          let cs = List.map (fun (c : Ast.enum_case) -> (c.Ast.cname, List.map ty_of_name c.Ast.payload)) e.Ast.ecases in
-          Hashtbl.replace enums e.Ast.ename { Types.el_name = e.Ast.ename; el_cases = cs; el_raw = e.Ast.eraw <> None }
-      | _ -> ())
-    prog.Ast.items;
-  let ret_of f = match f.Ast.ret with None -> Types.TVoid | Some n -> ty_of_name n in
+  let enum_layouts =
+    List.filter_map
+      (function Tast.IEnum l -> Hashtbl.replace enums l.Types.el_name l; Some l | _ -> None)
+      prog.Tast.items
+  in
   let funcs = Hashtbl.create 16 in
   List.iter
     (function
-      | Ast.IFunc f ->
-          let ptypes = List.map (fun (pr : Ast.param) -> ty_of_name pr.Ast.ptype) f.Ast.params in
-          Hashtbl.replace funcs f.Ast.fname (ptypes, ret_of f)
+      | Tast.IFunc f ->
+          Hashtbl.replace funcs f.Tast.fname
+            (List.map (fun (p : Tast.param) -> p.Tast.pty) f.Tast.params, f.Tast.ret)
       | _ -> ())
-    prog.Ast.items;
+    prog.Tast.items;
   let funcdefs =
     List.filter_map
       (function
-        | Ast.IFunc f ->
-            let params = List.map (fun (pr : Ast.param) -> (pr.Ast.pname, ty_of_name pr.Ast.ptype)) f.Ast.params in
-            Some (lower_func structs enums funcs f.Ast.fname params (ret_of f) f.Ast.body)
+        | Tast.IFunc f ->
+            let params = List.map (fun (p : Tast.param) -> (p.Tast.pname, p.Tast.pty)) f.Tast.params in
+            Some (lower_func structs enums funcs f.Tast.fname params f.Tast.ret f.Tast.body)
         | _ -> None)
-      prog.Ast.items
+      prog.Tast.items
   in
-  let main_body = List.filter_map (function Ast.IStmt s -> Some s | _ -> None) prog.Ast.items in
+  let main_body = List.filter_map (function Tast.IStmt s -> Some s | _ -> None) prog.Tast.items in
   let main = lower_func structs enums funcs "main" [] Types.TVoid main_body in
-  let struct_layouts =
-    List.filter_map (function Ast.IStruct s -> Some (Hashtbl.find structs s.Ast.sname) | _ -> None) prog.Ast.items
-  in
-  let enum_layouts =
-    List.filter_map (function Ast.IEnum e -> Some (Hashtbl.find enums e.Ast.ename) | _ -> None) prog.Ast.items
-  in
   { Sil.funcs = funcdefs @ [ main ]; structs = struct_layouts; enums = enum_layouts }

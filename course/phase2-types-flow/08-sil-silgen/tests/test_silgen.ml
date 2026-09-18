@@ -9,8 +9,8 @@ let lower (src : string) : Sil.modul =
   let p =
     Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d)
   in
-  Sema.check p d;
-  Silgen.lower p
+  (* SILGen consumes the TYPE-CHECKED tree, so the test lowers what Sema returned *)
+  Silgen.lower (Option.get (Sema.check p d))
 
 let func_named (m : Sil.modul) name =
   List.find (fun (f : Sil.func) -> f.Sil.fname = name) m.Sil.funcs

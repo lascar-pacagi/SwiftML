@@ -3,7 +3,7 @@
 (library
  (name swiftml_mem2reg)
  (wrapped false)
- (modules token diagnostics types lexer ast parser sema sil silgen opt irgen driver)
+ (modules token diagnostics types lexer ast tast parser sema sil silgen opt irgen driver)
  (flags
   (:standard -warn-error -a)))
 

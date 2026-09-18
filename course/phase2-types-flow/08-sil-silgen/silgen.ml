@@ -2,8 +2,16 @@
    lower_func/lower are given. You implement three things: the MEMORY MODEL (TODO(08a) — a
    variable is a stack slot, read with load, written with store), the ordinary BINARY OPERATOR
    (TODO(08b)), and the CONTROL-FLOW lowering (TODO(08c) in gen_statement) — the heart of SILGen:
-   turning the AST tree into a basic-block CFG.
+   turning the tree into a basic-block CFG.
    Reference: solution/silgen.ml.
+
+   Lower the TYPE-CHECKED tree (`Tast`) to raw, memory-based SIL.
+
+   SILGen consumes what Sema produced, and that is the whole reason this file is as short as
+   it is. Every node arrives carrying its type and every name arrives resolved, so there is
+   nothing here that asks "what did the checker decide?" — no second type system, no registry
+   lookups, no coercion logic. PLAN.md §0.1 records what this file looked like when it did
+   have to ask, and the bugs that came of it.
 
    Each variable becomes an `alloc_stack` slot, read with `load`, written with `store` (no
    SSA — Phase-4 mem2reg does that). Control flow becomes basic blocks: `if`/`while`/`for`
@@ -107,12 +115,6 @@ let continue_target (builder : builder) : int option =
   | (continue_target_id, _) :: _ -> Some continue_target_id
   | [] -> None
 
-let result_type (op : Ast.binop) (operand : Types.ty) : Types.ty =
-  match op with
-  | Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge | Ast.And | Ast.Or ->
-      Types.TBool
-  | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod -> operand
-
 (* --- lowering expressions: returns the SIL value holding the result --- *)
 
 (* A block is a SCOPE for names. Without this, an inner `var x` would overwrite the outer `x`
@@ -126,38 +128,35 @@ let restore_variables (builder : builder)
     (fun k value -> Hashtbl.replace builder.variables k value)
     saved_variables
 
-let rec gen_expression (builder : builder) (expression : Ast.expr) : Sil.value =
-  match expression with
-  | Ast.Int_lit (n, _) -> emit builder (Sil.Int_lit n) Types.TInt
-  | Ast.Double_lit (number, _) ->
-      emit builder (Sil.Float_lit number) Types.TDouble
-  | Ast.Bool_lit (boolean, _) -> emit builder (Sil.Bool_lit boolean) Types.TBool
-  | Ast.String_lit (text, _) -> emit builder (Sil.String_lit text) Types.TString
-  (* `e as T`: generate the operand AT the written type (see
-     gen_expression_as). The `None` arm cannot
-     be reached today — sema resolved this same name through `Types.of_name` and rejected it if it
-     failed — but it is not dead weight either: an ascription with nothing to coerce lowers to its
-     operand, which is what it does. Widening `as` to name a struct would start using it. *)
-  | Ast.Ascribe (operand_expression, tyname, _) -> (
-      match Types.of_name tyname with
-      | Some t -> gen_expression_as builder operand_expression t
-      | None -> gen_expression builder operand_expression)
-  | Ast.Var (name, _) ->
+let rec gen_expression (builder : builder) (expression : Tast.expr) : Sil.value =
+  (* `ty` is the type Sema concluded for this node. Reading it is the whole of what used to be
+     `gen_expression_as` plus a re-generation dance — see the literal arm below. *)
+  let ty = expression.Tast.ty in
+  match expression.Tast.e with
+  (* THE COERCION, already decided. An integer literal that checked at Double carries Double, so
+     it is BORN a Double here. Nothing in this file has to notice that `2` sits beside a `d`. *)
+  | Tast.Int_lit n when ty = Types.TDouble ->
+      emit builder (Sil.Float_lit (float_of_int n)) Types.TDouble
+  | Tast.Int_lit n -> emit builder (Sil.Int_lit n) Types.TInt
+  | Tast.Double_lit number -> emit builder (Sil.Float_lit number) Types.TDouble
+  | Tast.Bool_lit boolean -> emit builder (Sil.Bool_lit boolean) Types.TBool
+  | Tast.String_lit text -> emit builder (Sil.String_lit text) Types.TString
+  (* `e as T` — the operand was already checked AT T, so the coercion has nothing left to do *)
+  | Tast.Coerce operand_expression -> gen_expression builder operand_expression
+  | Tast.Local name ->
       ignore name;
-      (* TODO(08a): reading a variable is a LOAD from its slot.
-         `address_of builder name` is where that
-         slot is, and `value_type builder addr` is the type it holds. §2. *)
+      (* TODO(08a): a variable READ — find its slot with `address_of` and `load` from it. The
+         result's type is the slot's element type (`value_type builder addr`). §3. *)
       failwith "TODO(08a): load a variable from its slot"
-  | Ast.Unary (op, operand_expression, _) ->
+  | Tast.Unary (op, operand_expression) ->
       let value = gen_expression builder operand_expression in
-      emit builder (Sil.Unop (op, value)) (value_type builder value)
+      emit builder (Sil.Unop (op, value)) ty
   (* SHORT-CIRCUIT `&&` / `||` (concept 06 semantics, lowered here) — NOT
      bitwise: the right operand is evaluated only on the deciding edge, so its
      side effects (a trapping `a[i]` in `i < n && a[i]`,
      a force-unwrap, a throwing call) never run on the short path. Lowered to a cond_br diamond, the
      result merged through a stack slot (mem2reg promotes it to a phi). *)
-  | Ast.Binary (((Ast.And | Ast.Or) as op), left_expression, right_expression, _)
-    ->
+  | Tast.Binary (((Ast.And | Ast.Or) as op), left_expression, right_expression) ->
       let left_value = gen_expression builder left_expression in
       (* the slot the two answers meet in — named for the operator it serves, since this arm
          lowers both. mem2reg turns it into a phi in Phase 4. *)
@@ -179,52 +178,23 @@ let rec gen_expression (builder : builder) (expression : Ast.expr) : Sil.value =
       terminate builder (Sil.Br merge_block.Sil.bid);
       switch_to builder merge_block;
       emit builder (Sil.Load slot) Types.TBool
-  | Ast.Binary (op, left_expression, right_expression, _) ->
+  | Tast.Binary (op, left_expression, right_expression) ->
       ignore (op, left_expression, right_expression);
-      ignore result_type;
-      (* TODO(08b): every other operator. Lower both operands, then emit one `Sil.Binop`. Two
-         types are in play and they are not always the same: the type the operation happens AT
-         (`Int + Int` is Int arithmetic; if either side is a Double it is Double arithmetic) and
-         the type of its RESULT, which `result_type` gives you — a comparison is a Bool whatever it
-         compared. §2. *)
+      (* TODO(08b): the ordinary binary operator — lower both operands, then emit the `Binop`.
+         Note what you do NOT have to do: both operands already carry their final type, and so
+         does this node (`ty`), because Sema recorded all three. There is no coercion to spot
+         and nothing to re-generate. PLAN.md §0.1 is the story of the version that had to. §3. *)
       failwith "TODO(08b): lower a binary operator"
-  | Ast.Call (function_name, arguments, _) ->
+  (* RESOLVED calls: Sema already decided whether this was print or a declared function, so
+     there is no `Hashtbl.mem builder.functions` guess to get wrong. *)
+  | Tast.Print argument -> emit builder (Sil.Print (gen_expression builder argument)) Types.TVoid
+  | Tast.Fn_call (function_name, arguments) ->
       let argument_values = List.map (gen_expression builder) arguments in
-      if Hashtbl.mem builder.functions function_name then
-        let _, ret = Hashtbl.find builder.functions function_name in
-        let function_reference =
-          emit builder (Sil.Func_ref function_name) ret
-        in
-        emit builder (Sil.Apply (function_reference, argument_values)) ret
-      else emit builder (Sil.Print (List.hd argument_values)) Types.TVoid
-
-(* Generate [expression] AT an expected type. The only coercion this early is
-   the integer literal that
-   checks at Double: it must be BORN a Double, or the slot receives an i64 bit-pattern and
-   `let d: Double = 1` reads back as 4.94e-324. The recursion mirrors sema's `is_int_literal`. *)
-and gen_expression_as (builder : builder) (expression : Ast.expr)
-    (expected : Types.ty) : Sil.value =
-  match (expression, expected) with
-  | Ast.Int_lit (n, _), Types.TDouble ->
-      emit builder (Sil.Float_lit (float_of_int n)) Types.TDouble
-  | Ast.Unary (op, operand_expression, _), Types.TDouble ->
-      let value = gen_expression_as builder operand_expression Types.TDouble in
-      emit builder (Sil.Unop (op, value)) Types.TDouble
-  | ( Ast.Binary
-        ( ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div) as op),
-          left_expression,
-          right_expression,
-          _ ),
-      Types.TDouble ) ->
-      let left_value = gen_expression_as builder left_expression Types.TDouble
-      and right_value =
-        gen_expression_as builder right_expression Types.TDouble
-      in
-      emit builder (Sil.Binop (op, left_value, right_value)) Types.TDouble
-  | _ -> gen_expression builder expression
+      let function_reference = emit builder (Sil.Func_ref function_name) ty in
+      emit builder (Sil.Apply (function_reference, argument_values)) ty
 
 (* --- lowering statements; gen_block stops after a terminator (dead code) --- *)
-let rec gen_block (builder : builder) (statements : Ast.stmt list) : unit =
+let rec gen_block (builder : builder) (statements : Tast.stmt list) : unit =
   let saved_variables = Hashtbl.copy builder.variables in
   let rec go statements =
     match statements with
@@ -236,67 +206,53 @@ let rec gen_block (builder : builder) (statements : Ast.stmt list) : unit =
   go statements;
   restore_variables builder saved_variables
 
-and gen_statement (builder : builder) (s : Ast.stmt) : unit =
+and gen_statement (builder : builder) (s : Tast.stmt) : unit =
   match s with
-  | Ast.Let { name; annot; value; _ } ->
-      (* an annotation makes the slot that type, and the value is generated AT it *)
-      let value =
-        match annot with
-        | Some n -> (
-            match Types.of_name n with
-            | Some t -> gen_expression_as builder value t
-            | None -> gen_expression builder value)
-        | None -> gen_expression builder value
-      in
-      ignore name;
-      ignore value;
-      (* TODO(08a): a declaration is a SLOT and a STORE — alloc_stack for `name` at the value's
-         type, handed to `bind_variable` so later reads find it, then the value stored into it.
-         `lower` already does exactly this for each parameter. §2. *)
+  | Tast.Let { name; value; _ } ->
+      ignore (name, value);
+      (* TODO(08a): a binding — lower the value, `Alloc_stack` a slot of its type, remember the
+         slot with `bind_variable`, and `Store` into it. The slot takes the VALUE's type, which
+         Sema recorded: an annotated `let d: Double = 1` arrives with its literal already
+         carrying Double, so there is nothing to coerce here. §3. *)
       failwith "TODO(08a): give the variable a slot and store into it"
-  | Ast.Assign { name; value; _ } ->
-      let value = gen_expression builder value in
-      ignore name;
-      ignore value;
-      (* TODO(08a): assignment stores into the slot the name already has — no new slot. *)
+  | Tast.Assign { name; value; _ } ->
+      ignore (name, value);
+      (* TODO(08a): assignment — lower the value and `Store` it into the existing slot. *)
       failwith "TODO(08a): store into the variable's slot"
-  | Ast.Expr_stmt (expression, _) -> ignore (gen_expression builder expression)
-  | Ast.Return (eo, _) -> (
+  | Tast.Expr_stmt expression -> ignore (gen_expression builder expression)
+  | Tast.Return (eo, _) -> (
       match eo with
       | Some expression ->
           let value = gen_expression builder expression in
           terminate builder (Sil.Return (Some value))
       | None -> terminate builder (Sil.Return None))
-  (* --- build the control-flow GRAPH (TODO(08c)) --- *)
-  | Ast.If { cond; then_blk; else_blk; _ } ->
-      (* TODO(08c): the if-DIAMOND — a block per branch, both ending in a Br to the merge block
-         that execution continues from. §2 and its figure draw the shape. *)
-      ignore (cond, then_blk, else_blk);
+  | Tast.If _ ->
+      ignore (new_block, switch_to, terminate, gen_block);
+      (* TODO(08c): `if` — the DIAMOND. Lower the condition, make the blocks, `Cond_br` to them,
+         fill each, and have both arms `Br` to the merge block. §3. *)
       failwith "TODO(08c): lower `if`"
-  | Ast.While { cond; body; _ } ->
-      (* TODO(08c): the while LOOP — a header that re-tests the condition, a body whose last
-         terminator is the BACK-EDGE to that header, an exit block. Push (header, exit) on
-         `enter_loop`/`leave_loop` around the body: that is how break and continue find their
-         targets. §2. *)
-      ignore (cond, body);
+  | Tast.While _ ->
+      ignore (enter_loop, leave_loop);
+      (* TODO(08c): `while` — header / body / exit, with the BACK EDGE from the body to the
+         header. Register the loop so `break`/`continue` know where to go. §3. *)
       failwith "TODO(08c): lower `while`"
-  | Ast.For { var; lo; hi; body; _ } ->
-      (* TODO(08c): `for v in lo ..< hi` DESUGARS to the counted loop above, over a slot for `v`.
-         Evaluate hi once, before the loop. §2. *)
-      ignore (var, lo, hi, body);
+  | Tast.For _ ->
+      (* TODO(08c): `for v in lo ..< hi` — DESUGAR to a counted while loop: a slot for `v`,
+         header / body / latch / exit. `continue` must jump to the LATCH, not the header, or the
+         increment is skipped and the loop never ends. §3. *)
       failwith "TODO(08c): lower `for`"
-  | Ast.Break _ ->
-      (* TODO(08c): branch to the innermost loop's break target — `break_target builder`. *)
+  | Tast.Break _ ->
+      ignore break_target;
+      (* TODO(08c): `break` — branch to the enclosing loop's exit block. *)
       failwith "TODO(08c): lower `break`"
-  | Ast.Continue _ ->
-      (* TODO(08c): branch to the innermost loop's continue target —
-         `continue_target builder`, which is
-         NOT the same block as break's. *)
+  | Tast.Continue _ ->
+      ignore continue_target;
+      (* TODO(08c): `continue` — branch to the enclosing loop's continue target. *)
       failwith "TODO(08c): lower `continue`"
 
 (* --- lowering a function: params get slots; then the body --- *)
 let lower_func functions (name : string) (params : (string * Types.ty) list)
-    (ret : Types.ty) (body : Ast.stmt list) : Sil.func =
+    (ret : Types.ty) (body : Tast.stmt list) : Sil.func =
   let value_types = Hashtbl.create 16 in
   let entry = { Sil.bid = 0; instrs = []; term = Sil.Unreachable } in
   let builder =
@@ -339,48 +295,40 @@ let lower_func functions (name : string) (params : (string * Types.ty) list)
     val_ty = value_types;
   }
 
-(* --- the entry point: a checked program -> a SIL module --- *)
-let lower (program : Ast.program) : Sil.modul =
-  let type_of_name n = Option.value (Types.of_name n) ~default:Types.TInt in
-  let return_type_of function_decl =
-    match function_decl.Ast.ret with
-    | None -> Types.TVoid
-    | Some n -> type_of_name n
-  in
+(* --- the entry point: a type-checked program -> a SIL module ---
+   Note what is NOT here: no `Types.of_name`. A `Tast.func_decl`'s parameter and return types are
+   already types, not written names, so there is nothing left to resolve. *)
+let lower (program : Tast.program) : Sil.modul =
   let functions = Hashtbl.create 16 in
   List.iter
     (function
-      | Ast.IFunc function_decl ->
+      | Tast.IFunc function_decl ->
           let parameter_types =
-            List.map
-              (fun (parameter : Ast.param) -> type_of_name parameter.Ast.ptype)
-              function_decl.Ast.params
+            List.map (fun (p : Tast.param) -> p.Tast.pty) function_decl.Tast.params
           in
-          Hashtbl.replace functions function_decl.Ast.fname
-            (parameter_types, return_type_of function_decl)
-      | Ast.IStmt _ -> ())
-    program.Ast.items;
+          Hashtbl.replace functions function_decl.Tast.fname
+            (parameter_types, function_decl.Tast.ret)
+      | Tast.IStmt _ -> ())
+    program.Tast.items;
   let function_definitions =
     List.filter_map
       (function
-        | Ast.IFunc function_decl ->
+        | Tast.IFunc function_decl ->
             let params =
               List.map
-                (fun (parameter : Ast.param) ->
-                  (parameter.Ast.pname, type_of_name parameter.Ast.ptype))
-                function_decl.Ast.params
+                (fun (p : Tast.param) -> (p.Tast.pname, p.Tast.pty))
+                function_decl.Tast.params
             in
             Some
-              (lower_func functions function_decl.Ast.fname params
-                 (return_type_of function_decl)
-                 function_decl.Ast.body)
-        | Ast.IStmt _ -> None)
-      program.Ast.items
+              (lower_func functions function_decl.Tast.fname params
+                 function_decl.Tast.ret function_decl.Tast.body)
+        | Tast.IStmt _ -> None)
+      program.Tast.items
   in
   let main_statements =
     List.filter_map
-      (function Ast.IStmt s -> Some s | Ast.IFunc _ -> None)
-      program.Ast.items
+      (function Tast.IStmt s -> Some s | Tast.IFunc _ -> None)
+      program.Tast.items
   in
   let main = lower_func functions "main" [] Types.TVoid main_statements in
   { Sil.funcs = function_definitions @ [ main ] }

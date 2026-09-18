@@ -4,8 +4,8 @@
 let lower (src : string) : Sil.modul =
   let d = Diagnostics.create () in
   let p = Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d) in
-  Sema.check p d;
-  Silgen.lower p
+  (* SILGen consumes the TYPE-CHECKED tree *)
+  Silgen.lower (Option.get (Sema.check p d))
 
 let m2r (m : Sil.modul) : Sil.modul = Opt.run_pipeline [ { Opt.name = "mem2reg"; run = Opt.mem2reg } ] m
 

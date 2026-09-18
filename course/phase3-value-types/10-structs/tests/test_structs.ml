@@ -14,13 +14,13 @@ let parse (src : string) : Ast.program =
 
 let ast (src : string) : string = Ast.dump_program (parse src)
 
-let front (src : string) : Ast.program * Diagnostics.sink =
+(* the front end now yields the TYPE-CHECKED tree; `None` when the program had errors *)
+let front (src : string) : Tast.program option * Diagnostics.sink =
   let d = Diagnostics.create () in
   let p =
     Parser.parse_program (Parser.create (Lexer.tokenize (Lexer.create src d)) d)
   in
-  Sema.check p d;
-  (p, d)
+  (Sema.check p d, d)
 
 let errors (src : string) : string list =
   let _, d = front src in
@@ -31,13 +31,13 @@ let errors (src : string) : string list =
 
 let sil_module (src : string) : Sil.modul =
   let p, _ = front src in
-  Silgen.lower p
+  Silgen.lower (Option.get p)
 
 let sil (src : string) : string = Sil.string_of_module (sil_module src)
 
 let llvm (src : string) : string =
   let p, _ = front src in
-  Irgen.emit_llvm (Silgen.lower p)
+  Irgen.emit_llvm (Silgen.lower (Option.get p))
 
 let point = "struct Point {\n  var x: Int\n  var y: Int\n}\n"
 let line = point ^ "struct Line {\n  var a: Point\n  var b: Point\n}\n"

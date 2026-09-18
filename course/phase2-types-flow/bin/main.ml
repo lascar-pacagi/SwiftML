@@ -14,6 +14,7 @@ let emit_of_flag : string -> Driver.emit option = function
   | "--emit-tokens" -> Some Driver.Tokens
   | "--emit-ast" -> Some Driver.Ast
   | "--typecheck" -> Some Driver.Check
+  | "--emit-tast" -> Some Driver.Typed_ast
   | "--emit-sil" -> Some Driver.Sil
   | "--emit-llvm" -> Some Driver.Llvm
   | _ -> None

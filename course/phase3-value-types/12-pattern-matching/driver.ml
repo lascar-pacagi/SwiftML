@@ -5,6 +5,7 @@
 type emit =
   | Tokens
   | Ast
+  | Typed_ast (* the TYPE-CHECKED tree sema produced *)
   | Check
   | Sil
   | Llvm (* + IRGen, print LLVM IR *)
@@ -14,11 +15,10 @@ let read_file (path : string) : string =
   let ic = open_in_bin path in
   Fun.protect ~finally:(fun () -> close_in ic) (fun () -> really_input_string ic (in_channel_length ic))
 
-let frontend (src : string) (diags : Diagnostics.sink) : Ast.program =
+let frontend (src : string) (diags : Diagnostics.sink) : Tast.program option =
   let toks = Lexer.tokenize (Lexer.create src diags) in
   let prog = Parser.parse_program (Parser.create toks diags) in
-  Sema.check prog diags;
-  prog
+  Sema.check prog diags
 
 let bail_on_errors (diags : Diagnostics.sink) : unit =
   if Diagnostics.has_errors diags then (
@@ -29,7 +29,7 @@ let bail_on_errors (diags : Diagnostics.sink) : unit =
 let to_llvm (src : string) (diags : Diagnostics.sink) : string =
   let prog = frontend src diags in
   bail_on_errors diags;
-  let m = Silgen.lower prog in
+  let m = Silgen.lower (Option.get prog) in
   (match Sil.verify m with
   | [] -> ()
   | errs ->
@@ -54,12 +54,16 @@ let compile_file ?(out = "a.out") ~(src_path : string) ~(emit : emit) () : unit 
       bail_on_errors diags;
       print_endline (Ast.dump_program prog)
   | Check ->
-      let (_ : Ast.program) = frontend src diags in
+      let (_ : Tast.program option) = frontend src diags in
       bail_on_errors diags
+  | Typed_ast ->
+        let typed = frontend src diags in
+        bail_on_errors diags;
+        Option.iter (fun p -> print_endline (Tast.dump_program p)) typed
   | Sil ->
       let prog = frontend src diags in
       bail_on_errors diags;
-      let m = Silgen.lower prog in
+      let m = Silgen.lower (Option.get prog) in
       bail_on_errors diags;
       print_endline (Sil.string_of_module m)
   | Llvm -> print_string (to_llvm src diags)
