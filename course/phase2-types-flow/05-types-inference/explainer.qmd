@@ -20,7 +20,7 @@ must reject exactly the programs `swiftc` rejects.
   matching diagnostics. That accept/reject agreement *is* the test (the type-check oracle). And the
   checker does not merely *approve* the program — it **produces** one: a type-checked tree
   (`Tast`) with the answers filled in, which every later stage consumes instead of working them out
-  again. `--emit-tast` prints it, and §2's **What the checker produces** explains why it exists.
+  again. `--emit-tast` prints it, and §2's **What the checker produces** goes through it.
 - **Out of scope (later concepts):** control flow and functions (06–07); running the code — codegen
   for the new types flows through **SIL**, introduced at concept 08. Concept 05 stops at
   `--typecheck`. Also out of scope: generics and protocols (Phase 5), where the real constraint
@@ -357,26 +357,6 @@ integer_literal_expr type="Double"
 
 swiftc keeps the node *kind* and changes its *type* — which is why `Tast.Int_lit` above does the
 same rather than becoming a `Double_lit`.
-
-**Why it matters.** Without it, the work is simply done twice. This checker decides that the `2` in
-`d * 2` is a `Double`; the code generator is then handed the same untyped tree and has to decide it
-again — with less to go on, because all it sees is a literal that says `2`.
-
-You will meet the failure that produces at concept 09. If the `2` reaches the back end still looking
-like an integer, the LLVM it emits is
-
-```llvm
-%r = fmul double %d, 2
-```
-
-— a floating-point multiply with an integer operand — and clang refuses it:
-
-```
-error: integer constant must have integer type
-```
-
-Recording the answer here is what stops the question being asked a second time, by a pass with less
-information to answer it.
 
 ### What Swift *actually* does — and what we simplify
 
