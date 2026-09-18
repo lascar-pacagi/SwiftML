@@ -17,21 +17,26 @@ let ty =
     Types.equal
 
 (* -- TODO(05a) ---------------------------------------------------------- *)
+(* Two things decide whether a tree may flex to Double: every leaf must be an integer literal,
+   AND every operator must be one that Double has. Swift has no `%` on Double — swiftc answers
+   `let d: Double = 1 % 2` with "'%' is unavailable: For floating point numbers use
+   truncatingRemainder instead" — so one `%` anywhere stops the coercion, however literal the
+   leaves are. `/` is fine: Double division exists. Each check's label is what a failure
+   prints, so it names the tree. *)
 let test_is_int_literal () =
-  let yes e = Alcotest.(check bool) "literal" true (Sema.is_int_literal e) in
-  let no e =
-    Alcotest.(check bool) "not literal" false (Sema.is_int_literal e)
-  in
-  yes (int_ 1);
-  yes (neg_ (int_ 1));
-  yes (add_ (int_ 1) (Ast.Binary (Ast.Mul, int_ 2, int_ 3, sp)));
-  no (var_ "i");
-  (* a typed variable never flexes *)
-  no (dbl_ 1.0);
-  (* already a Double, nothing to flex *)
-  no (add_ (int_ 1) (var_ "i"));
-  (* one non-literal leaf is enough *)
-  no (Ast.Bool_lit (true, sp))
+  let yes what e = Alcotest.(check bool) what true (Sema.is_int_literal e) in
+  let no what e = Alcotest.(check bool) what false (Sema.is_int_literal e) in
+  yes "1" (int_ 1);
+  yes "-1" (neg_ (int_ 1));
+  yes "1 + 2 * 3" (add_ (int_ 1) (Ast.Binary (Ast.Mul, int_ 2, int_ 3, sp)));
+  yes "1 / 2 (Double has /)" (Ast.Binary (Ast.Div, int_ 1, int_ 2, sp));
+  no "1 % 2 (Double has no %)" (Ast.Binary (Ast.Mod, int_ 1, int_ 2, sp));
+  no "1 + 1 % 2 (one % is enough)"
+    (add_ (int_ 1) (Ast.Binary (Ast.Mod, int_ 1, int_ 2, sp)));
+  no "i (a typed variable never flexes)" (var_ "i");
+  no "1.0 (already a Double)" (dbl_ 1.0);
+  no "1 + i (one non-literal leaf is enough)" (add_ (int_ 1) (var_ "i"));
+  no "true" (Ast.Bool_lit (true, sp))
 
 (* -- TODO(05b) ---------------------------------------------------------- *)
 let test_unify () =

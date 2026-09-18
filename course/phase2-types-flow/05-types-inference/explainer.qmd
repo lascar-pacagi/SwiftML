@@ -578,14 +578,21 @@ swiftc's is the one to match — run the snippet and read the column it prints:
 
 | input | swiftc's caret | ours |
 |---|---|---|
-| `1 @ 2` | the bad byte | `lo`, the token's start (the cursor has stepped past it) |
+| a stray control byte | the bad byte | the same byte — `lo` was taken before it was consumed |
 | `print("\1")` | the character *after* the backslash, col 9 | the escape char — remember it before the `advance_char` |
 | `print("oops` | the **opening quote**, col 7 | the opener — remember it before consuming it |
 | `/* oops` | end of the comment text, **plus a note on the `/*`** | end of input; the note is §6's exercise 4 |
 
-The pattern behind the last two: a span is a *choice*, and the position you want to blame is often
-one you have to save before you consume it. `report_error lexer lo msg` builds the span `{lo; hi = current_position lexer}` —
-`lo` is where the caret goes, `hi` is how far the problem reaches.
+To see the first one you need a byte Swift really has no use for — a control character, say. `@` is
+not it: `@` begins an attribute, so swiftc's lexer takes it happily and the complaint arrives from
+the parser instead.
+
+The first row is free, and the reason is worth naming: `scan_token` takes `let lo =
+current_position lexer` *before* it looks at the byte, so by the time the `_ ->` fallback reports,
+`lo` is already the right place. The middle two are not free. A span is a *choice*, and the
+position you want to blame is often one you have to save before you consume it.
+`report_error lexer lo msg` builds the span `{lo; hi = current_position lexer}` — `lo` is where the
+caret goes, `hi` is how far the problem reaches.
 
 **In the parser, you name what you wanted.** Two given helpers do the reporting, and both build
 the text as `"expected " ^ what`:
