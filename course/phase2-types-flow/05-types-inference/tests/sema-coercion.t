@@ -7,7 +7,7 @@ The literal has no type of its own until something asks for one, so the annotati
 Double — Swift's `ExpressibleByIntegerLiteral`, narrowed here to the shapes we can recognise:
 
   $ printf 'let d: Double = 1 + 2\n' > y1.swift
-  $ ./lab.exe --typecheck y1.swift >/dev/null 2>&1; echo "exit=$?"
+  $ ./lab.exe --typecheck y1.swift 2>&1 >/dev/null; echo "exit=$?"
   exit=0
 
 `let d: Double = i` is rejected: an Int *variable* never flexes.
@@ -25,7 +25,7 @@ between numeric types implicitly:
 Unary minus and nested arithmetic keep every leaf a literal, so the whole tree may flex:
 
   $ printf 'let a: Double = -1\nlet b: Double = 1 + 2 * 3\nlet c: Double = 1 / 2\n' > y3.swift
-  $ ./lab.exe --typecheck y3.swift >/dev/null 2>&1; echo "exit=$?"
+  $ ./lab.exe --typecheck y3.swift 2>&1 >/dev/null; echo "exit=$?"
   exit=0
 
 One non-literal leaf is enough to stop it: `1 + i` is rejected.
@@ -44,7 +44,7 @@ The same rule applies on assignment, not just on `let`: `x = 3` where `x: Double
 there too:
 
   $ printf 'var x: Double = 0\nx = 3\n' > y5.swift
-  $ ./lab.exe --typecheck y5.swift >/dev/null 2>&1; echo "exit=$?"
+  $ ./lab.exe --typecheck y5.swift 2>&1 >/dev/null; echo "exit=$?"
   exit=0
 
 `let d: Double = 1 % 2` is rejected — `%` is Int-only, in both compilers.

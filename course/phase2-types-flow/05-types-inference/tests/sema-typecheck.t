@@ -21,5 +21,8 @@ Ill-typed programs are rejected, exit 1, with swiftc's diagnostic wording:
   cannot be applied to operands of type 'Int' and 'Bool'
 
   $ printf 'let i = 1\nlet d: Double = i\n' > b3.swift
-  $ ./lab.exe --typecheck b3.swift >/dev/null 2>&1; echo "exit=$?"
+  $ ./lab.exe --typecheck b3.swift 2>&1 >/dev/null; echo "exit=$?"
+  2:17: error: cannot convert value of type 'Int' to specified type 'Double'
+  let d: Double = i
+                  ^
   exit=1

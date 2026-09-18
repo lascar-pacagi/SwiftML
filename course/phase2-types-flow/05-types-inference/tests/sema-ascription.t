@@ -6,7 +6,7 @@ Synthesis would have committed `1 : Int` and then complained. Checking pushes `D
 literal instead, which is the whole point of the second judgment:
 
   $ printf 'let a: Double = 1 as Double\nprint(a)\n' > s1.swift
-  $ ./lab.exe --typecheck s1.swift >/dev/null 2>&1; echo "exit=$?"
+  $ ./lab.exe --typecheck s1.swift 2>&1 >/dev/null; echo "exit=$?"
   exit=0
 
 `i as Double` is rejected: a variable of type Int does not flex.
