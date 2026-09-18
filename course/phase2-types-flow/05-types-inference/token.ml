@@ -26,8 +26,9 @@ type kind =
   | Ident of string
   | Kw_let
   | Kw_var
-  | Kw_true (* NEW: Bool literals are keywords *)
-  | Kw_false (* NEW *)
+  (* NEW: Bool literals are keywords *)
+  | Kw_true
+  | Kw_false
   | Kw_as (* NEW: the `e as T` coercion *)
   (* arithmetic operators *)
   | Plus
@@ -35,14 +36,15 @@ type kind =
   | Star
   | Slash
   | Percent
-  (* assignment / comparison *)
+  (* assignment *)
   | Eq (* =  *)
-  | EqEq (* NEW: == *)
-  | Ne (* NEW: != *)
-  | Lt (* NEW: < *)
-  | Le (* NEW: <= *)
-  | Gt (* NEW: > *)
-  | Ge (* NEW: >= *)
+  (* comparison (NEW) *)
+  | EqEq (* == *)
+  | Ne (* != *)
+  | Lt (* <  *)
+  | Le (* <= *)
+  | Gt (* >  *)
+  | Ge (* >= *)
   (* punctuation *)
   | Colon (* NEW: :  — for type annotations *)
   | LParen

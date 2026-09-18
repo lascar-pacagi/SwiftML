@@ -29,7 +29,7 @@ type kind =
   | Kw_enum
   | Kw_protocol
   | Kw_where
-  | Kw_as (* NEW *)
+  | Kw_as (* the `e as T` coercion *)
   | Kw_case
   | Kw_switch
   | Kw_default

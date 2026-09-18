@@ -21,13 +21,14 @@ type kind =
   | Kw_true
   | Kw_false
   | Kw_as
-  | Kw_if (* NEW *)
-  | Kw_else (* NEW *)
-  | Kw_while (* NEW *)
-  | Kw_for (* NEW *)
-  | Kw_in (* NEW *)
-  | Kw_break (* NEW *)
-  | Kw_continue (* NEW *)
+  (* control flow (NEW) *)
+  | Kw_if
+  | Kw_else
+  | Kw_while
+  | Kw_for
+  | Kw_in
+  | Kw_break
+  | Kw_continue
   (* arithmetic *)
   | Plus
   | Minus
@@ -43,10 +44,10 @@ type kind =
   | Gt
   | Ge
   (* logical (NEW) *)
-  | AmpAmp (* NEW: && *)
-  | PipePipe (* NEW: || *)
+  | AmpAmp (* && *)
+  | PipePipe (* || *)
   (* range (NEW) *)
-  | DotDotLt (* NEW: ..< *)
+  | DotDotLt (* ..< *)
   (* punctuation *)
   | Colon
   | LParen
