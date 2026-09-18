@@ -20,7 +20,7 @@ must reject exactly the programs `swiftc` rejects.
   matching diagnostics. That accept/reject agreement *is* the test (the type-check oracle). And the
   checker does not merely *approve* the program — it **produces** one: a type-checked tree
   (`Tast`) with the answers filled in, which every later stage consumes instead of working them out
-  again. `--emit-tast` prints it; §2 "What the checker produces" is the why.
+  again. `--emit-tast` prints it, and §2's **What the checker produces** explains why it exists.
 - **Out of scope (later concepts):** control flow and functions (06–07); running the code — codegen
   for the new types flows through **SIL**, introduced at concept 08. Concept 05 stops at
   `--typecheck`. Also out of scope: generics and protocols (Phase 5), where the real constraint
@@ -59,7 +59,8 @@ check       Γ ⊢ e ⇐ τ        "e checks against the expected type τ"      
 In code both return a **typed node** rather than a type or a unit — `infer : Ast.expr ->
 Tast.expr`, `check_expr : Ast.expr -> Types.ty -> Tast.expr`. The type is *on* the node, so
 `(infer c e).Tast.ty` is the synthesised type; swiftc reads it the same way, `E->getType()`. Why
-the judgments build a tree at all is "What the checker produces", below.
+they build a tree at all, rather than just answering the question, is the subject of **What the
+checker produces** further down this section.
 
 - **`infer` (synthesis, ⇒)** is bottom-up: you have no expectation, so you read the expression and
   *produce* a type. Use it when nothing tells you what type to want — a bare `let x = e`, an operand
@@ -1165,8 +1166,8 @@ yet. But `Double(i)` is not a no-op the way `1 as Double` is: `1 as Double` only
 literal is, while `Double(i)` has to convert a value at run time — an `sitofp` once concept 09 emits
 LLVM. So a real version of this exercise adds its own node (`Tast.Num_conv of expr`) rather than
 reusing `Coerce`, exactly so the back end is *told* a conversion happens instead of having to infer
-it from the operand types. That is the same argument as "What the checker produces", applied to a
-rule you wrote yourself.
+it from the operand types. That is the argument §2 makes, arriving now in a rule you wrote
+yourself.
 
 ### 3 — sharper annotation errors
 

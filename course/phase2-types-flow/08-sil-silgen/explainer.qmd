@@ -105,7 +105,7 @@ Before the mechanics, look at the *input*, because it decides how much work this
 
 SILGen does not consume the tree the parser built. It consumes the tree **Sema produced** — a
 `Tast.program`, in which every node already carries its type and every name is already resolved
-(concept 05 §2, "What the checker produces"). That single fact is why the file you are about to
+(concept 05 §2, **What the checker produces**). That single fact is why the file you are about to
 write is as short as it is. A few things that are *not* in it:
 
 - **No coercion logic.** An integer literal that checked at `Double` arrives carrying `Double`, so
