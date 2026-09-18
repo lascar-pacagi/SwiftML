@@ -70,13 +70,32 @@ let infers what e expected =
   Alcotest.(check ty) what expected got.Tast.ty;
   Alcotest.(check (list string)) (what ^ ", silently") [] (messages d)
 
+(* Two different mistakes hide behind "the diagnostic is wrong", and a plain list comparison
+   shows them the same way. Say which: an arm that ACCEPTED the program is a rule that is
+   missing, an arm that rejected it with other words is a rule that is right and a sentence that
+   is not. *)
+let diagnosed what expected got =
+  match got with
+  | [ m ] when String.equal m expected -> ()
+  | [] ->
+      Alcotest.failf "%s: accepted it silently.@.Expected it to report:@.  %s" what
+        expected
+  | [ m ] ->
+      Alcotest.failf
+        "%s: rejected it, but with the wrong wording.@.  said: %s@.  want: %s" what
+        m expected
+  | l ->
+      Alcotest.failf "%s: expected exactly one diagnostic, got %d:@.%s" what
+        (List.length l)
+        (String.concat "\n" (List.map (fun m -> "  " ^ m) l))
+
 (* Every arm that can fail must REPORT, not just return a plausible type — and inference keeps
    going, so one bad name does not hide the rest of the file. A silent arm is the failure mode
    these catch: it returns a type and says nothing. *)
 let reports what e expected =
   let cx, d = fresh () in
   ignore (Sema.infer cx e);
-  Alcotest.(check (list string)) what [ expected ] (messages d)
+  diagnosed what expected (messages d)
 
 (* -- TODO(05a) ---------------------------------------------------------- *)
 (* Two things decide whether a tree may flex to Double: every LEAF must be an integer literal,
@@ -346,7 +365,7 @@ let accepts what e expected =
 let refuses what e expected message =
   let cx, d = fresh () in
   ignore (Sema.check_expr cx e expected);
-  Alcotest.(check (list string)) what [ message ] (messages d)
+  diagnosed what message (messages d)
 
 let test_check_literal () =
   accepts "1 against Int" (int_ 1) Types.TInt;
@@ -507,7 +526,7 @@ let () =
           case "infer: + - * / flex a literal" test_arith_flexes;
           case "infer: a var will not flex" test_var_never_flexes;
           case "infer: 1 % 2 is Int" test_mod_int;
-          case "infer: % never flexes" test_mod_never_flexes;
+          case "infer: % on a Double reports" test_mod_never_flexes;
           case "infer: + joins Strings" test_concat;
           case "infer: - * / % on String report" test_arith_string_reports;
           case "infer: arithmetic on Bool reports" test_arith_bool_reports;
