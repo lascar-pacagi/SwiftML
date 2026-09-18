@@ -246,6 +246,17 @@ Two bugs, one root cause, and the second is only reachable once the first is fix
 
 ## S3 — parity divergences (mostly documented v0 limits)
 
+- **Concept 30's `oracle.t` pins a swiftc BUG that swiftc has since fixed** *(found 2026-09-18)* —
+  the golden expects the line `swiftc -O differs from swiftc -Onone on program 9 (its optimizer,
+  not ours)`. The corpus loop prints that only when the two swiftc outputs disagree; on the
+  installed 6.3.2 they now agree, so the line is absent and the test fails. Nothing of ours is
+  wrong — the assertion is that a *third-party* inconsistency still exists.
+  A golden should never depend on an oracle's bug staying unfixed. Fix: make the check
+  one-directional (report a divergence if it happens, assert nothing when it does not), so the
+  test passes whether or not swiftc is self-consistent on that program.
+  `phase7-closures-stdlib/30-error-handling/tests/oracle.t:67`. Concept 30's answer key is
+  otherwise green; this is the only failing case.
+
 - **A local binding does not shadow a struct or function name when it is CALLED** *(found
   2026-09-16, while fixing the enum half of the same bug)* — `let S = 7` followed by `S(x: 1)` is
   accepted and builds the struct, where swiftc reports `cannot call value of non-function type
