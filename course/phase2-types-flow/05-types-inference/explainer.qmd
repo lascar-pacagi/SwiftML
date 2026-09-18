@@ -756,11 +756,16 @@ what carries forward is given.
        becomes `Tast.Local` — downstream, that node can only be a binding.
      - `Unary '-'`: the operand must be numeric, and keeps its type.
      - `Binary`: the operator typing above. A helper that `unify`s the two operand types is the
-       clean shape, with `is_int_literal` letting a literal flex to `Double`. Two things to get
-       right: decide each operator against the type `unify` *returned*, not the operands' own
-       types — the coercion happens inside `unify`, so a test on the raw types cannot see it; and
-       the type to fall back on after reporting differs per operator, since a failed comparison
-       is still a `Bool`.
+       clean shape, with `is_int_literal` letting a literal flex to `Double`. Three things to
+       get right. Decide each operator against the type `unify` *returned*, not the operands' own
+       types — the coercion happens inside `unify`, so a test on the raw types cannot see it. The
+       type to fall back on after reporting differs per operator, since a failed comparison is
+       still a `Bool`. And when `unify` let one side flex, the node `infer` already built for
+       that side still says `Int`: the decision has been made and not yet recorded. Writing it in
+       is the hard part of this arm, and it reaches the **whole flexed subtree**, not just its
+       root — in `(1 + 2 * 3) + 1.5` every literal and every inner node ends up `Double`. You
+       already have the function that pushes a type down. `--emit-tast` shows whether you got it,
+       and `swiftc -dump-ast` shows the same program's answer.
      - `Call`: a real call becomes `Tast.Print`, so nothing later has to re-ask whether this
        name was `print`. `print(_:)` takes one argument of *any* type — that phrase is about the
        argument, not the result. Its result is `Void` in Swift; with no `TVoid` yet, return `TInt` as the
