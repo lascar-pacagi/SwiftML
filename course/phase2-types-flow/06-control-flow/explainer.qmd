@@ -32,6 +32,12 @@ made of **statements**, which don't have a value; you check them for *well-forme
 flips from "what type is this?" to "is this allowed, and are its parts well-typed?" Swift keeps these
 separate too — `swift/lib/Sema/TypeCheckExpr.cpp` vs `TypeCheckStmt.cpp`.
 
+What does not flip is that the judgment still **produces** something. Concept 05's checker returned
+a `Tast.expr`; `check_stmt` returns a `Tast.stmt`, with its condition and its blocks already checked
+and inside it. So the scope rule you are about to write ends up *recorded* rather than re-derived:
+in the tree, a `for` variable is a `local` inside the body's block and nowhere else, and concept 08's
+SILGen reads that structure instead of rebuilding it.
+
 The rules are short but each one is a real Swift design decision:
 
 - **Conditions are `Bool`, full stop.** `if cond { … }` requires `cond : Bool`. This is just
@@ -269,6 +275,11 @@ operators' precedence.
    before checking the body (also a loop); `Break`/`Continue` error if `loop_depth = 0`. The scope
    helpers (`bind`/`lookup`/`in_scope`/`check_block`) and `loop_depth` are given.
 
+   Each arm **returns the matching `Tast` statement**, with its checked parts inside it — a rule that
+   type-checks something must also say what it produced. `check_block` gives back a
+   `Tast.stmt list`; note it still pushes and pops a scope, because the bindings a block makes are
+   its own.
+
 Reference: `solution/`. Don't peek until you've tried it.
 
 ## 4. Test it
@@ -312,6 +323,10 @@ one if-statement, while `--emit-ast` needs `parse_stmt` to dispatch on the new k
   Int bounds (both of them, and the body still checked when a bound is wrong), `break`/`continue`
   in and out of loops and after one, three levels of nesting, then-and-else as sibling scopes,
   and shadowing — including a loop variable shadowing an outer name of the same type.
+- `sema-typed-ast.t` — `--emit-tast`: what the checker *produced*. Blocks, the loop variable and
+  both branches come back as typed nodes, and `i` is a `local` inside the body and nowhere else —
+  the scope rule, visible in the tree. Also that a non-Bool condition yields **no tree at all**,
+  because a program that failed to check has no typed form.
 - `test_sema.ml` (alcotest `sema-flow`) — the exact diagnostics, in-process, plus two groups the
   cram files cannot express as sharply: **recovery** (every rule reports exactly once, and one run
   reports everything it can see — the property a wrong report-then-return pair breaks) and **loop
@@ -364,37 +379,65 @@ Mirrors `solution/sema.ml` (the control-flow checking). The scope stack and `loo
 machinery; notice `check_block` is the only place a scope is pushed/popped.
 
 ```ocaml
-let rec check_stmt (s : Ast.stmt) : unit =
-  match s with
-  (* … Let / Assign / Expr_stmt as in concept 05 … *)
-  | Ast.If { cond; then_blk; else_blk; _ } ->
-      check_expr cond Types.TBool;
-      check_block then_blk;
-      Option.iter check_block else_blk
-  | Ast.While { cond; body; _ } ->
-      check_expr cond Types.TBool;
-      incr loop_depth; check_block body; decr loop_depth
-  | Ast.For { var; lo; hi; body; _ } ->
-      check_expr lo Types.TInt;
-      check_expr hi Types.TInt;
-      incr loop_depth;
-      in_scope (fun () ->
-          bind var (Types.TInt, false);     (* the loop variable is an immutable Int *)
-          List.iter check_stmt body);
-      decr loop_depth
-  | Ast.Break span -> if !loop_depth = 0 then report_error span "'break' is only allowed inside a loop"
-  | Ast.Continue span -> if !loop_depth = 0 then report_error span "'continue' is only allowed inside a loop"
-and check_block (stmts : Ast.stmt list) : unit =
-  in_scope (fun () -> List.iter check_stmt stmts)   (* push a scope, check, pop *)
-
-(* the scope stack, defined once at the top of `check`: *)
-(*   let environment = ref [] and lookup x = List.assoc_opt x !environment
-     and bind n v = environment := (n,v) :: !environment
-     and in_scope f = let saved = !environment in f (); environment := saved *)
-
-(* and && / || in infer_binary: *)
-| Ast.And | Ast.Or ->
-    if tl = Types.TBool && tr = Types.TBool then Types.TBool else (ignore (bad ()); Types.TBool)
+  let rec check_stmt (s : Ast.stmt) : Tast.stmt =
+    match s with
+    | Ast.Let { name; is_var; annot; value; span } ->
+        let n =
+          match annot with
+          | None -> infer value
+          | Some tyname -> (
+              match Types.of_name tyname with
+              | Some t -> check_expr value t
+              | None ->
+                  report_error span (Printf.sprintf "cannot find type '%s' in scope" tyname);
+                  infer value)
+        in
+        bind name (n.Tast.ty, is_var);
+        Tast.Let { name; is_var; value = n; span }
+    | Ast.Assign { name; value; span } -> (
+        match lookup name with
+        | None ->
+            report_error span (Printf.sprintf "cannot find '%s' in scope" name);
+            Tast.Assign { name; value = infer value; span }
+        | Some (t, is_var) ->
+            if not is_var then
+              report_error span
+                (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" name);
+            Tast.Assign { name; value = check_expr value t; span })
+    | Ast.Expr_stmt (expression, _) -> Tast.Expr_stmt (infer expression)
+    | Ast.If { cond; then_blk; else_blk; span } ->
+        let cond = check_expr cond Types.TBool in
+        let then_blk = check_block then_blk in
+        let else_blk = Option.map check_block else_blk in
+        Tast.If { cond; then_blk; else_blk; span }
+    | Ast.While { cond; body; span } ->
+        let cond = check_expr cond Types.TBool in
+        incr loop_depth;
+        let body = check_block body in
+        decr loop_depth;
+        Tast.While { cond; body; span }
+    | Ast.For { var; lo; hi; body; span } ->
+        let lo = check_expr lo Types.TInt in
+        let hi = check_expr hi Types.TInt in
+        incr loop_depth;
+        let body' = ref [] in
+        in_scope (fun () ->
+            (* the loop variable is an immutable Int, in scope only in the body *)
+            bind var (Types.TInt, false);
+            body' := List.map check_stmt body);
+        decr loop_depth;
+        Tast.For { var; lo; hi; body = !body'; span }
+    | Ast.Break span ->
+        if !loop_depth = 0 then report_error span "'break' is only allowed inside a loop";
+        Tast.Break span
+    | Ast.Continue span ->
+        if !loop_depth = 0 then report_error span "'continue' is only allowed inside a loop";
+        Tast.Continue span
+  and check_block (statements : Ast.stmt list) : Tast.stmt list =
+    let out = ref [] in
+    in_scope (fun () -> out := List.map check_stmt statements);
+    !out
+  in
 ```
 
 ## 9. Exercise solutions
