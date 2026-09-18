@@ -88,7 +88,15 @@ type is *written down rather than deduced* — here, the coercion `e as T`:
         mk (Tast.Coerce n) n.Tast.ty span)
 ```
 
-The general shape is the same for every **elimination form** — the classic application rule
+That shape generalises. Type theory splits expressions in two: an **introduction form** *builds* a
+value of some type — a literal, a lambda — while an **elimination form** *consumes* one — applying a
+function, projecting a field out of a struct. The split is what the two judgments line up with, and
+it is the standard bidirectional discipline (Pierce & Turner, *Local Type Inference*): **introduction
+forms are checked, elimination forms are synthesised.** A literal has no type of its own worth
+trusting, so it takes one from its context; an application already knows its function's type, so it
+can hand one back.
+
+The classic application rule is that discipline in one line:
 
 ```
 Γ ⊢ f ⇒ A → B      Γ ⊢ e ⇐ A
@@ -98,8 +106,14 @@ The general shape is the same for every **elimination form** — the classic app
 
 *synthesise* the function's type, then *check* each argument against the parameter type you just
 learned. `07-functions` does exactly that once parameters have declared types
-(`List.iter2 (fun a t -> check_expr a t) args ptypes`); `e as T` is the same idea with the type
-written by hand instead of read off a signature. The **default bridge** between the two judgments
+(`List.map2 check_expr args ptypes` — `map2`, because each checked argument is a node that goes
+into the call's `Tast` form).
+
+`e as T` is not an elimination form — nothing is being taken apart — but it plays the same role in
+the knot, and that is why it is the arm where `infer` calls `check`. An ascription is the escape
+hatch the discipline needs: it lets an expression that can only be *checked* appear where something
+*synthesised* is wanted, by supplying the type by hand instead of reading it off a signature. Which
+is exactly what `1 as Double` is for — `1` alone cannot say whether it is an `Int` or a `Double`. The **default bridge** between the two judgments
 is one rule: *to check `e` against `τ`, when there's no smarter rule, `infer` its type and
 compare.*
 
