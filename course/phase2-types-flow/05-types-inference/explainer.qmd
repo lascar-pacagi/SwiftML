@@ -603,20 +603,15 @@ So your `parse_annot` hole calls `parse_ident p "a type name"` and is done — t
 and the recovery all come from the helper. The only thing you choose is the phrase, and the
 convention is a quoted literal for punctuation, a lowercase noun phrase for a category:
 
-```
-let d: = 1        1:8: error: expected a type name      <- parse_ident p "a type name"
-let x = (1 + 2    1:15: error: expected ')'             <- expect p Token.RParen "')'"
-let y = *         1:9: error: expected expression       <- given, in the prefix fallback
-let z = 1 as 5    1:14: error: expected type after 'as' <- parse_ident_ty p "type after 'as'"
-```
+| input | message | the phrase you pass |
+|---|---|---|
+| `let d: = 1` | `expected a type name` | **yours** — `parse_ident p "a type name"` |
+| `let x = (1 + 2` | `expected ')'` | **yours** — `expect p Token.RParen "')'"` |
+| `let y = *` | `expected expression` | given — the prefix fallback |
+| `let x = 1 2` | `expected newline or end of statement` | given — `parse_program` |
 
-That last phrase is chosen to land on swiftc's own wording: `diag::expected_type_after_as`
-(`DiagnosticsParse.def:1430`) reads *expected type after 'as'*, and since the helper prepends
-`expected `, naming the phrase `"type after 'as'"` reproduces it exactly — same column, too. When
-the oracle has a message for precisely your construct, matching it costs one string.
-
-`expected expression` (the prefix fallback) and `expected newline or end of statement` come from
-given code; no hole of yours produces them.
+The two given rows are there so you can recognise them when a test shows one: no hole of yours
+produces either.
 
 **Sema's eight.** These are the ones the tests assert character for character. Seven are swiftc's,
 taken from `DiagnosticsSema.def` and confirmed by running `swiftc -typecheck` on the program in the
@@ -639,10 +634,10 @@ names both types, `true < false` says *two 'Bool' operands*. And the unary one s
 not *operand*: this course shipped it without the "an" until the table was compiled, because no
 test asserted that string (now one does).
 
-**Every error path still returns a type.** `infer` is a function to `Types.ty`, so reporting is
+**Every error path still returns a node.** `infer` is a function to `Tast.expr`, so reporting is
 only half of what an error case has to do — the other half is handing back something so the walk
 can continue and the rest of the file still gets checked. There is no "no type" to return, so you
-pick a plausible one: `TInt`.
+pick a plausible one: a node typed `TInt`.
 
 It has a visible cost, and it is worth seeing before you write it:
 
@@ -667,6 +662,11 @@ judges *shape*, sema judges *meaning*.
 | `1 as 5` — not an identifier | parser | `expected type after 'as'` | same |
 | `1 as Foo` — unknown name | sema | `cannot find type 'Foo' in scope` | same |
 | `1 as x` — a *value*'s name | sema | `cannot find type 'x' in scope` | *type-casting operator expects a type on its right-hand side (got: let 'x')* |
+
+The first row's phrase is chosen to land on swiftc's wording exactly. `diag::expected_type_after_as`
+(`DiagnosticsParse.def:1430`) reads *expected type after 'as'*, and since the helper prepends
+`expected `, passing `"type after 'as'"` reproduces it — same column, too. When the oracle has a
+message for precisely your construct, matching it costs one string.
 
 The last row is a real divergence, and worth knowing why we accept it. swiftc looks `x` up in the
 *value* namespace, finds a `let`, and says so. We have one namespace and no way to tell "no such
