@@ -150,19 +150,22 @@ the type. So the rule has to name literals, and now
 program in this subset lands on the right verdict. Almost:
 
 ```
-                                let d: Double = 1 % 2
-  check = infer, then compare   accepted        <- wrong
-  check = push the type down    rejected
-  swiftc                        rejected: '%' is unavailable: For floating
-                                point numbers use truncatingRemainder instead
+                                     let d: Double = 1 % 2
+  fall-through + literal exception   accepted        <- wrong
+  push the type down                 rejected
+  swiftc                             rejected: '%' is unavailable: For floating
+                                     point numbers use truncatingRemainder instead
 ```
 
-Follow the simpler rule through that program. It infers a type for `1 % 2`, gets `Int`, compares
-it with the expected `Double`, and — because they differ — reaches for its one exception: *this
-expression is built only from integer literals, so let it be a Double*. `1 % 2` is built only from
-integer literals, so it is accepted. But there is no `%` on `Double` for it to become: the
-exception answered "may these literals be Doubles?" when the question was "does `%` exist at
-`Double`?"
+Note which rule the first line means. The **pure** fall-through of the table above would *reject*
+`1 % 2` — it gets `Int`, wants `Double`, they differ, done. What accepts it is the fall-through
+**plus the literal exception you just added**, and the exception is the part that goes wrong: it
+infers `Int`, compares, sees the mismatch, and reaches for *this expression is built only from
+integer literals, so let it be a Double*. `1 % 2` is built only from integer literals, so it is
+accepted.
+
+But there is no `%` on `Double` for it to become. The exception answered "may these literals be
+Doubles?" when the question was "does `%` exist at `Double`?"
 
 Only an expectation travelling **into** the operator can ask the second question, because only
 there is the operator and the wanted type in the same place. swiftc's wording shows it asks the
