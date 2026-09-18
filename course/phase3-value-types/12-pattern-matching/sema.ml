@@ -435,9 +435,11 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
             cases
         in
         let d = Option.map check_block default in
-        (* TODO(12e): EXHAUSTIVENESS — with no `default`, every case of the enum must be covered
-           by some pattern, or the switch is rejected. `covered` is what TODO(12d) recorded. *)
-        if default = None then failwith "TODO(12e): check exhaustiveness";
+        (* TODO(12e): EXHAUSTIVENESS — without a `default`, every case of the enum must be
+           matched, or it is an error in swiftc's words. `covered` is what TODO(12d) recorded. §2.
+           Note this hole does not `failwith`: an unwritten exhaustiveness check silently ACCEPTS,
+           so its test fails on the missing diagnostic rather than on a crash. *)
+        ignore covered;
         build cs d
     | Types.TInt ->
         let cs =

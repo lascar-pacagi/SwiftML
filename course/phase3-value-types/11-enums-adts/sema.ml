@@ -439,30 +439,11 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
             s.Ast.sfields;
           Hashtbl.replace structs s.Ast.sname { Types.sl_name = s.Ast.sname; sl_fields = fields }
       | Ast.IEnum e ->
-          let cases =
-            List.map
-              (fun (c : Ast.enum_case) ->
-                let payload =
-                  List.map (resolve_ty e.Ast.espan) c.Ast.payload
-                in
-                List.iter2
-                  (fun written resolved ->
-                    if resolved <> Types.TInt then
-                      err e.Ast.espan
-                        (Printf.sprintf
-                           "associated value type '%s' is not supported (only Int)"
-                           written))
-                  c.Ast.payload payload;
-                (c.Ast.cname, payload))
-              e.Ast.ecases
-          in
-          (match e.Ast.eraw with
-          | Some "Int" | None -> ()
-          | Some raw ->
-              err e.Ast.espan
-                (Printf.sprintf "raw type '%s' is not supported (only Int)" raw));
-          Hashtbl.replace enums e.Ast.ename
-            { Types.el_name = e.Ast.ename; el_cases = cases; el_raw = e.Ast.eraw <> None }
+          ignore e;
+          (* TODO(11d): resolve every associated-value type, enforce this concept's Int-only
+             payload/raw-type boundary, and replace the placeholder registered above with the
+             completed layout. §2. *)
+          failwith "TODO(11d): complete an enum layout"
       | _ -> ())
     prog.Ast.items;
   (* PASS 1: collect signatures so calls/recursion/forward-references resolve. *)
