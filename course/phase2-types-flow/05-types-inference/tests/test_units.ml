@@ -55,6 +55,9 @@ let fresh () =
   let d = Diagnostics.create () in
   let cx = Sema.create d in
   Hashtbl.replace cx.Sema.environment "i" (Types.TInt, false);
+  Hashtbl.replace cx.Sema.environment "d" (Types.TDouble, false);
+  Hashtbl.replace cx.Sema.environment "s" (Types.TString, false);
+  Hashtbl.replace cx.Sema.environment "b" (Types.TBool, false);
   (cx, d)
 
 let messages d =
@@ -329,6 +332,56 @@ let test_mixed_reports () =
     (bin_ Ast.Eq (int_ 1) (str_ "s"))
     (mixed Ast.Eq "Int" "String")
 
+(* THE WHOLE TABLE, the rejecting half: every operator against every unequal pair of types, with
+   typed VARIABLES so nothing can flex and the only question left is the operator's. 11 x 12 =
+   132 combinations, and real swiftc rejects every one of them (checked). It does not word them
+   all the same way — overload resolution gives `s - i` "cannot convert value of type 'String'
+   to expected argument type 'Int'" and `d != b` "conflicting arguments to generic parameter
+   'Self'" — because Swift's operators are generic functions and it is reporting on the
+   candidates it tried. We have one operator table and no overloads, so we give one wording;
+   the verdict is what matches. *)
+let typed =
+  [ ("i", Types.TInt); ("d", Types.TDouble); ("s", Types.TString); ("b", Types.TBool) ]
+
+let every_op = arith @ [ Ast.Mod ] @ equality @ ordered
+
+let test_mixed_all_ops () =
+  List.iter
+    (fun op ->
+      List.iter
+        (fun (ln, lt) ->
+          List.iter
+            (fun (rn, rt) ->
+              if lt <> rt then
+                reports (lbl op ln rn)
+                  (bin_ op (var_ ln) (var_ rn))
+                  (mixed op (Types.string_of_ty lt) (Types.string_of_ty rt)))
+            typed)
+        typed)
+    every_op
+
+(* and the same sweep for operands that DO agree: every operator on each of the four types,
+   accepted where the table allows it and reported as "two 'X' operands" where it does not *)
+let test_same_type_all_ops () =
+  List.iter
+    (fun (n, t) ->
+      List.iter
+        (fun op ->
+          let e = bin_ op (var_ n) (var_ n) and what = lbl op n n in
+          match (op, t) with
+          | (Ast.Add | Ast.Sub | Ast.Mul | Ast.Div), (Types.TInt | Types.TDouble)
+            ->
+              infers what e t
+          | Ast.Add, Types.TString -> infers what e Types.TString
+          | Ast.Mod, Types.TInt -> infers what e Types.TInt
+          | (Ast.Eq | Ast.Ne), _ -> infers what e Types.TBool
+          | (Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge), (Types.TInt | Types.TDouble | Types.TString)
+            ->
+              infers what e Types.TBool
+          | _ -> reports what e (two op (Types.string_of_ty t)))
+        every_op)
+    typed
+
 (* `print` must INFER its argument, or an error inside it is swallowed *)
 let test_print_infers_arg () =
   reports "print(nope)"
@@ -475,11 +528,11 @@ let test_unknown_annotation () =
 
 let test_assign_checks_value () =
   let cx, d = fresh () in
-  ignore (Sema.check_stmt cx (let_ ~annot:"Double" ~is_var:true "d" (int_ 0)));
+  ignore (Sema.check_stmt cx (let_ ~annot:"Double" ~is_var:true "m" (int_ 0)));
   (* the target's type is the expectation, so an Int literal flexes on assignment too *)
-  ignore (Sema.check_stmt cx (assign_ "d" (int_ 3)));
+  ignore (Sema.check_stmt cx (assign_ "m" (int_ 3)));
   Alcotest.(check (list string)) "silently" [] (messages d);
-  ignore (Sema.check_stmt cx (assign_ "d" (str_ "s")));
+  ignore (Sema.check_stmt cx (assign_ "m" (str_ "s")));
   Alcotest.(check (list string))
     "a mismatch reports" [ convert "String" "Double" ] (messages d)
 
@@ -548,6 +601,8 @@ let () =
           case "infer: < <= > >= on Bool report" test_ordered_bool_reports;
           case "infer: comparisons flex too" test_comparisons_flex;
           case "infer: mixed operands report" test_mixed_reports;
+          case "infer: every op, mixed operands" test_mixed_all_ops;
+          case "infer: every op, equal operands" test_same_type_all_ops;
           case "infer: print infers its arg" test_print_infers_arg;
           case "infer: print arity reports" test_print_arity;
           case "infer: unknown function reports" test_unknown_function;
