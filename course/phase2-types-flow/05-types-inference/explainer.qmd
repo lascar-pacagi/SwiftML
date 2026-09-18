@@ -109,9 +109,9 @@ learned. `07-functions` does exactly that once parameters have declared types
 (`List.map2 check_expr args ptypes` — `map2`, because each checked argument is a node that goes
 into the call's `Tast` form).
 
-`e as T` is the one arm where `infer` calls `check`, and the reason is small: `infer` has to return
-a type, but `1` on its own has none worth trusting. Writing `1 as Double` supplies it — the arm
-checks `1` against `Double`, then hands `Double` back.
+`infer` already has an answer for `1`: its default type, `Int`. `e as T` overrides that. The type
+is written down, so there is nothing to synthesise — the arm checks the operand against `T` and
+returns `T`, which is why it is the one place `infer` calls `check`.
 
 The **default bridge** between the two judgments is one rule: *to check `e` against `τ`, when
 there's no smarter rule, `infer` its type and compare.*
