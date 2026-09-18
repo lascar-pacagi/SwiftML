@@ -17,7 +17,10 @@ must reject exactly the programs `swiftc` rejects.
 - **You implement:** the new lexemes (`lexer.ml`), the new syntax (`parser.ml`), and the heart of
   this concept — the **bidirectional type checker** in `sema.ml`.
 - **Outcome:** `swiftml2 --typecheck foo.swift` accepts a program iff `swiftc -typecheck` does, with
-  matching diagnostics. That accept/reject agreement *is* the test (the type-check oracle).
+  matching diagnostics. That accept/reject agreement *is* the test (the type-check oracle). And the
+  checker does not merely *approve* the program — it **produces** one: a type-checked tree
+  (`Tast`) with the answers filled in, which every later stage consumes instead of working them out
+  again. `--emit-tast` prints it; §2 "What the checker produces" is the why.
 - **Out of scope (later concepts):** control flow and functions (06–07); running the code — codegen
   for the new types flows through **SIL**, introduced at concept 08. Concept 05 stops at
   `--typecheck`. Also out of scope: generics and protocols (Phase 5), where the real constraint
@@ -52,6 +55,11 @@ The fix is **bidirectional type checking**: *two* judgments that call each other
 infer       Γ ⊢ e ⇒ τ        "with the bindings Γ, e synthesises type τ"   (no expectation)
 check       Γ ⊢ e ⇐ τ        "e checks against the expected type τ"         (τ is given)
 ```
+
+In code both return a **typed node** rather than a type or a unit — `infer : Ast.expr ->
+Tast.expr`, `check_expr : Ast.expr -> Types.ty -> Tast.expr`. The type is *on* the node, so
+`(infer c e).Tast.ty` is the synthesised type; swiftc reads it the same way, `E->getType()`. Why
+the judgments build a tree at all is "What the checker produces", below.
 
 - **`infer` (synthesis, ⇒)** is bottom-up: you have no expectation, so you read the expression and
   *produce* a type. Use it when nothing tells you what type to want — a bare `let x = e`, an operand
@@ -266,6 +274,74 @@ every operator in the table above.
 The name is borrowed loosely. This is not Hindley–Milner *unification* — there are no type
 variables to solve for until Phase 5. It is "find a common type for two already-inferred operands",
 which is the degenerate case of what swiftc's constraint solver does with conversion constraints.
+
+### What the checker produces
+
+Look again at what just happened in `let d: Double = 1 + 2`. The checker **decided** something: it
+decided that the `1` and the `2` are `Double` literals, not `Int` ones. That decision is not in the
+source — the source says `1` — and it cannot be recovered later by looking at the text. So where
+does it get written down?
+
+The answer is the point of this section, and it shapes every concept after this one: **a type
+checker does not return a verdict, it returns a program.** `Sema.check` hands back a `Tast.program`
+— the same tree, with the answers filled in:
+
+```ocaml
+(* tast.ml — the TYPE-CHECKED AST *)
+type expr = { e : expr_kind; ty : Types.ty; span : Token.span }
+
+and expr_kind =
+  (* `ty` may be TInt OR TDouble — that is the decision, recorded *)
+  | Int_lit of int
+  | Local of string         (* RESOLVED: a binding that exists, not a name that might *)
+  | Print of expr           (* RESOLVED: a call that IS print *)
+  | Binary of Ast.binop * expr * expr
+  | Coerce of expr
+  …
+```
+
+Three things are different from `Ast`, and each is a decision being made once instead of twice:
+
+- **Every node carries its type.** Nothing downstream asks "what type is this?" — the checker
+  already answered.
+- **Names are resolved.** `Ast.Var "x"` might be a local or a typo; `Tast.Local "x"` can only be a
+  local. `Ast.Call ("print", _)` might be anything; `Tast.Print` is `print`.
+- **The annotation is gone.** `let d: Double = …` wrote a type *name*; `value.ty` is the resolved
+  answer, and the name has no further use.
+
+You can watch it happen. `./lab.exe --emit-tast` prints the tree the checker built:
+
+```bash
+$ printf 'let d = 1.5\nprint(d * 2)\n' > t.swift
+$ ./lab.exe --emit-tast t.swift
+(let d (double_lit 1.5 : Double))
+(print (* (local d : Double) (int_lit 2 : Double) : Double) : Int)
+```
+
+There it is: `(int_lit 2 : Double)`. Still an integer literal — the source did say `2` — but
+carrying the type it adopted.
+
+**This is exactly what swiftc does**, and you can check it against the oracle. `Expr` carries a
+`Type Ty` with `getType()`/`setType()` (`swift/include/swift/AST/Expr.h:406`), filled in by
+`lib/Sema/CSApply.cpp`, whose job its own header describes as "application of a solution to a
+constraint system … **resulting in a fully-type-checked expression**". Run it on the same program:
+
+```bash
+$ swiftc -dump-ast t.swift | grep -o 'integer_literal_expr type="[A-Za-z]*"'
+integer_literal_expr type="Double"
+```
+
+swiftc keeps the node *kind* and changes its *type* — which is why `Tast.Int_lit` above does the
+same rather than becoming a `Double_lit`.
+
+**Why it matters enough to build.** The alternative is that the checker reports errors and throws
+its work away, and the code generator re-derives what it needs. That is what this compiler used to
+do, and it went wrong in a way worth knowing about: SILGen grew a second, informal type system to
+cope, the two drifted apart, and a program as ordinary as `let d = 1.5; print(d * 2)` failed to
+compile with `error: integer constant must have integer type` — because SILGen had to *notice* that
+the `2` sat beside a Double, and in some copies of the file it didn't. `PLAN.md` §0.1 records the
+whole story, including the fix that reached 23 of 44 copies of a duplicated decision. You are
+building the version where the question is asked once.
 
 ### What Swift *actually* does — and what we simplify
 
@@ -635,10 +711,12 @@ what carries forward is given.
    as you write the `as` rule (the compiler will say so). Everything is top-level and takes `context`
    explicitly, so `tests/test_units.ml` can call each piece on its own and a failure names the
    function rather than "the checker". The `TODO(05a…g)` bodies are the rules:
-   - `infer e` — the literal cases are given; four arms are yours, and every error path must
-     still **return a type**: report, hand back a plausible one (`TInt`), keep walking. A checker
-     that stops at the first bad name finds one bug per run.
-     - `Var`: look it up in `environment`, else *cannot find … in scope*.
+   - `infer e` — the literal cases are given; four arms are yours. Each arm **builds a node**:
+     `mk (Tast.X …) τ span`, where `mk` is given. And every error path must still return one —
+     report, hand back a plausible node and type (`TInt`), keep walking. A checker that stops at
+     the first bad name finds one bug per run.
+     - `Var`: look it up in `environment`, else *cannot find … in scope*. A name that resolved
+       becomes `Tast.Local` — downstream, that node can only be a binding.
      - `Unary '-'`: the operand must be numeric, and keeps its type.
      - `Binary`: the operator typing above. A helper that `unify`s the two operand types is the
        clean shape, with `is_int_literal` letting a literal flex to `Double`. Two things to get
@@ -646,22 +724,32 @@ what carries forward is given.
        types — the coercion happens inside `unify`, so a test on the raw types cannot see it; and
        the type to fall back on after reporting differs per operator, since a failed comparison
        is still a `Bool`.
-     - `Call`: `print(_:)` takes one argument of *any* type — that phrase is about the argument,
-       not the result. Its result is `Void` in Swift; with no `TVoid` yet, return `TInt` as the
+     - `Call`: a real call becomes `Tast.Print`, so nothing later has to re-ask whether this
+       name was `print`. `print(_:)` takes one argument of *any* type — that phrase is about the
+       argument, not the result. Its result is `Void` in Swift; with no `TVoid` yet, return `TInt` as the
        placeholder §2 describes. `print` is the only function this subset has, so any other name
        is *cannot find '%s' in scope* — the same message an unknown variable gets, because to the
        checker it is the same question. Infer the arguments anyway, so a mistake inside them is
        reported in the same run instead of hiding behind the unknown name.
-   - `check_expr e τ` — the **bidirectional** half. An `Int_lit` checks against `Int` *or* `Double`.
-     For `Binary` arithmetic when τ is numeric, push τ into both operands — and for `Unary` `-e`
-     likewise, into the operand, since `-1` must be able to become a `Double` too. Everything
-     else: `infer` and compare, erroring with *cannot convert value of type 'X' to specified type
-     'Y'*.
+   - `check_expr e τ` — the **bidirectional** half. An `Int_lit` checks against `Int` *or*
+     `Double`, and the node it returns must **carry the expected type** — that one line is the
+     whole of "the coercion is recorded", and it is why no later stage has to notice that a `2`
+     sat beside a `Double`. For `Binary` arithmetic when τ is numeric, push τ into both operands —
+     and for `Unary` `-e` likewise, into the operand, since `-1` must be able to become a `Double`
+     too. Everything else: `infer` and compare, erroring with *cannot convert value of type 'X' to
+     specified type 'Y'*.
    - `Ascribe (e, T)` — `e as T`, the coercion. Resolve `T` with `Types.of_name`, `check_expr` the
-     operand against it, return it. Two lines, and the only place `infer` calls `check`.
-   - `check_stmt` — `Let`: if annotated, resolve the name with `Types.of_name` (*cannot find type …*
-     if unknown) and `check_expr` the value against it; else `infer`. Bind `name ↦ (τ, is_var)`.
+     operand against it, and wrap it in `Tast.Coerce`. Two lines, and the only place `infer` calls
+     `check`. (swiftc keeps this node too — `swiftc -dump-ast` on `1 as Double` shows a
+     `coerce_expr` around the literal.)
+   - `check_stmt` — returns the statement's `Tast` form. `Let`: if annotated, resolve the name
+     with `Types.of_name` (*cannot find type …* if unknown) and `check_expr` the value against it;
+     else `infer`. Bind `name ↦ (τ, is_var)`. The annotation does **not** survive into the `Tast`:
+     it was a written name, and `value.ty` is the resolved answer.
      `Assign`: target must exist, be a `var`, and the value `check_expr`s against its type.
+   - `check` (given) returns `Some { Tast.items }`, or `None` if anything was reported — a tree
+     that failed to check has no meaning, and making that a *type* rather than a convention means
+     no later stage can be handed one by accident.
 
 Don't peek at §8 until you've tried it. The reference is `solution/sema.ml`.
 
@@ -712,6 +800,10 @@ Lexer, then parser, then types, then sema — the order you fill the holes in:
   unknown type names caught. Goes green with the rule where `infer` calls `check`.
 - **`tests/sema-typecheck.t`** — `--typecheck` accept/reject with the matching diagnostic. Needs
   every earlier hole plus the checker, so it is the last file to go green.
+- **`tests/sema-typed-ast.t`** — `--emit-tast`: what the checker *produced*, not just whether it
+  approved. Pins the recorded coercion (`(int_lit 2 : Double)`), that a resolved name prints as a
+  `local`, that the annotation does not survive, and that a program with errors yields **no tree at
+  all**. One case runs `swiftc -dump-ast` beside ours so you can read the two together.
 - **`tests/test_sema.ml`** (alcotest `sema-types`) — the *exact* type-checker diagnostics, and
   that well-typed programs produce none.
 - **`tests/oracle.t` — the headline test, the type-check oracle.** Every program in
@@ -771,27 +863,63 @@ is exactly what **SIL**'s basic blocks (concept 08) exist to represent.
 ## 8. Appendix — full solution
 
 Mirrors `solution/sema.ml` — the checker (the lexer/parser additions are in their own `solution/`
-files). The shape to notice: `infer` recurses with `infer_binary`/`infer_call`, `check_expr` sits
-outside that group and falls back to it; `unify` + `is_int_literal` localise the one coercion;
-`check_stmt` chooses **check** (annotated) vs **infer**. Everything is
+files). The shape to notice: `infer` recurses with `infer_binary`/`infer_call`, and `check_expr` is in the
+same group because `e as T` calls back into it; `unify` + `is_int_literal` localise the one
+coercion; `check_stmt` chooses **check** (annotated) vs **infer**. Read what each arm *returns* —
+every one builds a `Tast` node, and `check` ends by handing back `Some { Tast.items }` or `None`. Everything is
 top-level over an explicit `context` rather than closed over a hidden environment — that is what lets
 `tests/test_units.ml` call each piece directly, and it is also how swiftc is arranged (`TypeChecker`
 takes the `ASTContext` and the `DeclContext`; nothing hides in a closure).
 
 ```ocaml
+(* FROZEN SOLUTION — concept 05 sema: the bidirectional type checker.
+
+   Two modes, mutually recursive:
+     infer expression        -> Tast.expr   synthesize a type (no expectation)
+     check_expr expression t -> Tast.expr   check against an expected type t (pushes t down)
+
+   Both RETURN A TYPED NODE. That is the architecture in one line: the checker does not
+   merely approve the program, it produces one — a `Tast.program` where every node
+   carries its type and every name is resolved. Concept 08's SILGen consumes that and
+   re-derives nothing. PLAN.md §0.1 records why, and what happened when it did.
+
+   Note `infer` returns just the node, not a (type, node) pair: the type is ON the node, so
+   `(infer c e).Tast.ty` is the answer. swiftc reads it the same way — `E->getType()`.
+
+   The one coercion is Swift's `ExpressibleByIntegerLiteral`: an *integer literal*
+   (recursively, an arithmetic expression of integer literals) may take type Double when
+   a Double is expected — so `let d: Double = 1 + 2` works, but `let d: Double = i`
+   (i: Int) does not. And it is recorded, not re-derived: the literal node comes back
+   with `ty = TDouble`, exactly as `swiftc -dump-ast` shows for `d * 2`
+   (`integer_literal_expr type="Double"`).
+
+   Everything is top-level and takes an explicit [context], so every piece can be
+   unit-tested on its own: the two pure helpers directly, the judgments against a
+   context you build. *)
+
 type context = {
-  environment : (string, Types.ty * bool) Hashtbl.t;  (* name -> its type, and whether it is a `var` *)
+  environment : (string, Types.ty * bool) Hashtbl.t;
+      (* name -> its type, and whether it is a `var` *)
   diagnostics : Diagnostics.sink;
 }
 
-let create (diagnostics : Diagnostics.sink) : context = { environment = Hashtbl.create 16; diagnostics }
-let report_error (context : context) span msg = Diagnostics.error context.diagnostics span msg
+let create (diagnostics : Diagnostics.sink) : context =
+  { environment = Hashtbl.create 16; diagnostics }
 
-(* a "pure integer-literal" expression can flex to Double *)
+let report_error (context : context) span msg =
+  Diagnostics.error context.diagnostics span msg
+
+(* build a typed node — the one place a `Tast.expr` is made *)
+let mk (e : Tast.expr_kind) (ty : Types.ty) (span : Token.span) : Tast.expr =
+  { Tast.e; ty; span }
+
+(* A "pure integer-literal" expression can flex to Double. Note `%` is NOT in the
+   list: Swift has no `%` on Double ("'%' is unavailable: For floating point numbers
+   use truncatingRemainder"), so a tree containing one can never take type Double. *)
 let rec is_int_literal = function
-    | Ast.Int_lit _ -> true
-    | Ast.Unary (Ast.Neg, expression, _) -> is_int_literal expression
-    | Ast.Binary ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod), a, b, _) ->
+  | Ast.Int_lit _ -> true
+  | Ast.Unary (Ast.Neg, expression, _) -> is_int_literal expression
+  | Ast.Binary ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div), a, b, _) ->
       is_int_literal a && is_int_literal b
   | _ -> false
 
@@ -802,141 +930,182 @@ let unify l tl r tr : Types.ty option =
   else if is_int_literal r && tl = Types.TDouble then Some Types.TDouble
   else None
 
-let rec infer (context : context) (expression : Ast.expr) : Types.ty =
-    match expression with
-    | Ast.Int_lit _ -> Types.TInt
-    | Ast.Double_lit _ -> Types.TDouble
-    | Ast.Bool_lit _ -> Types.TBool
-    | Ast.String_lit _ -> Types.TString
-    | Ast.Var (x, span) -> (
-        match Hashtbl.find_opt context.environment x with
-        | Some (t, _) -> t
-        | None ->
-            report_error context span (Printf.sprintf "cannot find '%s' in scope" x);
-            Types.TInt)
-    | Ast.Unary (Ast.Neg, e0, span) ->
-        let t = infer context e0 in
-        if Types.is_numeric t then t
-        else (
+let rec infer (context : context) (expression : Ast.expr) : Tast.expr =
+  match expression with
+  | Ast.Int_lit (n, span) -> mk (Tast.Int_lit n) Types.TInt span
+  | Ast.Double_lit (f, span) -> mk (Tast.Double_lit f) Types.TDouble span
+  | Ast.Bool_lit (b, span) -> mk (Tast.Bool_lit b) Types.TBool span
+  | Ast.String_lit (s, span) -> mk (Tast.String_lit s) Types.TString span
+  | Ast.Var (x, span) -> (
+      (* RESOLUTION: `Ast.Var` is a name that may or may not mean anything;
+         `Tast.Local` is a binding that does. Nothing downstream re-asks. *)
+      match Hashtbl.find_opt context.environment x with
+      | Some (t, _) -> mk (Tast.Local x) t span
+      | None ->
+          report_error context span (Printf.sprintf "cannot find '%s' in scope" x);
+          mk (Tast.Local x) Types.TInt span)
+  | Ast.Unary (Ast.Neg, e0, span) ->
+      let n = infer context e0 in
+      if not (Types.is_numeric n.Tast.ty) then
+        report_error context span
+          (Printf.sprintf "unary operator '-' cannot be applied to an operand of type '%s'"
+             (Types.string_of_ty n.Tast.ty));
+      mk (Tast.Unary (Ast.Neg, n)) n.Tast.ty span
+  | Ast.Binary (op, l, r, span) -> infer_binary context op l r span
+  | Ast.Call (f, args, span) -> infer_call context f args span
+  (* The one place `infer` calls `check`: the type is written down, so there is nothing
+     to synthesise — the operand is CHECKED against it, which is what lets
+     `1 as Double` work and `i as Double` fail. swiftc keeps a `coerce_expr` too. *)
+  | Ast.Ascribe (e0, tyname, span) -> (
+      match Types.of_name tyname with
+      | Some t -> mk (Tast.Coerce (check_expr context e0 t)) t span
+      | None ->
           report_error context span
-            (Printf.sprintf "unary operator '-' cannot be applied to an operand of type '%s'"
-               (Types.string_of_ty t));
-          t)
-    | Ast.Binary (op, l, r, span) -> infer_binary context op l r span
-    | Ast.Call (f, args, span) -> infer_call context f args span
-    (* The one place `infer` calls `check`: the type is written down, so there is nothing to
-       synthesise — the operand is CHECKED against it, which is what lets `1 as Double` work
-       and `i as Double` fail. *)
-    | Ast.Ascribe (e0, tyname, span) -> (
-        match Types.of_name tyname with
-        | Some t ->
-            check_expr context e0 t;
-            t
-        | None ->
-            report_error context span (Printf.sprintf "cannot find type '%s' in scope" tyname);
-            infer context e0)
-  and infer_binary context op l r span : Types.ty =
-    let tl = infer context l and tr = infer context r in
-    let bad () =
-      (* swiftc has two wordings, and picks by whether the operands agree:
+            (Printf.sprintf "cannot find type '%s' in scope" tyname);
+          let n = infer context e0 in
+          mk (Tast.Coerce n) n.Tast.ty span)
+
+and infer_binary context op l r span : Tast.expr =
+  let ln = infer context l and rn = infer context r in
+  let tl = ln.Tast.ty and tr = rn.Tast.ty in
+  let bad () =
+    (* swiftc has two wordings, and picks by whether the operands agree:
            1 + true     -> cannot be applied to operands of type 'Int' and 'Bool'
            true < false -> cannot be applied to two 'Bool' operands *)
-      report_error context span
-        (if tl = tr then
-           Printf.sprintf "binary operator '%s' cannot be applied to two '%s' operands"
-             (Ast.string_of_binop op) (Types.string_of_ty tl)
-         else
-           Printf.sprintf "binary operator '%s' cannot be applied to operands of type '%s' and '%s'"
-             (Ast.string_of_binop op) (Types.string_of_ty tl) (Types.string_of_ty tr))
-    in
-    let is_ordered t = Types.is_numeric t || t = Types.TString in
-    (* Match on the UNIFIED type, not on tl/tr: the coercion happens inside [unify], so a guard
-       over the raw operand types cannot see it — `1 == 2.0` would look like Int vs Double and be
-       rejected, and `i + 2.0` would look acceptable right up until [unify] returned None. *)
-    match (unify l tl r tr, op) with
+    report_error context span
+      (if tl = tr then
+         Printf.sprintf "binary operator '%s' cannot be applied to two '%s' operands"
+           (Ast.string_of_binop op) (Types.string_of_ty tl)
+       else
+         Printf.sprintf
+           "binary operator '%s' cannot be applied to operands of type '%s' and '%s'"
+           (Ast.string_of_binop op) (Types.string_of_ty tl) (Types.string_of_ty tr))
+  in
+  let is_ordered t = Types.is_numeric t || t = Types.TString in
+  let unified = unify l tl r tr in
+  (* APPLY the solution: if a side had to flex, re-check it AT the unified type so its
+     literal nodes come back carrying that type. This is CSApply's job — the solver
+     decides, then a walk writes the decision into the tree. Without it the literal
+     would still say TInt and SILGen would have to notice: PLAN.md §0.1's bug. *)
+  let ln, rn =
+    match unified with
+    | Some t ->
+        ( (if Types.equal tl t then ln else check_expr context l t),
+          if Types.equal tr t then rn else check_expr context r t )
+    | None -> (ln, rn)
+  in
+  (* Match on the UNIFIED type, not on tl/tr: the coercion happens inside [unify], so a
+     guard over the raw operand types cannot see it — `1 == 2.0` would look like Int vs
+     Double and be rejected, and `i + 2.0` acceptable until [unify] returned None. *)
+  let result =
+    match (unified, op) with
     | Some t, Ast.Add when Types.is_numeric t -> t
     | Some Types.TString, Ast.Add -> Types.TString (* `+` concatenates *)
     | Some t, (Ast.Sub | Ast.Mul | Ast.Div) when Types.is_numeric t -> t
     | Some Types.TInt, Ast.Mod -> Types.TInt (* no `%` on Double, as in Swift *)
     | Some _, (Ast.Eq | Ast.Ne) -> Types.TBool (* any single type may be compared *)
     | Some t, (Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge) when is_ordered t -> Types.TBool
-    (* Everything else is an error. The recovery type differs: a failed comparison is still a
-       Bool, or the enclosing `if` reports a second problem nobody wrote. *)
+    (* Everything else is an error. The recovery type differs: a failed comparison is
+       still a Bool, or the enclosing `if` reports a problem nobody wrote. *)
     | _, (Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge) ->
         bad ();
         Types.TBool
     | _ ->
         bad ();
         Types.TInt
-  and infer_call context f args span : Types.ty =
-    if f = "print" then (
-      (match args with
-      | [ a ] -> ignore (infer context a)
-      | _ ->
-          report_error context span "print(_:) expects exactly one argument";
-          List.iter (fun a -> ignore (infer context a)) args);
-      Types.TInt (* print returns Void; placeholder, unused as a value *))
-    else (
-      report_error context span (Printf.sprintf "cannot find '%s' in scope" f);
-      List.iter (fun a -> ignore (infer context a)) args;
-      Types.TInt)
-  (* The checking direction — and the other half of a genuine knot: [check_expr] falls back to
-   [infer], and [infer] calls [check_expr] for `expression as T`. Neither can be defined without the
-   other, which is what "the two judgments are mutually recursive" means in practice. *)
-and check_expr (context : context) (expression : Ast.expr) (expected : Types.ty) : unit =
+  in
+  mk (Tast.Binary (op, ln, rn)) result span
+
+and infer_call context f args span : Tast.expr =
+  (* RESOLUTION: `print` is the only function this subset has, so a call either IS print
+     or is an unknown name. `Tast.Print` records which — SILGen never has to ask. *)
+  if f = "print" then
+    match args with
+    | [ a ] -> mk (Tast.Print (infer context a)) Types.TInt span
+    | _ ->
+        report_error context span "print(_:) expects exactly one argument";
+        let ns = List.map (infer context) args in
+        let first =
+          match ns with n :: _ -> n | [] -> mk (Tast.Int_lit 0) Types.TInt span
+        in
+        mk (Tast.Print first) Types.TInt span
+  else (
+    report_error context span (Printf.sprintf "cannot find '%s' in scope" f);
+    let ns = List.map (infer context) args in
+    mk (Tast.Print (match ns with n :: _ -> n | [] -> mk (Tast.Int_lit 0) Types.TInt span))
+      Types.TInt span)
+(* The checking direction — and the other half of a genuine knot: [check_expr] falls
+   back to [infer], and [infer] calls [check_expr] for `expression as T`. Neither can be
+   defined without the other: "mutually recursive", in practice. *)
+
+and check_expr (context : context) (expression : Ast.expr) (expected : Types.ty) :
+    Tast.expr =
   match expression with
-  | Ast.Int_lit _ ->
-      (* integer literal: ExpressibleBy both Int and Double *)
-      if expected = Types.TInt || expected = Types.TDouble then ()
-      else
-        report_error context (Ast.expr_span expression)
+  | Ast.Int_lit (n, span) ->
+      (* An integer literal is ExpressibleBy both Int and Double — and THIS is where the
+         choice is recorded. The node keeps its kind and takes the expected type, just as
+         `swiftc -dump-ast` shows: `integer_literal_expr type="Double"`. *)
+      if expected = Types.TInt || expected = Types.TDouble then
+        mk (Tast.Int_lit n) expected span
+      else (
+        report_error context span
           (Printf.sprintf "cannot convert value of type 'Int' to specified type '%s'"
-             (Types.string_of_ty expected))
-  | Ast.Binary ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div), l, r, _) when Types.is_numeric expected ->
+             (Types.string_of_ty expected));
+        mk (Tast.Int_lit n) Types.TInt span)
+  | Ast.Binary (((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div) as op), l, r, span)
+    when Types.is_numeric expected ->
       (* push the expected numeric type into both operands: 1 + 2 checks as Double *)
-      check_expr context l expected;
-      check_expr context r expected
-  | Ast.Binary (Ast.Mod, l, r, _) when expected = Types.TInt ->
-      check_expr context l Types.TInt;
-      check_expr context r Types.TInt
-  | Ast.Unary (Ast.Neg, e0, _) when Types.is_numeric expected -> check_expr context e0 expected
+      let l = check_expr context l expected and r = check_expr context r expected in
+      mk (Tast.Binary (op, l, r)) expected span
+  | Ast.Binary (Ast.Mod, l, r, span) when expected = Types.TInt ->
+      let l = check_expr context l Types.TInt
+      and r = check_expr context r Types.TInt in
+      mk (Tast.Binary (Ast.Mod, l, r)) Types.TInt span
+  | Ast.Unary (Ast.Neg, e0, span) when Types.is_numeric expected ->
+      mk (Tast.Unary (Ast.Neg, check_expr context e0 expected)) expected span
   | _ ->
-      let t = infer context expression in
-      if not (Types.equal t expected) then
+      let n = infer context expression in
+      if not (Types.equal n.Tast.ty expected) then
         report_error context (Ast.expr_span expression)
           (Printf.sprintf "cannot convert value of type '%s' to specified type '%s'"
-             (Types.string_of_ty t) (Types.string_of_ty expected))
+             (Types.string_of_ty n.Tast.ty) (Types.string_of_ty expected));
+      n
 
-let check_stmt (context : context) (s : Ast.stmt) : unit =
-    match s with
-    | Ast.Let { name; is_var; annot; value; span } ->
-        let t =
-          match annot with
-          | None -> infer context value
-          | Some tyname -> (
-              match Types.of_name tyname with
-              | Some t ->
-                  check_expr context value t;
-                  t
-              | None ->
-                  report_error context span (Printf.sprintf "cannot find type '%s' in scope" tyname);
-                  infer context value)
-        in
-        Hashtbl.replace context.environment name (t, is_var)
-    | Ast.Assign { name; value; span } -> (
-        match Hashtbl.find_opt context.environment name with
-        | None ->
-            report_error context span (Printf.sprintf "cannot find '%s' in scope" name);
-            ignore (infer context value)
-        | Some (t, is_var) ->
-            if not is_var then
-              report_error context span (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" name);
-            check_expr context value t)
-    | Ast.Expr_stmt (expression, _) -> ignore (infer context expression)
+let check_stmt (context : context) (s : Ast.stmt) : Tast.stmt =
+  match s with
+  | Ast.Let { name; is_var; annot; value; span } ->
+      let n =
+        match annot with
+        | None -> infer context value
+        | Some tyname -> (
+            match Types.of_name tyname with
+            | Some t -> check_expr context value t
+            | None ->
+                report_error context span
+                  (Printf.sprintf "cannot find type '%s' in scope" tyname);
+                infer context value)
+      in
+      Hashtbl.replace context.environment name (n.Tast.ty, is_var);
+      Tast.Let { name; is_var; value = n; span }
+  | Ast.Assign { name; value; span } -> (
+      match Hashtbl.find_opt context.environment name with
+      | None ->
+          report_error context span (Printf.sprintf "cannot find '%s' in scope" name);
+          Tast.Assign { name; value = infer context value; span }
+      | Some (t, is_var) ->
+          if not is_var then
+            report_error context span
+              (Printf.sprintf "cannot assign to value: '%s' is a 'let' constant" name);
+          Tast.Assign { name; value = check_expr context value t; span })
+  | Ast.Expr_stmt (expression, _) -> Tast.Expr_stmt (infer context expression)
 
-let check (program : Ast.program) (diagnostics : Diagnostics.sink) : unit =
+(* The checker's output IS a program. `None` when it found errors: a tree that failed
+   to check has no meaning, and making that a *type* rather than a convention means no
+   later stage can be handed one by accident. *)
+let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.program option =
   let context = create diagnostics in
-  List.iter (check_stmt context) program.Ast.stmts
+  let stmts = List.map (check_stmt context) program.Ast.stmts in
+  if Diagnostics.has_errors diagnostics then None else Some { Tast.stmts }
 ```
 
 ## 9. Exercise solutions
@@ -970,20 +1139,34 @@ second `<` into the swiftc-style precedence error instead of letting it through 
 Treat them in `infer_call` before the `print` case:
 
 ```ocaml
-and infer_call f args span =
+and infer_call context f args span =
+  let numeric n = n.Tast.ty = Types.TInt || n.Tast.ty = Types.TDouble in
   match f, args with
-  | "Double", [a] -> let t = infer a in
-      if t = Types.TInt || t = Types.TDouble then Types.TDouble
-      else (report_error span "..."; Types.TDouble)
-  | "Int", [a] -> let t = infer a in
-      if t = Types.TInt || t = Types.TDouble then Types.TInt
-      else (report_error span "..."; Types.TInt)
-  | "print", _ -> (* as before *) Types.TInt
-  | _ -> report_error span (Printf.sprintf "cannot find '%s' in scope" f); Types.TInt
+  | "Double", [a] ->
+      let n = infer context a in
+      if not (numeric n) then report_error context span "...";
+      mk (Tast.Coerce n) Types.TDouble span
+  | "Int", [a] ->
+      let n = infer context a in
+      if not (numeric n) then report_error context span "...";
+      mk (Tast.Coerce n) Types.TInt span
+  | "print", _ -> (* as before *) mk (Tast.Print …) Types.TInt span
+  | _ ->
+      report_error context span (Printf.sprintf "cannot find '%s' in scope" f);
+      mk (Tast.Print …) Types.TInt span
 ```
 
 Now `let d: Double = Double(i)` checks (the `Call` infers `Double`, matching the annotation), while
 the bare `let d: Double = i` still fails — matching Swift, where conversions are explicit.
+
+One honest wrinkle, and it is the lesson of §2 coming back. `Tast.Coerce` is borrowed here because
+05 has no node of its own for this, and it works *at this concept* because nothing runs the code
+yet. But `Double(i)` is not a no-op the way `1 as Double` is: `1 as Double` only changes what a
+literal is, while `Double(i)` has to convert a value at run time — an `sitofp` once concept 09 emits
+LLVM. So a real version of this exercise adds its own node (`Tast.Num_conv of expr`) rather than
+reusing `Coerce`, exactly so the back end is *told* a conversion happens instead of having to infer
+it from the operand types. That is the same argument as "What the checker produces", applied to a
+rule you wrote yourself.
 
 ### 3 — sharper annotation errors
 
