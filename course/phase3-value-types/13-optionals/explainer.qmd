@@ -62,18 +62,19 @@ the three cases lower to *different* SIL. So the checker records which:
 line: build the `.some`. This is exactly swiftc's division of labour — `CSApply` inserts an
 `InjectIntoOptionalExpr` (`swift/include/swift/AST/Expr.h`) and `SILGenExpr.cpp` only *visits* it.
 
-It is worth seeing what the alternative looked like, because this compiler used to do it. Sema
-decided the wrap and recorded nothing; SILGen then re-derived the same decision by comparing SIL
-value types:
+The alternative is to decide it twice. Sema would work out that a wrap is needed and record nothing;
+SILGen would then reach the same conclusion from different evidence — comparing the SIL value's type
+against the slot it is going into:
 
 ```ocaml
 (* sema   *) if Types.equal (infer e) expected then () else check_expr e t
 (* silgen *) if vty b v = expected then v else emit b (Sil.Enum (1, [ v ])) expected
 ```
 
-One rule, reached twice, from different evidence. `PLAN.md` §0.1 is about what that costs. Optionals
-are the first *conversion* to become a node; protocols (21) and classes (25) each add one more, and
-between them they are what finally delete `gen_expr_as`.
+Two statements of one rule, which have to agree. They agree here only because you can see both at
+once; the two arms live in different files, and each concept adds more places where the wrap is
+expected — a `return`, a call argument, a struct field. Optionals are the first *conversion* to
+become a node; protocols (21) and classes (25) each add one more.
 
 ### Force-unwrap, and matching swiftc's crash
 

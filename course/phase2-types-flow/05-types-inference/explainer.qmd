@@ -358,14 +358,25 @@ integer_literal_expr type="Double"
 swiftc keeps the node *kind* and changes its *type* — which is why `Tast.Int_lit` above does the
 same rather than becoming a `Double_lit`.
 
-**Why it matters enough to build.** The alternative is that the checker reports errors and throws
-its work away, and the code generator re-derives what it needs. That is what this compiler used to
-do, and it went wrong in a way worth knowing about: SILGen grew a second, informal type system to
-cope, the two drifted apart, and a program as ordinary as `let d = 1.5; print(d * 2)` failed to
-compile with `error: integer constant must have integer type` — because SILGen had to *notice* that
-the `2` sat beside a Double, and in some copies of the file it didn't. `PLAN.md` §0.1 records the
-whole story, including the fix that reached 23 of 44 copies of a duplicated decision. You are
-building the version where the question is asked once.
+**Why it matters.** Without it, the work is simply done twice. This checker decides that the `2` in
+`d * 2` is a `Double`; the code generator is then handed the same untyped tree and has to decide it
+again — with less to go on, because all it sees is a literal that says `2`.
+
+You will meet the failure that produces at concept 09. If the `2` reaches the back end still looking
+like an integer, the LLVM it emits is
+
+```llvm
+%r = fmul double %d, 2
+```
+
+— a floating-point multiply with an integer operand — and clang refuses it:
+
+```
+error: integer constant must have integer type
+```
+
+Recording the answer here is what stops the question being asked a second time, by a pass with less
+information to answer it.
 
 ### What Swift *actually* does — and what we simplify
 

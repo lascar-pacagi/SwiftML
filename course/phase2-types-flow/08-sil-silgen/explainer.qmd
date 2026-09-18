@@ -115,23 +115,23 @@ write is as short as it is. A few things that are *not* in it:
 - **No type re-derivation.** `expression.Tast.ty` is the type of the node. The binary arm emits
   `Binop` at that type rather than working it out from the operands.
 
-**This is worth dwelling on, because it is a repaired mistake.** SILGen used to take the *parsed*
-tree, and it grew a second, informal type system to cope: a `gen_expression_as` walk that re-applied
-the literal coercion, and a binary arm that generated the left operand, discovered the right one was
-a `Double`, and then generated the left one **again** at `Double` — leaving the abandoned first copy
-sitting in the block. At `-Onone`, where nothing deletes it, that dead copy still executed. So this:
+**What that saves you, concretely.** Suppose SILGen had to work the coercion out for itself, from
+the parsed tree. It would generate the left operand, discover the right one is a `Double`, and
+generate the left one **again** at `Double` — leaving the abandoned first copy sitting in the block.
+Nothing deletes it at `-Onone`. So this program:
 
 ```swift
 let d = 1.5
 print((1 / 0) * d)
 ```
 
-trapped on an integer division by zero at `-Onone` and printed `inf` at `-O`, because the optimizer
-removed the copy that the unoptimized build still ran. An optimization level changing a program's
-output is the one thing an optimizer must never do.
+would trap on an integer division by zero at `-Onone` and print `inf` at `-O`, because the optimizer
+removes the copy the unoptimized build still runs. An optimization level changing a program's output
+is the one thing an optimizer must never do.
 
-That whole class of bug is not fixed here so much as made **unrepresentable**. The SIL for a literal
-tree beside a `Double` now contains no integer arithmetic at all:
+Taking the typed tree does not fix that bug so much as make it **unrepresentable**: there is no
+integer arithmetic to abandon, because the literal never was an integer. The SIL for a literal tree
+beside a `Double` contains none at all:
 
 ```bash
 $ printf 'let d = 1.5\nprint((1 + 2 * 3) * d)\n' > s.swift
@@ -139,8 +139,7 @@ $ ./lab.exe --emit-sil s.swift | grep -c integer_literal
 0
 ```
 
-`PLAN.md` §0.1 records the decision and the evidence, including a fix that reached 23 of 44 copies
-of a duplicated decision — and `tests/silgen-typed-input.t` pins both cases above.
+`tests/silgen-typed-input.t` pins both cases above.
 
 ### SILGen is a *builder*
 
