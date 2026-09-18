@@ -109,13 +109,12 @@ learned. `07-functions` does exactly that once parameters have declared types
 (`List.map2 check_expr args ptypes` — `map2`, because each checked argument is a node that goes
 into the call's `Tast` form).
 
-`e as T` is not an elimination form — nothing is being taken apart — but it plays the same role in
-the knot, and that is why it is the arm where `infer` calls `check`. An ascription is the escape
-hatch the discipline needs: it lets an expression that can only be *checked* appear where something
-*synthesised* is wanted, by supplying the type by hand instead of reading it off a signature. Which
-is exactly what `1 as Double` is for — `1` alone cannot say whether it is an `Int` or a `Double`. The **default bridge** between the two judgments
-is one rule: *to check `e` against `τ`, when there's no smarter rule, `infer` its type and
-compare.*
+`e as T` is the one arm where `infer` calls `check`, and the reason is small: `infer` has to return
+a type, but `1` on its own has none worth trusting. Writing `1 as Double` supplies it — the arm
+checks `1` against `Double`, then hands `Double` back.
+
+The **default bridge** between the two judgments is one rule: *to check `e` against `τ`, when
+there's no smarter rule, `infer` its type and compare.*
 
 ```
 Γ ⊢ e ⇒ σ      σ = τ
