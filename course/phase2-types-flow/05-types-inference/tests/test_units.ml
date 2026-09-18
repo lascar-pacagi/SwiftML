@@ -239,6 +239,25 @@ let test_arith_flexes () =
         Types.TDouble)
     arith
 
+(* The flex must be RECORDED, not just concluded. A Binary node that says Double over an operand
+   node that still says Int is PLAN.md §0.1's bug — the checker knew, the tree did not say so,
+   and SILGen had to work it out again (and got it wrong). `unify` decides; a second walk has to
+   write the decision into the flexed side. swiftc calls that walk CSApply. *)
+let flexed_operands what e =
+  let cx, _ = fresh () in
+  match (Sema.infer cx e).Tast.e with
+  | Tast.Binary (_, l, r) ->
+      Alcotest.(check ty) (what ^ ": left operand") Types.TDouble l.Tast.ty;
+      Alcotest.(check ty) (what ^ ": right operand") Types.TDouble r.Tast.ty
+  | _ -> Alcotest.failf "%s: expected a Binary node" what
+
+let test_flex_is_recorded () =
+  List.iter
+    (fun op ->
+      flexed_operands (lbl op "1" "2.0") (bin_ op (int_ 1) (dbl_ 2.0));
+      flexed_operands (lbl op "2.0" "1") (bin_ op (dbl_ 2.0) (int_ 1)))
+    arith
+
 (* A typed variable is the other half of the same rule: it must NOT flex. True of every
    operator, comparisons included — `unify` returns None and the operator never gets a type. *)
 let test_var_never_flexes () =
@@ -590,6 +609,7 @@ let () =
           case "infer: + - * / on Int" test_arith_int;
           case "infer: + - * / on Double" test_arith_double;
           case "infer: + - * / flex a literal" test_arith_flexes;
+          case "infer: the flex is recorded" test_flex_is_recorded;
           case "infer: a var will not flex" test_var_never_flexes;
           case "infer: 1 % 2 is Int" test_mod_int;
           case "infer: % on a Double reports" test_mod_never_flexes;
