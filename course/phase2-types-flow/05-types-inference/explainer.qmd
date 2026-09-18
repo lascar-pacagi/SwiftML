@@ -1238,12 +1238,12 @@ let is_numeric = function
   | TBool | TString -> false
 ```
 
-In `sema.ml`, return it instead of the invented `TInt`:
+In `sema.ml`, give the recovery node that type instead of the invented `TInt`:
 
 ```ocaml
     | None ->
         report_error context span (Printf.sprintf "cannot find '%s' in scope" x);
-        Types.TError
+        mk (Tast.Local x) Types.TError span
 ```
 
 and then teach the rules to keep quiet about it — `unify` accepts it against anything, and the
