@@ -635,30 +635,22 @@ middle column; the last is ours, because Swift has nothing to copy there:
 | `cannot assign to value: 'k' is a 'let' constant` | `k = 2` after `let k` | `assignment_lhs_is_immutable_variable` (:5377) |
 | `print(_:) expects exactly one argument` | `print(1, 2)` | **ours** — Swift's `print` is variadic |
 
-Two details in that list are easy to get wrong and are exactly why it is worth writing down. The
-binary operator has **two** wordings and swiftc picks by whether the operands agree — `1 + true`
-names both types, `true < false` says *two 'Bool' operands*. And the unary one says *an operand*,
-not *operand*: this course shipped it without the "an" until the table was compiled, because no
-test asserted that string (now one does).
-
-Read the binary rule literally: it turns on whether the **operands** agree, not on whether the
-checker managed to find one type for them. Those are the same question everywhere except one
-shape — an integer literal that flexed:
+Two details are easy to get wrong. The unary message says *an operand*, not *operand* — this
+course shipped it without the "an" until the table was compiled, because no test asserted the
+string. And the binary operator has **two** wordings, which swiftc picks between by whether the
+**operands** agree — not by whether the checker found one type for them. Those differ on one
+shape only, an integer literal that flexed:
 
 ```
-1.5 % 2.0    the operands agree             -> two 'Double' operands
-1 % 2.0      they do not; only the          -> operands of type 'Int' and 'Double'
-             unified type is Double
+1.5 % 2.0    operands agree    -> two 'Double' operands
+1 % 2.0      operands differ   -> operands of type 'Int' and 'Double'
 ```
 
-Both are `%` asked to work on a Double, and both are rejected; only the wording differs. `%` is
-the only operator where the readings part company, because it is the only one that refuses a type
-`unify` is willing to hand it — which is why picking the wording off `unify`'s result instead of
-off the operands passes every other case. Honesty cost: real swiftc answers both of those with
-`'%' is unavailable: For floating point numbers use truncatingRemainder instead`, which comes from
-the standard library marking the operator unavailable on `Double` rather than from the type
-checker. We have no such machinery, so we fall back to the generic binary wording — and we name
-the types the programmer actually wrote, not the one inference settled on.
+Both are rejected; only the wording differs. `%` is the only operator that refuses a type `unify`
+will hand it, which is why reading the rule off `unify`'s result instead of off the operands
+passes every other case. (Real swiftc answers both with `'%' is unavailable: For floating point
+numbers use truncatingRemainder instead`, a standard-library availability diagnostic; we have no
+such machinery, so the generic wording here is ours.)
 
 **Every error path still returns a node.** `infer` is a function to `Tast.expr`, so reporting is
 only half of what an error case has to do — the other half is handing back something so the walk
