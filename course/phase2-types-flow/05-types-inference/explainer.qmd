@@ -635,11 +635,10 @@ middle column; the last is ours, because Swift has nothing to copy there:
 | `cannot assign to value: 'k' is a 'let' constant` | `k = 2` after `let k` | `assignment_lhs_is_immutable_variable` (:5377) |
 | `print(_:) expects exactly one argument` | `print(1, 2)` | **ours** — Swift's `print` is variadic |
 
-Two details are easy to get wrong. The unary message says *an operand*, not *operand* — this
-course shipped it without the "an" until the table was compiled, because no test asserted the
-string. And the binary operator has **two** wordings, which swiftc picks between by whether the
-**operands** agree — not by whether the checker found one type for them. Those differ on one
-shape only, an integer literal that flexed:
+Copy the strings exactly; the tests assert them. One rule in that list is easy to get wrong: the
+binary operator has **two** wordings, and swiftc picks between them by whether the **operands**
+agree — not by whether the checker found one type for them. Those differ on one shape only, an
+integer literal that flexed:
 
 ```
 1.5 % 2.0    operands agree    -> two 'Double' operands
