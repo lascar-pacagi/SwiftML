@@ -99,6 +99,49 @@ address a name currently means, which is exactly what the source language scopes
 body and gone afterwards, so `i` after the loop is sema's error to report, not a slot SILGen has to
 keep.
 
+### What SILGen is handed
+
+Before the mechanics, look at the *input*, because it decides how much work this pass has to do.
+
+SILGen does not consume the tree the parser built. It consumes the tree **Sema produced** — a
+`Tast.program`, in which every node already carries its type and every name is already resolved
+(concept 05 §2, "What the checker produces"). That single fact is why the file you are about to
+write is as short as it is. A few things that are *not* in it:
+
+- **No coercion logic.** An integer literal that checked at `Double` arrives carrying `Double`, so
+  it is born a `float_literal`. There is no "notice that this literal sits beside a Double" step.
+- **No name resolution.** `Tast.Print` is `print` and `Tast.Fn_call` is a declared function; SILGen
+  never consults a table to find out which.
+- **No type re-derivation.** `expression.Tast.ty` is the type of the node. The binary arm emits
+  `Binop` at that type rather than working it out from the operands.
+
+**This is worth dwelling on, because it is a repaired mistake.** SILGen used to take the *parsed*
+tree, and it grew a second, informal type system to cope: a `gen_expression_as` walk that re-applied
+the literal coercion, and a binary arm that generated the left operand, discovered the right one was
+a `Double`, and then generated the left one **again** at `Double` — leaving the abandoned first copy
+sitting in the block. At `-Onone`, where nothing deletes it, that dead copy still executed. So this:
+
+```swift
+let d = 1.5
+print((1 / 0) * d)
+```
+
+trapped on an integer division by zero at `-Onone` and printed `inf` at `-O`, because the optimizer
+removed the copy that the unoptimized build still ran. An optimization level changing a program's
+output is the one thing an optimizer must never do.
+
+That whole class of bug is not fixed here so much as made **unrepresentable**. The SIL for a literal
+tree beside a `Double` now contains no integer arithmetic at all:
+
+```bash
+$ printf 'let d = 1.5\nprint((1 + 2 * 3) * d)\n' > s.swift
+$ ./lab.exe --emit-sil s.swift | grep -c integer_literal
+0
+```
+
+`PLAN.md` §0.1 records the decision and the evidence, including a fix that reached 23 of 44 copies
+of a duplicated decision — and `tests/silgen-typed-input.t` pins both cases above.
+
 ### SILGen is a *builder*
 
 SILGen threads a small **builder**: a current block you append instructions to (`emit`), a way to
@@ -269,17 +312,20 @@ One skeleton, `silgen.ml`, with holes of two kinds. The builder
 `Expr_stmt`/`Return`, and `lower_func`/`lower` are given.
 
 **`TODO(08a)` — the memory model**, three arms and about six lines. A variable is an
-`alloc_stack` slot: `Ast.Var` reads it with a `load`, `Ast.Let` allocates it and `store`s the
-value, `Ast.Assign` stores over the slot the name already has. `lower` does the same thing for
+`alloc_stack` slot: `Tast.Local` reads it with a `load`, `Tast.Let` allocates it and `store`s the
+value, `Tast.Assign` stores over the slot the name already has. `lower` does the same thing for
 each parameter, so the shape is already in the file. Do this first — it is the vocabulary
 everything below produces, and `silgen-memory.t` reports on it alone.
 
-**`TODO(08b)` — the ordinary binary operator**, one `emit`, but two types that are not always the
-same: the one the operation happens AT (either side a `Double` makes it Double arithmetic) and the
-one it produces, which `result_type` gives you — a comparison is a `Bool` whatever it compared.
-`&&` and `||` are not yours: they short-circuit, so the given `gen_expression` lowers them as a diamond.
+**`TODO(08b)` — the ordinary binary operator**, one `emit`. Read the arm above it first, and notice
+what you are *not* asked to do: both operands already carry their final type, and so does this node
+(`ty`), because Sema recorded all three. There is no coercion to spot and nothing to re-generate —
+the previous section is the story of the version that had to. `&&` and `||` are not yours either:
+they short-circuit, so the given `gen_expression` lowers them as a diamond.
 
-**`TODO(08c)` — the control flow**, the five cases of `gen_statement` described one by one above. Use
+**`TODO(08c)` — the control flow**, the five cases of `gen_statement` described one by one above.
+They match on `Tast` statements, whose blocks are already checked — `Tast.If` holds its two
+`Tast.stmt list`s, so lowering is purely about the CFG and never about what the parts mean. Use
 `new_block` to make blocks, `terminate` to set the current block's branch, `gen_block` to lower a
 list of statements into the current block, and `switch_to` to move the cursor.
 
@@ -403,62 +449,84 @@ Mirrors `solution/silgen.ml` (the control-flow lowering). The shape to notice: e
 **switches** to where control continues; loops push/pop `builder.loops` and add the back-edge.
 
 ```ocaml
-| Ast.If { cond; then_blk; else_blk; _ } ->
-    let c = gen_expression builder cond in
-    let then_block = new_block builder in
-    let merge_block = new_block builder in
-    let else_block = match else_blk with Some _ -> new_block builder | None -> merge_block in
-    terminate builder (Sil.Cond_br (c, then_block.Sil.bid, else_block.Sil.bid));
-    switch_to builder then_block; gen_block builder then_blk; terminate builder (Sil.Br merge_block.Sil.bid);
-    (match else_blk with
-     | Some e -> switch_to builder else_block; gen_block builder e; terminate builder (Sil.Br merge_block.Sil.bid)
-     | None -> ());
-    switch_to builder merge_block
-| Ast.While { cond; body; _ } ->
-    let header = new_block builder and body_block = new_block builder and exit_block = new_block builder in
-    terminate builder (Sil.Br header.Sil.bid);                     (* enter the loop *)
-    switch_to builder header;
-    let c = gen_expression builder cond in
-    terminate builder (Sil.Cond_br (c, body_block.Sil.bid, exit_block.Sil.bid));
-    switch_to builder body_block;
-    builder.loops <- (header.Sil.bid, exit_block.Sil.bid) :: builder.loops;  (* break/continue targets *)
-    gen_block builder body;
-    terminate builder (Sil.Br header.Sil.bid);                     (* the back-edge *)
-    builder.loops <- List.tl builder.loops;
-    switch_to builder exit_block
-| Ast.For { var; lo; hi; body; _ } ->
-    let lower_value = gen_expression builder lo in
-    let upper_value = gen_expression builder hi in                               (* evaluate hi ONCE *)
-    let address = emit builder (Sil.Alloc_stack var) Types.TInt in
-    Hashtbl.replace builder.variables var address;
-    ignore (emit builder (Sil.Store (lower_value, address)) Types.TVoid);
-    (* header -> body -> latch (v = v + 1) -> header.  The increment lives in its OWN
-       block (the latch), and `continue` targets the latch — not the header — so it can't
-       skip the increment and loop forever. *)
-    let header = new_block builder and body_block = new_block builder in
-    let latch = new_block builder and exit_block = new_block builder in
-    terminate builder (Sil.Br header.Sil.bid);
-    switch_to builder header;
-    let current_value = emit builder (Sil.Load address) Types.TInt in
-    let c = emit builder (Sil.Binop (Ast.Lt, current_value, upper_value)) Types.TBool in
-    terminate builder (Sil.Cond_br (c, body_block.Sil.bid, exit_block.Sil.bid));
-    switch_to builder body_block;
-    (* continue -> latch, break -> exit *)
-    builder.loops <- (latch.Sil.bid, exit_block.Sil.bid) :: builder.loops;
-    gen_block builder body;
-    terminate builder (Sil.Br latch.Sil.bid);
-    builder.loops <- List.tl builder.loops;
-    switch_to builder latch;
-    let current_value = emit builder (Sil.Load address) Types.TInt in            (* v = v + 1 *)
-    let one = emit builder (Sil.Int_lit 1) Types.TInt in
-    let incremented_value = emit builder (Sil.Binop (Ast.Add, current_value, one)) Types.TInt in
-    ignore (emit builder (Sil.Store (incremented_value, address)) Types.TVoid);
-    terminate builder (Sil.Br header.Sil.bid);
-    switch_to builder exit_block
-| Ast.Break _ ->
-    (match builder.loops with (_, exit_target) :: _ -> terminate builder (Sil.Br exit_target) | [] -> ())
-| Ast.Continue _ ->
-    (match builder.loops with (continue_target_id, _) :: _ -> terminate builder (Sil.Br continue_target_id) | [] -> ())
+  | Tast.If { cond; then_blk; else_blk; _ } ->
+      let condition_value = gen_expression builder cond in
+      let then_block = new_block builder in
+      let merge_block = new_block builder in
+      let else_block =
+        match else_blk with Some _ -> new_block builder | None -> merge_block
+      in
+      terminate builder
+        (Sil.Cond_br (condition_value, then_block.Sil.bid, else_block.Sil.bid));
+      switch_to builder then_block;
+      gen_block builder then_blk;
+      terminate builder (Sil.Br merge_block.Sil.bid);
+      (match else_blk with
+      | Some expression ->
+          switch_to builder else_block;
+          gen_block builder expression;
+          terminate builder (Sil.Br merge_block.Sil.bid)
+      | None -> ());
+      switch_to builder merge_block
+  | Tast.While { cond; body; _ } ->
+      let header = new_block builder
+      and body_block = new_block builder
+      and exit_block = new_block builder in
+      terminate builder (Sil.Br header.Sil.bid);
+      switch_to builder header;
+      let condition_value = gen_expression builder cond in
+      terminate builder
+        (Sil.Cond_br (condition_value, body_block.Sil.bid, exit_block.Sil.bid));
+      switch_to builder body_block;
+      enter_loop builder ~continue_to:header.Sil.bid
+        ~break_to:exit_block.Sil.bid;
+      gen_block builder body;
+      terminate builder (Sil.Br header.Sil.bid);
+      leave_loop builder;
+      switch_to builder exit_block
+  | Tast.For { var; lo; hi; body; _ } ->
+      (* desugar `for v in lo ..< hi { body }` into a counted while loop *)
+      let lower_value = gen_expression builder lo in
+      let upper_value = gen_expression builder hi in
+      let addr = emit builder (Sil.Alloc_stack var) Types.TInt in
+      bind_variable builder var addr;
+      emit_void builder (Sil.Store (lower_value, addr));
+      (* header -> body -> latch (the increment) -> header; continue jumps to the latch so
+         it doesn't skip `v = v + 1` (that would loop forever) *)
+      let header = new_block builder and body_block = new_block builder in
+      let latch = new_block builder and exit_block = new_block builder in
+      terminate builder (Sil.Br header.Sil.bid);
+      switch_to builder header;
+      let current_value = emit builder (Sil.Load addr) Types.TInt in
+      let condition_value =
+        emit builder
+          (Sil.Binop (Ast.Lt, current_value, upper_value))
+          Types.TBool
+      in
+      terminate builder
+        (Sil.Cond_br (condition_value, body_block.Sil.bid, exit_block.Sil.bid));
+      switch_to builder body_block;
+      enter_loop builder ~continue_to:latch.Sil.bid ~break_to:exit_block.Sil.bid;
+      gen_block builder body;
+      terminate builder (Sil.Br latch.Sil.bid);
+      leave_loop builder;
+      switch_to builder latch;
+      let current_value = emit builder (Sil.Load addr) Types.TInt in
+      let one = emit builder (Sil.Int_lit 1) Types.TInt in
+      let incremented_value =
+        emit builder (Sil.Binop (Ast.Add, current_value, one)) Types.TInt
+      in
+      emit_void builder (Sil.Store (incremented_value, addr));
+      terminate builder (Sil.Br header.Sil.bid);
+      switch_to builder exit_block
+  | Tast.Break _ -> (
+      match break_target builder with
+      | Some exit_target -> terminate builder (Sil.Br exit_target)
+      | None -> ())
+  | Tast.Continue _ -> (
+      match continue_target builder with
+      | Some condition_value -> terminate builder (Sil.Br condition_value)
+      | None -> ())
 ```
 
 ## 9. Exercise solutions
