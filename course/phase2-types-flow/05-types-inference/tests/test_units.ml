@@ -102,8 +102,21 @@ let reports what e expected =
    and every OPERATOR must be one that Double has. They are separate cases because they are
    separate mistakes. *)
 
-let yes what e = Alcotest.(check bool) what true (Sema.is_int_literal e)
-let no what e = Alcotest.(check bool) what false (Sema.is_int_literal e)
+(* `Expected: false / Received: true` says nothing about which rule broke, so these spell the
+   verdict out. The label names the tree, and for a `no` it names the reason too. *)
+let yes what e =
+  if not (Sema.is_int_literal e) then
+    Alcotest.failf
+      "%s@.  is_int_literal said NO, expected YES — every leaf is an integer \
+       literal@.  and every operator is one that Double has."
+      what
+
+let no what e =
+  if Sema.is_int_literal e then
+    Alcotest.failf
+      "%s@.  is_int_literal said YES, expected NO — this tree cannot flex to \
+       Double."
+      what
 
 let test_literal_leaves () =
   yes "1" (int_ 1);

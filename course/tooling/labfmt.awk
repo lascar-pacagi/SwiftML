@@ -176,22 +176,41 @@ function load_t(file,   line, blk, prose, started, ln, here, hereblk, cmd, cont,
 # label (which case), then either an [exception]/[failure] line or Expected/Received. Keep those,
 # drop the trace — a bare case name does not tell you what went wrong.
 !cram && clean ~ /^ *ASSERT / {
+  fail_cont = 0
   line = clean; sub(/^ *ASSERT */, "", line)
   if (line ~ /expected exactly|got [0-9]+$/) {            # an Alcotest.failf message, not a label
     if (curcase != shown_case) { put("       " D "└ " curcase Z); shown_case = curcase }
     put("         " R "failed:" Z " " line); next
   }
   if (curcase != shown_case) { put("       " D "└ " curcase Z); shown_case = curcase }
+  last_ran = line
   put("         " D "ran:  " Z " " line); next
 }
-# alcotest prints a BARE `FAIL "<label>"` for the check that actually failed, after the ASSERT
+# alcotest prints a BARE `FAIL <label>` for the check that actually failed, after the ASSERT
 # lines for the checks that merely ran. That line is the answer to "what is wrong", so keep it.
-!cram && clean ~ /^FAIL "/ {
+# A `check`'s label arrives quoted; an `Alcotest.failf` message does not, and may run over
+# several lines — those continuations are the explanation, so keep them too (see fail_cont).
+!cram && clean ~ /^FAIL / {
   line = clean; sub(/^FAIL */, "", line)
   if (curcase != shown_case) { put("       " D "└ " curcase Z); shown_case = curcase }
-  put("         " R "failed:" Z " " line); next
+  # A failf message is echoed once after ASSERT and again after FAIL, so its first line is
+  # already on screen as the `ran:` line. Skip the repeat and let the explanation carry the
+  # `failed:` marker instead.
+  if (line == last_ran) { fail_cont = 1; next }
+  put("         " R "failed:" Z " " line); fail_cont = 1; next
+}
+# ...and any line back at column 0 ends it (the stack frames, alcotest's own notes, or the next
+# thing entirely). No `next`: the line still gets its own rule below.
+!cram && fail_cont && clean ~ /^[^ ]/ { fail_cont = 0 }
+# The indented remainder of a multi-line failf message. Stack frames and alcotest's own notes
+# start at column 0, so the indent alone separates them.
+!cram && fail_cont && clean ~ /^  +[^ ]/ {
+  line = clean; sub(/^ */, "", line)
+  put("                " line)      # aligned under the text of the `ran:` line above
+  next
 }
 !cram && clean ~ /^\[(exception|failure)\]/ {
+  fail_cont = 0
   line = clean; sub(/^\[[a-z]*\] */, "", line)
   trace_left = (clean ~ /^\[exception\]/ ? 2 : 0)
   # An unwritten hole is not this case being wrong, and it reads the same whichever runner met
