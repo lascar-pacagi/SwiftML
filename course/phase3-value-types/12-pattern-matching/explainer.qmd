@@ -531,13 +531,17 @@ From `solution/silgen.ml` (dispatch) and `solution/sema.ml` (exhaustiveness):
       switch_to b merge
 ```
 
+Note `Option.map`, not `Option.iter`: the default's checked statements are part of the
+`Tast.Switch` this rule is building, so they have to be kept rather than walked and dropped.
+
 ```ocaml
 (* sema: exhaustiveness — no default ⇒ every case must be covered *)
-Option.iter check_block default;
+let d = Option.map check_block default in
 if default = None then begin
   let missing = List.filter (fun (c, _) -> not (List.mem c !covered)) el.Types.el_cases in
   if missing <> [] then err span "switch must be exhaustive"
-end
+end;
+build cs d      (* the arms and the default, assembled into the Tast.Switch *)
 ```
 
 ## 9. Exercise solutions

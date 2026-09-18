@@ -79,8 +79,13 @@ type is *written down rather than deduced* — here, the coercion `e as T`:
 ```ocaml
 | Ast.Ascribe (e0, tyname, span) -> (
     match Types.of_name tyname with
-    | Some t -> check_expr context e0 t; t     (* infer -> check *)
-    | None -> report_error context span (…); infer context e0)
+    (* infer -> check. `check_expr` hands back the CHECKED operand, and the arm wraps it:
+       the node records that the source said `as`, and `t` is the type of the whole thing. *)
+    | Some t -> mk (Tast.Coerce (check_expr context e0 t)) t span
+    | None ->
+        report_error context span (…);
+        let n = infer context e0 in
+        mk (Tast.Coerce n) n.Tast.ty span)
 ```
 
 There is nothing to synthesise from `1 as Double`: the type is right there in the source, and the
