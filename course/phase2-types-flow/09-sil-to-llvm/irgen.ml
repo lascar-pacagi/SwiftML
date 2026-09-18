@@ -1,9 +1,12 @@
-(* ANSWER KEY — concept 09 IRGen: lower a SIL module to LLVM IR text.
+(* IRGen — concept 09 (skeleton). Lower a SIL module to LLVM IR text.
 
    The mapping is almost one-to-one because raw SIL is already memory-based with basic
    blocks, just like LLVM: alloc_stack -> alloca, load/store -> load/store, a SIL block ->
    an LLVM block, br/cond_br/return -> LLVM br/ret, apply -> call, print -> a printf call.
-   Each SIL value maps to an LLVM operand (a constant, a global, or a fresh %tN). *)
+   Each SIL value maps to an LLVM operand (a constant, a global, or a fresh %tN).
+
+   You fill the two TODO(09) holes: gen_instr and gen_term. The shell (gen_binop, gen_print,
+   gen_allocas, the buffers, llvm_type) is given. Reference: solution/irgen.ml. *)
 
 let llvm_type : Types.ty -> string = function
   | Types.TInt -> "i64"
@@ -43,19 +46,19 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
          (escape text));
     global_name
   in
-  let gen_func (function_definition : Sil.func) =
+  let gen_func (func : Sil.func) =
     (* The process entry point follows the C ABI and returns an i32 status code, even though
        the source-level main body has no return value. *)
-    let is_main = function_definition.Sil.fname = "main" in
+    let is_main = func.Sil.fname = "main" in
     (* IRGen learns the printed LLVM operand for each SIL value as it walks the function.
        An operand may be an immediate constant, an argument such as %arg0, or a temporary. *)
     let operands : (Sil.value, string) Hashtbl.t = Hashtbl.create 64 in
     (* LLVM temporary names are local to a function, so numbering restarts for every function. *)
     let next_temp_id = ref 0 in
     let fresh_temp () =
-      let temp_id = !next_temp_id in
+      let id = !next_temp_id in
       incr next_temp_id;
-      Printf.sprintf "%%t%d" temp_id
+      Printf.sprintf "%%t%d" id
     in
     (* Read or record a value's LLVM spelling. Keeping both operations here hides the table. *)
     let lookup_operand value = Hashtbl.find operands value in
@@ -63,24 +66,21 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
       Hashtbl.replace operands value llvm_operand
     in
     (* Look up the SIL type when choosing an LLVM type or opcode. *)
-    let value_type value = Hashtbl.find function_definition.Sil.val_ty value in
+    let value_type value = Hashtbl.find func.Sil.val_ty value in
     (* Append emitted LLVM text to the module's function buffer. *)
     let emit text = Buffer.add_string function_definitions text in
     (* parameters *)
     let parameter_declarations =
       List.map
-        (fun (value, parameter_type) ->
+        (fun (value, ty) ->
           let llvm_name = Printf.sprintf "%%arg%d" value in
           bind_operand value llvm_name;
-          Printf.sprintf "%s %s" (llvm_type parameter_type) llvm_name)
-        function_definition.Sil.params
+          Printf.sprintf "%s %s" (llvm_type ty) llvm_name)
+        func.Sil.params
     in
-    let llvm_return_type =
-      if is_main then "i32" else llvm_type function_definition.Sil.ret
-    in
+    let llvm_return_type = if is_main then "i32" else llvm_type func.Sil.ret in
     emit
-      (Printf.sprintf "define %s @%s(%s) {\n" llvm_return_type
-         function_definition.Sil.fname
+      (Printf.sprintf "define %s @%s(%s) {\n" llvm_return_type func.Sil.fname
          (String.concat ", " parameter_declarations));
     let gen_binop result operator left right =
       let operand_type = value_type left in
@@ -160,8 +160,8 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
                (lookup_operand value))
       | Types.TVoid -> ()
     in
-    let gen_instr (value, instruction) =
-      match (instruction : Sil.instr) with
+    let gen_instr (value, instr) =
+      match (instr : Sil.instr) with
       (* given as the pattern: a SIL Int_lit maps a SIL value to a constant operand *)
       | Sil.Int_lit integer -> bind_operand value (string_of_int integer)
       | Sil.Bool_lit boolean ->
@@ -172,73 +172,22 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
       | Sil.String_lit text -> bind_operand value (add_string_const text)
       | Sil.Alloc_stack _ ->
           () (* emitted in the entry block by gen_allocas below (no-op here) *)
-      | Sil.Load address ->
-          let result_operand = fresh_temp () in
-          emit
-            (Printf.sprintf "  %s = load %s, ptr %s\n" result_operand
-               (llvm_type (value_type value))
-               (lookup_operand address));
-          bind_operand value result_operand
-      | Sil.Store (stored_value, address) ->
-          emit
-            (Printf.sprintf "  store %s %s, ptr %s\n"
-               (llvm_type (value_type stored_value))
-               (lookup_operand stored_value)
-               (lookup_operand address))
-      | Sil.Binop (operator, left, right) -> gen_binop value operator left right
-      | Sil.Unop (Ast.Neg, operand) ->
-          let result_operand = fresh_temp () in
-          if value_type operand = Types.TDouble then
-            emit
-              (Printf.sprintf "  %s = fneg double %s\n" result_operand
-                 (lookup_operand operand))
-          else
-            emit
-              (Printf.sprintf "  %s = sub i64 0, %s\n" result_operand
-                 (lookup_operand operand));
-          bind_operand value result_operand
-      | Sil.Func_ref name -> bind_operand value ("@" ^ name)
-      | Sil.Apply (function_operand, arguments) ->
-          let argument_list =
-            String.concat ", "
-              (List.map
-                 (fun argument ->
-                   Printf.sprintf "%s %s"
-                     (llvm_type (value_type argument))
-                     (lookup_operand argument))
-                 arguments)
-          in
-          let return_type = value_type value in
-          if return_type = Types.TVoid then
-            emit
-              (Printf.sprintf "  call void %s(%s)\n"
-                 (lookup_operand function_operand)
-                 argument_list)
-          else
-            let result_operand = fresh_temp () in
-            emit
-              (Printf.sprintf "  %s = call %s %s(%s)\n" result_operand
-                 (llvm_type return_type)
-                 (lookup_operand function_operand)
-                 argument_list);
-            bind_operand value result_operand
-      | Sil.Print printed_value -> gen_print printed_value
+      (* TODO(09): the remaining instructions. The mapping is near 1:1 — §2 tabulates every SIL
+         instruction against its LLVM line. Emit with [emit], and register each result operand
+         with [bind_operand value (fresh_temp ())] so later instructions can refer to it.
+         Watch the ones that emit NO line (a func_ref is just an operand) and the ones that
+         produce no result (a void call, a store). *)
+      | _ ->
+          ignore gen_binop;
+          ignore gen_print;
+          failwith "TODO(09): lower a SIL instruction"
     in
     let gen_term (terminator : Sil.term) =
-      match terminator with
-      | Sil.Br target -> emit (Printf.sprintf "  br label %%bb%d\n" target)
-      | Sil.Cond_br (condition, then_block, else_block) ->
-          emit
-            (Printf.sprintf "  br i1 %s, label %%bb%d, label %%bb%d\n"
-               (lookup_operand condition) then_block else_block)
-      | Sil.Return None ->
-          emit (if is_main then "  ret i32 0\n" else "  ret void\n")
-      | Sil.Return (Some return_value) ->
-          emit
-            (Printf.sprintf "  ret %s %s\n"
-               (llvm_type function_definition.Sil.ret)
-               (lookup_operand return_value))
-      | Sil.Unreachable -> emit "  unreachable\n"
+      ignore terminator;
+      ignore is_main;
+      (* TODO(09): the terminators — br, conditional br, ret, unreachable (§2). The one special
+         case: @main returns i32, so a valueless return there is `ret i32 0`. *)
+      failwith "TODO(09): lower a SIL terminator"
     in
     (* every alloca goes at the top of the ENTRY block: alloca'd stack space is only returned
        when the function exits, so an alloca inside a loop body would grow the stack every
@@ -248,8 +197,8 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
       List.iter
         (fun (block : Sil.block) ->
           List.iter
-            (fun (value, instruction) ->
-              match (instruction : Sil.instr) with
+            (fun (value, instr) ->
+              match (instr : Sil.instr) with
               | Sil.Alloc_stack _ ->
                   let stack_operand = fresh_temp () in
                   emit
@@ -258,7 +207,7 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
                   bind_operand value stack_operand
               | _ -> ())
             (List.rev block.Sil.instrs))
-        (List.rev function_definition.Sil.blocks)
+        (List.rev func.Sil.blocks)
     in
     List.iteri
       (fun block_index (block : Sil.block) ->
@@ -266,7 +215,7 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
         if block_index = 0 then gen_allocas ();
         List.iter gen_instr (List.rev block.Sil.instrs);
         if should_emit_terminator block.Sil.term then gen_term block.Sil.term)
-      (List.rev function_definition.Sil.blocks);
+      (List.rev func.Sil.blocks);
     emit "}\n\n"
   in
   List.iter gen_func sil_module.Sil.funcs;
