@@ -79,8 +79,8 @@ type is *written down rather than deduced* — here, the coercion `e as T`:
 ```ocaml
 | Ast.Ascribe (e0, tyname, span) -> (
     match Types.of_name tyname with
-    (* infer -> check. `check_expr` hands back the CHECKED operand, and the arm wraps it:
-       the node records that the source said `as`, and `t` is the type of the whole thing. *)
+    (* infer -> check. `check_expr` hands back the CHECKED operand and the arm
+       wraps it: the node records that the source said `as`, `t` is its type. *)
     | Some t -> mk (Tast.Coerce (check_expr context e0 t)) t span
     | None ->
         report_error context span (…);
@@ -143,8 +143,9 @@ last line survives for a reason worth noticing: `1 + 2.0` has no annotation, so 
 through `check` at all; `unify` handles it inside `infer`.
 
 The obvious repair is the wrong one. Allowing *any* `Int` to become a `Double` — a promotion rule —
-buys those four programs at the cost of accepting `let d: Double = i`, which Swift rejects: the
-flexibility belongs to literals, not to the type. So the rule has to name literals, and now
+buys those four programs at the cost of accepting `let d: Double = i` for an `Int` *variable* `i`,
+which Swift rejects. That contrast is the whole rule: the flexibility belongs to literals, not to
+the type. So the rule has to name literals, and now
 `check` needs one exception — *a tree of integer literals may be a Double*. With it, almost every
 program in this subset lands on the right verdict. Almost:
 
@@ -823,7 +824,7 @@ Lexer, then parser, then types, then sema — the order you fill the holes in:
 - **`tests/oracle.t` — the headline test, the type-check oracle.** Every program in
   `oracle-corpus.txt` (32 of them) goes to `swiftc -typecheck` and to your `--typecheck`, and the
   two must *agree* on accept/reject: coercion (`let d: Double = 1 + 2` ✓), literal flex
-  (`1 + 2.0` ✓), value mismatch (`let d: Double = i` ✗), `true < false` ✗, `let d: Double = 1 % 2`
+  (`1 + 2.0` ✓), value mismatch (`let i = 1` then `let d: Double = i` ✗), `true < false` ✗, `let d: Double = 1 % 2`
   ✗ — the cases where a naive checker diverges from Swift. It cannot judge your wording, only your
   verdicts; a crash is reported as a crash, never as a rejection.
 - **`tests/test_exercises.ml`** — §6's exercises, optional: each group stays `TODO (optional)`
@@ -847,7 +848,7 @@ perf gates when there's something to optimise.
    forbids another comparison on the right.
 2. **Explicit conversions.** Type `Double(x)` and `Int(x)` as conversions: `Double(_:)` accepts an
    `Int` (or `Double`) and yields `Double`; `Int(_:)` yields `Int` (Swift's `Int(Double)` truncates).
-   Now `let d: Double = Double(i)` works where `let d: Double = i` doesn't.
+   Now `let d: Double = Double(i)` works where `let d: Double = i` doesn't, for `i` an `Int`.
 3. **Sharper annotation errors.** Point the "cannot convert … to specified type" diagnostic at the
    *annotation's* span, and add a note showing the value's inferred type — closer to swiftc's output.
 4. **A note at the comment's opener.** The unterminated-comment error fires at end of input, which
@@ -1171,7 +1172,8 @@ and infer_call context f args span =
 ```
 
 Now `let d: Double = Double(i)` checks (the `Call` infers `Double`, matching the annotation), while
-the bare `let d: Double = i` still fails — matching Swift, where conversions are explicit.
+the bare `let d: Double = i` still fails for an `Int` `i` — matching Swift, where conversions are
+explicit.
 
 One honest wrinkle, and it is the lesson of §2 coming back. `Tast.Coerce` is borrowed here because
 05 has no node of its own for this, and it works *at this concept* because nothing runs the code
