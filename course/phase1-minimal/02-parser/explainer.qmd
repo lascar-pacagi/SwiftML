@@ -37,7 +37,8 @@ half, the **syntactic** grammar, and it is this concept's actual specification. 
 
 ```
 program    ::= [ nl ] [ statement { nl statement } ] [ nl ] Eof
-nl         ::= Newline+                        # one or more; blank and comment-only lines are Newlines
+nl         ::= Newline+                        # ONE OR MORE, so `[ nl ]` above is any run
+                                               # of blank/comment-only lines, or none at all
 statement  ::= "let" Ident "=" expr            # constant binding
              | "var" Ident "=" expr            # mutable binding
              | Ident "=" expr                  # reassignment (var only — sema decides that)
