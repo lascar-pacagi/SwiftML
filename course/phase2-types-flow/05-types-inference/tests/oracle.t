@@ -8,6 +8,9 @@ A CRASH is not a rejection: `failwith "TODO"` and `assert false` also exit non-z
 them as "reject" would let an unfinished checker agree with swiftc by accident on every invalid
 program. Exit 0 is accept, 1 is reject, anything else is reported as a crash.
 
+Every program in the corpus goes through both compilers and the two verdicts must match.
+Silence is agreement; a `DISAGREE` line names the program and which way each compiler went.
+
   $ while IFS= read -r prog; do
   >   [ -n "$prog" ] || continue
   >   printf '%b\n' "$prog" > p.swift

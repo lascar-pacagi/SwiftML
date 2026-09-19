@@ -276,6 +276,9 @@ cram && /^(diff --git|index |--- |\+\+\+ )/ { next }
 # command a `-`/`+` line belongs to even when the `$` line itself is outside the hunk's context
 cram && /^@@ / { flush(); match($0, /-[0-9]+/); dline = substr($0, RSTART + 1, RLENGTH - 1) + 0; pendblk = ""; next }
 cram && /^[[:space:]]+\$ / { flush(); sub(/^[[:space:]]+/, ""); pendblk = cmdblk[tfile, $0]; dline++; next }
+# A `>` line continues the COMMAND, it is not output. Counting it as both wanted and produced
+# put the whole shell script in each block and buried the one line that differed underneath it.
+cram && /^[[:space:]]+> / { dline++; next }
 # Strip the diff marker and the cram body's two-space indent, and NO MORE: eating the rest of the
 # leading space made a whitespace-only difference compare equal, so a test dune had failed was
 # reported PASS. Emitted IR is indented, so that is a difference worth seeing.
