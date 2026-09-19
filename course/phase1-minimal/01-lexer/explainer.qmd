@@ -38,9 +38,10 @@ integer arithmetic. The entire phase (lexer → parser → sema → codegen) tar
 Everything else is out of scope until later phases: `String`/`Double`/`Bool`, `if`/`while`/`for`,
 `func`, structs/enums, generics, Unicode identifiers, string/float literals, interpolation, …
 
-> **Swift notes** — you know systems languages but not Swift yet, so here's what's non-obvious about
-> this subset. (The lexer only *tokenizes*; the semantics below land in `03-sema`/`04-codegen`, but
-> they're worth knowing now because matching them is what "parity with `swiftc`" means.)
+> **Swift notes** — what is non-obvious about this subset coming from C, Rust or Go. The lexer only
+> *tokenizes*, and every rule below is enforced later, in `03-sema` or `04-codegen`. They are here
+> because each one is a place where a reasonable guess gives a different answer from Swift's, and
+> Phase 1 is done only when `swiftml` and `swiftc` agree on every program in the corpus.
 >
 > - **`let` vs `var` are bindings, not `const`.** Think Rust's `let` / `let mut`: `let` is an
 >   immutable binding checked at compile time, `var` is reassignable. The lexer just recognizes them
