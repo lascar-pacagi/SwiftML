@@ -14,7 +14,7 @@ downstream (parser, type checker, codegen) works on tokens, never on characters.
 - **You implement:** `lexer.ml : next` (in this concept dir) — return the next token from the cursor.
 - **Outcome:** `swiftml --emit-tokens arith.swift` prints the correct token stream; the parser in
   concept 02 consumes it.
-- **Out of scope (Phase 1):** string/float literals, interpolation (`"n is \(n)"` — an
+- **Out of scope (Phase 1):** string/float literals, interpolation (`"area is \(area)"` — an
   expression embedded in a literal, so the scanner would have to lex code inside a string),
   most keywords/operators, Unicode identifiers — added in later phases.
 
