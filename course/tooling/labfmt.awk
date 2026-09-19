@@ -167,8 +167,12 @@ function load_t(file,   line, blk, prose, started, ln, here, hereblk, cmd, cont,
   next
 }
 /^Testing `/ {
+  # flush FIRST: a cram diff that ends where an alcotest suite begins is still the CRAM file's
+  # failure, and `sec` moves `cur`. Filing it under the suite that happens to follow made dune's
+  # own red report as PASS — `/^File "/` above has always had this order.
+  flush(); drop_pending()
   match($0, /`[^']+'/); sec("alcotest", substr($0, RSTART + 1, RLENGTH - 2))
-  flush(); drop_pending(); cram = 0; build = 0; next
+  cram = 0; build = 0; next
 }
 
 # ---- a dune / OCaml error: keep the whole block, verbatim ------------------

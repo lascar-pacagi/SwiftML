@@ -221,6 +221,19 @@ Two bugs, one root cause, and the second is only reachable once the first is fix
 
 ## S2 — shipped-state / carry-forward (all FIXED this pass)
 
+- **`labfmt.awk` reported a FAILING cram test as PASS** whenever dune emitted an alcotest suite
+  immediately after the diff. `/^Testing `/` called `sec("alcotest", …)` *before* `flush()`, so the
+  pending cram diff was filed under the suite that followed instead of the `.t` it came from, and
+  the `bad` key never surfaced. `make lab` then printed `17 passing, 0 failing` while exiting 1 —
+  the exit code was the only honest part of the report. (`/^File "/` has always flushed first.)
+  **[FIXED]** flush before `sec`; verified the hidden failure appears and every answer key still
+  reads clean. Worth re-reading any past "green" claim that rested on `make lab` alone rather than
+  on its exit status.
+- **`make check-solution` cannot pass for a concept with no local copy of its earlier stages**
+  (`phase1-minimal/03-sema` has only `sema.ml`; its lexer/parser come from 01/02, which stay
+  skeletons in the worktree, so every case reports "not started"). Pre-existing, unrelated to the
+  above — the phase-2+ concepts carry their own copies and are unaffected. **[OPEN]**
+
 - **`40-macros/macros.ml` shipped the *solution*, not the skeleton** (0 `failwith` holes — the
   learner opens the file to the answer). **[FIXED]** re-carved `TODO(40a)/(40b)`; lab RED-on-skeleton
   re-verified.
