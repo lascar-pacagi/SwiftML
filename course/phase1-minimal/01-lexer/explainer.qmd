@@ -14,8 +14,9 @@ downstream (parser, type checker, codegen) works on tokens, never on characters.
 - **You implement:** `lexer.ml : next` (in this concept dir) — return the next token from the cursor.
 - **Outcome:** `swiftml --emit-tokens arith.swift` prints the correct token stream; the parser in
   concept 02 consumes it.
-- **Out of scope (Phase 1):** string/float literals, interpolation, most keywords/operators,
-  Unicode identifiers — added in later phases.
+- **Out of scope (Phase 1):** string/float literals, interpolation (`"n is \(n)"` — an
+  expression embedded in a literal, so the scanner would have to lex code inside a string),
+  most keywords/operators, Unicode identifiers — added in later phases.
 
 We hand-write it (rather than use `ocamllex`) for two reasons: it's how the **real Swift compiler**
 does it (`swift/lib/Parse/Lexer.cpp` is a hand-written DFA), and it gives us full control over
