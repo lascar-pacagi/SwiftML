@@ -63,9 +63,9 @@ into a clean token stream (we'll trace it in §2):
 
 ```swift
 // area of a rectangle
-let width  = 8
+let width  = 12
 var height = 5
-print(width * height - 3)   /* prints 37 */
+print(width * height - 3)   /* prints 57 */
 ```
 
 ## 2. Concepts in depth
@@ -133,15 +133,16 @@ args       ::= expr ( "," expr )*
 ```
 
 **Tracing the example.** Run `swiftml --emit-tokens` on the §1 program and you get the stream below.
-Watch three things: the comment-only first line still yields a `newline`; multi-digit `8` is one
-`int(8)` (maximal munch); and the trailing `/* prints 37 */` is dropped, but its line's `\n` is not.
+Watch three things: the comment-only first line still yields a `newline`; the two characters `12`
+become one `int(12)` rather than two `int`s (maximal munch); and the trailing `/* prints 57 */` is
+dropped, but its line's `\n` is not.
 
 ```
 newline          # line 1 was only a comment: skipped, but its line break is a token
 let              # `let` matched the keyword table, so Kw_let, not ident(let)
 ident(width)
 =
-int(8)
+int(12)
 newline
 var
 ident(height)
