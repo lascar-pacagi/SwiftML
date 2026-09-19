@@ -115,8 +115,6 @@ it right-associative. Our `infix_bp` table (already in `parser.ml`) gives `+ -` 
 
 ![Pratt parsing of `1 + 2 * 3`: `*` binds tighter, so it forms a subtree first.](figs/pratt.png)
 
-*(regenerate: `make figs C=phase1-minimal/02-parser`)*
-
 > Oracle: `../../swift/lib/Parse/ParseExpr.cpp` — `parseExprSequence` collects a flat sequence of
 > operands and operators, then folds by precedence group. Same idea; Swift's version handles
 > user-defined operators and precedence groups, which we don't (yet).

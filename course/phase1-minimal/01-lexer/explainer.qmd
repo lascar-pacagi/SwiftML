@@ -204,8 +204,6 @@ char still belongs to the current token* (all digits; all identifier chars).
 
 ![The lexer DFA: skip trivia, then dispatch on the first character.](figs/dfa.png)
 
-*(regenerate: `make figs C=phase1-minimal/01-lexer`)*
-
 ### The third file: `diagnostics.ml`
 
 This directory holds three sources, all one library (`swiftml_lexer`): `token.ml` (the contract —

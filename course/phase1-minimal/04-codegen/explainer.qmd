@@ -211,8 +211,6 @@ assignment reuses the slot and stores again. Wrap the lot in
 ![From AST to LLVM IR for `print(1 + 2 * 3)`: each node emits its instructions and returns the operand holding its result, in post-order — children first, so their operands exist before the parent names them. The literals emit nothing at all. The `print` node is last, and its "result" is the dummy operand `"0"`: a `print` statement's value is discarded, but `emit_expr` must return *something* because every expression case does — an `i64`
 operand, so `"0"` rather than printf's `i32` result.](figs/lowering.png)
 
-*(regenerate: `make figs C=phase1-minimal/04-codegen`)*
-
 ## 3. Build it, step by step
 
 Open `irgen.ml` in this directory.
