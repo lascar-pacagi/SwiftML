@@ -110,7 +110,10 @@ def make_dfa():
     box(ax, 8.7, 5.7, 1.7, 0.7, "Eof", EMIT, bold=True)
     arrow(ax, (6.5, 5.7), (7.85, 5.7), "yes", ly=0.26)
 
-    # dispatch fan-out: four branches down to scan steps, then to emitted tokens
+    # dispatch fan-out: four branches down to scan steps, then to emitted tokens.
+    # Routed as an elbow (stub -> shared rail -> one vertical drop per branch) rather
+    # than as diagonals: a guard label beside a vertical drop has the whole column to
+    # itself, where on a shallow diagonal fan it lands on top of a neighbouring edge.
     branches = [
         # x,   scan label,                       token label
         (1.4, "scan digits\n(maximal munch)", "Int(n)"),
@@ -118,12 +121,25 @@ def make_dfa():
         (6.2, "single char", "+ - * / % = ( ) ,"),
         (8.6, "—", "Newline"),
     ]
-    guards = ["0–9", "A–Z a–z _", "operator/punct", "\\n"]
+    guards = ["0–9", "A–Z a–z _", "operator / punct", "\\n"]
+    rail = 3.62
+    line(ax, (5, 3.90), (5, rail))
+    line(ax, (branches[0][0], rail), (branches[-1][0], rail))
     for (x, scan, tok), guard in zip(branches, guards):
-        # from dispatch box bottom to each scan node
-        arrow(ax, (5, 3.90), (x, 3.18), guard, rad=0.0, lx=(x - 5) * 0.16, ly=0.18)
-        box(ax, x, 2.7, 2.05, 0.95, scan, TRIVIA, fontsize=9)
-        arrow(ax, (x, 2.22), (x, 1.62))
+        arrow(ax, (x, rail), (x, 3.02))
+        ax.text(
+            x + 0.14,
+            3.30,
+            guard,
+            ha="left",
+            va="center",
+            fontsize=8.5,
+            color=TEXT,
+            fontstyle="italic",
+            zorder=6,
+        )
+        box(ax, x, 2.52, 2.05, 0.95, scan, TRIVIA, fontsize=9)
+        arrow(ax, (x, 2.04), (x, 1.58))
         box(ax, x, 1.15, 2.05, 0.7, tok, EMIT, fontsize=9, bold=True)
 
     # loop-back: emitted token -> next() (driver calls next again), routed up the
