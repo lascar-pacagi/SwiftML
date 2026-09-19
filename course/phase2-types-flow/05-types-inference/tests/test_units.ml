@@ -537,8 +537,28 @@ let test_check_comparison_reports () =
       refuses
         (lbl op "1" "2" ^ " against Int")
         (bin_ op (int_ 1) (int_ 2))
-        Types.TInt (convert "Bool" "Int"))
+        Types.TInt (convert "Bool" "Int");
+      refuses
+        (lbl op "1" "2" ^ " against String")
+        (bin_ op (int_ 1) (int_ 2))
+        Types.TString (convert "Bool" "String"))
     (equality @ ordered)
+
+(* The same shape twice more: a node whose type its own form decides, handed an expectation it
+   cannot take. Pushing down must not reach either. *)
+let test_check_other_shapes () =
+  (* the expectation reaches the OPERAND, so the complaint is about it, not about `-`.
+     swiftc words this one "to expected argument type 'Double'"; we have one convert
+     message and use it. *)
+  refuses "-true against Double" (neg_ (bool_ true)) Types.TDouble
+    (convert "Bool" "Double");
+  refuses "1 as Int against Double" (as_ (int_ 1) "Int") Types.TDouble
+    (convert "Int" "Double");
+  (* swiftc says type '()' here; with no TVoid yet, print's result is TInt — §2's simplification.
+     Both reject the program. *)
+  refuses "print(1) against Double"
+    (Ast.Call ("print", [ int_ 1 ], sp))
+    Types.TDouble (convert "Int" "Double")
 
 let test_check_reports () =
   refuses "\"s\" against Int" (str_ "s") Types.TInt (convert "String" "Int");
@@ -600,6 +620,29 @@ let test_assign_checks_value () =
   ignore (Sema.check_stmt cx (assign_ "m" (str_ "s")));
   Alcotest.(check (list string))
     "a mismatch reports" [ convert "String" "Double" ] (messages d)
+
+(* `let b: Bool = 1 < 2` is fine and `let d: Double = 1 < 2` is not — the annotation is an
+   expectation, and a comparison cannot take a numeric one. Same for an assignment's target
+   type. This is the unit cases above, seen the way it is actually written. *)
+let test_annotated_comparison () =
+  let cx, d = fresh () in
+  ignore (Sema.check_stmt cx (let_ ~annot:"Bool" ~is_var:false "ok" (bin_ Ast.Lt (int_ 1) (int_ 2))));
+  Alcotest.(check ty) "Bool annotation fits" Types.TBool (fst (bound cx "ok"));
+  Alcotest.(check (list string)) "silently" [] (messages d)
+
+let test_annotated_comparison_reports () =
+  let cx, d = fresh () in
+  ignore (Sema.check_stmt cx (let_ ~annot:"Double" ~is_var:false "bad" (bin_ Ast.Lt (int_ 1) (int_ 2))));
+  Alcotest.(check (list string))
+    "a comparison is not a Double" [ convert "Bool" "Double" ] (messages d)
+
+let test_assign_comparison_reports () =
+  let cx, d = fresh () in
+  ignore (Sema.check_stmt cx (let_ ~annot:"Double" ~is_var:true "m" (int_ 0)));
+  ignore (Sema.check_stmt cx (assign_ "m" (bin_ Ast.Lt (int_ 1) (int_ 2))));
+  Alcotest.(check (list string))
+    "the target's type is an expectation too" [ convert "Bool" "Double" ]
+    (messages d)
 
 let test_assign_to_let_reports () =
   let cx, d = fresh () in
@@ -689,6 +732,7 @@ let () =
           case "check_expr: % not at Double" test_check_mod_reports;
           case "check_expr: comparisons fall through" test_check_comparison;
           case "check_expr: comparisons refuse a number" test_check_comparison_reports;
+          case "check_expr: other fixed shapes refuse" test_check_other_shapes;
           case "check_expr: mismatch reports" test_check_reports;
         ] );
       ( "05e",
@@ -698,6 +742,9 @@ let () =
           case "check_stmt: bad annotated value" test_annotated_let_reports;
           case "check_stmt: unknown type reports" test_unknown_annotation;
           case "check_stmt: assign checks value" test_assign_checks_value;
+          case "check_stmt: Bool annotation fits <" test_annotated_comparison;
+          case "check_stmt: Double annotation does not" test_annotated_comparison_reports;
+          case "check_stmt: assign refuses a Bool" test_assign_comparison_reports;
           case "check_stmt: assign to let reports" test_assign_to_let_reports;
           case "check_stmt: assign unknown reports" test_assign_unknown_reports;
           case "check_stmt: expr stmt is inferred" test_expr_stmt;
