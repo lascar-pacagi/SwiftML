@@ -430,6 +430,35 @@ let test_ascribe () =
   infers "true as Bool" (as_ (bool_ true) "Bool") Types.TBool;
   infers "\"s\" as String" (as_ (str_ "s") "String") Types.TString
 
+(* The TYPE is only half of `as`. The node has to be there too, and a cram diff of two whole
+   s-expressions is a poor way to be told which one is missing — so name the shape here. *)
+let kind_name : Tast.expr_kind -> string = function
+  | Tast.Int_lit _ -> "int_lit"
+  | Tast.Double_lit _ -> "double_lit"
+  | Tast.Bool_lit _ -> "bool_lit"
+  | Tast.String_lit _ -> "string_lit"
+  | Tast.Local _ -> "local"
+  | Tast.Unary _ -> "unary"
+  | Tast.Binary _ -> "binary"
+  | Tast.Print _ -> "print"
+  | Tast.Coerce _ -> "coerce"
+
+let test_ascribe_node () =
+  let cx, _ = fresh () in
+  let n = Sema.infer cx (as_ (int_ 1) "Double") in
+  match n.Tast.e with
+  | Tast.Coerce inner ->
+      Alcotest.(check ty) "the coerce node's type" Types.TDouble n.Tast.ty;
+      Alcotest.(check ty) "the operand inside it" Types.TDouble inner.Tast.ty
+  | other ->
+      Alcotest.failf
+        ("1 as Double@."
+        ^^ "  `infer` handed back a `%s` node; expected a `coerce` wrapping it.@."
+        ^^ "  Checking the operand at Double is only half of `as`: the node itself@."
+        ^^ "  has to be built, or the tree cannot tell `1 as Double` from a literal@."
+        ^^ "  that merely flexed. swiftc keeps a `coerce_expr` here too.")
+        (kind_name other)
+
 let test_ascribe_reports () =
   reports "i as Double" (as_ (var_ "i") "Double") (convert "Int" "Double");
   reports "1 as Bool" (as_ (int_ 1) "Bool") (convert "Int" "Bool");
@@ -630,6 +659,7 @@ let () =
       ( "05g",
         [
           case "as: an identity coercion" test_ascribe;
+          case "as: leaves a coerce node" test_ascribe_node;
           case "as: a mismatch reports" test_ascribe_reports;
           case "as: unknown type reports" test_ascribe_unknown_type;
         ] );
