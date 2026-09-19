@@ -414,6 +414,33 @@ let test_print_arity () =
   reports "print()" (Ast.Call ("print", [], sp))
     "print(_:) expects exactly one argument"
 
+(* A bad call still checks what is inside it. Stopping at the callee hides every mistake in the
+   arguments until the callee is fixed, which is the one-bug-per-run behaviour the whole checker
+   is written to avoid. swiftc agrees: `foo(nope)` names both. *)
+let reports_all what e expected =
+  let cx, d = fresh () in
+  ignore (Sema.infer cx e);
+  Alcotest.(check (list string)) what expected (messages d)
+
+let test_unknown_call_checks_args () =
+  reports_all "foo(nope)"
+    (Ast.Call ("foo", [ var_ "nope" ], sp))
+    [ "cannot find 'foo' in scope"; "cannot find 'nope' in scope" ];
+  reports_all "foo(i, nope)"
+    (Ast.Call ("foo", [ var_ "i"; var_ "nope" ], sp))
+    [ "cannot find 'foo' in scope"; "cannot find 'nope' in scope" ];
+  reports_all "foo(-true)"
+    (Ast.Call ("foo", [ neg_ (bool_ true) ], sp))
+    [ "cannot find 'foo' in scope";
+      "unary operator '-' cannot be applied to an operand of type 'Bool'" ]
+
+(* the same for a call that IS print but with the wrong count — the arity complaint must not
+   swallow what is inside the arguments either *)
+let test_print_arity_checks_args () =
+  reports_all "print(nope, 2)"
+    (Ast.Call ("print", [ var_ "nope"; int_ 2 ], sp))
+    [ "print(_:) expects exactly one argument"; "cannot find 'nope' in scope" ]
+
 let test_unknown_function () =
   reports "foo()" (Ast.Call ("foo", [], sp)) "cannot find 'foo' in scope"
 
@@ -715,6 +742,8 @@ let () =
           case "infer: print infers its arg" test_print_infers_arg;
           case "infer: print arity reports" test_print_arity;
           case "infer: unknown function reports" test_unknown_function;
+          case "infer: a bad call checks its args" test_unknown_call_checks_args;
+          case "infer: bad arity checks its args" test_print_arity_checks_args;
         ] );
       ( "05g",
         [
