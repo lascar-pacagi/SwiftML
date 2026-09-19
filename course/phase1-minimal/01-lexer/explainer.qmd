@@ -217,14 +217,14 @@ fully written, mirroring `swift/lib/AST/DiagnosticEngine.cpp`:
 type severity = Error | Warning | Note
 type t    = { severity : severity; span : Token.span; message : string }
 type sink = { mutable diagnostics : t list             (* threaded through the front end *)
-            ; source : string option }                 (* the text, for rendering snippets *)
+            ; source : string option }            (* the text, for rendering snippets *)
 
 val create     : ?source:string -> unit -> sink
 val error      : sink -> Token.span -> string -> unit
 val warning    : sink -> Token.span -> string -> unit
-val note       : sink -> Token.span -> string -> unit   (* explains the diagnostic above it *)
+val note       : sink -> Token.span -> string -> unit  (* explains the one above it *)
 val has_errors : sink -> bool
-val print      : sink -> unit                   (* swiftc-style `line:col: error: message` *)
+val print      : sink -> unit              (* swiftc-style `line:col: error: message` *)
 ```
 
 `print` renders what `swiftc -diagnostic-style=llvm` renders: the message, then the source line it
@@ -713,11 +713,13 @@ code here is the part you fill in. **Try §3 first — this is the answer.**
 
 ```ocaml
 (* Two-char lookahead, for the comment forms `//`, `/*`, `*/`. *)
-let peek_next_char (lexer : t) : char = if lexer.pos + 1 < lexer.len then lexer.source.[lexer.pos + 1] else '\000'
+let peek_next_char (lexer : t) : char =
+  if lexer.pos + 1 < lexer.len then lexer.source.[lexer.pos + 1] else '\000'
 
 (* Swift identifier/number character classes (ASCII subset for Phase 1). *)
 let is_digit (c : char) : bool = c >= '0' && c <= '9'
-let is_identifier_start (c : char) : bool = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c = '_'
+let is_identifier_start (c : char) : bool =
+  (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c = '_'
 let is_identifier_continue (c : char) : bool = is_identifier_start c || is_digit c
 
 let next (lexer : t) : Token.t =
@@ -752,7 +754,8 @@ let next (lexer : t) : Token.t =
         done;
         (* depth > 0 here ⇒ unterminated: swiftc's wording, swiftc's position (end of
            input), and we carry on. Exercise 2 adds the note pointing at the opener. *)
-        if !depth > 0 then report_error lexer (current_position lexer) "unterminated '/*' comment";
+        if !depth > 0 then
+          report_error lexer (current_position lexer) "unterminated '/*' comment";
         skip_trivia ())
       else ()
   in
@@ -838,11 +841,13 @@ while !continue do
     else (
       let tag = match c with
         | '+' -> t_plus | '-' -> t_minus | '*' -> t_star | '/' -> t_slash | '%' -> t_percent
-        | '=' -> t_eq | '(' -> t_lparen | ')' -> t_rparen | ',' -> t_comma | '\n' -> t_newline
+        | '=' -> t_eq | '(' -> t_lparen | ')' -> t_rparen | ',' -> t_comma
+        | '\n' -> t_newline
         | _ -> -1        (* not a token: reported below, then skipped *)
       in
       incr pos;
-      if tag < 0 then report_error s !pos "invalid character in source file" else push tag s !pos)
+      if tag < 0 then report_error s !pos "invalid character in source file"
+      else push tag s !pos)
 done;
 { tags = !tags; starts = !starts; ends = !ends; n = !n; source }
 
@@ -875,7 +880,8 @@ if is_digit c then (
   while (not (at_end lexer)) && (let d = peek_char lexer in is_digit d || d = '_') do
     ignore (advance_char lexer)
   done;
-    make_token lo lexer (Token.Int (int_of_string (String.sub lexer.source start (lexer.pos - start)))))
+  let lexeme = String.sub lexer.source start (lexer.pos - start) in
+  make_token lo lexer (Token.Int (int_of_string lexeme)))
 ```
 
 No stripping step is needed: OCaml's own integer literals allow `_`, and `int_of_string` accepts it
@@ -892,7 +898,7 @@ already there — it just has to survive the loop:
 
 ```ocaml
 else if c = '/' && peek_next_char lexer = '*' then (
-  let opener = current_position lexer in                       (* <- before consuming the opener *)
+  let opener = current_position lexer in          (* <- before consuming the opener *)
   ignore (advance_char lexer); ignore (advance_char lexer);
   let depth = ref 1 in
   while !depth > 0 && not (at_end lexer) do
@@ -902,14 +908,17 @@ else if c = '/' && peek_next_char lexer = '*' then (
     let eof = current_position lexer in
     report_error lexer eof "unterminated '/*' comment";
     let note span msg =
-      Diagnostics.emit lexer.diagnostics { Diagnostics.severity = Note; span; message = msg }
+      Diagnostics.emit lexer.diagnostics
+        { Diagnostics.severity = Note; span; message = msg }
     in
     note { Token.lo = opener; hi = { opener with Token.col = opener.Token.col + 2 } }
       "comment started here";
     let terminator = String.concat "" (List.init !depth (fun _ -> "*/")) in
     note { Token.lo = eof; hi = eof }
       (if !depth = 1 then Printf.sprintf "insert '%s' to close this comment" terminator
-       else Printf.sprintf "insert '%s' to close these %d nested comments" terminator !depth));
+       else
+         Printf.sprintf "insert '%s' to close these %d nested comments"
+           terminator !depth));
   skip_trivia ())
 ```
 
