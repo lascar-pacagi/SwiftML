@@ -385,9 +385,21 @@ make profile-cpu C=phase1-minimal/01-lexer   # sampled call tree (macOS `sample`
 
 `bench/profile.ml` prints four views, each attacking the question from a different side.
 
-**1 — cost per construct.** The same 2 MB, nine times, each dominated by one token shape. Compare
-`ns/token` across shapes (MB/s also reflects how many tokens a shape packs per byte, so it flatters
-comments, which produce none):
+**The diagnosis is one table** — view 2, the same input at three levels of ambition:
+
+```
+   byte scan floor (no tokens)          1025.6 MB/s      1.95 ms
+   v1_fast (offsets, columnar)           233.6 MB/s      8.56 ms
+   v0 (Token.t list + line/col)           40.3 MB/s     49.68 ms
+
+   => scanning itself is 4% of v0's time; the other 96% is what v0 BUILDS
+```
+
+Touching every byte costs 2 ms; the lexer costs 50 ms. **Optimising the scan loop cannot win more
+than 4%.** The other three views are that sentence in detail.
+
+**View 1, cost per construct** — the same 2 MB nine times, each run dominated by one token shape.
+Read `ns/token`, not MB/s, which flatters comments because they produce no tokens at all:
 
 ```
    construct             MB/s v0    MB/s v1  ns/token v0     tokens
@@ -395,105 +407,47 @@ comments, which produce none):
    integers                 78.5      393.6        101.9     250001
    operators                26.3       92.9         76.0    1000009
    line comments           181.9      513.1         99.0     111113
-   block comments          116.3      478.1           -           1
 ```
 
-Comments are the *cheapest* bytes in the file — they never build anything. Identifiers are the
-dearest tokens: they call `String.sub`, and `Token.keyword_or_ident` compares the result.
+Comments are the cheapest bytes in the file: they build nothing. Identifiers are the dearest
+tokens: `String.sub`, then `Token.keyword_or_ident` compares the result.
 
-**2 — the cost ladder.** The same input at three levels of ambition, which separates *scanning*
-from *building*:
+**View 3, allocation accounting** — `Gc.quick_stat` deltas around one pass. "Allocation-bound"
+stops being a claim and becomes a number: **~25 words/token for v0, ~7 for v1_fast**.
 
-```
-   byte scan floor (no tokens)          1025.6 MB/s      1.95 ms   memory bandwidth ceiling
-   v1_fast (offsets, columnar)           233.6 MB/s      8.56 ms   612256 tokens
-   v0 (Token.t list + line/col)           40.3 MB/s     49.68 ms   612256 tokens
-
-   => scanning itself is 4% of v0's time; the other 96% is what v0 BUILDS
-```
-
-That single line is the whole diagnosis. Touching every byte costs 2 ms; the lexer costs 50 ms.
-**Optimising the scan loop cannot win more than 4%.**
-
-**3 — allocation accounting.** `Gc.quick_stat` deltas around one pass: words allocated, words per
-token, minor and major collections. This is where "allocation-bound" stops being a claim and
-becomes a number (~25 words/token for the reference v0, ~7 for v1_fast).
-
-**4 — allocation sites.** `Gc.Memprof` samples one allocation in a thousand *with a callstack*, and
-the report attributes the sampled words to the innermost frame that has a source location:
+**View 4, allocation sites** — `Gc.Memprof` samples one allocation in a thousand *with a
+callstack*, and attributes the words to the innermost frame that has a source location. Three runs,
+three pictures:
 
 ```
-   lexer.ml:22 current_position            22.0%  ########
-   lexer.ml:37 make_token                  19.3%  #######
+   v0                          v1_fast (scan only)           v1_fast + to_tokens
+   22.0% current_position      66.9% lex.push.grow           29.1% position_of_offset
+   19.3% make_token            11.5% Array.make tags         17.7% lex.push.grow
+                               11.5% Array.make ends         11.1% to_tokens.build
+                               10.1% Array.make starts       10.9% to_tokens.build
 ```
 
-That is as close as it gets to "this line is the bottleneck" — `current_position` builds a `Token.pos`, `make_token`
-builds the token and its span, and `take_while` is a closure allocated per call.
+Left: a `Token.pos` and a span per token. Middle: four *arrays* — the initial three and their
+doublings — and nothing per token, because the scan never builds one. Right is the honest one: ask
+for every token's span and the records come back, `position_of_offset` now the biggest allocator of
+all. The fast rung **deferred** those costs, it did not remove them — which is why the parser is
+meant to consume the soup and ask for a position only when it has a diagnostic to place, exactly as
+swiftc does with `SourceLoc` and `SourceManager`.
 
-Once the fast rung exists, the same section runs for **it** too, and the contrast is the lesson:
-
-```
-4. ALLOCATION SITES (v1_fast)
-   lexer_v1_fast.ml:113 Lexer_v1_fast.lex.push.grow   66.9%
-   lexer_v1_fast.ml:105 Lexer_v1_fast.lex             11.5%   (Array.make tags)
-   lexer_v1_fast.ml:107 Lexer_v1_fast.lex             11.5%   (Array.make ends)
-   lexer_v1_fast.ml:106 Lexer_v1_fast.lex             10.1%   (Array.make starts)
-```
-
-Four sites, all of them *arrays* — the initial three and their doublings. Nothing is attributed to a
-token, because the scan never builds one. "Allocates essentially nothing per token" stops being a
-claim and becomes a list you can read.
-
-And then the honest third view, `v1_fast + to_tokens`, which materialises the same `Token.t list`
-v0 produces:
+**The CPU view** says the same thing from outside. `make profile-cpu` attaches macOS `sample` to a
+steady workload (`profile.exe --spin`, no Memprof overhead) and sorts frames by top-of-stack:
 
 ```
-   lexer_v1_fast.ml:84  Lexer_v1_fast.position_of_offset           29.1%
-   lexer_v1_fast.ml:113 lex.push.grow                  17.7%
-   lexer_v1_fast.ml:262 to_tokens.build                11.1%
-   lexer_v1_fast.ml:257 to_tokens.build                10.9%
-   lexer_v1_fast.ml:259 to_tokens.build                10.9%
-```
-
-The records and the positions are back — `position_of_offset` is now the single biggest allocator. The fast rung
-never made those costs disappear, it **deferred** them; demand every token's span and you pay again.
-That is exactly why the parser is meant to consume the soup, asking for a position only when it has
-a diagnostic to place — which is what swiftc does with `SourceLoc` and `SourceManager`.
-
-**And the CPU view.** `make profile-cpu` runs a steady lexing workload (`profile.exe --spin`,
-v0 only, no Memprof overhead) and attaches macOS `sample` to it, then flattens the call tree and
-sorts by top-of-stack:
-
-```
-   frame                                       samples  share
-   caml_shared_try_alloc                           780   18.6% [GC]
-   do_some_marking                                 661   15.8% [GC]
-   pool_sweep                                      612   14.6% [GC]
-   oldify_one                                      566   13.5% [GC]
-   oldify_mopup                                    295    7.0% [GC]
-   Lexer.next                                      277    6.6%
-   try_update_object_header                        271    6.5% [GC]
-   Lexer.advance_char                                      153    3.7%
-   List.rev_append                                  96    2.3%
-   Lexer.take_while                                 76    1.8%
-   ...
-
-   (the table lists the top 15 of 27 frames = 96.7% of samples; the shares below
-    are over ALL frames, so they do not add up from the rows above)
-
-   OCaml code (yours + stdlib)   20.5%   14 frames
    GC / allocator                76.5%    7 frames
+   OCaml code (yours + stdlib)   20.5%   14 frames
    other runtime                  3.0%    6 frames
 ```
 
-Two things to read carefully here. The **table is a top-15 excerpt while the three shares cover
-every frame**, so don't try to add the rows up — the report prints how many frames exist and what
-fraction the visible ones account for, precisely so the two can't be confused. And the first bucket
-is labelled **"yours + stdlib"** because the demangler cannot tell your code from the standard
-library: both are ordinary OCaml frames. In the run above, `List.rev_append` (2.3%, from the
-`List.rev` at the end of `tokenize`) and `List.length_aux` (1.2%, the harness counting tokens) are
-stdlib, so *your* lexer is nearer 16% than 20%. Frames like `parse_intnat` — the C function behind
-`int_of_string` — land in "other runtime" instead.
+Three quarters of the CPU is the collector — `caml_shared_try_alloc`, `do_some_marking`,
+`pool_sweep`, `oldify_one`. `Lexer.next` itself is 6.6%. Two notes on reading the full report: the frame table
+it prints is a top-15 excerpt while these shares cover *every* frame, so the rows do not add up to
+them; and "yours + stdlib" is one bucket because both are ordinary OCaml frames — `List.rev_append`
+(from `tokenize`'s `List.rev`) sits in it, so *your* lexer is nearer 16% than 20%.
 
 **Profiling the fast rung.** Once `lexer_v1_fast.ml` works, pass the rung — the tool spins one
 scanner at a time, because the bench interleaves both and v0 (nine times slower) would swamp the
