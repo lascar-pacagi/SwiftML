@@ -340,7 +340,7 @@ pin the corners that are easy to get subtly wrong:
   file (just `eof`). Each is a place where a munch loop without a bounds check walks off the end.
 
 The goldens were produced by running the answer key; they are the specification, not a
-recording of your output — if `dune promote` looks tempting, the test is telling you something.
+recording of your output.
 Expected for `print(1 + 2)`:
 
 ```
