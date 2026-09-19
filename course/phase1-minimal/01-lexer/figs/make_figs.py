@@ -10,12 +10,14 @@ Produces:
 
 Real figure, from a real script (per CLAUDE.md: diagrams come from figs/, not stock art).
 """
+import math
 import os
 import matplotlib
 
 matplotlib.use("Agg")  # headless: write a PNG, never open a window
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+from matplotlib.path import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -81,6 +83,40 @@ def arrow(ax, p0, p1, label=None, rad=0.0, lx=0.0, ly=0.0):
         )
 
 
+def elbow(ax, pts, head=False, radius=0.22):
+    """A right-angled connector drawn as a SINGLE path, with its corners rounded.
+
+    Two butt-ended segments meeting at a corner leave a notch, and a hard 90° reads
+    oddly beside boxes that are all rounded. Round each corner with a quadratic
+    through the vertex, clamped so it never eats more than half of either leg.
+    """
+    verts = [pts[0]]
+    codes = [Path.MOVETO]
+    for i in range(1, len(pts) - 1):
+        (px, py), (vx, vy), (nx, ny) = pts[i - 1], pts[i], pts[i + 1]
+        din = math.hypot(vx - px, vy - py)
+        dout = math.hypot(nx - vx, ny - vy)
+        r = min(radius, din / 2, dout / 2)
+        a = (vx + (px - vx) / din * r, vy + (py - vy) / din * r)
+        b = (vx + (nx - vx) / dout * r, vy + (ny - vy) / dout * r)
+        verts += [a, (vx, vy), b]
+        codes += [Path.LINETO, Path.CURVE3, Path.CURVE3]
+    verts.append(pts[-1])
+    codes.append(Path.LINETO)
+    ax.add_patch(
+        FancyArrowPatch(
+            path=Path(verts, codes),
+            arrowstyle="-|>" if head else "-",
+            mutation_scale=14,
+            linewidth=1.3,
+            color=EDGE,
+            joinstyle="round",
+            capstyle="round",
+            zorder=1,
+        )
+    )
+
+
 def line(ax, p0, p1):
     """A plain connector segment (no arrowhead)."""
     ax.add_patch(
@@ -123,10 +159,9 @@ def make_dfa():
     ]
     guards = ["0–9", "A–Z a–z _", "operator / punct", "\\n"]
     rail = 3.62
-    line(ax, (5, 3.90), (5, rail))
-    line(ax, (branches[0][0], rail), (branches[-1][0], rail))
-    for (x, scan, tok), guard in zip(branches, guards):
-        arrow(ax, (x, rail), (x, 3.02))
+    line(ax, (5, 3.90), (5, rail))  # the stub, drawn once: four rounded corners
+    for (x, scan, tok), guard in zip(branches, guards):  # here would arch over the rail
+        elbow(ax, [(5, rail), (x, rail), (x, 3.02)], head=True)
         ax.text(
             x + 0.14,
             3.30,
@@ -145,9 +180,8 @@ def make_dfa():
     # loop-back: emitted token -> next() (driver calls next again), routed up the
     # right margin as a clean elbow so it never crosses the dispatch fan.
     rx = 10.8
-    line(ax, (9.63, 1.15), (rx, 1.15))  # right out of the Newline terminal
-    line(ax, (rx, 1.15), (rx, 8.4))  # up the margin
-    arrow(ax, (rx, 8.4), (6.12, 8.4))  # left into next()
+    # out of the Newline terminal, up the margin, back into next()
+    elbow(ax, [(9.63, 1.15), (rx, 1.15), (rx, 8.4), (6.12, 8.4)], head=True)
     ax.text(
         rx + 0.12,
         4.8,
