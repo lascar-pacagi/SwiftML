@@ -82,14 +82,16 @@ builds from those tokens; the lexer doesn't enforce it, but seeing it tells you 
 `Token.kind` (see `token.ml`); trivia is consumed but never emitted.
 
 ```
-token         ::= Int | Ident | keyword | operator | punct | Newline    # then finally Eof
+token         ::= Int | Ident | keyword | operator | punct | Newline | Eof
 
 Int           ::= digit+                          # decimal only in Phase 1  -> Token.Int
 Ident         ::= id-head id-tail*                # -> Token.Ident (unless a keyword, below)
-keyword       ::= "let" | "var"                   # an Ident whose spelling is in the keyword table
+keyword       ::= "let" | "var"                   # an Ident whose spelling is in the table
 operator      ::= "+" | "-" | "*" | "/" | "%" | "="
 punct         ::= "(" | ")" | ","
 Newline       ::= "\n"                            # SIGNIFICANT: terminates a statement
+Eof           ::= <end of input>                  # the one token matched by NO characters:
+                                                  # emitted once, when the input runs out
 
 id-head       ::= "A"…"Z" | "a"…"z" | "_"
 id-tail       ::= id-head | digit
