@@ -113,7 +113,10 @@ so `*` (bp 20) pulls its operands together before `+` (bp 10) ever sees them. Us
 right recursion makes `-` left-associative (`10 - 4 - 3` ⇒ `(- (- 10 4) 3)`); using `bp` would make
 it right-associative. Our `infix_bp` table (already in `parser.ml`) gives `+ -` → 10, `* / %` → 20.
 
-![Pratt parsing of `1 + 2 * 3`: `*` binds tighter, so it forms a subtree first.](figs/pratt.png)
+@fig-pratt traces `1 + 2 * 3` through that loop one call at a time, so you can watch the
+binding powers decide the shape.
+
+![Pratt parsing of `1 + 2 * 3`: `*` binds tighter, so it forms a subtree first.](figs/pratt.png){#fig-pratt}
 
 > Oracle: `../../swift/lib/Parse/ParseExpr.cpp` — `parseExprSequence` collects a flat sequence of
 > operands and operators, then folds by precedence group. Same idea; Swift's version handles

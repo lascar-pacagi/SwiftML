@@ -202,7 +202,10 @@ char still belongs to the current token* (all digits; all identifier chars).
 > a big `switch` on the current character, with `lexNumber`, `lexIdentifier`, `skipToEndOfLine`,
 > and nesting `/* */` handling. Ours is the same shape, much smaller.
 
-![The lexer DFA: skip trivia, then dispatch on the first character.](figs/dfa.png)
+@fig-dfa is the whole of `next()` on one page: skip trivia, test for end of input, dispatch on
+one character, and every path ends at a token.
+
+![The lexer DFA: skip trivia, then dispatch on the first character.](figs/dfa.png){#fig-dfa}
 
 ### The third file: `diagnostics.ml`
 

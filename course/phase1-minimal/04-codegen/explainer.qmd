@@ -208,8 +208,10 @@ assignment reuses the slot and stores again. Wrap the lot in
 > emitting via LLVM's `IRBuilder`. We emit text for clarity; the structure (recursive lower,
 > return an operand) is identical. Phase 2 moves this onto SIL.
 
+@fig-lowering follows `print(1 + 2 * 3)` node by node, with the operand each one hands back.
+
 ![From AST to LLVM IR for `print(1 + 2 * 3)`: each node emits its instructions and returns the operand holding its result, in post-order — children first, so their operands exist before the parent names them. The literals emit nothing at all. The `print` node is last, and its "result" is the dummy operand `"0"`: a `print` statement's value is discarded, but `emit_expr` must return *something* because every expression case does — an `i64`
-operand, so `"0"` rather than printf's `i32` result.](figs/lowering.png)
+operand, so `"0"` rather than printf's `i32` result.](figs/lowering.png){#fig-lowering}
 
 ## 3. Build it, step by step
 
