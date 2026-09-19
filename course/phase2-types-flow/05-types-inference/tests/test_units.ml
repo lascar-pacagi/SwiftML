@@ -523,6 +523,23 @@ let test_check_comparison () =
         Types.TBool)
     (equality @ ordered)
 
+(* ...and it must not be GIVEN one either. A comparison's result is Bool whatever the operands
+   are, so `let d: Double = 1 < 2` is an error — swiftc says so. An arm that pushes a numeric
+   expectation into every operator except `%` accepts it silently, and the literals inside
+   obligingly become Doubles, so nothing downstream notices. *)
+let test_check_comparison_reports () =
+  List.iter
+    (fun op ->
+      refuses
+        (lbl op "1" "2" ^ " against Double")
+        (bin_ op (int_ 1) (int_ 2))
+        Types.TDouble (convert "Bool" "Double");
+      refuses
+        (lbl op "1" "2" ^ " against Int")
+        (bin_ op (int_ 1) (int_ 2))
+        Types.TInt (convert "Bool" "Int"))
+    (equality @ ordered)
+
 let test_check_reports () =
   refuses "\"s\" against Int" (str_ "s") Types.TInt (convert "String" "Int");
   refuses "i against Double" (var_ "i") Types.TDouble (convert "Int" "Double");
@@ -671,6 +688,7 @@ let () =
           case "check_expr: % at Int" test_check_mod;
           case "check_expr: % not at Double" test_check_mod_reports;
           case "check_expr: comparisons fall through" test_check_comparison;
+          case "check_expr: comparisons refuse a number" test_check_comparison_reports;
           case "check_expr: mismatch reports" test_check_reports;
         ] );
       ( "05e",

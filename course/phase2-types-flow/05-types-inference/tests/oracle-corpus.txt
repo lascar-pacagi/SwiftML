@@ -30,3 +30,5 @@ let i = 1\nlet s = i as Double
 let t = 1 as Foo
 var m: Double = 0\nm = "s"
 let u = 1 - "a"
+let d: Double = 1 < 2
+let e: Int = 1 == 2
