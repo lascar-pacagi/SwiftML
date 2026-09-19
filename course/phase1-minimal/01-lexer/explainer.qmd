@@ -335,9 +335,9 @@ pin the corners that are easy to get subtly wrong:
   begin at the newline, not at the `//`. A kinds-only test can never catch that, and everything
   downstream (parser diagnostics, and DWARF line numbers in Phase 8) points at these spans;
 - **CRLF files** lex like LF ones (`'\r'` is trivia);
-- **the three ways input can run out** — a file whose last line has no `\n` (`5` on its own is
-  `int(5) eof`, *not* `int(5) newline eof`), a comment that reaches end-of-input, and an empty
-  file (just `eof`). Each is a place where a munch loop without a bounds check walks off the end.
+- **running out of input** — an empty file, a file that ends inside a comment, and a file whose
+  last line has no `\n` (`5` alone lexes as `int(5) eof`, with no `newline` invented before it):
+  the three places a munch loop can read past the last byte.
 
 The goldens were produced by running the answer key; they are the specification, not a
 recording of your output.
