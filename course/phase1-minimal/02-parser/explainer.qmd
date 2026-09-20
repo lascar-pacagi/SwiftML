@@ -163,12 +163,12 @@ one broken line yields one error instead of a cascade, is §6's exercise 1.
 Concept 01's lexer copied its wording from `DiagnosticsParse.def`. The parser's wording is **ours**,
 because Swift's grammar is far larger and its messages name constructs this subset does not have:
 `let = 5` is `expected pattern` to swiftc, since what follows `let` in Swift is a *pattern*, not an
-identifier. So the tests assert the shape of a failure — how many errors, exit 1, parsing continued
-— and not its text.
+identifier. Ours is what the table below says, and `tests/parser-diagnostics.t` holds you to it —
+with one exception, the prefix error, whose text §6's first exercise rewrites.
 
-The **position** is not free: every diagnostic goes at the offending token's span — the token that
-was *found*, not the one that was hoped for — and `tests/parser-diagnostics.t` pins all four.
-Against swiftc, two land on the same column and two do not:
+The **position** matters as much as the text: every diagnostic goes at the offending token's span —
+the token that was *found*, not the one that was hoped for. Against swiftc, two land on the same
+column and two do not:
 
 +-----------------+----------------------------------+--------------------------------------+
 | input           | ours                             | swiftc                               |
