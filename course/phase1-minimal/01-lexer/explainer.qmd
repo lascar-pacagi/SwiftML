@@ -507,7 +507,7 @@ micro-optimize the scan loop with `unsafe_get` barely helped: it shaved the 3 %,
 
 ### How v1_fast gets its 12× — the exact moves swiftc makes
 
-`bench/lexer_v1_fast.ml` attacks the representation, not the loop. Three changes, all of which mirror
+`lexer_v1_fast.ml` attacks the representation, not the loop. Three changes, all of which mirror
 `swift/lib/Parse/Lexer.cpp` + `SourceManager`:
 
 1. **Offset-only positions (Swift's `SourceLoc`).** A token stores just two `int` byte offsets —
@@ -641,16 +641,15 @@ a real bug in the fast rung: it stopped silently on an unterminated `/*` where v
 concept's perf gate. Three times is a deliberately loose floor for a change worth ~9×: if you land
 between 1× and 3×, you are still allocating per token, and `make profile` section 3 will say so.
 
-### "Is that a fair comparison?" — yes, and here's the honest caveat
+### Why the reference lexer stays naive
 
-v1_fast does **less eagerly**: it defers line/col and literal/identifier materialization. That's not
-cheating — it's the point. In a real compiler the parser pulls from this token buffer and only pays
-for a position when it emits a diagnostic (rare), so the deferred work is mostly never done. The
-`to_tokens` function proves we *can* reconstruct v0's exact output (the bench asserts it), but you'd
-rarely call it. The Phase-1 **reference `Lexer` deliberately keeps the simple `Token.t list`** — it's
-far easier to learn from, and Phase 1 isn't perf-critical; v1_fast shows the design you'd actually
-ship (and that Phase 2's parser could consume directly). The `v1_fast` rung lives in `bench/` (not
-`solution/`) so it's compiled into the build. See §6 for further perf exercises.
+`lexer.ml` keeps the plain `Token.t list` on purpose: it is the file you learn the DFA from, and
+Phase 1 is not perf-critical. The fast rung sits beside it as `lexer_v1_fast.ml` — a second module
+in this same directory, with its own answer key in `solution/` — so both are built, both are
+tested, and `to_tokens` proves they agree token-for-token.
+
+Which one a real compiler ships is the table above, not a matter of taste: the soup, *and* an AST
+that stores offsets. Half the design buys 1.2×; both halves buy 2×. §6 has further perf exercises.
 
 ## 6. Exercises
 
