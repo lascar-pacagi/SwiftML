@@ -58,10 +58,26 @@ carry on and find the next mistake instead of stopping at the first. And **a bad
 its arguments**, so `foo(nope)` reports both the unknown callee and the unknown argument in one run.
 
 The third column being constant is Phase 1's whole type system: one type, so no expression can
-mismatch another. This is nonetheless the exact function Phase 2 rewrites to yield real types and
-report `cannot convert value of type 'X' to 'Y'` — which makes Phase 2 an edit rather than a
+mismatch another. Phase 2 widens it — `Bool`, `Double`, `String`, operator typing, the integer
+literal that may become a `Double` — and that part really is an edit to this function rather than a
 rewrite. (`sema.ml` closes over the scope rather than passing it; the signature above is the
 textbook shape the rules are usually written in.)
+
+**What does change shape, at concept 05, is what the checker hands back.** Here `check` returns
+`unit`: it walks the tree, reports what is wrong, and the tree it was given goes on to codegen
+unaltered — so codegen has to work out for itself that a `Var` names a local, and in Phase 1 it
+can, because there is one type and one kind of name. Phase 2 makes that impossible, and `check`
+becomes
+
+```ocaml
+val check : Ast.program -> Diagnostics.sink -> Tast.program option
+```
+
+— a *different tree*, in which every node carries the type the checker concluded and every name
+that resolved is a node that can only mean that. Phase 1 is exempt because nothing downstream has
+to ask anything; from 05 on, a checker that answers `unit` means SILGen must re-derive what Sema
+already knew, and the two drift. `PLAN.md` §0.1 records the bug that proved it. Nothing you write
+here is wasted — the rules in the table survive intact — but expect the signature to move.
 
 > Oracle: in `../../swift/lib/Sema/`, declaration checking and scope live in `TypeCheckDecl.cpp`;
 > expression checking funnels into the **constraint system** (`CSGen.cpp` generates constraints,
@@ -373,6 +389,7 @@ Why it's shaped this way:
   a `let` ⇒ `cannot assign to value: '…' is a 'let' constant` (both match swiftc's wording).
 - **`check_expr` returns a `ty`** even though it's always `TInt` now — that's the seam Phase 2's
   bidirectional checker grows into (real `Bool`/`Double`/`String`, operator typing, coercions).
+  At concept 05 the *whole* checker also starts returning a tree rather than `unit`; see §2.
 - `print` is handled in the `Call` arm, so it is *not* looked up as a variable.
 
 ## 9. Exercise solutions
