@@ -20,3 +20,5 @@ print(1 + * 2)
 print(,)
 print 1
 let a = 1 2
+print(1,)
+print(1, 2,)

@@ -132,7 +132,10 @@ and parse_call_args (parser : t) : Ast.expr list =
       let expression = parse_expr_bp parser 0 in
       if peek_kind parser = Token.Comma then (
         ignore (advance parser);
-        loop (expression :: accumulator))
+        (* SE-0439: a comma MAY follow the last argument, so `f(1,)` is legal. A leading
+           one is not — that is why this test is here and not at the top of the loop. *)
+        if peek_kind parser = Token.RParen then List.rev (expression :: accumulator)
+        else loop (expression :: accumulator))
       else List.rev (expression :: accumulator)
     in
     loop []

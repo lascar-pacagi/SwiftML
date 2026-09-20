@@ -46,6 +46,25 @@ It binds tighter than every binary operator, and it is a PREFIX: it can follow `
   $ ./lab.exe --emit-expr g.swift
   (print 1 (+ 2 3))
 
+A TRAILING comma is allowed after the last argument, and changes nothing about the call.
+Swift accepts `print(1,)` (SE-0439) and so do we — the argument loop stops when the token
+after a comma is `)`:
+
+  $ printf 'print(1,)\n' > g2.swift
+  $ ./lab.exe --emit-expr g2.swift
+  (print 1)
+  $ printf 'print(1, 2,)\n' > g3.swift
+  $ ./lab.exe --emit-expr g3.swift
+  (print 1 2)
+
+A LEADING comma is not: an argument list starts with an expression, so `print(,1)` is an
+error, as it is for swiftc. (We report it twice where swiftc reports once — recovery, not
+the verdict, and the oracle checks the verdict.)
+
+  $ printf 'print(,1)\n' > g4.swift
+  $ ./lab.exe --emit-expr g4.swift 2>&1 >/dev/null | head -1 | grep -c 'error:'
+  1
+
 A `*` where an operand should be is reported, exit 1.
 Diagnostics go to stderr as `line:col: error: …`, exit 1. The wording is yours (§6
 exercise 1 sharpens it), so only the shape is asserted:
