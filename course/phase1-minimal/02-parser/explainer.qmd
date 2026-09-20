@@ -207,20 +207,21 @@ input before giving up, so it blames `2:1`; we blame the newline that `expect` a
 for two statements on a line swiftc points at `1:10`, the gap *after* `1`, because its message asks
 you to insert a `;` there — a fix-it position, not the offending token. Ours names what it found.
 
-**Two ways to report, both given.** `expect p kind what` when exactly one kind will do: it returns
-the token either way, and on a mismatch reports `expected <what>`. `report_error p msg` for
-everything else — it files `msg` at the token `peek` would return. The `'='` and the `')'` use the
-first; the prefix position and the statement terminator use the second; `parse_ident` uses the
-second for you.
+**Three ways to report, all given.** `expect p kind what` when exactly one kind will do: it returns
+the token either way, and on a mismatch reports `expected <what>`. `parse_ident p what` for a name:
+an identifier is a kind *carrying a payload*, so `expect` cannot ask for one — it reports and hands
+back `"_"` so the walk continues. `report_error p msg` for everything else: it files `msg` at the
+token `peek` would return. The `'='` and the `')'` use the first, the two binding forms the second,
+the prefix position and the statement terminator the third.
 
 ## 3. Build it, step by step
 
 Open `parser.ml` in this directory. Helpers `peek`, `peek_kind`, `peek_kind_at`, `advance`,
 `expect`, `skip_newlines`, `report_error`, `parse_ident`, `infix_bp`, `binop_of_kind` and
 `span_between` are written. `skip_newlines p` walks the cursor past a run of `Newline`s; every
-production that allows blank lines calls it rather than writing the loop again. `expect` and
-`report_error` are the two ways to report — see §2 — and `parse_ident` already uses the second, so
-the messages you write yourself are the two below.
+production that allows blank lines calls it rather than writing the loop again. `expect`, `parse_ident` and
+`report_error` are the three ways to report — see §2 — so the only messages you write yourself are
+the two below.
 
 1. **`parse_prefix`** (write it as a local function or inline at the top of `parse_expr_bp`):
    match `peek_kind p`:
