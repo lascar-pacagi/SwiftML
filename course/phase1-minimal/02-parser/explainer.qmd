@@ -220,8 +220,7 @@ Open `parser.ml` in this directory. Helpers `peek`, `peek_kind`, `peek_kind_at`,
 `expect`, `skip_newlines`, `report_error`, `parse_ident`, `infix_bp`, `binop_of_kind` and
 `span_between` are written. `skip_newlines p` walks the cursor past a run of `Newline`s; every
 production that allows blank lines calls it rather than writing the loop again. `expect`, `parse_ident` and
-`report_error` are the three ways to report — see §2 — so the only messages you write yourself are
-the two below.
+`report_error` are the three ways to report — see §2.
 
 1. **`parse_prefix`** (write it as a local function or inline at the top of `parse_expr_bp`):
    match `peek_kind p`:
