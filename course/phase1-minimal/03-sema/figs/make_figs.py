@@ -39,34 +39,64 @@ def arrow(ax, p0, p1, color=EDGE):
 
 
 def make():
-    fig, ax = plt.subplots(figsize=(10.6, 6.2))
+    # The env is not a column of snapshots beside the code — it is ONE value handed from
+    # each statement to the next. Draw that literally: env, statement, env, statement,
+    # zig-zagging down, so "threaded through the walk" is something you can follow.
+    fig, ax = plt.subplots(figsize=(9.6, 9.4))
     ax.set_xlim(0, 12)
-    ax.set_ylim(0, 8.4)
+    ax.set_ylim(1.5, 12.2)
     ax.axis("off")
 
-    ax.text(2.6, 8.0, "program (checked in order)", fontsize=11, fontweight="bold", color=TEXT, ha="center")
-    ax.text(8.8, 8.0, "environment threaded through the walk", fontsize=11, fontweight="bold", color=TEXT, ha="center")
+    ax.text(6.0, 11.75, "one walk, one environment, handed along",
+            fontsize=12.5, fontweight="bold", color=TEXT, ha="center")
+    ax.text(6.0, 11.32,
+            "each statement is checked against the environment it is given, then extends it",
+            fontsize=9.5, color=TEXT, ha="center", style="italic")
 
+    STMT_X, ENV_X = 3.0, 8.9
     rows = [
-        ("let a = 1", OK, False, "{ }            checks 1 — then adds a",        "{ a:let }"),
-        ("var b = a + 2", OK, False, "{ a:let }      a in scope — then adds b",   "{ a:let, b:var }"),
-        ("let x = x", ERR, True, "init checked BEFORE x is added:\n\"cannot find 'x' in scope\"", "{ a:let, b:var }"),
-        ("b = 7", OK, False, "b is var — assignment OK",                          "{ a:let, b:var }"),
-        ("a = 9", ERR, True, "a is let:\n\"cannot assign to value: 'a' is a 'let' constant\"", "{ a:let, b:var }"),
+        # statement, error?, what the check consults, what it does to the env, env after
+        ("let a = 1", False, "checks 1", "adds a", "{ a:let }"),
+        ("var b = a + 2", False, "a is in scope", "adds b", "{ a:let, b:var }"),
+        ("let x = x", True, "x is NOT in scope yet", "nothing added",
+         "{ a:let, b:var }"),
+        ("b = 7", False, "b is a var", "no new name", "{ a:let, b:var }"),
+        ("a = 9", True, "a is a let", "nothing added", "{ a:let, b:var }"),
     ]
-    y = 7.0
-    for stmt, col, is_err, note, env_after in rows:
-        code(ax, 2.6, y, stmt, col, err=is_err)
-        arrow(ax, (4.5, y), (6.4, y), "#b22" if is_err else "#2f6f4f")
-        env(ax, 8.8, y, env_after)
-        ax.text(5.45, y + 0.42, note, fontsize=7.6, color=("#b22" if is_err else "#444"),
-                ha="center", style="italic")
-        y -= 1.45
 
-    ax.text(6.0, 0.35, "one pass, one rule: check each statement against the env-so-far, THEN extend the env",
-            fontsize=10.5, color=TEXT, ha="center", fontweight="bold")
+    y = 10.5
+    env(ax, ENV_X, y, "{ }")
+    ax.text(ENV_X, y + 0.52, "the empty env", fontsize=8.5, color="#666",
+            ha="center", va="bottom", style="italic")
+
+    for stmt, is_err, consults, effect, after in rows:
+        ys, ye = y - 0.72, y - 1.44
+        red = "#b22"
+        # env  ->  statement : what it is checked against
+        arrow(ax, (ENV_X - 2.35, y - 0.30), (STMT_X + 1.85, ys + 0.30))
+        ax.text(6.45, (y + ys) / 2 + 0.16, consults, fontsize=8.2, color="#444",
+                ha="right", va="center", style="italic")
+        code(ax, STMT_X, ys, stmt, ERR if is_err else OK, err=is_err)
+        # statement -> env : what it does to it
+        arrow(ax, (STMT_X + 1.85, ys - 0.30), (ENV_X - 2.35, ye + 0.30),
+              red if is_err else "#2f6f4f")
+        ax.text(5.20, (ys + ye) / 2 - 0.16, effect, fontsize=8.2,
+                color=red if is_err else "#2f6f4f", ha="right", va="center",
+                style="italic")
+        env(ax, ENV_X, ye, after)
+        if is_err:
+            ax.text(STMT_X - 1.85, ys - 0.40, "reported, walk continues", fontsize=8,
+                    color=red, ha="left", va="top", style="italic")
+        y = ye
+
+    ax.text(6.0, 2.25,
+            "The two rejections are the same rule read twice: `let x = x` fails because the\n"
+            "initialiser is checked against the env BEFORE x joins it, and `a = 9` fails because\n"
+            "the env remembers that a was bound by `let`.",
+            fontsize=9.5, color=TEXT, ha="center", va="center")
+
     out = os.path.join(HERE, "env_walk.png")
-    fig.savefig(out, dpi=160, bbox_inches="tight")
+    fig.savefig(out, dpi=170, bbox_inches="tight")
     plt.close(fig)
     print("wrote", out)
 

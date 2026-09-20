@@ -30,7 +30,7 @@ differently — see "Diagnostics are the product" below.)
 @fig-env-walk follows a short program through that walk, and shows both classic rejections
 falling out of the order alone.
 
-![Sema is one walk threading an environment: each statement is checked against the environment built so far, then extends it. Both classic rejections fall out of the threading order — `let x = x` fails because the initializer is checked *before* `x` is added, and `a = 9` fails because the environment records that `a` is a `let`.](figs/env_walk.png){#fig-env-walk}
+![One walk, one environment: each statement is checked against the environment it is given, then extends it — and both classic rejections fall out of that order alone.](figs/env_walk.png){#fig-env-walk}
 
 ### Type checking as a recursive judgment
 
