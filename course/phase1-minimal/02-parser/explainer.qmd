@@ -94,8 +94,13 @@ and `parse_stmt` decides what it is looking at from the front of the token strea
 | anything else | an expression statement |
 
 The middle row is why the parser needs **one token of lookahead**: an identifier alone does not
-say which of the last two rows applies, and `x` could still turn out to be `x = 1` or `x + 1`. The
-token cursor (`peek`, `advance`, `expect`) is your input.
+say which of the last two rows applies, and `x` could still turn out to be `x = 1` or `x + 1`.
+`peek_kind_at p 1` is how you look.
+
+None of your functions touch the token array directly. `parser.ml` gives you a cursor over it —
+`peek` (what is here?), `peek_kind_at` (what is *n* tokens further on?), `advance` (take it and
+step), `expect` (take it if it is the kind I want, else report), `skip_newlines` — and every rule
+you write is built from those five.
 
 ### Pratt parsing / precedence climbing
 
