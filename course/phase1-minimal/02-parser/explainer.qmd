@@ -148,8 +148,13 @@ of raising. Parsing continues, so one run reports several syntax errors rather t
 The AST built after an error may be nonsense — that's fine, because `Driver.bail_on_errors` checks
 `Diagnostics.has_errors`, prints them (`file:line:col: error: message`), and exits 1 before Sema ever
 sees the tree. `swiftc` makes the same trade in `lib/Parse` (its recursive-descent routines return a
-`ParserStatus` and keep going). Where it doesn't recover well yet — a bad *prefix* token — is
-Exercise 1.
+`ParserStatus` and keep going).
+
+That policy covers the case where a rule knows what it wanted — `expect RParen` names the `)` it
+did not get. The case it does not cover is a token that cannot *begin* an expression at all, like
+the `*` in `1 + * 3`: `parse_prefix` has no rule for it, so all it can do is report something
+generic and invent a placeholder node. Improving that message, and skipping to the next newline so
+one broken line yields one error instead of a cascade, is §6's exercise 1.
 
 ### The parser's diagnostics
 
