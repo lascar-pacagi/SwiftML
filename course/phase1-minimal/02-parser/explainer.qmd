@@ -257,7 +257,9 @@ again.
    the name by matching `peek_kind` rather than `expect`, which compares whole kinds.)
 4. **`parse_program`:** skip leading `Newline`s (`skip_newlines p`, given); loop until `Eof`: parse
    a statement, then consume the terminating `Newline` (or stop at `Eof`); collect into
-   `Ast.program`.
+   `Ast.program`. Anything else after a statement is the error in §2's table — call
+   `report_statement_end p` (given) and keep going, so a second broken line is still reported. Its
+   text and span are given rather than yours because `tests/parser-diagnostics.t` asserts both.
 
 ## 4. Test it
 

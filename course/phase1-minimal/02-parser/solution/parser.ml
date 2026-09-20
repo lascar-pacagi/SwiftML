@@ -182,6 +182,13 @@ let parse_stmt (parser : t) : Ast.stmt =
       let expression = parse_expr parser in
       Ast.Expr_stmt (expression, Ast.expr_span expression)
 
+(* The statement terminator's diagnostic. Given: `parse_program` decides WHEN a statement is
+   badly terminated, but the text and the span are fixed — the tests assert both, and swiftc
+   words the same complaint `…must be separated by ';'` once the language has one (concept 10). *)
+let report_statement_end (parser : t) : unit =
+  Diagnostics.error parser.diagnostics (peek parser).Token.span
+    "consecutive statements on a line must be separated by a newline"
+
 (* Whole file: skip blank lines, parse statements until Eof, consuming the Newline
    (or Eof) that terminates each. *)
 let parse_program (parser : t) : Ast.program =
@@ -194,9 +201,7 @@ let parse_program (parser : t) : Ast.program =
         (match peek_kind parser with
         | Token.Newline -> ignore (advance parser)
         | Token.Eof -> ()
-        | _ ->
-            Diagnostics.error parser.diagnostics (peek parser).Token.span
-              "consecutive statements on a line must be separated by a newline");
+        | _ -> report_statement_end parser);
         loop (s :: accumulator)
   in
   loop []
