@@ -194,7 +194,7 @@ places this concept reports, and the message each must produce:
 | the `for` loop variable | `expected a loop variable` |
 | after that variable | `expected 'in'` |
 | between the range's bounds | `expected '..<'` |
-| between two statements with no newline between them | `expected newline or end of statement` |
+| between two statements with no newline between them | `consecutive statements on a line must be separated by a newline` |
 
 **Sema** — the tests compare these character for character:
 
@@ -248,7 +248,7 @@ operators' precedence.
    (given, beside `expect`) is the loop for that, and every production that tolerates blank lines
    calls it rather than writing its own. After each statement: consume a `Newline` if there is
    one; if the next token is `}` or end of input the statement was the last, so that is fine too;
-   anything else is `expected newline or end of statement` — the same message `parse_program`
+   anything else is `consecutive statements on a line must be separated by a newline` — the same message `parse_program`
    gives at top level, reported at the token that is actually there.
 
    In `parse_if`, two details. `else if` is not a third form: parse the `else`, and if an `if`

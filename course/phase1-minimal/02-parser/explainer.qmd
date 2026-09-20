@@ -175,7 +175,7 @@ Against swiftc, two land on the same column and two do not:
 | `let b = *` | `1:9` `expected expression` | `1:9` `unary operator cannot be separated from its operand` |
 | `let = 5` | `1:5` `expected identifier` | `1:5` `expected pattern` |
 | `print((1 + 2)` | `1:14` `expected ')'` | `2:1` `expected ')' in expression list` |
-| `let a = 1 2` | `1:11` `expected newline or end of statement` | `1:10` `consecutive statements on a line must be separated by ';'` |
+| `let a = 1 2` | `1:11` `…separated by a newline` | `1:10` `…separated by ';'` |
 
 The two that differ differ for a reason. For the unclosed paren swiftc scans to end of input before
 giving up, so it blames `2:1`; we blame the newline that `expect` actually met. And for two
@@ -417,7 +417,7 @@ let parse_program (p : t) : Ast.program =
         | Token.Eof -> ()
         | _ ->
             Diagnostics.error p.diagnostics (peek p).Token.span
-              "expected newline or end of statement");
+              "consecutive statements on a line must be separated by a newline");
         loop (s :: acc)
   in
   loop []
@@ -457,7 +457,7 @@ statement isn't a `Newline`/`Eof`, skip forward to the next `Newline` before con
 ```ocaml
 | _ ->
     Diagnostics.error p.diagnostics (peek p).Token.span
-      "expected newline or end of statement";
+      "consecutive statements on a line must be separated by a newline";
     while (match peek_kind p with Token.Newline | Token.Eof -> false | _ -> true) do
       ignore (advance p)
     done

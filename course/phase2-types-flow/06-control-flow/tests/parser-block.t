@@ -39,7 +39,7 @@ Two statements on one line are an error: a newline SEPARATES them, as at top lev
 
   $ printf '{\n  print(1) print(2)\n}\n' > b6.swift
   $ timeout 5 ./lab.exe --emit-block b6.swift; echo "exit=$?"
-  2:12: error: expected newline or end of statement
+  2:12: error: consecutive statements on a line must be separated by a newline
     print(1) print(2)
              ^
   exit=1

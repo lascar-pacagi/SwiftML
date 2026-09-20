@@ -427,7 +427,7 @@ let rec parse_block (p : t) : Ast.stmt list =
         (match peek_kind p with
         | Token.Newline -> ignore (advance p)
         | Token.RBrace | Token.Eof -> ()
-        | _ -> Diagnostics.error p.diags (peek p).Token.span "expected newline or end of statement");
+        | _ -> Diagnostics.error p.diags (peek p).Token.span "consecutive statements on a line must be separated by ';'");
         loop (s :: acc)
   in
   loop []
@@ -922,7 +922,7 @@ let parse_program (p : t) : Ast.program =
         (match peek_kind p with
         | Token.Newline -> ignore (advance p)
         | Token.Eof -> ()
-        | _ -> Diagnostics.error p.diags (peek p).Token.span "expected newline or end of statement");
+        | _ -> Diagnostics.error p.diags (peek p).Token.span "consecutive statements on a line must be separated by ';'");
         loop (Ast.IFunc f :: acc)
     | Token.Kw_struct ->
         let s = parse_struct p in
@@ -965,7 +965,7 @@ let parse_program (p : t) : Ast.program =
         (match peek_kind p with
         | Token.Newline -> ignore (advance p)
         | Token.Eof -> ()
-        | _ -> Diagnostics.error p.diags (peek p).Token.span "expected newline or end of statement");
+        | _ -> Diagnostics.error p.diags (peek p).Token.span "consecutive statements on a line must be separated by ';'");
         loop (Ast.IStmt s :: acc)
   in
   loop []

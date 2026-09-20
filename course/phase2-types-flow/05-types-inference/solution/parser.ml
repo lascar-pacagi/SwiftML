@@ -222,7 +222,7 @@ let parse_program (parser : t) : Ast.program =
         | Token.Eof -> ()
         | _ ->
             Diagnostics.error parser.diagnostics (peek parser).Token.span
-              "expected newline or end of statement");
+              "consecutive statements on a line must be separated by a newline");
         loop (s :: accumulator)
   in
   loop []

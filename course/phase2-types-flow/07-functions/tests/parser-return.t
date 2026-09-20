@@ -43,7 +43,7 @@ Two statements on one line are still an error — `return 1 print(2)` stops at `
 
   $ printf 'return 1 print(2)\n' > e1.swift
   $ ./lab.exe --emit-ast e1.swift; echo "exit=$?"
-  1:10: error: expected newline or end of statement
+  1:10: error: consecutive statements on a line must be separated by a newline
   return 1 print(2)
            ^
   exit=1

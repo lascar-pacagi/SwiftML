@@ -620,7 +620,7 @@ convention is a quoted literal for punctuation, a lowercase noun phrase for a ca
 | `let d: = 1` | `expected a type name` | **yours** — `parse_ident p "a type name"` |
 | `let x = (1 + 2` | `expected ')'` | **yours** — `expect p Token.RParen "')'"` |
 | `let y = *` | `expected expression` | given — the prefix fallback |
-| `let x = 1 2` | `expected newline or end of statement` | given — `parse_program` |
+| `let x = 1 2` | `consecutive statements on a line must be separated by a newline` | given — `parse_program` |
 
 The two given rows are there so you can recognise them when a test shows one: no hole of yours
 produces either.

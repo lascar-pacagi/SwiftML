@@ -29,7 +29,7 @@ second line is the parser recovering: it did not consume a type, so the statemen
   1:14: error: expected type after 'as'
   let y = 1 as 5
                ^
-  1:14: error: expected newline or end of statement
+  1:14: error: consecutive statements on a line must be separated by a newline
   let y = 1 as 5
                ^
   exit=1
