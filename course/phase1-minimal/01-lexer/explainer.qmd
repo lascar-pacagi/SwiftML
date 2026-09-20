@@ -564,8 +564,25 @@ character.
 Row C is the design that actually pays, and it is swiftc's: the AST stores **offsets**, so
 `line:col` is a `SourceManager` query priced per *diagnostic* rather than per node. Even then the
 win is 2×, not 12× — and it comes from a different place than you would guess. Not from the fast
-scan: from the parser never needing a token at every position, so the tokens it skips are never
-built at all. Deferring only pays for the work that is never demanded.
+scan: from the parser never needing a whole token at most positions, so the ones it skips are never
+built. Take one line of the corpus and ask which of its tokens end up in the tree:
+
+```
+   let  value_0  =  1000  +  0  *  3  -  40  /  5  %  6  ⏎      15 tokens
+    ●      ●         ●        ●     ●      ●     ●     ●        8 spans stored
+```
+
+The eight are the `let` keyword (the `Let` node spans from it), the identifier, and the six integer
+literals. The other seven are read for their **kind alone**. The operators are the surprise: look at
+`parse_expr_bp` and the `Binary` node's span is `span_between (expr_span left) (expr_span right)` —
+computed from its *operands*, so the `+` token's own span is never asked for. Same for the `=` of an
+assignment, the `(` of a call, and every `Newline` that `skip_newlines` steps over. And
+`peek_kind_at parser 1`, the lookahead that tells `c = …` from `c + …`, reads a kind at a position
+the parser may not consume at all.
+
+v0 built all fifteen. Deferring pays for exactly the seven nobody asks about — which is also why
+the win shrinks as the consumer gets greedier, and vanishes at `to_tokens`, which asks for all of
+them.
 
 ### Build the fast rung
 
