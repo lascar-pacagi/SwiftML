@@ -47,7 +47,7 @@ statement  ::= "let" Ident "=" expr            # constant binding
 expr       ::= add
 add        ::= mul ( ("+" | "-") mul )*        # lowest precedence, left-associative
 mul        ::= unary ( ("*" | "/" | "%") unary )*
-unary      ::= "-" unary | primary             # unary minus, binds tighter than any binary op
+unary      ::= "-" unary | primary             # unary minus, tighter than any binary op
 primary    ::= Int
              | Ident
              | Ident "(" args? ")"             # a call — Phase 1 only ever calls print
@@ -112,9 +112,11 @@ absorb operators that bind at least as tightly as `minimum_binding_power`":
 ```
 1. parse a PREFIX (a "nud" — null denotation): a literal, a variable, a parenthesized expr,
    a unary minus, or a call. This is the left operand.
-2. LOOP: peek the next token. If it's an infix operator with binding power bp >= minimum_binding_power:
+2. LOOP: peek the next token. If it is an infix operator whose binding power bp is
+   >= minimum_binding_power:
      - consume it,
-     - parse the RIGHT operand with parse_expr_bp p (bp + 1)   <- the +1 gives LEFT associativity,
+     - parse the RIGHT operand with parse_expr_bp p (bp + 1)
+       (the +1 is what makes the operator LEFT-associative),
      - fold:  left := Binary(op, left, right).
    Otherwise stop and return left.
 ```
@@ -352,7 +354,8 @@ let rec parse_expr_bp (p : t) (minimum_binding_power : int) : Ast.expr =
           | None -> assert false
         in
         let right = parse_expr_bp p (bp + 1) in (* bp + 1 ⇒ left-associative *)
-        loop (Ast.Binary (op, left, right, span_between (Ast.expr_span left) (Ast.expr_span right)))
+        let span = span_between (Ast.expr_span left) (Ast.expr_span right) in
+        loop (Ast.Binary (op, left, right, span))
     | _ -> left
   in
   loop left
@@ -408,7 +411,9 @@ let parse_program (p : t) : Ast.program =
         (match peek_kind p with
         | Token.Newline -> ignore (advance p)
         | Token.Eof -> ()
-        | _ -> Diagnostics.error p.diagnostics (peek p).Token.span "expected newline or end of statement");
+        | _ ->
+            Diagnostics.error p.diagnostics (peek p).Token.span
+              "expected newline or end of statement");
         loop (s :: acc)
   in
   loop []
@@ -435,7 +440,8 @@ First, name the offending token in the prefix error instead of a bare placeholde
 | _ ->
     let t = peek p in
     Diagnostics.error p.diagnostics t.Token.span
-      (Printf.sprintf "expected an expression, found '%s'" (Token.string_of_kind t.Token.kind));
+      (Printf.sprintf "expected an expression, found '%s'"
+         (Token.string_of_kind t.Token.kind));
     ignore (advance p);
     Ast.Int_lit (0, t.Token.span)
 ```
@@ -446,7 +452,8 @@ statement isn't a `Newline`/`Eof`, skip forward to the next `Newline` before con
 
 ```ocaml
 | _ ->
-    Diagnostics.error p.diagnostics (peek p).Token.span "expected newline or end of statement";
+    Diagnostics.error p.diagnostics (peek p).Token.span
+      "expected newline or end of statement";
     while (match peek_kind p with Token.Newline | Token.Eof -> false | _ -> true) do
       ignore (advance p)
     done
