@@ -212,7 +212,9 @@ reports `expected <what>` when it does not match — the `'='` and the `')'`. Th
 each for its own reason: an identifier is `Token.Ident s`, a kind *carrying a payload*, so there is
 no single value to compare against; in prefix position nothing specific was expected, since several
 kinds would have been fine; and after a statement two kinds are acceptable, a `Newline` or `Eof`.
-Each of those three calls `report_error` itself.
+The first of those three is the given `parse_ident`, which reports for you — so **you call
+`report_error` twice**: in prefix position, and after a statement. Those are the two places in the
+code you write that find something wrong with no specific token to name.
 
 ## 3. Build it, step by step
 
@@ -230,7 +232,7 @@ again.
    - `Token.LParen` ⇒ `advance`, `let e = parse_expr_bp p 0 in`, `expect RParen`, return `e`.
    - `Token.Minus` ⇒ `advance`, `let e = parse_expr_bp p 100 in` (unary binds tight),
      return `Ast.Unary (Neg, e, span)`.
-   - anything else ⇒ diagnostic ("expected expression"), **consume the offending token**, and
+   - anything else ⇒ `report_error p "expected expression"`, **consume the offending token**, and
      return a placeholder expression.
 
    That consume matters more than it looks. Something has to guarantee **progress**, or the next
