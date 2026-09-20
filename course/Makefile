@@ -131,8 +131,7 @@ bench:
 	  echo "no benchmark for '$(C)' — it has no bench/bench.ml."; \
 	  echo "concepts with one:"; \
 	  for f in */*/bench/bench.ml; do [ -e "$$f" ] && echo "  make bench C=$${f%/bench/bench.ml}"; done; \
-	  exit 2; fi
-	@$(DUNE) exec -- ./$(C)/bench/bench.exe
+	else $(DUNE) exec -- ./$(C)/bench/bench.exe; fi
 
 # Run only a concept's §6 EXERCISE tests. Untouched groups report as optional; a started
 # but incorrect exercise is RED. The same suites also appear in `make lab`.
@@ -145,21 +144,21 @@ exercises:
 #                                                allocation accounting, allocation sites
 #   make profile-cpu C=phase1-minimal/01-lexer   sampled call tree (macOS `sample`):
 #                                                how much CPU is your code vs the GC
-# Only a concept that ships bench/profile.ml can be profiled; say so, and say which can,
-# rather than letting dune report a missing .exe for a target that was never going to exist.
+# Only a concept that ships bench/profile.ml can be profiled, and only nine ship a
+# bench/bench.ml. Having neither is a fact about the concept, not a failed command — so say
+# so, list the ones that do, and exit 0 (as check-solution does for a missing solution/).
+# Guard and action must be ONE shell command: make runs each recipe line in its own shell.
 profile:
 	@if [ -z "$(C)" ] || [ ! -f "$(C)/bench/profile.ml" ]; then \
 	  echo "no profiler for '$(C)' — it has no bench/profile.ml."; \
 	  echo "concepts with one:"; \
 	  for f in */*/bench/profile.ml; do [ -e "$$f" ] && echo "  make profile C=$${f%/bench/profile.ml}"; done; \
-	  exit 2; fi
-	@$(DUNE) exec -- ./$(C)/bench/profile.exe
+	else $(DUNE) exec -- ./$(C)/bench/profile.exe; fi
 
 profile-cpu:
 	@if [ -z "$(C)" ] || [ ! -f "$(C)/bench/profile.ml" ]; then \
-	  echo "no profiler for '$(C)' — it has no bench/profile.ml."; exit 2; fi
-	@$(DUNE) build ./$(C)/bench/profile.exe
-	@./tooling/profile-cpu.sh $(C) $(RUNG)
+	  echo "no profiler for '$(C)' — it has no bench/profile.ml."; \
+	else $(DUNE) build ./$(C)/bench/profile.exe && ./tooling/profile-cpu.sh $(C) $(RUNG); fi
 
 # ---- keeping your work out of the repo -------------------------------------
 # You edit the skeletons in place, so your solutions live as uncommitted changes.
