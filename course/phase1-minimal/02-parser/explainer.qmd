@@ -202,25 +202,12 @@ again.
    - anything else ⇒ diagnostic ("expected expression"), **consume the offending token**, and
      return a placeholder expression.
 
-   That consume matters more than it looks. Something has to guarantee the parser makes
-   PROGRESS, or the next iteration meets the same token and you get an infinite loop with
-   unbounded diagnostics — and in this parser nothing else does: `parse_program`'s error arm
-   reports and carries on without skipping. swiftc splits the job differently. Its
-   `parseExprPrimary` default arm does *not* consume —
-
-   ```cpp
-   default:
-   UnknownCharacter:
-     checkForInputIncomplete();
-     diagnose(Tok, ID);
-     return nullptr;
-   ```
-
-   — because its callers run explicit panic-mode recovery (`skipUntilDeclStmtRBrace` and
-   friends) that consumes for it. The arm just above, for a token the *lexer* already rejected,
-   does consume: "Eat an invalid token in an expression context." Either split works; what is
-   not allowed is neither side making progress. §6's first exercise moves us to swiftc's
-   arrangement, adding skip-to-the-next-newline recovery in `parse_program`.
+   That consume matters more than it looks. Something has to guarantee **progress**, or the next
+   iteration meets the same token and loops forever, emitting a diagnostic each time round — and
+   here nothing else does, since `parse_program`'s error arm reports and carries on without
+   skipping. swiftc puts the consume on the other side: `parseExprPrimary` returns `nullptr`
+   without eating, and its callers run panic-mode recovery that skips for it. Either split works;
+   neither side making progress does not. §6's first exercise moves us to that arrangement.
 2. **The infix loop** completes `parse_expr_bp`. Starting from the `left` that `parse_prefix`
    returned, repeat until the next token is no longer an operator you may take:
    - look up `infix_bp (peek_kind p)`;
