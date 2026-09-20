@@ -177,9 +177,7 @@ the same input:
 | `let a = 1 2` | after a statement | `expected newline or end of statement` | `consecutive statements on a line must be separated by ';'` |
 
 Two of those come from the given `expect p kind what`, whose message is always `expected <what>`;
-the prefix position and the statement terminator are written by hand. Word yours differently if you
-like — nothing asserts the strings. §6's first exercise makes the prefix message name the token it
-found, which is the one place the given wording is genuinely weak.
+the prefix position and the statement terminator are written by hand.
 
 ## 3. Build it, step by step
 
