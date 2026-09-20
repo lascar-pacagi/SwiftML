@@ -160,33 +160,78 @@ def make_memory():
     # ---- top: the list ----------------------------------------------------
     ax.text(5.5, 11.35, "v0:  Token.t list", ha="center", fontsize=13,
             fontweight="bold", color=TEXT)
-    ax.text(5.5, 10.95, "18.1 words/token  ·  5 blocks  ·  chased", ha="center",
-            fontsize=10, color=TEXT, fontstyle="italic")
+    ax.text(5.5, 10.95,
+            "18.1 words/token  ·  five blocks, each its own allocation  ·  chased",
+            ha="center", fontsize=10, color=TEXT, fontstyle="italic")
 
-    blocks = [
-        (1.1, 10.05, 3.2, "::  [ hdr | * | * ]", CELL),
-        (5.6, 9.00, 3.6, "Token.t  [ hdr | kind | * ]", REC),
-        (2.4, 7.95, 3.1, "span  [ hdr | * | * ]", REC),
-        (0.7, 6.75, 3.6, "pos lo  [ hdr | line | col | off ]", REC),
-        (5.6, 6.75, 3.6, "pos hi  [ hdr | line | col | off ]", REC),
-        (2.6, 5.60, 3.8, "::  [ hdr | * | * ]   next token", CELL),
-    ]
-    for x, y, w, label, color in blocks:
-        word(ax, x, y, w, label, color, fontsize=8.5)
+    CW, CH = 1.02, 0.52          # one machine word
 
-    def hop(a, b):
-        ax.add_patch(FancyArrowPatch(a, b, arrowstyle="-|>", mutation_scale=10,
-                                     linewidth=1.1, color=EDGE, zorder=1))
+    def record(x, y, label, cells, color):
+        """A heap block drawn word by word. `cells` are (text, is_pointer)."""
+        ax.text(x - 0.16, y + CH / 2, label, ha="right", va="center",
+                fontsize=9, color=TEXT)
+        for k, (text, _) in enumerate(cells):
+            ax.add_patch(FancyBboxPatch(
+                (x + k * CW, y), CW - 0.03, CH,
+                boxstyle="round,pad=0.01,rounding_size=0.03",
+                linewidth=1.0, edgecolor=EDGE,
+                facecolor=("#dfe6ef" if text == "hdr" else color)))
+            ax.text(x + k * CW + (CW - 0.03) / 2, y + CH / 2, text,
+                    ha="center", va="center", fontsize=8.5, color=TEXT)
+        return x, y
 
-    hop((2.70, 10.05), (7.40, 9.42))     # cons    -> Token.t
-    hop((7.40, 9.00), (3.95, 8.37))      # Token.t -> span
-    hop((3.30, 7.95), (2.50, 7.17))      # span    -> pos lo
-    hop((4.20, 7.95), (7.40, 7.17))      # span    -> pos hi
-    elbow(ax, [(1.1, 10.26), (0.28, 10.26), (0.28, 5.81), (2.6, 5.81)], head=True)
+    def port(x, k):              # bottom-centre of word k, where a pointer leaves
+        return (x + k * CW + (CW - 0.03) / 2, )
+
+    rows = {
+        "cons":  (3.05, 10.05, "cons cell",
+                  [("hdr", 0), ("head ●", 1), ("tail ●", 1)], CELL),
+        "tok":   (4.60, 8.95, "Token.t",
+                  [("hdr", 0), ("kind", 0), ("span ●", 1)], REC),
+        "span":  (3.45, 7.85, "span",
+                  [("hdr", 0), ("lo ●", 1), ("hi ●", 1)], REC),
+        "lo":    (0.75, 6.70, "pos lo",
+                  [("hdr", 0), ("line", 0), ("col", 0), ("offset", 0)], REC),
+        "hi":    (5.85, 6.70, "pos hi",
+                  [("hdr", 0), ("line", 0), ("col", 0), ("offset", 0)], REC),
+        "next":  (3.05, 5.55, "cons cell",
+                  [("hdr", 0), ("head ●", 1), ("tail ●", 1)], CELL),
+    }
+    for x, y, label, cells, color in rows.values():
+        record(x, y, label, cells, color)
+
+    def link(src, k, dst_x, dst_w):
+        """From word k of `src` down into the top edge of the block at dst_x."""
+        sx, sy = rows[src][0], rows[src][1]
+        x0 = sx + k * CW + (CW - 0.03) / 2
+        ax.add_patch(FancyArrowPatch((x0, sy), (dst_x + dst_w / 2, dst_x * 0 + 0),
+                                     alpha=0))          # placeholder, replaced below
+        return x0, sy
+
+    def arrow_to(src, k, dst):
+        sx, sy = rows[src][0], rows[src][1]
+        dx, dy, _, dcells, _ = rows[dst]
+        x0 = sx + k * CW + (CW - 0.03) / 2
+        x1 = dx + len(dcells) * CW / 2
+        ax.add_patch(FancyArrowPatch((x0, sy), (x1, dy + CH), arrowstyle="-|>",
+                                     mutation_scale=10, linewidth=1.1,
+                                     color=EDGE, zorder=1))
+
+    arrow_to("cons", 1, "tok")     # head -> the token
+    arrow_to("tok", 2, "span")     # span pointer
+    arrow_to("span", 1, "lo")
+    arrow_to("span", 2, "hi")
+    # The tail pointer, routed down the RIGHT margin: the left is where the row labels
+    # live, and `pos hi` stops short of x=10, so this side is clear all the way down.
+    tx = rows["cons"][0] + 2 * CW + (CW - 0.03) / 2
+    nx = rows["next"][0] + 3 * CW          # right edge of the next cons cell
+    elbow(ax, [(tx, 10.05), (tx, 9.72), (10.55, 9.72), (10.55, 5.81), (nx, 5.81)],
+          head=True)
 
     ax.text(5.5, 4.95,
-            "five blocks, five addresses.  Each arrow is a load that must finish before\n"
-            "the next address is even known — a prefetcher cannot run ahead of a chase.",
+            "17 words in five blocks (3 + 3 + 3 + 4 + 4), at five addresses the allocator\n"
+            "chose. Each ● is a load that must finish before the next address is even\n"
+            "known — a prefetcher cannot run ahead of a pointer chase.",
             ha="center", va="center", fontsize=9, color=TEXT, fontstyle="italic")
 
     # ---- bottom: the soup -------------------------------------------------
