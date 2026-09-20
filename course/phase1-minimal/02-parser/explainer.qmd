@@ -100,7 +100,9 @@ say which of the last two rows applies, and `x` could still turn out to be `x = 
 None of your functions touch the token array directly. `parser.ml` gives you a cursor over it —
 `peek` (what is here?), `peek_kind_at` (what is *n* tokens further on?), `advance` (take it and
 step), `expect` (take it if it is the kind I want, else report), `skip_newlines` — and every rule
-you write is built from those five.
+you write is built from those five. A sixth, `report_error p msg`, files a diagnostic at the token
+`peek` would return; every message in this concept goes through it, which is how "always the
+offending token" stays true without being repeated at four call sites.
 
 ### Pratt parsing / precedence climbing
 
@@ -257,9 +259,8 @@ again.
    the name by matching `peek_kind` rather than `expect`, which compares whole kinds.)
 4. **`parse_program`:** skip leading `Newline`s (`skip_newlines p`, given); loop until `Eof`: parse
    a statement, then consume the terminating `Newline` (or stop at `Eof`); collect into
-   `Ast.program`. Anything else after a statement is the error in §2's table — call
-   `report_statement_end p` (given) and keep going, so a second broken line is still reported. Its
-   text and span are given rather than yours because `tests/parser-diagnostics.t` asserts both.
+   `Ast.program`. Anything else after a statement is an error: `report_error p` with the wording
+   from §2's table, then keep going, so a second broken line is still reported.
 
 ## 4. Test it
 

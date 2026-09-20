@@ -32,13 +32,18 @@ let advance (parser : t) : Token.t =
     parser.pos <- parser.pos + 1;
   token
 
+(* Report at the OFFENDING token — the one that was found, not the one that was hoped for.
+   Every diagnostic in this file goes through here, so that rule lives in one place (the lexer
+   has the same helper, for the same reason). The wording comes from explainer §2's table. *)
+let report_error (parser : t) (message : string) : unit =
+  Diagnostics.error parser.diagnostics (peek parser).Token.span message
+
 (* Consume a token of the expected kind, or report an error and return the current one. *)
 let expect (parser : t) (k : Token.kind) (description : string) : Token.t =
   let token = peek parser in
   if token.Token.kind = k then advance parser
   else (
-    Diagnostics.error parser.diagnostics token.Token.span
-      (Printf.sprintf "expected %s" description);
+    report_error parser (Printf.sprintf "expected %s" description);
     token)
 
 (* Newlines separate declarations and statements in several grammar productions. *)
@@ -97,7 +102,7 @@ let rec parse_expr_bp (parser : t) (minimum_binding_power : int) : Ast.expr =
           (Ast.Neg, operand, span_between t.Token.span (Ast.expr_span operand))
     | _ ->
         let t = peek parser in
-        Diagnostics.error parser.diagnostics t.Token.span "expected expression";
+        report_error parser "expected expression";
         ignore (advance parser);
         Ast.Int_lit (0, t.Token.span)
     (* recovery placeholder *)
@@ -152,8 +157,7 @@ let parse_ident (parser : t) (description : string) : string * Token.span =
       (s, t.Token.span)
   | _ ->
       let t = peek parser in
-      Diagnostics.error parser.diagnostics t.Token.span
-        (Printf.sprintf "expected %s" description);
+      report_error parser (Printf.sprintf "expected %s" description);
       ("_", t.Token.span)
 
 let parse_stmt (parser : t) : Ast.stmt =
@@ -182,13 +186,6 @@ let parse_stmt (parser : t) : Ast.stmt =
       let expression = parse_expr parser in
       Ast.Expr_stmt (expression, Ast.expr_span expression)
 
-(* The statement terminator's diagnostic. Given: `parse_program` decides WHEN a statement is
-   badly terminated, but the text and the span are fixed — the tests assert both, and swiftc
-   words the same complaint `…must be separated by ';'` once the language has one (concept 10). *)
-let report_statement_end (parser : t) : unit =
-  Diagnostics.error parser.diagnostics (peek parser).Token.span
-    "consecutive statements on a line must be separated by a newline"
-
 (* Whole file: skip blank lines, parse statements until Eof, consuming the Newline
    (or Eof) that terminates each. *)
 let parse_program (parser : t) : Ast.program =
@@ -201,7 +198,9 @@ let parse_program (parser : t) : Ast.program =
         (match peek_kind parser with
         | Token.Newline -> ignore (advance parser)
         | Token.Eof -> ()
-        | _ -> report_statement_end parser);
+        | _ ->
+            report_error parser
+              "consecutive statements on a line must be separated by a newline");
         loop (s :: accumulator)
   in
   loop []
