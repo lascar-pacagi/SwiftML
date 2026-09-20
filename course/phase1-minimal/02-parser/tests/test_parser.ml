@@ -63,6 +63,29 @@ let test_expr_calls () =
       Alcotest.(check string) "arg2" "3" (Ast.dump_expr c)
   | _ -> Alcotest.fail "expected a 3-argument call (comma-separated args)"
 
+(* SE-0439: a comma may FOLLOW the last argument. The rule is "a comma may follow an
+   argument", not "arguments are separated by commas" — so a trailing one is legal and a
+   leading one is not, and the tree is the same either way. swiftc accepts `print(1,)` and
+   `print(1, 2,)`, and rejects `print(,)` and `print(,1)`. *)
+let test_expr_trailing_comma () =
+  check_expr "one argument, trailing comma" "(print 1)" "print(1,)";
+  check_expr "two arguments, trailing comma" "(print 1 2)" "print(1, 2,)";
+  check_expr "a trailing comma changes nothing" (dump_of_expr "f(1+2, -3)")
+    "f(1+2, -3,)";
+  check_expr "and it nests" "(print (f 1))" "print(f(1,),)"
+
+let test_expr_leading_comma () =
+  let reports name src =
+    let parser, diagnostics = mk_d src in
+    ignore (Parser.parse_expr parser);
+    if Diagnostics.all diagnostics = [] then
+      Alcotest.failf "%s: %s was accepted; an argument list starts with an expression"
+        name src
+  in
+  reports "leading comma" "print(,1)";
+  reports "comma alone" "print(,)";
+  reports "doubled comma" "print(1,,2)"
+
 let test_expr_nested_calls () =
   check_expr "a call may be an argument" "(print (f 1))" "print(f(1))";
   check_expr "arguments are full expressions" "(f (+ 1 2) (- 3) 4)"
@@ -260,7 +283,12 @@ let () =
       ( "expr: unary",
         [ Alcotest.test_case "unary minus" `Quick test_expr_unary ] );
       ( "expr: calls",
-        [ Alcotest.test_case "comma-separated args" `Quick test_expr_calls ] );
+        [
+          Alcotest.test_case "comma-separated args" `Quick test_expr_calls;
+          Alcotest.test_case "a trailing comma is allowed" `Quick
+            test_expr_trailing_comma;
+          Alcotest.test_case "a leading comma is not" `Quick test_expr_leading_comma;
+        ] );
       ( "expr: nesting",
         [
           Alcotest.test_case "calls and parens nest" `Quick
