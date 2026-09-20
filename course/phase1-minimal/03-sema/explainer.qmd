@@ -38,18 +38,29 @@ The canonical shape is a function `check_expr : environment -> expr -> ty` that 
 expression (and reports diagnostics as a side effect):
 
 ```
-check_expr environment (Int_lit _)        = TInt
-check_expr environment (Var x)            = if x in environment then TInt
-                                    else error "cannot find 'x' in scope"; TInt
-check_expr environment (Unary(_, e))      = check_expr environment e            (* must be Int *)
-check_expr environment (Binary(_, l, r))  = check_expr environment l; check_expr environment r; TInt
-check_expr environment (Call("print",[a])) = check_expr environment a; TInt
-check_expr environment (Call(f, args))    = error if f<>"print" or arity<>1
+check_expr : environment -> expr -> ty        (* reports as a side effect; always yields a type *)
 ```
 
-Everything returns `TInt` in Phase 1, so there are no *mismatches* yet — but this is the exact
-function Phase 2 rewrites to return real types and report `cannot convert value of type 'X' to 'Y'`.
-Building it now means Phase 2 is an edit, not a rewrite.
+| expression | what it checks | yields |
+|---|---|---|
+| `Int_lit _` | nothing — a literal is its own evidence | `TInt` |
+| `Var x` | `x` is in the environment, else *cannot find 'x' in scope* | `TInt` |
+| `Unary (_, e)` | `e` | `TInt` |
+| `Binary (_, l, r)` | `l`, then `r` | `TInt` |
+| `Call ("print", [a])` | `a` | `TInt` |
+| `Call (f, args)` | reports — `f` is not `print`, or `print` has the wrong count — **and checks `args` anyway** | `TInt` |
+
+Two things in that table are easy to leave out and are the whole of error recovery. **Every row
+yields a type, the failing ones included**: a function that returns `ty` has nothing else to hand
+back, so an error path reports and then answers `TInt` regardless — which is what lets the walk
+carry on and find the next mistake instead of stopping at the first. And **a bad call still checks
+its arguments**, so `foo(nope)` reports both the unknown callee and the unknown argument in one run.
+
+The third column being constant is Phase 1's whole type system: one type, so no expression can
+mismatch another. This is nonetheless the exact function Phase 2 rewrites to yield real types and
+report `cannot convert value of type 'X' to 'Y'` — which makes Phase 2 an edit rather than a
+rewrite. (`sema.ml` closes over the scope rather than passing it; the signature above is the
+textbook shape the rules are usually written in.)
 
 > Oracle: in `../../swift/lib/Sema/`, declaration checking and scope live in `TypeCheckDecl.cpp`;
 > expression checking funnels into the **constraint system** (`CSGen.cpp` generates constraints,
