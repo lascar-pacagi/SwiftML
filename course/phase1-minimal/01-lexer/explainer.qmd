@@ -568,8 +568,8 @@ scan: from the parser never needing a whole token at most positions, so the ones
 built. Take one line of the corpus and ask which of its tokens end up in the tree:
 
 ```
-   let  value_0  =  1000  +  0  *  3  -  40  /  5  %  6  ⏎      15 tokens
-    ●      ●         ●        ●     ●      ●     ●     ●        8 spans stored
+   let  value_0  =  1000  +  0  *  3  -  40  /  5  %  6  nl      15 tokens
+    ●      ●         ●       ●     ●     ●      ●     ●          8 reach the tree
 ```
 
 The eight are the `let` keyword (the `Let` node spans from it), the identifier, and the six integer
