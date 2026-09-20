@@ -60,8 +60,7 @@ its arguments**, so `foo(nope)` reports both the unknown callee and the unknown 
 The third column being constant is Phase 1's whole type system: one type, so no expression can
 mismatch another. Phase 2 widens it — `Bool`, `Double`, `String`, operator typing, the integer
 literal that may become a `Double` — and that part really is an edit to this function rather than a
-rewrite. (`sema.ml` closes over the scope rather than passing it; the signature above is the
-textbook shape the rules are usually written in.)
+rewrite.
 
 **What does change shape, at concept 05, is what the checker hands back.** Here `check` returns
 `unit`: it walks the tree, reports what is wrong, and the tree it was given goes on to codegen
