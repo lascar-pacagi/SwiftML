@@ -158,12 +158,16 @@ one broken line yields one error instead of a cascade, is §6's exercise 1.
 
 ### The parser's diagnostics
 
-Concept 01's lexer copied its wording from `DiagnosticsParse.def`; the parser's is **ours**. Swift's
-grammar is far larger and its messages name constructs we do not have (`expected pattern`,
-`expected ')' in expression list`), so the tests check that a malformed program is *reported* —
-how many errors, exit 1, parsing continued — and leave the words to you. These are the four
-situations, with the wording `solution/parser.ml` uses and what swiftc says for the same input,
-so you can compare positions:
+Concept 01's lexer copied its wording from `DiagnosticsParse.def`. The parser's wording is **ours**,
+because Swift's grammar is far larger and its messages name constructs this subset does not have:
+`let = 5` is `expected pattern` to swiftc, since what follows `let` in Swift is a *pattern*, not an
+identifier. So the tests assert the shape of a failure — how many errors, exit 1, parsing continued
+— and not its text.
+
+The **position** is not free, though: every diagnostic goes at the offending token's span, the token
+that was *found* rather than the one that was hoped for, and that is where swiftc points too — `1:5`
+for `let = 5`, the `=`. Here are the four sites, with the answer key's wording beside swiftc's for
+the same input:
 
 | input | where | ours | swiftc |
 |---|---|---|---|
@@ -172,11 +176,10 @@ so you can compare positions:
 | `print((1 + 2)` | `expect RParen` | `expected ')'` | `expected ')' in expression list` |
 | `let a = 1 2` | after a statement | `expected newline or end of statement` | `consecutive statements on a line must be separated by ';'` |
 
-The pattern is one function, `expect p kind what`, whose message is `expected <what>`, and two
-hand-written sites: the prefix position and the statement terminator. Every one is reported at the
-**offending token's span** — the token that was found, not the one that was hoped for — which is
-also where swiftc points (`1:5` for `let = 5`, the `=`). §6's first exercise makes the prefix
-message name the token it found.
+Two of those come from the given `expect p kind what`, whose message is always `expected <what>`;
+the prefix position and the statement terminator are written by hand. Word yours differently if you
+like — nothing asserts the strings. §6's first exercise makes the prefix message name the token it
+found, which is the one place the given wording is genuinely weak.
 
 ## 3. Build it, step by step
 
