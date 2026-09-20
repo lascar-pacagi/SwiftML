@@ -166,17 +166,21 @@ because Swift's grammar is far larger and its messages name constructs this subs
 identifier. So the tests assert the shape of a failure — how many errors, exit 1, parsing continued
 — and not its text.
 
-The **position** is not free, though: every diagnostic goes at the offending token's span, the token
-that was *found* rather than the one that was hoped for, and that is where swiftc points too — `1:5`
-for `let = 5`, the `=`. Here are the four sites, with the answer key's wording beside swiftc's for
-the same input:
+The **position** is not free: every diagnostic goes at the offending token's span — the token that
+was *found*, not the one that was hoped for — and `tests/parser-diagnostics.t` pins all four.
+Against swiftc, two land on the same column and two do not:
 
-| input | where | ours | swiftc |
-|---|---|---|---|
-| `let b = *` | prefix position, no operand | `expected expression` | `unary operator cannot be separated from its operand` |
-| `let = 5` | `parse_ident` | `expected identifier` | `expected pattern` |
-| `print((1 + 2)` | `expect RParen` | `expected ')'` | `expected ')' in expression list` |
-| `let a = 1 2` | after a statement | `expected newline or end of statement` | `consecutive statements on a line must be separated by ';'` |
+| input | ours | swiftc |
+|---|---|---|
+| `let b = *` | `1:9` `expected expression` | `1:9` `unary operator cannot be separated from its operand` |
+| `let = 5` | `1:5` `expected identifier` | `1:5` `expected pattern` |
+| `print((1 + 2)` | `1:14` `expected ')'` | `2:1` `expected ')' in expression list` |
+| `let a = 1 2` | `1:11` `expected newline or end of statement` | `1:10` `consecutive statements on a line must be separated by ';'` |
+
+The two that differ differ for a reason. For the unclosed paren swiftc scans to end of input before
+giving up, so it blames `2:1`; we blame the newline that `expect` actually met. And for two
+statements on a line swiftc points at `1:10`, the gap *after* `1`, because its message asks you to
+insert a `;` there — a fix-it position, not the offending token. Ours names what it found.
 
 Only the third uses the given `expect p kind what`, which compares one specific kind and reports
 `expected <what>` when it does not match. The other three cannot, and each for its own reason: an
