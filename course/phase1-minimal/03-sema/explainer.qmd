@@ -38,7 +38,8 @@ The canonical shape is a function `check_expr : environment -> expr -> ty` that 
 expression (and reports diagnostics as a side effect):
 
 ```
-check_expr : environment -> expr -> ty        (* reports as a side effect; always yields a type *)
+check_expr : environment -> expr -> ty
+(* reports as a side effect; always yields a type *)
 ```
 
 | expression | what it checks | yields |
@@ -81,8 +82,9 @@ That raises an obvious question: *whose* wording? swiftc's. It is the behavioral
 messages exactly as it is for output, and asking it takes one command:
 
 ```bash
-swiftc -typecheck bad.swift                                                # the authority
-_build/default/phase1-minimal/03-sema/tests/lab.exe --typecheck bad.swift  # ours, same stage
+# the authority, and ours at the same stage
+swiftc -typecheck bad.swift
+_build/default/phase1-minimal/03-sema/tests/lab.exe --typecheck bad.swift
 ```
 
 `--typecheck` is our `swiftc -typecheck`: lex → parse → sema and stop. It exists so Sema can be
@@ -350,7 +352,9 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : unit =
         Hashtbl.replace scope name is_var
     | Ast.Assign { name; value; span } ->
         (match Hashtbl.find_opt scope name with
-        | None -> Diagnostics.error diagnostics span (Printf.sprintf "cannot find '%s' in scope" name)
+        | None ->
+            Diagnostics.error diagnostics span
+              (Printf.sprintf "cannot find '%s' in scope" name)
         | Some is_var ->
             if not is_var then
               Diagnostics.error diagnostics span
@@ -411,7 +415,8 @@ hand, completes exercise 1's diagnostic:
     | Some (_, prev) ->
         Diagnostics.error diagnostics span
           (Printf.sprintf "invalid redeclaration of '%s'" name);
-        Diagnostics.note diagnostics prev (Printf.sprintf "'%s' previously declared here" name)
+        Diagnostics.note diagnostics prev
+          (Printf.sprintf "'%s' previously declared here" name)
     | None -> Hashtbl.replace scope name (is_var, span))
 ```
 
