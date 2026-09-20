@@ -84,11 +84,18 @@ Keep the grammar in view while you write §3 — it is also the answer to "shoul
 ### Recursive descent
 
 Each grammar rule becomes a function that consumes the tokens it expects and returns an AST node,
-calling sub-rule functions for sub-parts. `parse_program` loops calling `parse_stmt` until `Eof`;
-`parse_stmt` peeks: a `let`/`var` keyword ⇒ parse a binding; an identifier immediately followed by
-`=` ⇒ a reassignment (`Ast.Assign`); otherwise ⇒ parse an expression statement. Telling the last two
-apart needs **one token of lookahead** past the identifier. The token cursor (`peek`, `advance`,
-`expect`) is your input.
+calling sub-rule functions for sub-parts. `parse_program` loops calling `parse_stmt` until `Eof`,
+and `parse_stmt` decides what it is looking at from the front of the token stream:
+
+| it starts with | it is |
+|---|---|
+| `let` or `var` | a binding |
+| an identifier, and the token after it is `=` | a reassignment — `Ast.Assign` |
+| anything else | an expression statement |
+
+The middle row is why the parser needs **one token of lookahead**: an identifier alone does not
+say which of the last two rows applies, and `x` could still turn out to be `x = 1` or `x + 1`. The
+token cursor (`peek`, `advance`, `expect`) is your input.
 
 ### Pratt parsing / precedence climbing
 
