@@ -81,7 +81,7 @@ A statement that is itself broken is reported inside the block, once:
 
   $ printf '{\n  let = 1\n}\n' > b11.swift
   $ timeout 5 ./lab.exe --emit-block b11.swift; echo "exit=$?"
-  2:7: error: expected identifier
+  2:7: error: expected a constant name
     let = 1
         ^
   exit=1

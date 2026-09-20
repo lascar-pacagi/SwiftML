@@ -168,8 +168,7 @@ identifier. Ours is what the table below says, and `tests/parser-diagnostics.t` 
 with one exception, the prefix error, whose text §6's first exercise rewrites.
 
 The **position** matters as much as the text: every diagnostic goes at the offending token's span —
-the token that was *found*, not the one that was hoped for. Against swiftc, two land on the same
-column and two do not:
+the token that was *found*, not the one that was hoped for. These are the five, against swiftc:
 
 +-----------------+----------------------------------+--------------------------------------+
 | input           | ours                             | swiftc                               |
@@ -179,7 +178,12 @@ column and two do not:
 |                 |                                  | separated from its operand           |
 +-----------------+----------------------------------+--------------------------------------+
 | `let = 5`       | `1:5`                            | `1:5`                                |
-|                 | expected identifier              | expected pattern                     |
+|                 | expected a constant name         | expected pattern                     |
+|                 | (`var = 5`: a variable name)     |                                      |
++-----------------+----------------------------------+--------------------------------------+
+| `let a 5`       | `1:7`                            | `1:6`                                |
+|                 | expected '='                     | consecutive statements on a line     |
+|                 |                                  | must be separated by ';'             |
 +-----------------+----------------------------------+--------------------------------------+
 | `print((1 + 2)` | `1:14`                           | `2:1`                                |
 |                 | expected ')'                     | expected ')' in expression list      |
@@ -193,17 +197,22 @@ The last row is the same sentence twice, differing only in the separator each na
 no semicolon; from concept 10 it is lexed as a `Newline`, and our wording becomes swiftc's word
 for word.
 
+`let a 5` is the one swiftc has no message for, because it does not need one: `let a: Int` is a
+complete declaration in Swift, so `=` is optional and `let a` simply ends — leaving `5` as a
+second statement on the line. Our subset has no type annotations until concept 05 and no
+uninitialised bindings, so `=` is required and `expect` asks for it by name.
+
 The two positions that differ, differ for a reason. For the unclosed paren swiftc scans to end of
 input before giving up, so it blames `2:1`; we blame the newline that `expect` actually met. And
 for two statements on a line swiftc points at `1:10`, the gap *after* `1`, because its message asks
 you to insert a `;` there — a fix-it position, not the offending token. Ours names what it found.
 
-Only the third uses the given `expect p kind what`, which compares one specific kind and reports
-`expected <what>` when it does not match. The other three cannot, and each for its own reason: an
-identifier is `Token.Ident s`, a kind *carrying a payload*, so there is no single value to compare
-against; in prefix position nothing specific was expected, since several kinds would have been
-fine; and after a statement two kinds are acceptable, a `Newline` or `Eof`. Each of those three
-calls `report_error` itself.
+Two of the five come from the given `expect p kind what`, which compares one specific kind and
+reports `expected <what>` when it does not match — the `'='` and the `')'`. The other three cannot,
+each for its own reason: an identifier is `Token.Ident s`, a kind *carrying a payload*, so there is
+no single value to compare against; in prefix position nothing specific was expected, since several
+kinds would have been fine; and after a statement two kinds are acceptable, a `Newline` or `Eof`.
+Each of those three calls `report_error` itself.
 
 ## 3. Build it, step by step
 

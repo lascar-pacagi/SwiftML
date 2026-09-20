@@ -475,7 +475,8 @@ and parse_stmt (p : t) : Ast.stmt =
   | Token.Kw_let | Token.Kw_var ->
       let kw = advance p in
       let is_var = kw.Token.kind = Token.Kw_var in
-      let name, _ = parse_ident p "identifier" in
+      let what = if is_var then "a variable name" else "a constant name" in
+      let name, _ = parse_ident p what in
       let annot = parse_annot p in
       ignore (expect p Token.Eq "'='");
       let value = parse_expr p in
