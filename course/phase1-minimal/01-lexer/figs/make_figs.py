@@ -126,6 +126,116 @@ def line(ax, p0, p1):
     )
 
 
+# ---- memory layout: list-of-records vs struct-of-arrays --------------------
+CELL = "#f3e2d0"  # list cons cells
+REC = "#e8eef7"  # records
+ARR = "#dceede"  # the soup's arrays
+MISS = "#f6c9c2"  # a cache line that had to be fetched
+
+
+def word(ax, x, y, w, label, color, fontsize=7.5):
+    ax.add_patch(
+        FancyBboxPatch(
+            (x, y),
+            w,
+            0.42,
+            boxstyle="round,pad=0.01,rounding_size=0.03",
+            linewidth=0.9,
+            edgecolor=EDGE,
+            facecolor=color,
+        )
+    )
+    ax.text(x + w / 2, y + 0.21, label, ha="center", va="center",
+            fontsize=fontsize, color=TEXT)
+
+
+def make_memory():
+    fig, ax = plt.subplots(figsize=(11.6, 6.6))
+    ax.set_xlim(0, 15.5)
+    ax.set_ylim(0, 9.2)
+    ax.axis("off")
+
+    ax.text(3.5, 8.8, "v0:  Token.t list", ha="center", fontsize=12,
+            fontweight="bold", color=TEXT)
+    ax.text(3.5, 8.42, "18.1 words/token · 5 blocks · chased", ha="center",
+            fontsize=9, color=TEXT, fontstyle="italic")
+    ax.text(11.4, 8.8, "v1:  the token soup", ha="center", fontsize=12,
+            fontweight="bold", color=TEXT)
+    ax.text(11.4, 8.42, "4.0 words/token · 3 arrays · walked", ha="center",
+            fontsize=9, color=TEXT, fontstyle="italic")
+
+    # -- left: one token is five blocks, at whatever addresses the allocator handed
+    #    out. Laid out strictly descending so the arrows can be read; the point is the
+    #    number of hops, not the geometry.
+    blocks = [
+        (0.5, 7.15, 2.7, "::  [ hdr | * | * ]", CELL),
+        (3.7, 6.05, 3.0, "Token.t  [ hdr | kind | * ]", REC),
+        (1.3, 4.95, 2.6, "span  [ hdr | * | * ]", REC),
+        (0.2, 3.70, 3.0, "pos lo  [ hdr | line | col | off ]", REC),
+        (3.7, 3.70, 3.0, "pos hi  [ hdr | line | col | off ]", REC),
+        (1.6, 2.45, 3.2, "::  [ hdr | * | * ]   next token", CELL),
+    ]
+    for x, y, w, label, color in blocks:
+        word(ax, x, y, w, label, color)
+
+    def hop(a, b):
+        (ax0, ay0), (bx0, by0) = a, b
+        ax.add_patch(FancyArrowPatch((ax0, ay0), (bx0, by0), arrowstyle="-|>",
+                                     mutation_scale=9, linewidth=1.0, color=EDGE,
+                                     zorder=1))
+
+    hop((1.85, 7.15), (5.20, 6.47))      # cons  -> Token.t
+    hop((5.20, 6.05), (2.60, 5.37))      # Token.t -> span
+    hop((2.20, 4.95), (1.70, 4.12))      # span  -> pos lo
+    hop((3.00, 4.95), (5.20, 4.12))      # span  -> pos hi
+    # the tail pointer, routed down the margin so it crosses nothing
+    elbow(ax, [(0.5, 7.36), (0.05, 7.36), (0.05, 2.66), (1.6, 2.66)], head=True)
+
+    ax.text(3.5, 1.55,
+            "five separate blocks, five addresses.  Every arrow is a load that must\n"
+            "finish before the next address is even known — a prefetcher cannot\n"
+            "run ahead of a pointer chase.",
+            ha="center", va="center", fontsize=8.5, color=TEXT, fontstyle="italic")
+
+    # -- right: three contiguous arrays, one column per token
+    names = ["tags", "starts", "ends"]
+    ys = [7.0, 6.1, 5.2]
+    for name, y in zip(names, ys):
+        ax.text(8.0, y + 0.21, name, ha="right", va="center", fontsize=9, color=TEXT)
+        for k in range(12):
+            word(ax, 8.2 + k * 0.52, y, 0.50, str(k), ARR, fontsize=6.5)
+
+    # the 64-byte cache line: 8 words of one array
+    ax.add_patch(
+        FancyBboxPatch((8.17, 6.92), 8 * 0.52 - 0.02, 0.58,
+                       boxstyle="round,pad=0.02,rounding_size=0.04",
+                       linewidth=1.8, edgecolor="#b4453a", facecolor="none", zorder=4))
+    ax.text(8.17 + 8 * 0.26, 7.72, "one 64-byte cache line = 8 tags",
+            ha="center", fontsize=8.5, color="#b4453a", fontweight="bold")
+    ax.text(11.4, 4.55,
+            "column i IS token i.  Reading every tag is a stride-1 walk:\n"
+            "one cache line serves 8 tokens, and the prefetcher sees it coming.",
+            ha="center", va="center", fontsize=8.5, color=TEXT, fontstyle="italic")
+
+    # -- the scoreboard
+    ax.add_patch(FancyBboxPatch((0.6, 0.18), 14.3, 0.62,
+                                boxstyle="round,pad=0.02,rounding_size=0.05",
+                                linewidth=1.1, edgecolor=EDGE, facecolor="#f7f7f4"))
+    ax.text(7.75, 0.49,
+            "cache lines touched to read one token's kind:   "
+            "v0  2 or more, at unrelated addresses        "
+            "v1  1/8 of one",
+            ha="center", va="center", fontsize=9.5, color=TEXT)
+
+    ax.set_title(
+        "Same tokens, two memory layouts — 18 words chased vs 4 words walked",
+        fontsize=12, color=TEXT, pad=12)
+    fig.tight_layout()
+    out = os.path.join(HERE, "memory.png")
+    fig.savefig(out, dpi=170)
+    print("wrote", out)
+
+
 def make_dfa():
     fig, ax = plt.subplots(figsize=(9.8, 6.4))
     ax.set_xlim(0, 11.4)
@@ -209,3 +319,4 @@ def make_dfa():
 
 if __name__ == "__main__":
     make_dfa()
+    make_memory()

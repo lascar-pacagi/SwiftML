@@ -525,6 +525,23 @@ micro-optimize the scan loop with `unsafe_get` barely helped: it shaved the 3 %,
    `to_tokens` / `token_kind_at`. Even the keyword check (`let`/`var`) compares bytes in place rather than
    allocating a substring.
 
+@fig-memory is the same tokens under both layouts, measured with `Obj.reachable_words` on a real
+2801-token program rather than counted by hand.
+
+![A `Token.t list` is five blocks per token at five addresses; the soup is three arrays where
+column `i` is token `i`.](figs/memory.png){#fig-memory}
+
+A `Token.t list` costs **18.1 words per token**, spread over five separate blocks — the cons cell,
+the `Token.t`, its `span`, and two `pos` records. Reading one token's *kind* means following
+pointers to addresses the allocator picked independently, and each load must complete before the
+next address is even known: a pointer chase is the one access pattern a hardware prefetcher cannot
+run ahead of.
+
+The soup costs **4.0 words per token**, and column `i` *is* token `i`. Reading every tag is a
+stride-1 walk, so a 64-byte cache line carries eight of them: one line per eight tokens, against two
+or more lines *per token* for the list. The allocation saving is about 4×; the cache saving is much
+larger, which is why the measured speedup is bigger than the word count alone predicts.
+
 Net effect: the scanning pass allocates *essentially nothing per token*. That's the 8×.
 
 ### Build the fast rung
