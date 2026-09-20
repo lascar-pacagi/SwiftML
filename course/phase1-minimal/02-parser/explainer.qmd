@@ -175,12 +175,22 @@ Against swiftc, two land on the same column and two do not:
 | `let b = *` | `1:9` `expected expression` | `1:9` `unary operator cannot be separated from its operand` |
 | `let = 5` | `1:5` `expected identifier` | `1:5` `expected pattern` |
 | `print((1 + 2)` | `1:14` `expected ')'` | `2:1` `expected ')' in expression list` |
-| `let a = 1 2` | `1:11` `…separated by a newline` | `1:10` `…separated by ';'` |
 
-The two that differ differ for a reason. For the unclosed paren swiftc scans to end of input before
-giving up, so it blames `2:1`; we blame the newline that `expect` actually met. And for two
-statements on a line swiftc points at `1:10`, the gap *after* `1`, because its message asks you to
-insert a `;` there — a fix-it position, not the offending token. Ours names what it found.
+The fourth is the one where the two nearly meet, and it does not fit a table cell. For
+`let a = 1 2` ours says, at `1:11`:
+
+```
+consecutive statements on a line must be separated by a newline
+```
+
+and swiftc says the same sentence at `1:10`, ending in `';'` instead. Phase 1 has no semicolon;
+from concept 10 it is lexed as a `Newline`, the wording becomes swiftc's word for word, and this
+row stops being a divergence at all.
+
+The two positions that differ, differ for a reason. For the unclosed paren swiftc scans to end of
+input before giving up, so it blames `2:1`; we blame the newline that `expect` actually met. And
+for two statements on a line swiftc points at `1:10`, the gap *after* `1`, because its message asks
+you to insert a `;` there — a fix-it position, not the offending token. Ours names what it found.
 
 Only the third uses the given `expect p kind what`, which compares one specific kind and reports
 `expected <what>` when it does not match. The other three cannot, and each for its own reason: an
