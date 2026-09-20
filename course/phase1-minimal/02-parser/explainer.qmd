@@ -147,8 +147,7 @@ Parser.create : Token.t list -> Diagnostics.sink -> t
 ```
 
 It's stored as `p.diagnostics`, and the given `expect` is the whole policy in five lines: on a mismatch it
-pushes a `Diagnostics.error` at the offending token's span and **returns that token anyway** instead
-of raising. Parsing continues, so one run reports several syntax errors rather than only the first.
+calls `report_error` and **returns that token anyway** instead of raising. Parsing continues, so one run reports several syntax errors rather than only the first.
 The AST built after an error may be nonsense — that's fine, because `Driver.bail_on_errors` checks
 `Diagnostics.has_errors`, prints them (`file:line:col: error: message`), and exits 1 before Sema ever
 sees the tree. `swiftc` makes the same trade in `lib/Parse` (its recursive-descent routines return a
@@ -204,7 +203,7 @@ Only the third uses the given `expect p kind what`, which compares one specific 
 identifier is `Token.Ident s`, a kind *carrying a payload*, so there is no single value to compare
 against; in prefix position nothing specific was expected, since several kinds would have been
 fine; and after a statement two kinds are acceptable, a `Newline` or `Eof`. Each of those three
-calls `Diagnostics.error` directly.
+calls `report_error` itself.
 
 ## 3. Build it, step by step
 
@@ -362,7 +361,7 @@ let rec parse_expr_bp (p : t) (minimum_binding_power : int) : Ast.expr =
         Ast.Unary (Ast.Neg, operand, span_between t.Token.span (Ast.expr_span operand))
     | _ ->
         let t = peek p in
-        Diagnostics.error p.diagnostics t.Token.span "expected expression";
+        report_error p "expected expression";
         ignore (advance p);
         Ast.Int_lit (0, t.Token.span) (* recovery placeholder *)
   in
@@ -400,7 +399,7 @@ let parse_ident (p : t) (what : string) : string * Token.span =
   | Token.Ident s -> let t = advance p in (s, t.Token.span)
   | _ ->
       let t = peek p in
-      Diagnostics.error p.diagnostics t.Token.span (Printf.sprintf "expected %s" what);
+      report_error p (Printf.sprintf "expected %s" what);
       ("_", t.Token.span)
 
 let parse_stmt (p : t) : Ast.stmt =
@@ -434,7 +433,7 @@ let parse_program (p : t) : Ast.program =
         | Token.Newline -> ignore (advance p)
         | Token.Eof -> ()
         | _ ->
-            Diagnostics.error p.diagnostics (peek p).Token.span
+            report_error p
               "consecutive statements on a line must be separated by a newline");
         loop (s :: acc)
   in
@@ -461,7 +460,7 @@ First, name the offending token in the prefix error instead of a bare placeholde
 ```ocaml
 | _ ->
     let t = peek p in
-    Diagnostics.error p.diagnostics t.Token.span
+    report_error p
       (Printf.sprintf "expected an expression, found '%s'"
          (Token.string_of_kind t.Token.kind));
     ignore (advance p);
@@ -474,8 +473,7 @@ statement isn't a `Newline`/`Eof`, skip forward to the next `Newline` before con
 
 ```ocaml
 | _ ->
-    Diagnostics.error p.diagnostics (peek p).Token.span
-      "consecutive statements on a line must be separated by a newline";
+    report_error p "consecutive statements on a line must be separated by a newline";
     while (match peek_kind p with Token.Newline | Token.Eof -> false | _ -> true) do
       ignore (advance p)
     done
