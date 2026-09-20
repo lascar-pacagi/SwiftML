@@ -127,7 +127,12 @@ oracle:
 # Benchmark a concept (needs a bench/bench.ml — e.g. 01-lexer, 20-llvm-opt):
 #   make bench C=phase4-optimizer/20-llvm-opt
 bench:
-	$(DUNE) exec -- ./$(C)/bench/bench.exe
+	@if [ -z "$(C)" ] || [ ! -f "$(C)/bench/bench.ml" ]; then \
+	  echo "no benchmark for '$(C)' — it has no bench/bench.ml."; \
+	  echo "concepts with one:"; \
+	  for f in */*/bench/bench.ml; do [ -e "$$f" ] && echo "  make bench C=$${f%/bench/bench.ml}"; done; \
+	  exit 2; fi
+	@$(DUNE) exec -- ./$(C)/bench/bench.exe
 
 # Run only a concept's §6 EXERCISE tests. Untouched groups report as optional; a started
 # but incorrect exercise is RED. The same suites also appear in `make lab`.
@@ -140,10 +145,19 @@ exercises:
 #                                                allocation accounting, allocation sites
 #   make profile-cpu C=phase1-minimal/01-lexer   sampled call tree (macOS `sample`):
 #                                                how much CPU is your code vs the GC
+# Only a concept that ships bench/profile.ml can be profiled; say so, and say which can,
+# rather than letting dune report a missing .exe for a target that was never going to exist.
 profile:
-	$(DUNE) exec -- ./$(C)/bench/profile.exe
+	@if [ -z "$(C)" ] || [ ! -f "$(C)/bench/profile.ml" ]; then \
+	  echo "no profiler for '$(C)' — it has no bench/profile.ml."; \
+	  echo "concepts with one:"; \
+	  for f in */*/bench/profile.ml; do [ -e "$$f" ] && echo "  make profile C=$${f%/bench/profile.ml}"; done; \
+	  exit 2; fi
+	@$(DUNE) exec -- ./$(C)/bench/profile.exe
 
 profile-cpu:
+	@if [ -z "$(C)" ] || [ ! -f "$(C)/bench/profile.ml" ]; then \
+	  echo "no profiler for '$(C)' — it has no bench/profile.ml."; exit 2; fi
 	@$(DUNE) build ./$(C)/bench/profile.exe
 	@./tooling/profile-cpu.sh $(C) $(RUNG)
 

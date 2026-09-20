@@ -231,7 +231,8 @@ Run from `course/`:
   `solution/token.ml` once lost a keyword the skeleton had.
 - Differential vs swiftc: `make oracle F=tests/programs/arith.swift` (`B=swiftml4` to pick a
   later phase's binary).
-- Benchmark (concepts with a `bench/`: 01-lexer, 20-llvm-opt): `make bench C=phase4-optimizer/20-llvm-opt`.
+- Benchmark: `make bench C=phase4-optimizer/20-llvm-opt`. Nine concepts ship a `bench/bench.ml`
+  (01, 09, 10, 11, 12, 20, 24, 28, 34); on any other the target lists the ones that do.
 - Exercise tests (01-lexer): the §6 exercises run inside `make lab`, each group SKIPPING itself
   until a probe sees the lexer behave differently from stock (a half-done attempt fails, it is
   not skipped); `make exercises C=…` runs only those. Same skip-until-started convention makes
