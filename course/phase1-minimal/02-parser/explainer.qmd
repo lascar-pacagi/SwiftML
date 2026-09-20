@@ -176,8 +176,12 @@ the same input:
 | `print((1 + 2)` | `expect RParen` | `expected ')'` | `expected ')' in expression list` |
 | `let a = 1 2` | after a statement | `expected newline or end of statement` | `consecutive statements on a line must be separated by ';'` |
 
-Two of those come from the given `expect p kind what`, whose message is always `expected <what>`;
-the prefix position and the statement terminator are written by hand.
+Only the third uses the given `expect p kind what`, which compares one specific kind and reports
+`expected <what>` when it does not match. The other three cannot, and each for its own reason: an
+identifier is `Token.Ident s`, a kind *carrying a payload*, so there is no single value to compare
+against; in prefix position nothing specific was expected, since several kinds would have been
+fine; and after a statement two kinds are acceptable, a `Newline` or `Eof`. Each of those three
+calls `Diagnostics.error` directly.
 
 ## 3. Build it, step by step
 
