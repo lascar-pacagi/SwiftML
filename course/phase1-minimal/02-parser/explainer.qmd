@@ -215,10 +215,12 @@ second for you.
 
 ## 3. Build it, step by step
 
-Open `parser.ml` in this directory. Helpers `peek`, `peek_kind`, `advance`, `expect`,
-`skip_newlines`, `infix_bp`, `binop_of_kind` are written. `skip_newlines p` walks the cursor past a
-run of `Newline`s; every production that allows blank lines calls it rather than writing the loop
-again.
+Open `parser.ml` in this directory. Helpers `peek`, `peek_kind`, `peek_kind_at`, `advance`,
+`expect`, `skip_newlines`, `report_error`, `parse_ident`, `infix_bp`, `binop_of_kind` and
+`span_between` are written. `skip_newlines p` walks the cursor past a run of `Newline`s; every
+production that allows blank lines calls it rather than writing the loop again. `expect` and
+`report_error` are the two ways to report — see §2 — and `parse_ident` already uses the second, so
+the messages you write yourself are the two below.
 
 1. **`parse_prefix`** (write it as a local function or inline at the top of `parse_expr_bp`):
    match `peek_kind p`:
