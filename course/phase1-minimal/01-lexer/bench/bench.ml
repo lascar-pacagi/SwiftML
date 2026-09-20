@@ -15,7 +15,7 @@
 
    For *where* the time goes rather than how much, see `make profile C=phase1-minimal/01-lexer`. *)
 
-(* The gate. The real gain is ~8x; 3x leaves room for a loaded laptop but still fails
+(* The gate. The real gain is ~12x; 3x leaves room for a loaded laptop but still fails
    loudly if v1 is only "a bit" faster — which means it is still allocating per token. *)
 let min_speedup = 3.0
 

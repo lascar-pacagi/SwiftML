@@ -366,13 +366,14 @@ line/col spans) — a faster lexer that changes the output is a bug, not a win �
 
 ```
   equivalence: v1_fast == v0_naive  (kinds + line/col spans) OK
-  v0_naive      42.5 MB/s   (750001 tokens/lex)
-  v1_fast      353.0 MB/s   (750001 tokens/lex)
-  => v1_fast is 8.3x v0_naive
+  v0_naive      32.9 MB/s   (750001 tokens/lex, 1.897s)
+  v1_fast      397.1 MB/s   (750001 tokens/lex, 0.157s)
+  => v1_fast is 12.1x v0_naive
 ```
 
-So we go from ~42 MB/s to **~350 MB/s — squarely in swiftc's "hundreds of MB/s" band**. Here's the
-whole story, because *how* you get there is the lesson.
+So we go from tens of MB/s to **hundreds — squarely in swiftc's band**. (The ratio moves with the
+machine and the corpus; what does not move is where the time goes.) Here's the whole story, because
+*how* you get there is the lesson.
 
 ### Finding the bottleneck: `make profile`
 
@@ -504,7 +505,7 @@ inner `while` loop that actually reads bytes? A few percent. **Lesson #1: measur
 — the bottleneck is almost never where the code "looks busy."** (This is why the earlier instinct to
 micro-optimize the scan loop with `unsafe_get` barely helped: it shaved the 3 %, not the 97 %.)
 
-### How v1_fast gets 8× — the exact moves swiftc makes
+### How v1_fast gets its 12× — the exact moves swiftc makes
 
 `bench/lexer_v1_fast.ml` attacks the representation, not the loop. Three changes, all of which mirror
 `swift/lib/Parse/Lexer.cpp` + `SourceManager`:
@@ -542,17 +543,17 @@ stride-1 walk, so a 64-byte cache line carries eight of them: one line per eight
 or more lines *per token* for the list. The allocation saving is about 4×; the cache saving is much
 larger, which is why the measured speedup is bigger than the word count alone predicts.
 
-Net effect: the scanning pass allocates *essentially nothing per token*. That's the 8×.
+Net effect: the scanning pass allocates *essentially nothing per token*. That's the 12×.
 
 **But what does a consumer actually get?** `make bench` times `lex` against `tokenize` — a soup
 against a finished `Token.t list`. That flatters the fast rung, because a parser needs tokens, not
-a soup. Time the three things a parser could do with it instead (2.6 MB, three runs, stable):
+a soup. Time what a parser could do with it instead — same corpus as the bench above, best of three:
 
 ```
-   v0  tokenize -> Token.t list           27.8 MB/s    1.00x
-   v1  lex (soup only)                   199.1 MB/s    7.2x     <- what the bench reports
-   v1  lex + to_tokens -> Token.t list    20.6 MB/s    0.74x    <- SLOWER than v0
-   v1  lex + walk every kind, no spans   153.2 MB/s    5.5x
+   v0  tokenize -> Token.t list            33.3 MB/s    1.00x
+   v1  lex (soup only)                    398.0 MB/s   11.97x   <- what the bench reports
+   v1  lex + to_tokens -> Token.t list     25.9 MB/s    0.78x   <- SLOWER than v0
+   v1  lex + walk every kind, no spans    249.9 MB/s    7.52x
 ```
 
 Read the third line twice. **If the parser insists on a `Token.t list`, the fast rung is a net
@@ -563,7 +564,7 @@ if some of it is never demanded.
 
 Which is the argument for the soup being the *interface*, not a private detail of the lexer. A
 parser that indexes the arrays and asks `position_of_offset` only when it has a diagnostic to place
-keeps 5.5× of the 7.2×; one that calls `to_tokens` first keeps none of it. swiftc makes exactly
+keeps 7.5× of the 12×; one that calls `to_tokens` first keeps none of it. swiftc makes exactly
 this bet: a `SourceLoc` is an offset, and `line:col` is a `SourceManager` query you pay for per
 *diagnostic*, not per token.
 
