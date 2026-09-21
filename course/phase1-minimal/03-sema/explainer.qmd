@@ -236,8 +236,8 @@ make oracle F=prog.swift B=swiftml4             # or a later phase's binary
 It compiles `F` **twice** — once with `swiftc`, once with our compiler — runs both binaries, and
 compares three things: whether each compiler accepted the program at all, the program's stdout, and
 its exit code. Identical on all three ⇒ `OK`; otherwise it prints a diff and our compile output.
-That is the headline correctness check of the whole project, and `tooling/oracle.sh` is 60 lines you
-can read.
+That is the headline correctness check of the whole project, and `tooling/oracle.sh` is short
+enough to read in one sitting.
 
 Even then it will not check your *diagnostics*. For a program both compilers **reject**, all it can
 see is that they agreed to reject it — a failed compile leaves no program to run:
@@ -267,8 +267,9 @@ make lab       C=phase1-minimal/03-sema      # concept + exercises
 ```
 
 **1 — reject redeclaration.** Does `let x = 1` followed by `let x = 2` shadow, as it would in a REPL,
-or is it an error? Don't guess; the oracle answers in one command (`-diagnostic-style=llvm` prints
-plain `line:col:` instead of the source-quoting display):
+or is it an error? Don't guess; the oracle answers in one command (`-diagnostic-style=llvm` swaps
+Swift's boxed display for clang-style `file:line:col:` prefixes, which is what our diagnostics look
+like; the quoted source line and caret under each are elided below):
 
 ```console
 $ printf 'let x = 1\nlet x = 2\nprint(x)\n' > redecl.swift
