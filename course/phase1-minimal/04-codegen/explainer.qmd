@@ -398,13 +398,11 @@ zero, which have to reach the machine so the program traps where Swift traps rat
 compiler crashing at compile time. And fold the way the hardware does — `-7 / 2` is `-3` and
 `-7 % 2` is `-1`, truncating toward zero — or your optimized and unoptimized builds disagree.
 
-> This one **invalidates part of `tests/test_irgen.ml`**, and that is worth sitting with. The
-> `arithmetic` group asserts one instruction per operator, which is exactly what folding removes,
-> so those cases go red the moment the exercise works. Nothing is broken: the tests encode a
-> lowering, you changed the lowering, so the tests describing the old one are now wrong.
-> `tests/test_exercises.ml` states the new contract, and updating the stale cases in the concept
-> suite is part of the exercise. This is the same bookkeeping every optimization pass in Phase 4
-> comes with.
+> This one **changes what `tests/test_irgen.ml` can see**, and that is worth sitting with. Its
+> `arithmetic` group asserts one instruction per operator, which is exactly what folding removes:
+> the tests encode a lowering, and you changed the lowering. So the suite probes which one you
+> built and states each of those rules a second way, over an operand no folder may reduce, and
+> they keep checking you; `tests/test_exercises.ml` states what folding itself must do.
 
 ## 7. Recap & what's next — **M1 reached**
 
