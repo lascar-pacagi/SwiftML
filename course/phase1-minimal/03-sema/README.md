@@ -37,3 +37,5 @@ rejected. Freeze `sema.ml` into `solution/`.
 > that threads an environment and reports diagnostics — is exactly what Phase 2 fills with real
 > types (`Bool`/`Double`/`String`), and Phase 5 replaces with a constraint solver. Build the
 > skeleton now so later phases slot in.
+
+`solution/exercises/` holds the same key with §6's exercises applied (sema.ml); `make check-exercises C=phase1-minimal/03-sema` builds and runs it.

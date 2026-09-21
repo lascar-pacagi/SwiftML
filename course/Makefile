@@ -8,7 +8,7 @@ PY := $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
 # bare `dune` if opam isn't installed.
 DUNE := $(shell command -v opam >/dev/null 2>&1 && echo "opam exec -- dune" || echo dune)
 
-.PHONY: setup setup-hooks claim claim-all unclaim save restore check-pristine check-shipped build test test-all lab check-solution exercises oracle bench profile profile-cpu fmt lint figs explainer docs preview clean
+.PHONY: setup setup-hooks claim claim-all unclaim save restore check-pristine check-shipped build test test-all lab check-solution check-exercises exercises oracle bench profile profile-cpu fmt lint figs explainer docs preview clean
 
 # ---- Phase 0: toolchain bootstrap ------------------------------------------
 # Installs OCaml + dune + the test/format deps. Walks you through opam if missing.
@@ -117,6 +117,9 @@ lab:
 # The answer key runs in an isolated detached worktree, so the learner's live files are untouched.
 check-solution:
 	@C="$(C)" ./tooling/check-solution.sh
+
+check-exercises:
+	@C="$(C)" ./tooling/check-exercises.sh
 
 # Differential test a single program against swiftc:
 #   make oracle F=tests/programs/arith.swift            (defaults to the Phase-1 swiftml)

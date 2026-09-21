@@ -24,6 +24,12 @@ trap cleanup EXIT INT TERM
 git -C "$REPO_ROOT" worktree add --quiet --detach "$WORKTREE" HEAD || exit $?
 WORK_C="$WORKTREE/course/$C"
 
+# Fill every concept first: this one's tests link the chain below it, and a prerequisite
+# still on its skeleton would leave every case reading TODO rather than exercising the
+# key under test. The concept under test is then re-filled from its own solution/ below.
+. "$REPO_ROOT/course/tooling/fill-solutions.sh"
+fill_solutions "$WORKTREE/course"
+
 for sol in "$WORK_C"/solution/*.ml; do
   f="$(basename "$sol")"
   [ -f "$WORK_C/$f" ] || continue     # solution-only files (e.g. a v1 rung) are not copied in

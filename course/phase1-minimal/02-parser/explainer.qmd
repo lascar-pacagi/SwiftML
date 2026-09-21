@@ -463,6 +463,9 @@ Why it's shaped this way:
 
 ## 9. Exercise solutions
 
+The fragments below are quoted from `solution/exercises/parser.ml` — the stock answer key with these
+exercises applied, which `make check-exercises C=phase1-minimal/02-parser` builds and runs.
+
 ### 1 — a good prefix error + `v1_recovery`
 
 First, name the offending token in the prefix error instead of a bare placeholder:

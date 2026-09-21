@@ -45,3 +45,5 @@ dune exec swiftml -- --emit-llvm tests/programs/arith.swift   # inspect the IR
 decoration + a trailing newline), integer division/remainder semantics, and — once you add bigger
 programs — Swift's **trap on overflow** at `-Onone`. For the Phase-1 corpus plain `add/sub/mul/sdiv/
 srem i64` matches; note where you'll need overflow-checked intrinsics in Phase 2.
+
+`solution/exercises/` holds the same key with §6's exercises applied (irgen.ml); `make check-exercises C=phase1-minimal/04-codegen` builds and runs it.

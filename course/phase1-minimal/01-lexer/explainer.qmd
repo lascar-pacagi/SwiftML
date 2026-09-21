@@ -923,6 +923,9 @@ reconstruct later — and only for tokens somebody actually looks at.
 
 ## 9. Exercise solutions
 
+The fragments below are quoted from `solution/exercises/lexer.ml` and `solution/exercises/token.ml` — the stock answer key with these
+exercises applied, which `make check-exercises C=phase1-minimal/01-lexer` builds and runs.
+
 ### 1 — `_` digit separators
 
 Swift lets `_` appear *after the first digit* of an integer literal — `1_000_000`, `1_0`, even a

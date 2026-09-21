@@ -43,3 +43,5 @@ comments + newlines are handled exactly. Then freeze `lexer.ml` into `solution/`
 Key Swift-specific things to get right (peek at the oracle): newlines are **significant** tokens
 (Swift terminates statements at line breaks), block comments `/* */` **nest**, and identifiers
 follow Swift's rules (letter/`_` then letters/digits/`_`).
+
+`solution/exercises/` holds the same key with §6's exercises applied (lexer.ml + token.ml); `make check-exercises C=phase1-minimal/01-lexer` builds and runs it.

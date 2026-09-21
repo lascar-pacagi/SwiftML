@@ -36,3 +36,5 @@ dune exec swiftml -- --emit-ast tests/programs/arith.swift
 `--emit-ast` produces the correct S-expression for the corpus (precedence/associativity right:
 `1 + 2 * 3` ⇒ `(+ 1 (* 2 3))`, `10 - 4 - 3` ⇒ `(- (- 10 4) 3)`), and bad input yields a sensible
 diagnostic rather than a crash. Freeze `parser.ml` into `solution/`.
+
+`solution/exercises/` holds the same key with §6's exercises applied (parser.ml); `make check-exercises C=phase1-minimal/02-parser` builds and runs it.

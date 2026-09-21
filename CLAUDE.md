@@ -170,6 +170,18 @@ scratchpad, drop the pristine skeleton from `git show HEAD:` over the learner's 
 by swapping files in the learner's tree. Verify a commit by LISTING the staged files, never by the
 absence of unstaged ones (e04b0df committed learner files that way).
 
+**§6's exercises ship as files (STANDARD, 2026-09-21).** `solution/exercises/<stage>.ml` is the
+stock answer key with that concept's §6 exercises applied, and `make check-exercises C=<dir>` builds
+and runs it. Applied to 01-04. Without it, §9's exercise solutions are code nobody ever compiles:
+04's folding sketch carried an `int` fold that prints the wrong answer for `3000000000 * 3000000000`
+(OCaml's native int is 63 bits, i64 is 64) and a `let a = … and b = …` whose evaluation order OCaml
+leaves unspecified, in the one arm whose entire subject is order. Same failure mode as a
+hand-written golden. The target checks two things at once: the exercises themselves, via
+`tests/test_exercises.ml`, whose groups activate only when they see the lowering change; and that
+the concept's OWN suite still passes with the exercises in — which is what "unit tests stay
+exercise-neutral" means operationally. Mark each difference from the stock key `EX<n>` in a comment,
+and say in the header which exercises are applied and which files they touch.
+
 **Goldens are produced, never written.** Run the case against `solution/` (or a scratch build of it)
 and paste what it prints; a hand-written expectation is how a test ends up asserting the wrong thing
 — 05's unterminated-literal golden said end-of-input while the explainer said opening quote, and the
@@ -224,11 +236,15 @@ Run from `course/`:
   own output. Exit status is preserved, so RED/GREEN checks still work. Each concept's cram tests
   run `./lab.exe`, built from THAT concept's library — so they test the code in that directory,
   not the phase binary. RED on the skeleton, GREEN with `solution/` swapped in.
-- Answer key: `make check-solution C=<dir>` creates a detached worktree, copies `solution/*.ml`
-  over the skeletons there, runs that concept's tests, and removes the worktree. The learner's live
-  files are never replaced, even briefly. It is the ONLY thing that compiles `solution/`, so a
-  reference that has drifted from the skeleton is caught by a command instead of by chance —
-  `solution/token.ml` once lost a keyword the skeleton had.
+- Answer key: `make check-solution C=<dir>` creates a detached worktree, fills EVERY concept's
+  `solution/*.ml` over its skeleton there (a concept's tests link the whole chain below it, so a
+  prerequisite left on its skeleton makes every case read `TODO`), re-copies this concept's own
+  key, runs its tests, and removes the worktree. The learner's live files are never replaced, even
+  briefly. It is the ONLY thing that compiles `solution/`, so a reference that has drifted from the
+  skeleton is caught by a command instead of by chance — `solution/token.ml` once lost a keyword
+  the skeleton had.
+- Exercise key: `make check-exercises C=<dir>` does the same, then lets `solution/exercises/*.ml`
+  override the stage modules it carries. See "§6's exercises ship as files" below.
 - Differential vs swiftc: `make oracle F=tests/programs/arith.swift` (`B=swiftml4` to pick a
   later phase's binary).
 - Benchmark: `make bench C=phase4-optimizer/20-llvm-opt`. Nine concepts ship a `bench/bench.ml`

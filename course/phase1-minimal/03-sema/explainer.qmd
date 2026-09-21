@@ -397,6 +397,9 @@ Why it's shaped this way:
 
 ## 9. Exercise solutions
 
+The fragments below are quoted from `solution/exercises/sema.ml` — the stock answer key with these
+exercises applied, which `make check-exercises C=phase1-minimal/03-sema` builds and runs.
+
 ### 1 — reject redeclaration
 
 The oracle settles it: swiftc **rejects** top-level redeclaration (`invalid redeclaration of 'x'`),

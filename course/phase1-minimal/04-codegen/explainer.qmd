@@ -526,6 +526,9 @@ let emit_llvm (program : Ast.program) : string =
 
 ## 9. Exercise solutions
 
+The fragments below are quoted from `solution/exercises/irgen.ml` — the stock answer key with these
+exercises applied, which `make check-exercises C=phase1-minimal/04-codegen` builds and runs.
+
 ### 1 — give a slot only to what is actually assigned
 
 Scan the program once for the names that appear as assignment targets; every other binding — every
@@ -552,27 +555,35 @@ generally, via the dominator tree.
 ### 2 — fold constant arithmetic
 
 One extra case in `emit_expr`'s `Binary` arm, before the general one: if both operands came back as
-literals, do the arithmetic here and return the answer as an immediate.
+literals, do the arithmetic here and return the answer as an immediate. Note *where* the question
+is asked — of the two operand strings the children handed back, not of the tree. The children have
+already been lowered, so this is one question per node rather than a second walk per node.
 
 ```ocaml
 | Ast.Unary (Ast.Neg, e, _) -> (
     let v = emit_expr context e in
-    match int_of_string_opt v with
-    | Some x -> string_of_int (-x)
+    match Int64.of_string_opt v with
+    | Some x -> Int64.to_string (Int64.neg x)
     | None -> (* …the general case: emit `sub i64 0, v`… *))
 
 | Ast.Binary (op, l, r, _) -> (
     let a = emit_expr context l in
     let b = emit_expr context r in
-    match (int_of_string_opt a, int_of_string_opt b, op) with
-    | Some x, Some y, Ast.Add -> string_of_int (x + y)
-    | Some x, Some y, Ast.Sub -> string_of_int (x - y)
-    | Some x, Some y, Ast.Mul -> string_of_int (x * y)
-    | Some x, Some y, Ast.Div when y <> 0 -> string_of_int (x / y)
-    | Some x, Some y, Ast.Mod when y <> 0 -> string_of_int (x mod y)
+    match (Int64.of_string_opt a, Int64.of_string_opt b, op) with
+    | Some x, Some y, Ast.Add -> Int64.to_string (Int64.add x y)
+    | Some x, Some y, Ast.Sub -> Int64.to_string (Int64.sub x y)
+    | Some x, Some y, Ast.Mul -> Int64.to_string (Int64.mul x y)
+    | Some x, Some y, Ast.Div when y <> 0L -> Int64.to_string (Int64.div x y)
+    | Some x, Some y, Ast.Mod when y <> 0L -> Int64.to_string (Int64.rem x y)
     | _ -> (* …the general case: emit the instruction… *))
 ```
 
-The `y <> 0` guards matter: `1 / 0` must stay an `sdiv` so the program traps where Swift traps,
+The `<> 0L` guards matter: `1 / 0` must stay an `sdiv` so the program traps where Swift traps,
 rather than the compiler crashing while folding it. Concept 17 makes exactly this argument about
 its own constant folder, over SIL instead of the AST.
+
+`Int64` and not OCaml's `int` for the same reason the operators are signed: this has to agree with
+the machine. `int` is 63 bits here, and `3000000000 * 3000000000` fits in an `i64` — fold it in
+`int` and the program prints `-223372036854775808`, while the same arithmetic written through a
+variable prints `9000000000000000000`. An optimization that changes the answer is the worst kind of
+bug there is. `Int64.div`/`Int64.rem` truncate toward zero, which is what `sdiv`/`srem` do.
