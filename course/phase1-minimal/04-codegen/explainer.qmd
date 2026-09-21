@@ -202,8 +202,8 @@ strings the recursive calls handed back; real code builds each line with `Printf
 
 Every case ends the same way — emit the instruction, return the operand that now holds the value.
 That operand is always an `i64`, which is why `print` returns `"0"` and not printf's `i32` result.
-A literal emits nothing at all: it returns `"42"`, and its parent writes that straight into its own
-instruction.
+A literal emits nothing at all: `42` returns the operand `"42"`, and its parent writes that digit
+straight into its own instruction.
 
 Statements are shorter still: `let`/`var` allocate a slot, lower the initializer, `store` it;
 assignment reuses the slot and stores again. Wrap the lot in
