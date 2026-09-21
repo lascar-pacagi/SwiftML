@@ -353,8 +353,10 @@ thousand `acc = acc + N * 3`), ten runs of the whole front end plus IRGen:
 
 Read that honestly before enjoying it: `swiftc` is loading the standard library, running real type
 inference with overload resolution, and paying ~65 ms of process startup even on a one-line file.
-We lex, parse, walk a flat scope where everything is `Int`, and print text. The number to keep is
-not the ratio but *ours*: 4 ms for a thousand lines is the budget every later phase spends from.
+We lex, parse, walk a flat scope where everything is `Int`, and print text — so the ratio compares
+two compilers doing different amounts of work, and means nothing. The number worth writing down is
+our own 4 ms: it is what this pipeline costs today, and every stage a later phase adds — a real
+type checker, SIL, the optimizer passes — is measured by what it adds to it.
 
 ## 6. Exercises
 
