@@ -398,12 +398,12 @@ zero, which have to reach the machine so the program traps where Swift traps rat
 compiler crashing at compile time. And fold the way the hardware does — `-7 / 2` is `-3` and
 `-7 % 2` is `-1`, truncating toward zero — or your optimized and unoptimized builds disagree.
 
-> This one **changes what `tests/test_irgen.ml` can see**, and that is worth sitting with. Its
-> `arithmetic` group asserts one instruction per operator, which is exactly what folding removes:
-> the tests encode a lowering, and you changed the lowering. So each of those cases is written
-> twice: `9 / 3` lowers to nothing once you fold it, but `x / 2` still has to emit an `sdiv`, and
-> a variable is something no folder may touch. The suite checks which lowering it is looking at
-> and runs the matching version. `tests/test_exercises.ml` states what folding itself must do.
+> This one **changes what `tests/test_irgen.ml` can see** — its `arithmetic` group asserts one
+> instruction per operator, which is exactly what folding removes. The report will not tell you:
+> each of those cases is written twice (`9 / 3` lowers to nothing once you fold it, while `x / 2`
+> still has to emit an `sdiv`, since no folder may touch a variable) and the suite runs the one
+> that matches your lowering. The line that does move is `ex2 constant folding`, which stops
+> saying *not started* and begins checking the folder itself.
 
 ## 7. Recap & what's next — **M1 reached**
 
