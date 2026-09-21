@@ -103,11 +103,13 @@ synthesised** (Pierce & Turner, *Local Type Inference*).
 
 That falls out of what each one knows about itself. `1` can be an Int or a Double, and which it is
 was never the literal's to decide — the `Int` it falls back to is a *default*, the answer for when
-nothing is asking, not a type it carries. So it is a form that takes one: checked.
+nothing is asking, not a type it carries. Its type comes from the context, not from itself:
+checked.
 
-An application `f(x)` is the opposite. `f` has a type already — `(Int) -> Bool`, say — and the type of `f(x)` is the half of it
-after the arrow, `Bool`. Nobody has to supply that, so the expression can hand it back:
-synthesised. Which is why the coercion above is the case where `infer` calls `check`.
+An application `f(x)` is the opposite. `f` has a type already — `(Int) -> Bool`, say — and the type
+of `f(x)` is the half of it after the arrow, `Bool`. Nobody has to supply that, so the expression
+can hand it back: synthesised. Which is why the coercion above is the case where `infer` calls
+`check`.
 
 The classic application rule is that discipline in one line:
 
