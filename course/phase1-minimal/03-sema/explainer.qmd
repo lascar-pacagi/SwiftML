@@ -141,9 +141,9 @@ Open `sema.ml` in this directory. Implement `check (program) (diagnostics)`:
 
 1. Keep a mutable `environment` (e.g. `let environment = Hashtbl.create 16` or a `ref []`).
 2. Write a local `check_expr : expr -> ty` that recurses as in §2, using
-   `Diagnostics.error diagnostics (Ast.expr_span e) "cannot find '<name>' in scope"` for unknown `Var`.
+   `Diagnostics.error diagnostics (Ast.expr_span e) "cannot find '%s' in scope"` for unknown `Var`.
    `Call` has two rules, and the tests pin both messages verbatim:
-   - the callee must be `print` — anything else is `cannot find '<f>' in scope`, the same message
+   - the callee must be `print` — anything else is `cannot find '%s' in scope`, the same message
      an unknown variable gets (and the same one swiftc gives for an undefined function);
    - `print` takes exactly one argument — otherwise `print(_:) expects exactly one argument`.
 
@@ -156,8 +156,8 @@ Open `sema.ml` in this directory. Implement `check (program) (diagnostics)`:
    - `Ast.Let { name; is_var; value; _ }` ⇒ `ignore (check_expr value)`; **then** record `name`
      (store `is_var` so assignment can check mutability).
    - `Ast.Assign { name; value; span }` ⇒ the target `name` must already be in scope (else
-     `cannot find '<name>' in scope`) **and** be a `var` (else `cannot assign to value: '<name>'
-     is a 'let' constant`); then `ignore (check_expr value)`.
+     `cannot find '%s' in scope`) **and** be a `var` (else `cannot assign to value: '%s' is a
+     'let' constant`); then `ignore (check_expr value)`.
    - `Ast.Expr_stmt (e, _)` ⇒ `ignore (check_expr e)`.
 4. `check` returns `unit`; the driver checks `Diagnostics.has_errors` and bails before IRGen.
    (That signature is Phase 1's. From concept 05 it returns a typed tree instead — §2's *What does change shape* says why, and nothing in the rules above is affected.)

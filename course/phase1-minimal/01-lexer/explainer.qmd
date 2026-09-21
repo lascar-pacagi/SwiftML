@@ -741,8 +741,8 @@ $ swiftml --emit-tokens nest.swift
 5:1: note: insert '*/*/' to close these 2 nested comments
 ```
 
-so the message is `insert '<n copies of */>' to close this comment` at depth 1, and
-`insert '<n copies of */>' to close these <n> nested comments` at depth ≥ 2 — singular and plural
+so the message is `insert '*/' to close this comment` at depth 1, and
+`insert '*/*/' to close these 2 nested comments` at depth 2 — singular and plural
 are two different sentences, which is why the code has the `if !depth = 1` branch. The tests pin
 those two strings and nothing else about the note: its **span is your call**. Putting it at end of
 input says "insert the text *here*", which is what a fix-it means; putting it on the opener keeps
