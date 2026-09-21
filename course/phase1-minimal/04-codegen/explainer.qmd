@@ -158,8 +158,12 @@ LLVM has no integer negation instruction. Phase 2's `Double` uses the parallel
 
 Honest gap: Swift traps on integer overflow and on `x / 0`, while plain `add` and `sdiv` do not —
 overflow wraps quietly and division by zero is undefined behaviour. Phase 1 accepts that
-divergence; matching Swift means the checked intrinsics (`llvm.sadd.with.overflow`) and an explicit
-zero test, which is why the trapping story belongs with the later phases.
+divergence, and the two halves are repaid at different times. Division by zero is fixed in
+**concept 09**, where the divisor goes through a runtime helper that traps with swiftc's own
+message and exit code. Overflow is not fixed anywhere in this course: the checked intrinsics
+(`llvm.sadd.with.overflow` and a branch per operation) cost real time, which is the point of
+**concept 20**'s first exercise — add them, then re-measure how much of the gap to `swiftc -O`
+they explain.
 
 ### Lowering = a recursive walk that returns "where the value is"
 
