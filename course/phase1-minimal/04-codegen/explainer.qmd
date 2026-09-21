@@ -152,9 +152,9 @@ rejects the module.
 | `-a` | `Neg` | `sub i64 0, a` |
 
 The `s` in `sdiv`/`srem` is *signed* — Swift's `Int` is signed, and LLVM makes you say so, because
-`udiv` on the same bits gives different answers for negatives. There is no integer negation
-instruction, hence `0 - a`. Phase 2's `Double` uses the parallel `fadd`/`fsub`/`fmul`/`fdiv` family,
-and comparisons arrive as `icmp slt` and friends.
+`udiv` on the same bits gives different answers for negatives. And the last row is not a typo:
+LLVM has no integer negation instruction. Phase 2's `Double` uses the parallel
+`fadd`/`fsub`/`fmul`/`fdiv` family, and comparisons arrive as `icmp slt` and friends.
 
 Honest gap: Swift traps on integer overflow and on `x / 0`, while plain `add` and `sdiv` do not —
 overflow wraps quietly and division by zero is undefined behaviour. Phase 1 accepts that
