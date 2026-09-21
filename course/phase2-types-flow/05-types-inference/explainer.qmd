@@ -199,6 +199,16 @@ where "infer and compare" has nothing to infer:
 | `{ x in x + 1 }` (concept 29) | `x`'s type is unknown | the expected function type |
 | `[]` (concept 31) | element type? | the expected array type |
 
+If you have not met Swift's optionals, the first row needs a word. A value that may be absent has
+type `T?` — shorthand for `Optional<T>`, which is an ordinary enum with two cases, `some(T)` and
+`none` — and `nil` is that `none`. So `nil` on its own has nothing to synthesise: an absent `Int`
+and an absent `String` are two different types, and the source text is the same in both. Only the
+context can say which, and concept 13 builds the whole thing out of concept 11's enums.
+
+The third row is Swift's closure syntax, which you meet properly in concept 29: `{ x in x + 1 }` is
+an anonymous function of one parameter `x`, with everything before the `in` the parameter list and
+everything after it the body. Nothing there says what `x` is — so, like `nil`, it has to be told.
+
 So the second judgment is not scaffolding for later concepts that you are paying for early: it
 earns its place in this one, and later constructs simply cannot be typed without it.
 
