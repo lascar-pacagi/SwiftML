@@ -30,17 +30,21 @@ TEXT = "#1b2733"
 REG = "#2f6f4f"  # returned-operand chips
 
 
-def node(ax, x, y, label, color, ret, r=0.40, fontsize=14, ret_right=False):
+def node(ax, x, y, label, color, ret, order, r=0.42, fontsize=14, ret_side="below"):
+    """One AST node: its label, the visit number, and the operand it hands back."""
     ax.add_patch(plt.Circle((x, y), r, facecolor=color, edgecolor=EDGE, linewidth=1.3, zorder=3))
     ax.text(x, y, label, ha="center", va="center", fontsize=fontsize, fontweight="bold",
             color=TEXT, zorder=4)
-    # the operand this node "returns" — beside the node when an edge leaves downward
-    if ret_right:
-        ax.text(x + r + 0.18, y, ret, ha="left", va="center", fontsize=10.5,
-                color=REG, family="monospace", fontweight="bold", zorder=4)
-    else:
-        ax.text(x, y - r - 0.28, ret, ha="center", va="center", fontsize=10.5,
-                color=REG, family="monospace", fontweight="bold", zorder=4)
+    # visit order, in its own badge up-left: children before parents, left before right
+    ax.add_patch(plt.Circle((x - r - 0.10, y + r + 0.10), 0.20, facecolor="#b4453a",
+                            edgecolor="none", zorder=5))
+    ax.text(x - r - 0.10, y + r + 0.10, str(order), ha="center", va="center", fontsize=9.5,
+            fontweight="bold", color="white", zorder=6)
+    dx, dy, ha = {"below": (0, -r - 0.30, "center"),
+                  "right": (r + 0.18, 0, "left"),
+                  "left": (-r - 0.18, 0, "right")}[ret_side]
+    ax.text(x + dx, y + dy, ret, ha=ha, va="center", fontsize=10.5,
+            color=REG, family="monospace", fontweight="bold", zorder=4)
 
 
 def edge(ax, p0, p1):
@@ -48,62 +52,72 @@ def edge(ax, p0, p1):
 
 
 def make_lowering():
-    fig, ax = plt.subplots(figsize=(9.4, 5.6))
-    ax.set_xlim(0, 10)
-    ax.set_ylim(0, 6.8)
+    fig, ax = plt.subplots(figsize=(10.6, 6.2))
+    ax.set_xlim(0, 11.4)
+    ax.set_ylim(-0.7, 7.2)
     ax.axis("off")
 
-    call = (2.5, 5.5)
-    plus = (2.5, 4.1)
-    one = (1.1, 2.7)
-    star = (3.9, 2.7)
-    two = (3.0, 1.2)
-    three = (4.8, 1.2)
+    call = (2.5, 5.7)
+    plus = (2.5, 4.2)
+    one = (1.0, 2.7)
+    star = (4.0, 2.7)
+    two = (3.1, 1.2)
+    three = (4.9, 1.2)
 
-    edge(ax, call, plus)
-    edge(ax, plus, one)
-    edge(ax, plus, star)
-    edge(ax, star, two)
-    edge(ax, star, three)
+    for a, b in ((call, plus), (plus, one), (plus, star), (star, two), (star, three)):
+        edge(ax, a, b)
 
-    node(ax, *call, "print", CALL, "-> \"0\"", r=0.52, fontsize=11, ret_right=True)
-    node(ax, *plus, "+", OP, "-> %t2")
-    node(ax, *one, "1", LIT, "-> 1")
-    node(ax, *star, "*", OP, "-> %t1")
-    node(ax, *two, "2", LIT, "-> 2")
-    node(ax, *three, "3", LIT, "-> 3")
+    # visit order is what emit_expr does: left operand, right operand, then the node
+    node(ax, *call, "print", CALL, '-> "0"', 6, r=0.54, fontsize=11, ret_side="right")
+    node(ax, *plus, "+", OP, "-> %t2", 5, ret_side="right")
+    node(ax, *one, "1", LIT, "-> 1", 1, ret_side="left")
+    node(ax, *star, "*", OP, "-> %t1", 4, ret_side="right")
+    node(ax, *two, "2", LIT, "-> 2", 2)
+    node(ax, *three, "3", LIT, "-> 3", 3)
 
-    ax.text(2.5, 6.55, "AST of  print(1 + 2 * 3)", ha="center", va="center", fontsize=12,
+    ax.text(2.5, 6.85, "AST of  print(1 + 2 * 3)", ha="center", va="center", fontsize=12,
             fontweight="bold", color=TEXT)
-    ax.text(2.5, 0.35, "green = the operand each node returns", ha="center", va="center",
-            fontsize=9, color=REG, fontstyle="italic")
+    ax.text(2.6, -0.30,
+            "red = the order emit_expr visits the nodes — left operand, right operand,\n"
+            "then the node itself.   green = the operand each node hands back.",
+            ha="center", va="center", fontsize=9, color=TEXT, fontstyle="italic")
 
-    # the IR panel (right), filled in post-order
-    px, py, pw, ph = 6.0, 1.6, 3.7, 4.0
+    # the IR panel, each line tagged with the node that emitted it
+    px, py, pw, ph = 6.5, 1.5, 4.6, 4.6
     ax.add_patch(FancyBboxPatch((px, py), pw, ph, boxstyle="round,pad=0.03,rounding_size=0.1",
                                 linewidth=1.2, edgecolor=EDGE, facecolor=CODE, zorder=2))
-    ax.text(px + pw / 2, py + ph - 0.32, "emitted IR  (post-order)", ha="center", va="center",
-            fontsize=10.5, fontweight="bold", color=TEXT, zorder=3)
-    lines = [
-        ("visit 2, 3   ->  literals, no IR", TEXT),
-        ("%t1 = mul i64 2, 3", REG),
-        ("visit 1      ->  literal, no IR", TEXT),
-        ("%t2 = add i64 1, %t1", REG),
-        ("...from the print node, last:", TEXT),
-        ("%t3 = call i32 (ptr, ...) @printf(", REG),
-        ("          ptr @.fmt, i64 %t2)", REG),
-    ]
-    y = py + ph - 0.90
-    for text, color in lines:
-        ax.text(px + 0.22, y, text, ha="left", va="center", fontsize=9.5,
-                family="monospace", color=color, zorder=3)
-        y -= 0.46
+    ax.text(px + pw / 2, py + ph - 0.34, "the IR that comes out, in order",
+            ha="center", va="center", fontsize=10.5, fontweight="bold", color=TEXT, zorder=3)
 
-    ax.set_title("AST → LLVM IR: each node emits instructions and returns its result operand",
+    lines = [
+        (None, "nodes 1, 2, 3 emit nothing at all:", TEXT),
+        (None, "a literal IS already an operand", TEXT),
+        (4, "%t1 = mul i64 2, 3", REG),
+        (5, "%t2 = add i64 1, %t1", REG),
+        (6, "%t3 = call i32 (ptr, ...) @printf(", REG),
+        (None, "         ptr @.fmt, i64 %t2)", REG),
+    ]
+    y = py + ph - 0.95
+    for order, text, color in lines:
+        if order is not None:
+            ax.add_patch(plt.Circle((px + 0.34, y), 0.19, facecolor="#b4453a",
+                                    edgecolor="none", zorder=3))
+            ax.text(px + 0.34, y, str(order), ha="center", va="center", fontsize=9,
+                    fontweight="bold", color="white", zorder=4)
+        ax.text(px + 0.68, y, text, ha="left", va="center", fontsize=9.5,
+                family="monospace", color=color, zorder=3)
+        y -= 0.50
+
+    ax.text(px + pw / 2, py + 0.34,
+            "every %tN is defined before it is used, for free:\n"
+            "a parent cannot run until its children have",
+            ha="center", va="center", fontsize=8.8, color=TEXT, fontstyle="italic", zorder=3)
+
+    ax.set_title("AST → LLVM IR: each node emits its instructions, then hands back one operand",
                  fontsize=12, color=TEXT, pad=8)
     fig.tight_layout()
     out = os.path.join(HERE, "lowering.png")
-    fig.savefig(out, dpi=160, bbox_inches="tight")
+    fig.savefig(out, dpi=170, bbox_inches="tight")
     plt.close(fig)
     print("wrote", out)
 
