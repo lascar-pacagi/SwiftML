@@ -118,24 +118,8 @@ store i64 42, ptr %x.addr        ; write the value 42 into that slot
 
 Keeping that distinction straight is most of what codegen is: `%x.addr` is *where* `x` lives and
 never changes; `%t1` is *what it held* at one moment. Arithmetic works on values only —
-`%t2 = mul i64 %t1, 2` — and every instruction names its type.
-
-LLVM's own reason for carrying types at all is optimisation rather than bookkeeping — the LangRef
-puts it as *"by providing type information, LLVM can be used as the target of optimizations: for
-example, through pointer analysis, it can be proven that a C automatic variable is never accessed
-outside of the current function, allowing it to be promoted to a simple SSA value instead of a
-memory location."* That promotion is `mem2reg`, and you write it in concept 16.
-
-On `mul` the written type is redundant — `%t1` has one definition, so it could be looked up. On the
-three lines above it, it is not, and for a reason with a date: since LLVM 15 a pointer is **opaque**,
-spelled `ptr`, carrying no pointee type. `load i64* %p` became `load i64, ptr %p`; the type did not
-appear from nowhere, it *moved*, from the pointer to the instruction, because — LLVM again — *"a
-load needs to know how many bytes to load from memory and what type to treat the resulting value
-as."* Drop the `i64` and the file will not parse.
-
-So a back end has to know the type of everything it emits, not merely of the values it computes: it
-cannot write a `load` or an `alloca` at all without one. Free in Phase 1, where every value is
-`i64`; the reason Sema starts handing down a typed tree at concept 05.
+`%t2 = mul i64 %t1, 2` — and every instruction names its type, which means a back end has to know
+the type of everything it emits. Free here, where every value is `i64`.
 
 **The call.** `call i32 (ptr, ...) @printf(ptr @.fmt, i64 %t2)` repeats the *whole function type*
 before the callee name, which is unusual and specific to variadics: LLVM needs to know where the
