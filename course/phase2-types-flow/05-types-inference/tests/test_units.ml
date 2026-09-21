@@ -60,10 +60,14 @@ let fresh () =
   Hashtbl.replace cx.Sema.environment "b" (Types.TBool, false);
   (cx, d)
 
+(* ERRORS only, as `test_sema.ml` does. Every case below asks "did this rule report a
+   problem?", and a Note is not one: it explains an error that is already counted here.
+   §6 exercises 3 and 4 both add notes, and neither changes what any rule REPORTS. *)
 let messages d =
-  List.map
-    (fun (x : Diagnostics.t) -> x.Diagnostics.message)
-    (Diagnostics.all d)
+  Diagnostics.all d
+  |> List.filter (fun (x : Diagnostics.t) ->
+         x.Diagnostics.severity = Diagnostics.Error)
+  |> List.map (fun (x : Diagnostics.t) -> x.Diagnostics.message)
 
 (* A synthesis rule holds when `infer` gives the node this type AND says nothing. The silence
    half matters: an arm that returns the right type but also reports is still wrong. *)

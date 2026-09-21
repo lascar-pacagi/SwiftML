@@ -1,0 +1,260 @@
+(* FROZEN SOLUTION, WITH §6 EXERCISE 4 APPLIED (a note at the comment opener), — concept 05 lexer. Phase-1 scanning + the Phase-2 lexemes:
+   string/float literals, the `:` colon, and the comparison operators. Verify by copying
+   over ../lexer.ml and running the concept's runtest. *)
+
+type t = {
+  source : string;
+  len : int;
+  mutable pos : int;
+  mutable line : int;
+  mutable col : int;
+  diagnostics : Diagnostics.sink;
+      (* errors are REPORTED, not raised — see [report_error] below *)
+}
+
+let create (source : string) (diagnostics : Diagnostics.sink) : t =
+  {
+    source;
+    len = String.length source;
+    pos = 0;
+    line = 1;
+    col = 1;
+    diagnostics;
+  }
+
+let current_position (lexer : t) : Token.pos =
+  { Token.line = lexer.line; col = lexer.col; offset = lexer.pos }
+
+let at_end (lexer : t) : bool = lexer.pos >= lexer.len
+
+let peek_char (lexer : t) : char =
+  if at_end lexer then '\000' else lexer.source.[lexer.pos]
+
+let peek_next_char (lexer : t) : char =
+  if lexer.pos + 1 < lexer.len then lexer.source.[lexer.pos + 1] else '\000'
+
+let advance_char (lexer : t) : char =
+  let c = lexer.source.[lexer.pos] in
+  lexer.pos <- lexer.pos + 1;
+  if c = '\n' then (
+    lexer.line <- lexer.line + 1;
+    lexer.col <- 1)
+  else lexer.col <- lexer.col + 1;
+  c
+
+let make_token (lo : Token.pos) (lexer : t) (kind : Token.kind) : Token.t =
+  { Token.kind; span = { Token.lo; hi = current_position lexer } }
+
+(* Report at [lo .. current_position] and KEEP LEXING, like `Lexer::diagnose` in
+   swift/lib/Parse/Lexer.cpp. Recovery is the point: one run reports every bad byte. *)
+let report_error (lexer : t) (lo : Token.pos) (msg : string) : unit =
+  Diagnostics.error lexer.diagnostics
+    { Token.lo; hi = current_position lexer }
+    msg
+
+let is_digit c = c >= '0' && c <= '9'
+
+let is_identifier_start c =
+  (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c = '_'
+
+let is_identifier_continue c = is_identifier_start c || is_digit c
+
+(* scan a "..." string literal (the opening '"' is at the cursor); basic escapes *)
+let scan_string (lexer : t) : string =
+  let opener = current_position lexer in
+  (* the '"' — where swiftc blames an unterminated literal *)
+  ignore (advance_char lexer (* opening quote *));
+  let b = Buffer.create 16 in
+  let rec loop () =
+    if at_end lexer || peek_char lexer = '"' then ()
+    else
+      let c = advance_char lexer in
+      if c = '\\' && not (at_end lexer) then (
+        let esc = current_position lexer in
+        (match advance_char lexer with
+        | 'n' -> Buffer.add_char b '\n'
+        | 't' -> Buffer.add_char b '\t'
+        | 'r' -> Buffer.add_char b '\r'
+        | '0' -> Buffer.add_char b '\000'
+        | '"' -> Buffer.add_char b '"'
+        | '\'' -> Buffer.add_char b '\''
+        | '\\' -> Buffer.add_char b '\\'
+        (* Swift's escape set is closed: anything else is `diag::lex_invalid_escape`.
+           swiftc points at the character after the backslash, so the span starts at [esc]. *)
+        | other ->
+            report_error lexer esc "invalid escape sequence in literal";
+            Buffer.add_char b other);
+        loop ())
+      else (
+        Buffer.add_char b c;
+        loop ())
+  in
+  loop ();
+  (* `diag::lex_unterminated_string`, reported on the opening quote like swiftc; return what we
+     scanned so the parser still sees a String token and the run reports its errors too. *)
+  if at_end lexer then report_error lexer opener "unterminated string literal"
+  else ignore (advance_char lexer (* closing quote *));
+  Buffer.contents b
+
+let rec next (lexer : t) : Token.t =
+  (* trivia (given, Phase 1) *)
+  let rec skip_trivia () =
+    if at_end lexer then ()
+    else
+      let c = peek_char lexer in
+      if c = ' ' || c = '\t' || c = '\r' then (
+        ignore (advance_char lexer);
+        skip_trivia ())
+      else if c = '/' && peek_next_char lexer = '/' then (
+        ignore (advance_char lexer);
+        ignore (advance_char lexer);
+        while (not (at_end lexer)) && peek_char lexer <> '\n' do
+          ignore (advance_char lexer)
+        done;
+        skip_trivia ())
+      else if c = '/' && peek_next_char lexer = '*' then (
+        (* EX4: captured BEFORE the two advance_chars that eat the opener — the same move
+           as the string literal's span, one stage earlier: save the position before you
+           consume the thing you will want to blame. Nesting needs nothing more, because
+           this is bound by the call that saw the OUTERMOST `/*`. *)
+        let opener = current_position lexer in
+        ignore (advance_char lexer);
+        ignore (advance_char lexer);
+        let depth = ref 1 in
+        while !depth > 0 && not (at_end lexer) do
+          if peek_char lexer = '/' && peek_next_char lexer = '*' then (
+            ignore (advance_char lexer);
+            ignore (advance_char lexer);
+            incr depth)
+          else if peek_char lexer = '*' && peek_next_char lexer = '/' then (
+            ignore (advance_char lexer);
+            ignore (advance_char lexer);
+            decr depth)
+          else ignore (advance_char lexer)
+        done;
+        (* swiftc's `diag::lex_unterminated_block_comment`, reported at end of input *)
+        if !depth > 0 then (
+          report_error lexer (current_position lexer)
+            "unterminated '/*' comment";
+          (* EX4: and swiftc's second line, `diag::lex_comment_start`, at the opener. A
+             note EXPLAINS the error above it rather than being a problem of its own, so
+             the driver still exits on the error and prints both lines. This is the
+             two-location shape §6 exercise 3 reuses one stage up, in Sema. *)
+          Diagnostics.emit lexer.diagnostics
+            {
+              Diagnostics.severity = Diagnostics.Note;
+              span =
+                {
+                  Token.lo = opener;
+                  hi = { opener with Token.col = opener.Token.col + 2 };
+                };
+              message = "comment started here";
+            });
+        skip_trivia ())
+      else ()
+  in
+  skip_trivia ();
+  let lo = current_position lexer in
+  if at_end lexer then make_token lo lexer Token.Eof
+  else
+    let c = peek_char lexer in
+    if is_digit c then (
+      (* number: integer part, then an optional fractional part => Double *)
+      let start = lexer.pos in
+      while (not (at_end lexer)) && is_digit (peek_char lexer) do
+        ignore (advance_char lexer)
+      done;
+      if peek_char lexer = '.' && is_digit (peek_next_char lexer) then (
+        ignore (advance_char lexer (* '.' *));
+        while (not (at_end lexer)) && is_digit (peek_char lexer) do
+          ignore (advance_char lexer)
+        done;
+        make_token lo lexer
+          (Token.Float
+             (float_of_string
+                (String.sub lexer.source start (lexer.pos - start)))))
+      else
+        make_token lo lexer
+          (Token.Int
+             (int_of_string (String.sub lexer.source start (lexer.pos - start)))))
+    else if c = '"' then make_token lo lexer (Token.String (scan_string lexer))
+    else if is_identifier_start c then (
+      let start = lexer.pos in
+      while (not (at_end lexer)) && is_identifier_continue (peek_char lexer) do
+        ignore (advance_char lexer)
+      done;
+      make_token lo lexer
+        (Token.keyword_or_ident
+           (String.sub lexer.source start (lexer.pos - start))))
+    else
+      match c with
+      | '+' ->
+          ignore (advance_char lexer);
+          make_token lo lexer Token.Plus
+      | '-' ->
+          ignore (advance_char lexer);
+          make_token lo lexer Token.Minus
+      | '*' ->
+          ignore (advance_char lexer);
+          make_token lo lexer Token.Star
+      | '/' ->
+          ignore (advance_char lexer);
+          make_token lo lexer Token.Slash
+      | '%' ->
+          ignore (advance_char lexer);
+          make_token lo lexer Token.Percent
+      | '=' ->
+          ignore (advance_char lexer);
+          if peek_char lexer = '=' then (
+            ignore (advance_char lexer);
+            make_token lo lexer Token.EqEq)
+          else make_token lo lexer Token.Eq
+      | '!' ->
+          ignore (advance_char lexer);
+          if peek_char lexer = '=' then (
+            ignore (advance_char lexer);
+            make_token lo lexer Token.Ne)
+          else (
+            report_error lexer lo "expected '=' after '!'";
+            next lexer)
+      | '<' ->
+          ignore (advance_char lexer);
+          if peek_char lexer = '=' then (
+            ignore (advance_char lexer);
+            make_token lo lexer Token.Le)
+          else make_token lo lexer Token.Lt
+      | '>' ->
+          ignore (advance_char lexer);
+          if peek_char lexer = '=' then (
+            ignore (advance_char lexer);
+            make_token lo lexer Token.Ge)
+          else make_token lo lexer Token.Gt
+      | ':' ->
+          ignore (advance_char lexer);
+          make_token lo lexer Token.Colon
+      | '(' ->
+          ignore (advance_char lexer);
+          make_token lo lexer Token.LParen
+      | ')' ->
+          ignore (advance_char lexer);
+          make_token lo lexer Token.RParen
+      | ',' ->
+          ignore (advance_char lexer);
+          make_token lo lexer Token.Comma
+      | '\n' ->
+          ignore (advance_char lexer);
+          make_token lo lexer Token.Newline
+      | _ ->
+          (* swiftc's `diag::lex_invalid_character`; drop the byte and lex on *)
+          ignore (advance_char lexer);
+          report_error lexer lo "invalid character in source file";
+          next lexer
+
+let tokenize (lexer : t) : Token.t list =
+  let rec loop acc =
+    let tok = next lexer in
+    match tok.Token.kind with
+    | Token.Eof -> List.rev (tok :: acc)
+    | _ -> loop (tok :: acc)
+  in
+  loop []

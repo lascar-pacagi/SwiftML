@@ -180,7 +180,12 @@ hand-written golden. The target checks two things at once: the exercises themsel
 `tests/test_exercises.ml`, whose groups activate only when they see the lowering change; and that
 the concept's OWN suite still passes with the exercises in — which is what "unit tests stay
 exercise-neutral" means operationally. Mark each difference from the stock key `EX<n>` in a comment,
-and say in the header which exercises are applied and which files they touch.
+and say in the header which exercises are applied and which files they touch. An exercise may
+legitimately change a CRAM golden (05's non-associative comparisons delete a case that pinned the
+opposite); list those files in `solution/exercises/expected-diffs.txt` WITH the reason, and the
+runner tolerates a failure there and nowhere else. Alcotest suites are never excused — they are the
+ones the standard says stay exercise-neutral, and 05's `test_units.ml` had to start filtering to
+Errors (a Note is not a report) before its key would pass.
 
 **Goldens are produced, never written.** Run the case against `solution/` (or a scratch build of it)
 and paste what it prints; a hand-written expectation is how a test ends up asserting the wrong thing

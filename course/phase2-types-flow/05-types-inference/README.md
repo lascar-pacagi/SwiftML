@@ -41,3 +41,8 @@ bidirectional special case here).
 - Ill-typed programs (`let x: Int = "s"`, `1 + true`, `1 == "a"`) are rejected with the right
   diagnostics; well-typed ones pass.
 - `make oracle` parity on the concept's corpus (`swiftml` accepts/rejects exactly what `swiftc` does).
+
+`solution/exercises/` holds the same key with §6's exercises applied — 1 in `parser.ml`, 2/3/5 in
+`sema.ml`, 4 in `lexer.ml`, 5's `TError` in `types.ml`; `make check-exercises
+C=phase2-types-flow/05-types-inference` builds and runs it. Two exercises change golden output on
+purpose; `solution/exercises/expected-diffs.txt` says which files and why.

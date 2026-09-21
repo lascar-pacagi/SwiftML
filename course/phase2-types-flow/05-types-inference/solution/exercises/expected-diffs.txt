@@ -1,0 +1,18 @@
+# Cram files whose GOLDENS this concept's §6 exercises are expected to change, with the
+# reason. `make check-exercises` tolerates a failure in exactly these files and nowhere
+# else — anything not listed here is a broken exercise key.
+#
+# A line is `<path under the concept dir>: <why>`. Keep the reason specific: the point of
+# the list is that someone can read it and agree, not that it silences the runner.
+
+tests/parser-precedence.t: exercise 1 makes `1 < 2 == true` a parse error. The case it
+  breaks pins the OPPOSITE — that comparisons chain left-associatively here — which is a
+  v0 divergence swiftc does not share (it reports "adjacent operators are in
+  non-associative precedence group", at the FIRST operator). The exercise is the fix, so
+  the golden and the exercise cannot both be right.
+
+tests/sema-coercion.t: exercise 3 adds a note beside every annotation mismatch, and cram
+  compares whole output, so four cases that were already reporting the right error at the
+  right column now print a second line.
+
+tests/sema-typecheck.t: the same note, in the end-to-end rejection case.

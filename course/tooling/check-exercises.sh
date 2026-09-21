@@ -46,8 +46,35 @@ done
 [ -n "$FILES" ] || { echo "$C: solution/exercises/ holds no .ml files"; exit 0; }
 echo "check-exercises: isolated exercise key:$FILES"
 
-(cd "$WORKTREE/course" && make -s lab C="$C")
+OUT="$(cd "$WORKTREE/course" && make -s lab C="$C" 2>&1)"
 rc=$?
+echo "$OUT"
+
+# An exercise may legitimately change a golden — that is what "you changed the lowering"
+# means. solution/exercises/expected-diffs.txt names the cram files where that is expected
+# AND WHY; a failure anywhere else is a broken key. Alcotest suites are never excused:
+# they are the ones the standard says must stay exercise-neutral.
+ALLOW="$C/solution/exercises/expected-diffs.txt"
+if [ $rc -ne 0 ] && [ -f "$ALLOW" ]; then
+  unexpected=0
+  while IFS= read -r line; do
+    case "$line" in
+      "FAIL "*"(cram)")
+        f="${line#FAIL }"; f="${f% (cram)}"
+        grep -q "^$f:" "$ALLOW" || { echo "  unexpected: $f"; unexpected=1; } ;;
+      "FAIL "*) echo "  unexpected: ${line#FAIL }"; unexpected=1 ;;
+    esac
+  done <<EOF2
+$(printf '%s\n' "$OUT" | grep '^FAIL ')
+EOF2
+  if [ $unexpected -eq 0 ]; then
+    echo
+    echo "EXERCISE KEY OK — $C passes, and every cram file it changes is declared in"
+    echo "  $ALLOW"
+    sed -n 's/^\([^#][^:]*\):.*/  changed: \1/p' "$ALLOW"
+    exit 0
+  fi
+fi
 
 if [ $rc -eq 0 ]; then echo; echo "EXERCISE KEY OK — $C passes its own tests with §6 applied"
 else echo; echo "EXERCISE KEY BROKEN — $C does not pass with §6 applied (exit $rc)"; fi

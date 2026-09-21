@@ -72,8 +72,8 @@ checker produces** further down this section.
 
 @fig-bidir runs the same `1 + 2` through both. Watch the numbering: `infer` reaches the operands
 first and works up, while `check` starts at the root, because the root is where the expectation
-arrives. And watch what each hands back — the two walks disagree about what kind of thing the
-literal `1` is, and each one writes its answer down.
+arrives. Then compare what each hands back: the two trees disagree about what type the literal
+`1` has, and that disagreement is recorded on the node itself.
 
 ![The same source under both judgments: `infer` synthesises upward, `check(·, Double)` pushes the expectation downward, and each writes its answer onto every node it returns.](figs/bidir.png){#fig-bidir}
 
@@ -1157,6 +1157,11 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
 
 ## 9. Exercise solutions
 
+The fragments below are quoted from `solution/exercises/` — the stock answer key with all
+five exercises applied, which `make check-exercises C=phase2-types-flow/05-types-inference`
+builds and runs. Exercise 1 lives in its `parser.ml`, 2/3/5 in `sema.ml`, 4 in `lexer.ml`,
+and 5's `TError` in `types.ml`.
+
 ### 1 — non-associative comparisons
 
 In the Pratt infix loop, comparisons should refuse a second comparison on their right. The cleanest
@@ -1170,16 +1175,23 @@ nonetheless next, report it:
     let op = Option.get (binop_of_kind op_tok.Token.kind) in
     let is_cmp = match op with Ast.Eq|Ast.Ne|Ast.Lt|Ast.Le|Ast.Gt|Ast.Ge -> true | _ -> false in
     let right = parse_expr_bp p (if is_cmp then bp + 1 else bp + 1) in
-    (* if we just parsed a comparison and another comparison is immediately next, it's an error *)
+    (* if we just parsed a comparison and another comparison is immediately next, it's an
+       error — reported at op_tok, the FIRST of the two, which is where swiftc points:
+       `let c = 1 < 2 == true` is blamed at column 11, the `<`, not at the `==`. *)
     (if is_cmp then match infix_bp (peek_kind p) with
-       | Some 5 -> Diagnostics.error p.diagnostics (peek p).Token.span
+       | Some 5 -> Diagnostics.error p.diagnostics op_tok.Token.span
                      "adjacent operators are in non-associative precedence group 'ComparisonPrecedence'"
        | _ -> ());
     loop (Ast.Binary (op, left, right, …))
 ```
 
-(Comparisons already use `bp + 1`, so `a < b < c` parses as `(a < b) < c`; the added check turns the
-second `<` into the swiftc-style precedence error instead of letting it through to a type error.)
+(Comparisons already use `bp + 1`, so `a < b < c` parses as `(a < b) < c`; the added check turns it
+into swiftc's precedence error instead of letting it through to a type error.)
+
+This exercise is the one place in the concept where you *remove* a behaviour the tests pin.
+`tests/parser-precedence.t` asserts that `1 < 2 == true` is `(1 < 2) == true` — v0's answer, and a
+divergence: swiftc rejects it. So that case goes red when the exercise works, which is why
+`solution/exercises/expected-diffs.txt` names the file and says why.
 
 ### 2 — explicit conversions `Double(_:)` / `Int(_:)`
 
@@ -1216,12 +1228,24 @@ reusing `Coerce`, exactly so the back end is *told* a conversion happens instead
 it from the operand types. That is the argument §2 makes, arriving now in a rule you wrote
 yourself.
 
-### 3 — sharper annotation errors
+### 3 — say where the expectation came from
 
-Thread the annotation's span (add it to `Ast.Let`, or recompute it) and emit the diagnostic there,
-plus a `Diagnostics.Note`: *"value of type 'Int' here"* pointing at the value. `swiftc` shows both the
-"cannot convert" error at the annotation and the inferred type at the expression; mirroring the
-two-location shape is good diagnostics practice you'll reuse throughout Sema.
+Ask the oracle before you move anything. `swiftc -typecheck` on `let x: Int = "s"` reports at
+**column 14** — the value — and so do we, byte for byte. The error is already where it belongs, so
+the exercise is not to move it.
+
+What neither compiler says is *why* `Int` was expected. Add a `Diagnostics.Note` at the
+declaration — `'x' is declared as 'Int' here` — and you have the two-location shape you will reuse
+all through Sema, the same one §6 exercise 4 builds one stage down in the lexer.
+
+It belongs in `check_stmt`, not in `check_expr`: `check_expr` is handed a *type*, not a statement,
+so the only span it has is the one it is already reporting on, and a note on top of its own error
+says nothing.
+
+Two honest notes. This one is ours, not swiftc's — knowing which of your diagnostics match the
+oracle and which you added is part of the job. And because cram compares whole output, the extra
+line turns four already-correct cases red in `sema-coercion.t` and `sema-typecheck.t`;
+`solution/exercises/expected-diffs.txt` names them and says why.
 
 ### 4 — a note at the comment's opener
 
