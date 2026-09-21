@@ -261,11 +261,7 @@ What runs, in the order you will turn it green:
   `sdiv`/`srem`, a fresh register per result); **literals** its `print` case; **slots**
   `slot_of` + `emit_stmt` (`04b`/`04c`: one `alloca` per name, `store`/`load` through the SAME
   register, reassignment); **module** `emit_llvm` (`04d`: preamble, `@main`, `ret i32 0`).
-  Until a hole exists its group reads `TODO`, not `FAIL`. Every case there writes its
-  operands as literals, which is the clearest way to state a rule and exactly what §6's
-  constant folding erases — so the suite probes which of the two lowerings you built and
-  runs the matching phrasing of each rule, the folded one asserting over a variable no
-  folder may reduce. The report reads the same either way; nothing is skipped.
+  Until a hole exists its group reads `TODO`, not `FAIL`.
 - `run-arith.t` and `run-vars.t` — end-to-end through the lab binary: `build` the program,
   run it, compare stdout. Arithmetic with every operator, the sign rules of `/` and `%`, then
   the slot model (a read after a write sees the write; a var written three times prints its
@@ -397,13 +393,6 @@ immediate; same for `-` applied to a literal. Two cases must *not* fold: divisio
 zero, which have to reach the machine so the program traps where Swift traps rather than the
 compiler crashing at compile time. And fold the way the hardware does — `-7 / 2` is `-3` and
 `-7 % 2` is `-1`, truncating toward zero — or your optimized and unoptimized builds disagree.
-
-> This one **changes what `tests/test_irgen.ml` can see** — its `arithmetic` group asserts one
-> instruction per operator, which is exactly what folding removes. The report will not tell you:
-> each of those cases is written twice (`9 / 3` lowers to nothing once you fold it, while `x / 2`
-> still has to emit an `sdiv`, since no folder may touch a variable) and the suite runs the one
-> that matches your lowering. The line that does move is `ex2 constant folding`, which stops
-> saying *not started* and begins checking the folder itself.
 
 ## 7. Recap & what's next — **M1 reached**
 
