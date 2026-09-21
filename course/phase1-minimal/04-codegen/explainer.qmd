@@ -400,9 +400,10 @@ compiler crashing at compile time. And fold the way the hardware does — `-7 / 
 
 > This one **changes what `tests/test_irgen.ml` can see**, and that is worth sitting with. Its
 > `arithmetic` group asserts one instruction per operator, which is exactly what folding removes:
-> the tests encode a lowering, and you changed the lowering. So the suite probes which one you
-> built and states each of those rules a second way, over an operand no folder may reduce, and
-> they keep checking you; `tests/test_exercises.ml` states what folding itself must do.
+> the tests encode a lowering, and you changed the lowering. So each of those cases is written
+> twice: `9 / 3` lowers to nothing once you fold it, but `x / 2` still has to emit an `sdiv`, and
+> a variable is something no folder may touch. The suite checks which lowering it is looking at
+> and runs the matching version. `tests/test_exercises.ml` states what folding itself must do.
 
 ## 7. Recap & what's next — **M1 reached**
 
