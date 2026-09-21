@@ -149,7 +149,9 @@ Open `sema.ml` in this directory. Implement `check (program) (diagnostics)`:
 
    In both cases **report and keep going**: still `check_expr` each argument, so
    `print(1, y)` reports the arity *and* `cannot find 'y' in scope` in one run. A checker that
-   stops at the first problem makes the user recompile once per mistake.
+   stops at the first problem makes the user recompile once per mistake. And every arm still
+   yields a `ty`, the failing ones included — there is nothing else to hand back, and returning
+   `TInt` after reporting is what lets the walk continue at all.
 3. Walk the statements:
    - `Ast.Let { name; is_var; value; _ }` ⇒ `ignore (check_expr value)`; **then** record `name`
      (store `is_var` so assignment can check mutability).
@@ -158,6 +160,7 @@ Open `sema.ml` in this directory. Implement `check (program) (diagnostics)`:
      is a 'let' constant`); then `ignore (check_expr value)`.
    - `Ast.Expr_stmt (e, _)` ⇒ `ignore (check_expr e)`.
 4. `check` returns `unit`; the driver checks `Diagnostics.has_errors` and bails before IRGen.
+   (That signature is Phase 1's. From concept 05 it returns a typed tree instead — §2's *What does change shape* says why, and nothing in the rules above is affected.)
 
 **Wording and position both count.** The tests compare the whole `line:col: error: …` line,
 so use swiftc's messages exactly as §2 lists them, and report each one at the span of the thing
