@@ -1,6 +1,7 @@
 (* The AST for the Phase-2 / concept-05 subset — a *contract* (fully written). Carries
    Phase 1's nodes forward and adds: Double/Bool/String literals, the comparison binops,
-   and an optional type annotation on bindings (`let x: Double = …`).
+   the `e as T` coercion, and an optional type annotation on bindings (`let x: Double = …`).
+   Every addition is marked NEW below.
 
    Design oracle: swift/include/swift/AST/{Expr,Stmt,Decl}.h *)
 
@@ -10,12 +11,15 @@ type binop =
   | Mul
   | Div
   | Mod (* arithmetic *)
+  (* NEW in this concept: the six comparisons. They are the first operators whose result
+     type is not their operand type — `1 < 2` is a Bool built out of two Ints — which is
+     most of what makes this concept's checker more than the name resolver it was. *)
   | Eq
   | Ne
   | Lt
   | Le
   | Gt
-  | Ge (* comparison -> Bool *)
+  | Ge
 
 type unop = Neg
 
