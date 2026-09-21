@@ -261,9 +261,11 @@ What runs, in the order you will turn it green:
   `sdiv`/`srem`, a fresh register per result); **literals** its `print` case; **slots**
   `slot_of` + `emit_stmt` (`04b`/`04c`: one `alloca` per name, `store`/`load` through the SAME
   register, reassignment); **module** `emit_llvm` (`04d`: preamble, `@main`, `ret i32 0`).
-  Until a hole exists its group reads `TODO`, not `FAIL`. Once §6's constant folding is in,
-  the literal-only cases can no longer observe the lowering and report `skip` (the exercise
-  suite guards the folding, the oracle guards the answers).
+  Until a hole exists its group reads `TODO`, not `FAIL`. Every case there writes its
+  operands as literals, which is the clearest way to state a rule and exactly what §6's
+  constant folding erases — so the suite probes which of the two lowerings you built and
+  runs the matching phrasing of each rule, the folded one asserting over a variable no
+  folder may reduce. The report reads the same either way; nothing is skipped.
 - `run-arith.t` and `run-vars.t` — end-to-end through the lab binary: `build` the program,
   run it, compare stdout. Arithmetic with every operator, the sign rules of `/` and `%`, then
   the slot model (a read after a write sees the write; a var written three times prints its

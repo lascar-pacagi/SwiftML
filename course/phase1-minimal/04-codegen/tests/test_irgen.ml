@@ -145,6 +145,74 @@ let lhs_of (l : string) : string option =
   in
   go 0
 
+(* --- the fold-proof phrasing of the same rules ---------------------------------------
+   §6's second exercise, constant folding, turns `40 + 2` into the immediate `42`. Every
+   case below that spells its operands as literals would then be asserting instructions
+   that no longer exist — so the probe picks which of the two lowerings you built, and
+   the suite runs the matching phrasing of each rule. The rules are the same either way;
+   with folding on they are asserted over an UNBOUND VARIABLE, which no folder may
+   reduce. Nothing is skipped: the report has the same lines whichever you did.
+
+   How that variable is materialised is §6's FIRST exercise's business, so nothing here
+   asserts it — `arith` drops the memory instructions, and the register threading is
+   checked by comparing registers to each other rather than to a fixed %tN. *)
+let folding =
+  lazy (match instrs "40 + 2" with exception _ -> false | ls -> ls = [])
+
+let pick (plain : unit -> unit) (folded : unit -> unit) () : unit =
+  if Lazy.force folding then folded () else plain ()
+
+(* the arithmetic of [src], without whatever materialising a variable took *)
+let arith (src : string) : string list =
+  List.filter
+    (fun l ->
+      not
+        (contains l "= alloca" || contains l "= load "
+        || starts_with "store " l))
+    (instrs src)
+
+let one_arith (src : string) : string =
+  match arith src with
+  | [ l ] -> l
+  | ls ->
+      Alcotest.failf "%S should lower to ONE arithmetic instruction, not %d:@.%s"
+        src (List.length ls) (String.concat "\n" ls)
+
+(* the two operands of a binary instruction: the word before the comma, and after it *)
+let operands_of (l : string) : string * string =
+  match String.index_opt l ',' with
+  | None -> ("", "")
+  | Some c ->
+      let before = String.trim (String.sub l 0 c) in
+      let left =
+        match List.rev (String.split_on_char ' ' before) with
+        | w :: _ -> w
+        | [] -> ""
+      in
+      (left, String.trim (String.sub l (c + 1) (String.length l - c - 1)))
+
+(* the opcode of an instruction: "%t3 = mul i64 %t2, 3" -> "mul" *)
+let opcode_of (l : string) : string =
+  match String.split_on_char ' ' l with _ :: _ :: op :: _ -> op | _ -> "?"
+
+let is_register (s : string) : bool = String.length s > 1 && s.[0] = '%'
+let result_of (l : string) : string = Option.value (lhs_of l) ~default:"(none)"
+
+let two (what : string) (src : string) : string * string =
+  match arith src with
+  | [ a; b ] -> (a, b)
+  | ls ->
+      Alcotest.failf "%s: %S should lower to two instructions, not %d:@.%s" what
+        src (List.length ls) (String.concat "\n" ls)
+
+(* the outer instruction consumes the register the inner one produced *)
+let consumes (what : string) (inner : string) (outer : string) : unit =
+  let left, right = operands_of outer in
+  Alcotest.(check bool)
+    (Printf.sprintf "%s: %S must take %s" what outer (result_of inner))
+    true
+    (left = result_of inner || right = result_of inner)
+
 (* --- group `module`: emit_llvm, the whole file -------------------------------------
    Nothing here needs an expression: an EMPTY program is still a valid module with a
    `main` that returns 0. *)
@@ -413,6 +481,238 @@ let test_fresh_names () =
   let b = Irgen.emit_expr c (parse_expr "2 + 2") in
   Alcotest.(check bool) "two expressions, two different registers" true (a <> b)
 
+(* --- the folded phrasing of `literals` and `arithmetic` ------------------------------
+   One per case above, same rule, operands folding cannot see. See `pick`. *)
+
+let test_immediates_folded () =
+  Alcotest.(check string) "a literal returns itself" "42" (operand "42");
+  Alcotest.(check (list string)) "...and emits nothing" [] (instrs "42");
+  Alcotest.(check (list string))
+    "a big literal is passed through" []
+    (instrs "9007199254740993");
+  Alcotest.(check string)
+    "...unchanged" "9007199254740993"
+    (operand "9007199254740993");
+  (* a literal operand is written verbatim into the instruction that consumes it *)
+  let left, right = operands_of (one_arith "x + 2") in
+  Alcotest.(check bool) "the variable is materialised" true (is_register left);
+  Alcotest.(check string) "the literal is written in place" "2" right;
+  let left, right = operands_of (one_arith "2 + x") in
+  Alcotest.(check string) "on the left too" "2" left;
+  Alcotest.(check bool) "...with the variable on the right" true (is_register right)
+
+let test_print_call_folded () =
+  (* the variadic call type is repeated before the callee — clang rejects it otherwise.
+     A literal argument is already an immediate, so this case reads the same either way *)
+  Alcotest.(check (list string))
+    "the call shape"
+    [ "%t1 = call i32 (ptr, ...) @printf(ptr @.fmt, i64 7)" ]
+    (instrs "print(7)");
+  (* the argument is evaluated first, and ITS register is what gets passed *)
+  let mul, call = two "evaluate, then call" "print(x * 3)" in
+  Alcotest.(check string) "the multiply comes first" "mul" (opcode_of mul);
+  Alcotest.(check bool)
+    "and its register is the argument" true
+    (contains call
+       (Printf.sprintf "call i32 (ptr, ...) @printf(ptr @.fmt, i64 %s)"
+          (result_of mul)));
+  Alcotest.(check bool)
+    "print's operand is not printf's i32 register" false
+    (is_register (operand "print(1)"));
+  let c = Irgen.create () in
+  ignore (Irgen.emit_expr c (parse_expr "print(1)"));
+  ignore (Irgen.emit_expr c (parse_expr "print(2)"));
+  let ls =
+    String.split_on_char '\n' (Buffer.contents c.Irgen.buffer)
+    |> List.map String.trim
+    |> List.filter (fun l -> l <> "")
+  in
+  Alcotest.(check int)
+    "one call per print" 2
+    (n_with "call i32 (ptr, ...) @printf" ls)
+
+let test_opcodes_folded () =
+  let op src opcode =
+    let l = one_arith src in
+    Alcotest.(check string) (Printf.sprintf "%S" src) opcode (opcode_of l);
+    let left, right = operands_of l in
+    Alcotest.(check bool)
+      (Printf.sprintf "%S takes the variable on the left" src)
+      true (is_register left);
+    Alcotest.(check string)
+      (Printf.sprintf "%S keeps its literal on the right" src)
+      "2" right
+  in
+  op "x + 2" "add";
+  op "x - 2" "sub";
+  op "x * 2" "mul";
+  op "x / 2" "sdiv";
+  op "x % 2" "srem";
+  (* unary minus is lowered as 0 - x — LLVM has no integer negate *)
+  let l = one_arith "-x" in
+  let left, right = operands_of l in
+  Alcotest.(check string) "-x is a subtraction" "sub" (opcode_of l);
+  Alcotest.(check string) "...from zero" "0" left;
+  Alcotest.(check bool) "...of the variable" true (is_register right)
+
+let test_operands_folded () =
+  Alcotest.(check bool)
+    "an operator returns its register" true
+    (is_register (operand "x + 2"));
+  let _, outer = two "nested" "x * 3 + 4" in
+  Alcotest.(check string)
+    "nested: the OUTER register is returned" (result_of outer)
+    (operand "x * 3 + 4");
+  let _, outer = two "unary" "-(x * 3)" in
+  Alcotest.(check string)
+    "unary returns its own register" (result_of outer) (operand "-(x * 3)")
+
+let test_signedness_folded () =
+  (* the signed-vs-unsigned choice matters for parity — never the unsigned forms *)
+  Alcotest.(check string) "sdiv, not udiv" "sdiv" (opcode_of (one_arith "x / 2"));
+  Alcotest.(check string) "srem, not urem" "srem" (opcode_of (one_arith "x % 2"))
+
+let test_nesting_folded () =
+  (* post-order, and the inner register threaded into the outer instruction *)
+  let inner, outer = two "post-order" "x * 3 + 4" in
+  Alcotest.(check string) "the inner operator is the multiply" "mul"
+    (opcode_of inner);
+  Alcotest.(check string) "the outer is the add" "add" (opcode_of outer);
+  consumes "post-order" inner outer;
+  (* left-associativity is visible in the operand threading, not just the tree *)
+  let inner, outer = two "a - b - c" "x - 3 - 2" in
+  Alcotest.(check string)
+    "a - b - c groups to the left" (result_of inner)
+    (fst (operands_of outer));
+  Alcotest.(check string) "...and c is the right operand" "2"
+    (snd (operands_of outer));
+  (* unary applies after its operand *)
+  let inner, outer = two "unary" "-(x * 3)" in
+  Alcotest.(check string) "the product first" "mul" (opcode_of inner);
+  Alcotest.(check string) "then the negation, from zero" "0"
+    (fst (operands_of outer));
+  consumes "unary" inner outer;
+  (* one instruction per operator, however deep *)
+  Alcotest.(check int)
+    "three operators, three instructions" 3
+    (List.length (arith "x + x * 3 - 4"))
+
+(* Every operator in one expression, with the exact sequence its precedence implies.
+   `x + x * 3 - x / 2 % 3` is (x + (x*3)) - ((x/2) % 3): `*` `/` `%` bind tighter than
+   `+` `-`, and each level runs left to right. *)
+let test_all_operators_folded () =
+  let ls = arith "x + x * 3 - x / 2 % 3" in
+  Alcotest.(check (list string))
+    "five binops and the precedence between them"
+    [ "mul"; "add"; "sdiv"; "srem"; "sub" ]
+    (List.map opcode_of ls);
+  let nth = List.nth ls in
+  Alcotest.(check string)
+    "the add takes the multiply's register" (result_of (nth 0))
+    (snd (operands_of (nth 1)));
+  Alcotest.(check string)
+    "the remainder takes the division's" (result_of (nth 2))
+    (fst (operands_of (nth 3)));
+  Alcotest.(check (pair string string))
+    "and the subtraction takes both halves"
+    (result_of (nth 1), result_of (nth 3))
+    (operands_of (nth 4))
+
+let test_operand_order_folded () =
+  (* getting the operands the wrong way round still produces a plausible-looking
+     module, and only the ANSWER is wrong *)
+  let keeps_order src =
+    let left, right = operands_of (one_arith src) in
+    Alcotest.(check bool)
+      (Printf.sprintf "%S keeps the variable first" src)
+      true (is_register left);
+    Alcotest.(check string)
+      (Printf.sprintf "%S keeps the literal second" src)
+      "4" right
+  in
+  keeps_order "x - 4";
+  keeps_order "x / 4";
+  keeps_order "x % 4";
+  (* and a literal on the LEFT stays on the left *)
+  let left, right = operands_of (one_arith "100 / x") in
+  Alcotest.(check string) "100 / x divides 100" "100" left;
+  Alcotest.(check bool) "...by x" true (is_register right);
+  (* chains group to the left *)
+  let first, second = two "a / b / c" "x / 5 / 2" in
+  Alcotest.(check string)
+    "a / b / c is (a / b) / c" (result_of first)
+    (fst (operands_of second));
+  Alcotest.(check string) "...and c is the second's right operand" "2"
+    (snd (operands_of second));
+  (* parentheses override the grouping *)
+  match arith "2 * (x + 4) * 5" with
+  | [ sum; m1; m2 ] ->
+      Alcotest.(check string) "the parenthesised sum first" "add" (opcode_of sum);
+      Alcotest.(check string) "then 2 * it" (result_of sum)
+        (snd (operands_of m1));
+      Alcotest.(check string) "then that * 5" (result_of m1)
+        (fst (operands_of m2))
+  | ls ->
+      Alcotest.failf "expected three instructions, got:@.%s"
+        (String.concat "\n" ls)
+
+(* A long expression: nothing special happens, which is the point — one instruction per
+   operator, each consuming the previous register, and the LAST one is what is returned. *)
+let test_deep_expression_folded () =
+  let src = "x + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10" in
+  let ls = arith src in
+  Alcotest.(check int) "nine operators, nine instructions" 9 (List.length ls);
+  Alcotest.(check string)
+    "the last register is returned"
+    (result_of (List.nth ls 8))
+    (operand src);
+  (* a left-leaning chain: each add takes the previous one's register on the left *)
+  List.iteri
+    (fun i l ->
+      if i > 0 then
+        Alcotest.(check string)
+          (Printf.sprintf "add %d takes add %d's register" (i + 1) i)
+          (result_of (List.nth ls (i - 1)))
+          (fst (operands_of l)))
+    ls;
+  (* a wide, mixed expression: still one instruction per operator *)
+  let wide = "(x + 2) * (3 - x) / (5 % x) - (7 + x) * (x - 10)" in
+  Alcotest.(check int)
+    "nine operators, nine instructions" 9
+    (List.length (arith wide))
+
+(* Literals at the edges of the grammar. *)
+let test_literal_edges_folded () =
+  let left, right = operands_of (one_arith "x + 0") in
+  Alcotest.(check bool) "zero is an operand like any other" true
+    (is_register left);
+  Alcotest.(check string) "...written in place" "0" right;
+  let inner, outer = two "double negation" "-(-x)" in
+  Alcotest.(check (pair string string))
+    "double negation is two subtractions from zero" ("sub", "sub")
+    (opcode_of inner, opcode_of outer);
+  Alcotest.(check string) "the outer negates the inner" (result_of inner)
+    (snd (operands_of outer));
+  Alcotest.(check string) "a lone zero returns itself" "0" (operand "0");
+  (* no instruction is invented to materialise a constant *)
+  Alcotest.(check (list string))
+    "a bare literal emits nothing" [] (instrs "1000000")
+
+let test_fresh_names_folded () =
+  (* every result gets a NAME OF ITS OWN — reusing one would break SSA, and LLVM would
+     reject the module *)
+  let ls = arith "(x + 2) * (x + 3)" in
+  Alcotest.(check int) "three operators, three instructions" 3 (List.length ls);
+  Alcotest.(check int)
+    "three distinct result registers" 3
+    (List.length (List.sort_uniq compare (List.map result_of ls)));
+  (* the counter lives in the ctx, so a second expression continues where the first
+     left off instead of colliding with it *)
+  let c = Irgen.create () in
+  let a = Irgen.emit_expr c (parse_expr "x + 1") in
+  let b = Irgen.emit_expr c (parse_expr "x + 2") in
+  Alcotest.(check bool) "two expressions, two different registers" true (a <> b)
+
 (* --- group `slots`: slot_of and emit_stmt -------------------------------------------
    These use `slot_of` and `emit_stmt` directly — the module wrapper is not involved. *)
 (* Every value in LLVM is `%name` (local) or `@name` (global) or a literal. A bare
@@ -584,6 +884,36 @@ let test_stmt_kinds () =
     (index_where (fun l -> contains l "load i64") ls < add_at
     && add_at < last_where (starts_with "store"))
 
+(* The folded phrasing: every source here runs its value through a reassigned `var`,
+   which no constant folder may look through. See `pick`. *)
+let test_stmt_kinds_folded () =
+  (* a bare expression statement emits its instructions and drops the operand *)
+  Alcotest.(check int)
+    "an expression statement still computes" 1
+    (n_with "= mul i64" (stmts_of "var v = 1\nv = v + 1\nv * 2"));
+  (* a declaration stores its initializer's operand into the slot *)
+  let ls = stmts_of "var v = 1\nv = v + 1\nvar w = v * 3\nw = w + 1" in
+  let mul =
+    match List.filter (fun l -> contains l "= mul i64") ls with
+    | [ l ] -> l
+    | got ->
+        Alcotest.failf "expected one multiply, got %d:@.%s" (List.length got)
+          (String.concat "\n" ls)
+  in
+  Alcotest.(check bool)
+    "the stored value is the multiply's register" true
+    (List.exists
+       (fun l -> starts_with (Printf.sprintf "store i64 %s," (result_of mul)) l)
+       ls);
+  (* an assignment reads the right-hand side, computes, and stores last *)
+  let ls = stmts_of "var v = 1\nv = v + 1" in
+  let last_where p = List.length ls - 1 - index_where p (List.rev ls) in
+  let add_at = index_where (fun l -> contains l "= add i64") ls in
+  Alcotest.(check bool)
+    "load, then add, then the store that ends the statement" true
+    (index_where (fun l -> contains l "load i64") ls < add_at
+    && add_at < last_where (starts_with "store"))
+
 (* Many statements, and the slot bookkeeping that has to survive them. *)
 let test_many_statements () =
   let src =
@@ -603,15 +933,6 @@ let test_many_statements () =
   Alcotest.(check int) "twelve loads" 12 (n_with "load i64" ls);
   Alcotest.(check int) "three calls" 3 (n_with "call i32 (ptr, ...) @printf" ls)
 
-(* §6's second exercise, constant folding, turns `40 + 2` into the immediate `42` — and
-   with it every literal-only expectation below becomes unobservable BY DESIGN. Once the
-   probe sees folding, those cases are SKIPPED (alcotest reports them as such, they are not
-   failures); the exercise suite then guards the folding, and `oracle.t` the answers. *)
-let folding = lazy (instrs "40 + 2" = [])
-
-let unless_folded (test : unit -> unit) () : unit =
-  if Lazy.force folding then Alcotest.skip () else test ()
-
 let () =
   Alcotest.run "irgen"
     [
@@ -626,30 +947,30 @@ let () =
       ( "literals",
         [
           Alcotest.test_case "immediates emit no instruction" `Quick
-            (unless_folded test_immediates);
+            (pick test_immediates test_immediates_folded);
           Alcotest.test_case "the printf call" `Quick
-            (unless_folded test_print_call);
+            (pick test_print_call test_print_call_folded);
         ] );
       ( "arithmetic",
         [
           Alcotest.test_case "opcode mapping (emit_expr alone)" `Quick
-            (unless_folded test_opcodes);
+            (pick test_opcodes test_opcodes_folded);
           Alcotest.test_case "every operator in one expression" `Quick
-            (unless_folded test_all_operators);
+            (pick test_all_operators test_all_operators_folded);
           Alcotest.test_case "operand order and associativity" `Quick
-            (unless_folded test_operand_order);
+            (pick test_operand_order test_operand_order_folded);
           Alcotest.test_case "long and wide expressions" `Quick
-            (unless_folded test_deep_expression);
+            (pick test_deep_expression test_deep_expression_folded);
           Alcotest.test_case "literal edges" `Quick
-            (unless_folded test_literal_edges);
+            (pick test_literal_edges test_literal_edges_folded);
           Alcotest.test_case "what emit_expr returns" `Quick
-            (unless_folded test_operands);
+            (pick test_operands test_operands_folded);
           Alcotest.test_case "signed div/rem, not unsigned" `Quick
-            (unless_folded test_signedness);
+            (pick test_signedness test_signedness_folded);
           Alcotest.test_case "post-order + exact sequence" `Quick
-            (unless_folded test_nesting);
+            (pick test_nesting test_nesting_folded);
           Alcotest.test_case "a fresh register per result" `Quick
-            (unless_folded test_fresh_names);
+            (pick test_fresh_names test_fresh_names_folded);
         ] );
       ( "slots",
         [
@@ -663,7 +984,7 @@ let () =
           Alcotest.test_case "reassignment replaces the value" `Quick
             test_reassignment;
           Alcotest.test_case "each statement kind" `Quick
-            (unless_folded test_stmt_kinds);
+            (pick test_stmt_kinds test_stmt_kinds_folded);
           Alcotest.test_case "a longer program's bookkeeping" `Quick
             test_many_statements;
         ] );

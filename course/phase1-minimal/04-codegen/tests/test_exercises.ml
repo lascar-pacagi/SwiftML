@@ -10,9 +10,10 @@
      make exercises C=phase1-minimal/04-codegen     just this file
 
    Note what exercise 2 does to the CONCEPT's suite: constant folding removes the very
-   instructions `tests/test_irgen.ml`'s `arithmetic` group counts, so those cases go red
-   when it works. That is not a regression — the tests describe a lowering, and you
-   changed the lowering. The contract below is the new one. *)
+   instructions `tests/test_irgen.ml`'s `arithmetic` group counts. That suite probes for
+   it and switches those cases to a phrasing folding cannot erase (the operands come from
+   a variable), so the rules stay checked and the report keeps the same lines. The
+   contract below is the extra one folding brings with it. *)
 
 let diags () = Diagnostics.create ()
 
