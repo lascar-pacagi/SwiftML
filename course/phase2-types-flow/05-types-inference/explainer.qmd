@@ -93,13 +93,18 @@ type is *written down rather than deduced* — here, the coercion `e as T`:
         mk (Tast.Coerce n) n.Tast.ty span)
 ```
 
-That shape generalises. Type theory splits expressions in two: an **introduction form** *builds* a
-value of some type — a literal, a lambda — while an **elimination form** *consumes* one — applying a
-function, projecting a field out of a struct. The split is what the two judgments line up with, and
-it is the standard bidirectional discipline (Pierce & Turner, *Local Type Inference*): **introduction
-forms are checked, elimination forms are synthesised.** A literal has no type of its own worth
-trusting, so it takes one from its context; an application already knows its function's type, so it
-can hand one back.
+There is a rule behind which form gets which judgment, and it is worth knowing because it decides
+every case you add from here on.
+
+Type theory splits expressions in two. An **introduction form** *builds* a value of some type — a
+literal, a lambda. An **elimination form** *consumes* one — applying a function, projecting a field
+out of a struct. The discipline is that **introduction forms are checked and elimination forms are
+synthesised** (Pierce & Turner, *Local Type Inference*).
+
+That falls out of what each one knows about itself. `1` could be an Int or a Double and nothing
+inside the literal settles which, so it has to be told: checked. An application `f(x)` is the
+opposite — `f` has a type already, and the result is written in it, so the expression can hand one
+back: synthesised. Which is why the coercion above is the case where `infer` calls `check`.
 
 The classic application rule is that discipline in one line:
 
