@@ -70,7 +70,12 @@ checker produces** further down this section.
   right side of `let x: τ = e`, an assignment to a variable of known type, (later) a function
   argument against its parameter type.
 
-![Bidirectional checking on `1 + 2`: `infer` flows types up; `check(·, Double)` pushes the expected type down, which is what lets the literals coerce.](figs/bidir.png)
+@fig-bidir runs the same `1 + 2` through both. Watch the numbering: `infer` reaches the operands
+first and works up, while `check` starts at the root, because the root is where the expectation
+arrives. And watch what each hands back — the two walks disagree about what kind of thing the
+literal `1` is, and each one writes its answer down.
+
+![The same source under both judgments: `infer` synthesises upward, `check(·, Double)` pushes the expectation downward, and each writes its answer onto every node it returns.](figs/bidir.png){#fig-bidir}
 
 The two are **mutually recursive**, and you can see both directions in this concept. `check`
 falls back to `infer` when it has no smarter rule. And `infer` calls `check` on any form whose
