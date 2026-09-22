@@ -121,8 +121,8 @@ Five new tokens, all in the operator `match` of the lexer (maximal munch, like `
 | `if` `else` `while` `for` `in` `break` `continue` | `Kw_…` | keywords, already in `token.ml`'s table |
 
 The syntactic grammar — `<-- new` marks what this concept adds; as in 05, `[ x ]` is optional
-and `{ x }` is zero-or-more. Precedence is the `infix_bp` table, loosest first; the two logical
-rows are yours to add, and so is everything below the grammar:
+and `{ x }` is zero-or-more. The `(bp N)` beside an expression production is its entry in the
+`infix_bp` table, loosest first:
 
 ```
 program    ::= [ nl ] [ statement { nl statement } ] [ nl ]
