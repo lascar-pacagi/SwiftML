@@ -717,23 +717,18 @@ judges *shape*, sema judges *meaning*.
 | `1 as Foo` — unknown name | sema | `cannot find type 'Foo' in scope` | same |
 | `1 as x` — a *value*'s name | sema | `cannot find type 'x' in scope` | *type-casting operator expects a type on its right-hand side (got: let 'x')* |
 
-The first row's phrase is chosen to land on swiftc's wording exactly. `diag::expected_type_after_as`
-(`DiagnosticsParse.def:1430`) reads *expected type after 'as'*, and since the helper prepends
-`expected `, passing `"type after 'as'"` reproduces it — same column, too. When the oracle has a
-message for precisely your construct, matching it costs one string.
+The first row's phrase is picked to land on swiftc's exactly: `diag::expected_type_after_as`
+(`DiagnosticsParse.def:1430`) reads *expected type after 'as'*, and the helper prepends
+`expected `, so `"type after 'as'"` reproduces it, column included.
 
-The last row is a real divergence, and worth knowing why we accept it. swiftc looks `x` up in the
-*value* namespace, finds a `let`, and says so. We have one namespace and no way to tell "no such
-name" from "a name, but not a type" — `Types.of_name` returns `None` for both, so `x` reads exactly
-like `Foo`. Consulting `environment` before giving up would close the gap; it is a fair exercise, but not
-the rule this concept is about.
+The last row diverges because we have one namespace. swiftc finds `x` among the *values* and says
+so; `Types.of_name` returns `None` for a value's name and a nonexistent one alike, so `x` reads
+exactly like `Foo`. Consulting `environment` before giving up would close it — a fair exercise.
 
-**Parser wording is ours; Sema wording is swiftc's.** swiftc words the annotation case just
-`expected type` (`diag::expected_type`), and our subset's parser diverges from Swift's grammar in
-enough places that copying its phrasing would be false advertising — so nothing pins these strings
-against the oracle, only their *shape*: report, recover, point at the first bad token. The Sema
-messages in §3 are the opposite case — copied verbatim from `DiagnosticsSema.def`, and the tests
-assert them character for character, because there the two compilers are checking the same rule.
+Which is the general rule: **Sema's wording is swiftc's, the parser's is ours.** §3's Sema messages
+are copied from `DiagnosticsSema.def` and the tests assert them character for character, because
+both compilers are checking the same rule. Our parser accepts a different grammar, so nothing pins
+its strings but their *shape*: report, recover, point at the first bad token.
 
 ## 3. Build it, step by step
 
