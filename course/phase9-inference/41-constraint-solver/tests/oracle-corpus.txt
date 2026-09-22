@@ -1,0 +1,16 @@
+# Programs both compilers must AGREE about. `swiftc -typecheck` is the oracle for every one:
+# `abs`, overloading, literal defaulting and return-type resolution are all real Swift.
+func f(_ x: Int) -> Int { return x }|func f(_ x: Double) -> Double { return x }|let a = f(1)|let b: Double = f(1)
+func g() -> Int { return 1 }|func g() -> Double { return 2.5 }|let c: Double = g()|let d: Int = g()
+let n = 1 + 2
+let d = 1 + 2.0
+let s = "a" + "b"
+let b = 1 < 2
+let b2 = 1.5 < 2
+func sq(_ x: Int) -> Int { return x * x }|let y = sq(4)
+func add(_ a: Int, _ b: Int) -> Int { return a + b }|let z = add(1, 2)
+let bad = 1 + true
+let bad2 = true < false
+let bad3: String = 1
+let bad4 = "a" + 1
+func h(_ x: Int) -> Int { return x }|let bad5 = h(1, 2)

@@ -1,0 +1,18 @@
+(executable
+ (name lab)
+ (modules lab)
+ (libraries swiftml_solver)
+ (flags
+  (:standard -warn-error -a)))
+
+(cram
+ (deps lab.exe oracle-corpus.txt))
+
+; Unit tests for the solver's pieces, each callable on its own: `unify` and `simplify` are
+; testable before any search exists, which is what lets 41a and 41b go green one at a time.
+(test
+ (name test_units)
+ (modules test_units)
+ (libraries alcotest swiftml_solver)
+ (flags
+  (:standard -warn-error -a)))
