@@ -466,14 +466,14 @@ real Swift but our `of_name` doesn't know the name, so we report *cannot find ty
 scope* — we have no 32-bit float to give it.
 
 **What our numbers leave out.** A Swift numeric literal is richer than `digits [. digits]`: it can
-carry an exponent (`1e3`, `1.5e-3`), `_` group separators (`1_000`), and non-decimal bases (`0xFF`,
-`0b1010`, `0o17`) — all valid Swift that `swiftc` compiles to `1000.0`, `0.0015`, `1000`, `255`,
-`10`. We scan none of them, and the failure is quiet rather than loud: `1e3` lexes as `int(1)`
-followed by the *identifier* `e3`, `0xFF` as `int(0)` then `xFF`, because a digit run stops at the
-first non-digit and letters start an identifier. The parser then reports something unhelpful about
-the second token. Widening the number scanner — and reporting
-`diag::lex_invalid_digit_in_int_literal` on `0xZZ` — is a natural exercise; the machinery you need
-is the same `peek`/`advance_char` loop you are about to write.
+carry an exponent (`1e3`, `1.5e-3`), `_` group separators (`1_000`), and non-decimal bases
+(`0xFF`, `0b1010`, `0o17`). All six are valid Swift, and `swiftc` compiles them to `1000.0`,
+`0.0015`, `1000`, `255`, `10` and `15`. We scan none of them, and the failure is quiet rather than
+loud: `1e3` lexes as `int(1)` followed by the *identifier* `e3`, and `0xFF` as `int(0)` then
+`xFF`, because a digit run stops at the first non-digit and letters start an identifier. The
+parser then reports something unhelpful about the second token. Widening the number scanner — and
+reporting `diag::lex_invalid_digit_in_int_literal` on `0xZZ` — is a natural exercise; the
+machinery you need is the same `peek`/`advance_char` loop you are about to write.
 
 **What a string token carries.** The value, not the spelling. The quotes are consumed and never
 appear in the payload, and each escape — which is *two* characters in the file, a backslash and a
