@@ -7,16 +7,17 @@
    trail, simplification of everything decidable, then a depth-first search over the
    disjunctions with a scope per guess, a score to rank the solutions, and a hard budget. *)
 
-(* --- the substitution (ConstraintSystem.h's type-variable bindings) ---------------------- *)
+(* --- the substitution (ConstraintSystem.h's type-variable bindings) ------------------- *)
 
 type solution = {
   bindings : (int, Constraints.ty) Hashtbl.t;
   (* the variables bound so far, most recent first. A scope is a position in this list, so
-     undoing a guess costs only what the guess added. swiftc calls it the trail, and gives it
-     a whole header: swift/include/swift/Sema/CSTrail.h. *)
+     undoing a guess costs only what the guess added. swiftc calls it the trail, and
+     gives it a whole header: swift/include/swift/Sema/CSTrail.h. *)
   mutable trail : int list;
   (* which variables a literal constraint applies to, and of which kind: needed to default
-     anything still unbound when the search ends, and to score one solution against another *)
+     anything still unbound when the search ends, and to score one solution against
+     another *)
   literals : (int, Constraints.literal_kind) Hashtbl.t;
 }
 
@@ -29,7 +30,8 @@ let rec resolve (s : solution) (t : Constraints.ty) : Constraints.ty =
   | Constraints.Var n -> (
       match Hashtbl.find_opt s.bindings n with None -> t | Some t' -> resolve s t')
 
-(* The types a literal of each kind may take, most preferred FIRST — the head is the literal's
+(* The types a literal of each kind may take, most preferred FIRST — the head is the
+literal's
    DEFAULT type. Swift declares these in the standard library rather than the compiler:
    `public typealias IntegerLiteralType = Int` in stdlib/public/core/Policy.swift. *)
 let literal_types = function
@@ -37,9 +39,9 @@ let literal_types = function
   | Constraints.Double_literal -> [ Types.TDouble ]
 
 (* --- scopes (ConstraintSystem.h:1323, `struct SolverScope`) ------------------------------
-   Trying an overload makes bindings that may have to be undone. Remember where the trail was
-   on entry; undo back to it on the way out. That is what makes a wrong guess cheap, and it is
-   why the search can afford to be exhaustive. *)
+   Trying an overload makes bindings that may have to be undone. Remember where the trail
+   was on entry; undo back to it on the way out. That is what makes a wrong guess cheap,
+   and it is why the search can afford to be exhaustive. *)
 
 type scope = int list
 
@@ -68,7 +70,7 @@ let scope_budget = 20_000
 
 type search = { mutable scopes_explored : int }
 
-(* --- TODO(41a): unify ------------------------------------------------------------------- *)
+(* --- TODO(41a): unify ----------------------------------------------------------------- *)
 let unify (s : solution) (a : Constraints.ty) (b : Constraints.ty) : bool =
   match (resolve s a, resolve s b) with
   | Constraints.Con x, Constraints.Con y -> Types.equal x y
@@ -80,7 +82,7 @@ let unify (s : solution) (a : Constraints.ty) (b : Constraints.ty) : bool =
           s.trail <- n :: s.trail;
           true)
 
-(* --- TODO(41b): simplify ---------------------------------------------------------------- *)
+(* --- TODO(41b): simplify -------------------------------------------------------------- *)
 let rec simplify (s : solution) (cs : Constraints.t list) : Constraints.t list option =
   match cs with
   | [] -> Some []
@@ -100,9 +102,10 @@ let rec simplify (s : solution) (cs : Constraints.t list) : Constraints.t list o
 
 (* --- the score (Score.h, `SK_NonDefaultLiteral` at :59) ----------------------------------
    Several assignments can satisfy the same system, and the checker has to pick one. swiftc
-   ranks them on a dozen axes; one is enough here, and it is one of theirs: a literal that had
-   to leave its default type counts against a solution. That single rule is why `1 + 2` is Int
-   arithmetic even though Double arithmetic satisfies every constraint just as well. *)
+   ranks them on a dozen axes; one is enough here, and it is one of theirs: a literal
+   that had to leave its default type counts against a solution. That single rule is why
+   `1 + 2` is Int arithmetic even though Double arithmetic satisfies every constraint
+   just as well. *)
 let score (s : solution) : int =
   Hashtbl.fold
     (fun n kind acc ->
@@ -111,7 +114,7 @@ let score (s : solution) : int =
       | _ -> acc)
     s.literals 0
 
-(* --- TODO(41c): the search (CSStep.cpp's DisjunctionStep) -------------------------------- *)
+(* --- TODO(41c): the search (CSStep.cpp's DisjunctionStep) ----------------------------- *)
 let rec solve (search : search) (s : solution) (cs : Constraints.t list) :
     (solution * int) option =
   search.scopes_explored <- search.scopes_explored + 1;
@@ -168,10 +171,10 @@ let rec solve (search : search) (s : solution) (cs : Constraints.t list) :
 
 (* --- the splitter, TODO(41e) (CSStep.h:232, `SplitterStep`) ------------------------------
    The single most important thing the real solver does for performance, and the reason an
-   ordinary Swift file compiles at all. Constraints that share no type variable cannot affect
-   each other, so solving them together multiplies two searches that could have been added.
-   Split the system into connected components of the constraint graph, solve each alone, and
-   put the answers back together — k^(m+n) becomes k^m + k^n. *)
+   ordinary Swift file compiles at all. Constraints that share no type variable cannot
+   affect each other, so solving them together multiplies two searches that could have
+   been added. Split the system into connected components of the constraint graph, solve
+   each alone, and put the answers back together — k^(m+n) becomes k^m + k^n. *)
 
 let rec vars_of (c : Constraints.t) : int list =
   let of_ty = function Constraints.Var n -> [ n ] | Constraints.Con _ -> [] in
@@ -220,7 +223,8 @@ let components (cs : Constraints.t list) : Constraints.t list list =
       | [] -> ungrouped := c :: !ungrouped
       | v :: _ ->
           let r = find v in
-          Hashtbl.replace buckets r (c :: Option.value ~default:[] (Hashtbl.find_opt buckets r)))
+          Hashtbl.replace buckets r (c :: Option.value ~default:[] (Hashtbl.find_opt
+          buckets r)))
     cs;
   let grouped = Hashtbl.fold (fun _ v acc -> List.rev v :: acc) buckets [] in
   match !ungrouped with [] -> grouped | u -> List.rev u :: grouped
@@ -245,13 +249,14 @@ let solve_system (search : search) (s : solution) (cs : Constraints.t list) :
         match solve search s component with
         | None -> None
         | Some (part, part_score) ->
-            (* components share no variables, so merging is a union — no conflict is possible *)
-            Hashtbl.iter (fun k v -> Hashtbl.replace s.bindings k v) part.bindings;
-            go (acc_score + part_score) rest)
+            (* components share no variables, so merging is a union — no conflict is
+            possible *) Hashtbl.iter (fun k v -> Hashtbl.replace s.bindings k v)
+            part.bindings; go (acc_score + part_score) rest)
   in
   go 0 (components cs)
 
-(* --- diagnosing a FAILED search (given) ---------------------------------------------------
+(* --- diagnosing a FAILED search (given)
+---------------------------------------------------
    The hard part of any constraint solver, and the reason swiftc has a directory for it
    (lib/Sema/CSDiagnostics.cpp, ~9000 lines). When the search comes back empty you know the
    system has no solution — and nothing else. Not which constraint is to blame, because the
@@ -334,10 +339,11 @@ let diagnose (search : search) (diagnostics : Diagnostics.sink) (s : solution)
   if !reported then true
   else
     (* Nothing offered by any overload set is wrong in itself, so the conflict comes from a
-       type someone WROTE. Drop each written type in turn and solve what is left: if the rest
-       of the program has an answer, that answer is what the annotation disagrees with, and
-       naming both is swiftc's wording. Dropping a constraint to see what the others say is
-       the same move as swiftc's "fixes", in the one case this subset needs. *)
+       type someone WROTE. Drop each written type in turn and solve what is left: if the
+       rest of the program has an answer, that answer is what the annotation disagrees
+       with, and naming both is swiftc's wording. Dropping a constraint to see what the
+       others say is the same move as swiftc's "fixes", in the one case this subset
+       needs. *)
     let written =
       List.filter
         (function Constraints.Equal (_, Constraints.Con _, _) -> true | _ -> false)
@@ -364,7 +370,7 @@ let diagnose (search : search) (diagnostics : Diagnostics.sink) (s : solution)
         | _ -> false)
       written
 
-(* --- the entry point (given) ------------------------------------------------------------- *)
+(* --- the entry point (given) ---------------------------------------------------------- *)
 
 let span_of_program (program : Ast.program) : Token.span =
   match program.Ast.items with
@@ -381,7 +387,8 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
   let s = empty () in
   List.iter
     (function
-      | Constraints.Literal (Constraints.Var n, kind, _) -> Hashtbl.replace s.literals n kind
+      | Constraints.Literal (Constraints.Var n, kind, _) -> Hashtbl.replace s.literals n
+      kind
       | _ -> ())
     g.Csgen.constraints;
   let search = { scopes_explored = 0 } in

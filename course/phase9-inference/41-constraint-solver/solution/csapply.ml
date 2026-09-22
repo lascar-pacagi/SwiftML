@@ -6,12 +6,13 @@
 
    This is concept 05's lesson arriving from the other direction. There, `check_expr` wrote
    the flex into the operand as it went, because the decision and the walk were the same
-   thing. Here they are two passes — the solver decides, this walk records — which is exactly
-   why swiftc needs a file for it.
+   thing. Here they are two passes — the solver decides, this walk records — which is
+   exactly why swiftc needs a file for it.
 
    Design oracle: swift/lib/Sema/CSApply.cpp — `ExprRewriter`, which walks the expression
-   "resulting in a fully-type-checked expression" (its own words), calling `Expr::setType` and
-   replacing each overloaded reference with a `ConcreteDeclRef` naming the chosen decl. *)
+   "resulting in a fully-type-checked expression" (its own words), calling
+   `Expr::setType` and replacing each overloaded reference with a `ConcreteDeclRef`
+   naming the chosen decl. *)
 
 type solution = (int, Constraints.ty) Hashtbl.t
 

@@ -3,9 +3,10 @@
 
    Concept 05's checker decided every node the moment it reached it. That works because its
    rules are local: an operator looks at two operand types and answers. A constraint-based
-   checker does the opposite — it writes down what must be TRUE and postpones every decision,
-   so a fact learned at the far end of an expression can settle a question asked at the near
-   end. That is the whole difference, and everything below follows from it.
+   checker does the opposite — it writes down what must be TRUE and postpones every
+   decision, so a fact learned at the far end of an expression can settle a question
+   asked at the near end. That is the whole difference, and everything below follows from
+   it.
 
    Design oracle: swift/include/swift/Sema/Constraint.h (the constraint kinds),
    swift/lib/Sema/CSGen.cpp (generation), CSSolver.cpp (solving), CSApply.cpp (writing the
@@ -22,9 +23,10 @@ let string_of_ty = function
   | Var n -> Printf.sprintf "$T%d" n
 
 (* Swift's literals are POLYMORPHIC: `1` is anything `ExpressibleByIntegerLiteral`, and only
-   the context decides which. Concept 05 modelled that with `is_int_literal`, a predicate that
-   WALKED the expression to ask "could this whole subtree have been a Double?". Here it is a
-   constraint on one type variable instead — the walk disappears, and so does its cost. *)
+   the context decides which. Concept 05 modelled that with `is_int_literal`, a predicate
+   that WALKED the expression to ask "could this whole subtree have been a Double?". Here
+   it is a constraint on one type variable instead — the walk disappears, and so does its
+   cost. *)
 type literal_kind =
   | Int_literal (* Int or Double, defaulting to Int *)
   | Double_literal (* Double only, in this subset *)
@@ -39,12 +41,15 @@ type t =
   | Equal of ty * ty * Token.span
       (* these two types are the same. The workhorse — swiftc's `Bind`/`Equal`. *)
   | Literal of ty * literal_kind * Token.span
-      (* this type must be one a literal of that kind can take. swiftc words it as conformance
+      (* this type must be one a literal of that kind can take. swiftc words it as
+      conformance
          to a protocol, and resolves it the same way: try the default first. *)
   | Disjunction of disjunction
-      (* EXACTLY ONE of these alternatives must hold. This is where overloading lives, and it
-         is the only constraint that cannot be solved by looking at it — it has to be SEARCHED,
-         which is where the exponent in "exponential in the worst case" comes from. *)
+      (* EXACTLY ONE of these alternatives must hold. This is where overloading lives,
+      and it
+         is the only constraint that cannot be solved by looking at it — it has to be
+         SEARCHED, which is where the exponent in "exponential in the worst case" comes
+         from. *)
 
 and disjunction = {
   what : string; (* the overloaded name, for diagnostics: "+", "abs" *)
@@ -76,9 +81,9 @@ let rec string_of_constraint = function
 
 (* --- overload sets ----------------------------------------------------------------------
    A signature, and the machinery for an overloaded NAME. Concept 07 kept one signature per
-   name and reported a second declaration as `invalid redeclaration`. Swift does not: several
-   functions may share a name as long as their signatures differ, and picking between them is
-   the job this concept exists to do. *)
+   name and reported a second declaration as `invalid redeclaration`. Swift does not:
+   several functions may share a name as long as their signatures differ, and picking
+   between them is the job this concept exists to do. *)
 
 type signature = { params : Types.ty list; result : Types.ty }
 

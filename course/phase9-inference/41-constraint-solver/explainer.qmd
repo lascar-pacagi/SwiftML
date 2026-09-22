@@ -1,0 +1,997 @@
+---
+title: "41 · The constraint solver"
+format:
+  html: { toc: true }
+  typst: { toc: true }
+---
+
+## 1. What you'll build, and why
+
+Every type checker you have written so far decides each node the moment it reaches it. That works
+because its rules are **local**: `+` looks at two operand types and answers, `check_expr` is handed
+an expected type and pushes it down. Concept 05 called this bidirectional checking, and it got you
+through five more concepts.
+
+Overloading breaks it. Swift lets two functions share a name as long as their signatures differ —
+and the *return type* counts as part of the signature:
+
+```swift
+func g() -> Int    { return 1 }
+func g() -> Double { return 2.5 }
+let c: Double = g()
+let d: Int    = g()
+```
+
+That is a real Swift program; `swiftc` compiles it and it prints `2.5` then `1`. Two identical call
+sites, two different functions. Nothing about `g()` decides which one is meant — only the type the
+context wants back does, and `infer` has nothing to look at when it gets there.
+
+There is no order in which a local rule could reach the answer. The fix is not a better rule; it is
+a different architecture, and it is the one swiftc actually uses.
+
+- **You implement:** `unify` and `simplify` (the part that needs no guessing), `solve` (the search
+  over overload choices, with scopes, scoring and a budget), and `csapply` (writing the answer back
+  onto the tree). Plus, when you want it, the **splitter** — an optional second rung that is the
+  difference between a compiler and a toy.
+- **Outcome:** your compiler resolves overloads on the parameter type, on the arity, and on the
+  return type alone, and the programs **run and match `swiftc` byte for byte**.
+- **Prereqs:** 05 (bidirectional checking, literal defaulting), 07 (functions, two-pass collection
+  of signatures), 09 (SIL and LLVM, which this concept carries so the programs can run).
+
+**A leaf.** This concept forks concept 09's pipeline rather than extending concept 40's, so the
+solver is the only new part and nothing downstream depends on it. Concept 14 did the same.
+
+## 2. Concepts, in depth
+
+### The wall
+
+Trace `let d: Int = g()` through concept 05's machinery and watch it fail.
+
+`check_stmt` sees an annotation, resolves `Int`, and calls `check_expr value TInt`. `check_expr`
+has no arm for a call, so it falls through to `infer`, which reaches `Ast.Call ("g", [])` and looks
+`g` up. In concept 07 that lookup returned one signature. Now it returns two, and `infer` must
+return a type. It can pick the first, or the last, or report an ambiguity — every one of those is
+wrong for some program, and the information that would settle it (`Int`, four tokens to the left)
+was thrown away one call earlier when `check_expr` gave up and delegated.
+
+You could patch it: give `check_expr` a `Call` arm that filters the overload set by the expected
+type. That handles this example. It does not handle `let d: Int = f(g())`, where the argument's
+overload and the result's overload constrain each other, and neither is known first. Each patch
+buys one program.
+
+The problem is the *shape*: a checker that must produce an answer at every node can only use the
+information that reached that node. Overload resolution needs information from elsewhere in the
+expression, and sometimes from outside it.
+
+### Generate, solve, apply
+
+So stop producing answers. Walk the tree once and write down what must be **true**, in a language
+with a word for "I do not know yet". Then solve the whole system at once. Then walk the tree again
+and write the answers onto it.
+
+@fig-solve follows the program above through all three.
+
+![One program through the three passes: `csgen` writes the system down, `cssolver` searches it, `csapply` writes the answer onto the tree. Swap `Int` for `Double` in the annotation and the same call site resolves to the other declaration.](figs/solve.png){#fig-solve}
+
+Three files, and they are swiftc's three files:
+
+| ours | swiftc | what it does |
+|---|---|---|
+| `csgen.ml` | `lib/Sema/CSGen.cpp` | one walk; allocates a type variable per expression, emits constraints, decides nothing |
+| `cssolver.ml` | `lib/Sema/CSSolver.cpp`, `CSStep.cpp` | finds an assignment of the variables that satisfies every constraint |
+| `csapply.ml` | `lib/Sema/CSApply.cpp` | one walk; puts the types and the chosen declarations onto the tree |
+
+The split is not tidiness. Generation cannot fail to be complete — it never has to choose, so there
+is no wrong choice to make. Solving cannot look at the program — it only sees constraints, so it
+cannot accidentally depend on the order the source was written in. And applying cannot re-derive
+anything, because by then the answer exists. Each pass can only get its own job wrong.
+
+### The language of facts
+
+Three constraint kinds are enough for this subset. swiftc's `Constraint.h` has about forty, most of
+them about conformance and subtyping.
+
+```ocaml
+type ty = Con of Types.ty      (* a type we know *)
+        | Var of int           (* $T0 — one we do not *)
+
+type t =
+  | Equal       of ty * ty * span            (* these two are the same type *)
+  | Literal     of ty * literal_kind * span  (* a literal of this kind may be this type *)
+  | Disjunction of disjunction               (* EXACTLY ONE alternative holds *)
+```
+
+`Var` is the case concept 05's `Types.ty` did not have, and its absence is exactly why that checker
+had to decide early. There was no way to write down "the answer is whatever it turns out to be".
+
+**`Literal` replaces a tree walk.** Concept 05 modelled Swift's polymorphic literals with
+`is_int_literal`, a predicate that walked an expression asking "could this whole subtree have been a
+Double?". Here the same fact is one constraint on one variable:
+
+```
+$T0 : ExpressibleByIntegerLiteral
+```
+
+The walk disappears, and with it both of the quadratics §6 exercise 5 of concept 05 is about. The
+solver never asks the question twice because the answer is written down the first time.
+
+**`Disjunction` is the only one that cannot be solved by looking at it.** `Equal` is work for
+`unify`; `Literal` is a membership test once its type is known. A disjunction has to be *searched*,
+and that is where the exponent in "exponential in the worst case" comes from.
+
+An overload set becomes one:
+
+```
+g is one of { (Int) -> Int    [ $T0 == Int    ]
+            | (Double) -> Double [ $T0 == Double ] }
+```
+
+Run `--emit-constraints` on any program in this concept and you will see the real thing.
+
+### The grammar does not change
+
+This is the first concept in the course that adds **no syntax at all**. The lexer, the parser and
+the AST are concept 07's, untouched. What changes is what a program is allowed to *mean*:
+
+| before (07) | now (41) |
+|---|---|
+| a name identifies one function | a name identifies a **set**, and the signatures must differ |
+| a second `func f` is `invalid redeclaration of 'f'` | only a second one with the **same signature** is |
+| `Tast.Fn_call` carries a name | it carries a name **and the index of the declaration chosen** |
+
+That last row is the concept's whole output. A name is no longer a unique identifier, which has a
+consequence downstream — see *Two functions, one name, one symbol* below.
+
+### Solving: what needs no guess, and what does
+
+`simplify` runs the worklist and solves everything decidable:
+
+- `Equal (a, b)` — hand it to `unify`. Resolve both sides first: what matters is what they are
+  *now*, not what they were written as. Two concrete types must agree; a variable takes the other
+  side.
+- `Literal (t, kind)` — if `t` has resolved to a concrete type, check it is one the literal may
+  take. If it has not, **keep the constraint**. The default is only applied when the search is
+  over, and a constraint dropped here is a program wrongly accepted later.
+- `Disjunction` — keep it. That is the search's job.
+
+What `unify` does *not* need here is an occurs check. This subset has no type constructors — no
+`Array<T>`, no `(A) -> B` as a first-class type — so there is no way to build a type that contains
+a variable, and therefore no way to bind `$T0` to something containing `$T0`. Every Hindley–Milner
+implementation needs one; ours is honestly vacuous, and saying so is better than pretending the
+code is complete.
+
+`solve` handles the rest: take a disjunction, try each alternative, keep what works.
+
+### Scopes, and why a wrong guess is cheap
+
+Trying an alternative makes bindings that may have to be undone. The mechanism is a **trail**: a
+list of every variable bound, most recent first. A scope is a position in that list; leaving one
+pops back to it, removing each binding on the way.
+
+```ocaml
+let entry = scope_of s in
+(match solve search s (choice.implies @ rest) with ...);
+restore s entry
+```
+
+Undoing costs exactly what the guess added — not a copy of the solution, not a rebuild. swiftc's is
+`ConstraintSystem.h:1323`'s `SolverScope`, with a trail large enough to have its own header
+(`CSTrail.h`) and its own budget. This is what lets the search afford to be exhaustive.
+
+### Scoring, or why `1 + 2` is not Double arithmetic
+
+`1 + 2` has more than one solution. Int arithmetic satisfies every constraint; so does Double, with
+both literals taking their non-default type. Both are *correct* — the system does not distinguish
+them, so something outside it must.
+
+swiftc ranks solutions on about a dozen axes (`Sema/Score.h`). One of them is enough here, and it is
+one of theirs:
+
+```ocaml
+(* SK_NonDefaultLiteral — Score.h:59 *)
+let score s = (* one point for each integer literal that ended up a Double *)
+```
+
+Lowest score wins. `1 + 2` scores 0 as Ints and 2 as Doubles, so Ints win. `1 + 2.0` cannot be Ints
+at all, so the Double solution wins by being the only one. The rule is small and it is doing real
+work: delete it and take the first solution instead, and every literal in the language silently
+becomes a Double.
+
+This is also why the search explores **every** alternative rather than stopping at the first that
+works. Answering yes-or-no needs one solution; answering *correctly* needs the best one.
+
+### It is exponential, and swiftc says so
+
+> Solving the constraint systems generated by the Swift language can, in the worst case, require
+> exponential time. Even the classic Hindley-Milner type inference algorithm requires exponential
+> time, and the Swift type system introduces additional complications, especially overload
+> resolution.
+>
+> — `swift/docs/TypeChecker.md:552`
+
+*n* disjunctions of *k* alternatives is *k^n* combinations. Propagation prunes hard — commit to
+`Int` at one operator and every `Double` alternative below it dies immediately — but nothing
+guarantees the pruning happens, and when the alternatives are independent nothing prunes at all.
+
+So the search gets a hard budget and **reports** rather than hangs. Ours counts scopes; swiftc has
+four ceilings (`LangOptions.h:959-969` — an expression timeout, 512 MB of memory, a million scopes,
+64 MB of trail) and one diagnostic, which is the one everybody has seen:
+
+```
+error: the compiler is unable to type-check this expression in reasonable time;
+       try breaking up the expression into distinct sub-expressions
+```
+
+Ours says exactly that. §5 shows how to provoke it.
+
+### The splitter, which is not optional
+
+Two constraints can only affect each other if they share a type variable, directly or through a
+chain. Constraints that share none are independent problems, and solving them *together* multiplies
+searches that could have been added: *k^(m+n)* where *k^m + k^n* would do.
+
+swiftc splits the constraint graph into connected components and solves each alone
+(`CSStep.h:232`'s `SplitterStep`; the constraint graph is the docs' first Performance heading). Our
+`components` starts out returning `[ cs ]` — one group, everything together. That is *correct*, and
+every test in this concept passes with it.
+
+It is also the difference between a compiler and a toy, and §5 measures exactly how much.
+
+### Diagnosing a failure, which is the hard part
+
+A constraint solver starts at a disadvantage here, and it is worth being clear about why. Concept
+05's checker knew which rule failed, because a rule had to fail for it to stop. A search that comes
+back empty knows only that the system is unsatisfiable — not which constraint is to blame, because
+it never committed to one, and not which operand is wrong, because it tried both ways.
+
+swiftc recovers the blame by solving **again with "fixes" enabled**: a fix lets a failing constraint
+succeed at a score penalty, so the search completes, and the fixes it had to apply *are* the
+diagnosis. That machinery is `lib/Sema/CSDiagnostics.cpp`, and it is about nine thousand lines.
+
+`Cssolver.diagnose` (given) is the crude version, in two stages:
+
+1. **Is an overload set wrong on its own?** For each disjunction, test every alternative against
+   the operand constraints only. If none survives, that operator or call is to blame, and it is
+   reported with concept 05's wording. Note *operand constraints only*: testing against the whole
+   system would blame `+` for `let x: Bool = 1 + 2`, and `+` really can add two Ints.
+2. **Otherwise the conflict is with a type someone wrote.** Drop each written type in turn and
+   solve what is left. If the rest of the program has an answer, that answer is what the annotation
+   disagrees with — and naming both is swiftc's wording. Dropping a constraint to see what the
+   others say is the same move as a fix, in the one case this subset needs.
+
+Every message, against the oracle:
+
+| program | ours | swiftc |
+|---|---|---|
+| `let b = 1 + true` | `binary operator '+' cannot be applied to operands of type 'Int' and 'Bool'` | words it as an argument conversion, because its `+` is generic |
+| `let c = true < false` | `binary operator '<' cannot be applied to two 'Bool' operands` | **identical** |
+| `let s = "a" + 1` | `binary operator '+' cannot be applied to operands of type 'String' and 'Int'` | **identical** |
+| `let y: String = 1` | `cannot convert value of type 'Int' to specified type 'String'` | **identical** |
+| `let x: Bool = 1 + 2` | `cannot convert value of type 'Int' to specified type 'Bool'` | suggests `!= 0`, which needs a fix-it we do not have |
+| `f(1, 2)` with no 2-arity `f` | `no exact matches in call to global function 'f'` | **identical** |
+| two identical `func f` | `invalid redeclaration of 'f'` | **identical** |
+
+### Two functions, one name, one symbol
+
+Overloading has a consequence that reaches past the checker, and this is the first place in the
+course where it bites: **a name is no longer a unique identifier, and a symbol must be.** Three
+functions called `show` cannot all be `@show` in the IR.
+
+So SILGen mangles, using the index the solver recorded:
+
+```
+sil @show$0(%0 : $Int) -> $Int
+sil @show$1(%0 : $Double) -> $Int
+sil @show$2(%0 : $String) -> $Int
+```
+
+Swift does the same thing for the same reason, with a scheme that encodes the whole signature —
+`show(_: Int) -> Int` becomes `$s4main4showyS2iF`. Run `swiftc -emit-assembly` on an overloaded
+program and you can read them. The index is enough for us because the checker has already chosen;
+what matters is that *something* distinguishes them, and that the checker is what decides.
+
+### Honest limits
+
+- **No type constructors**, so unification is union-find plus concrete equality, and the occurs
+  check is vacuous. Real inference variables inside `Array<T>` or a function type would need it.
+- **No generics.** swiftc's hardest disjunctions come from generic overloads with conformance
+  requirements; ours come from a handful of concrete signatures.
+- **One score axis.** `SK_NonDefaultLiteral` and nothing else, so two solutions that differ any
+  other way tie, and a tie is reported as an ambiguity rather than ranked.
+- **Diagnosis is two heuristics**, not a fix-based replay. §6 exercise 3 is the swiftc route.
+- **Double printing** is concept 09's `%g`, so `3.0` prints as `3`. Inherited, documented there,
+  and the reason no oracle program prints a Double.
+
+## 3. Build it, step by step
+
+Your concept 07 front end and concept 09 back end are filled in; you write the `TODO(41)` holes.
+§4 lists which test file each one turns green.
+
+| file | holes | what you write |
+|---|---|---|
+| `cssolver.ml` | 3 | `unify`, `simplify`, `solve` |
+| `csapply.ml` | 1 | the expression walk that builds the `Tast` |
+| `cssolver.ml` | *optional* | `components` — the splitter, `TODO(41e)` |
+
+### The traps, one per hole
+
+**`TODO(41a)` `unify`.** Resolve both sides before comparing: what matters is what they are now,
+not what they were written as. Every binding you make must go on the **trail**, or a scope cannot
+undo it — and a scope that cannot undo is a solver that gets one guess.
+
+**`TODO(41b)` `simplify`.** The three kinds are not alike, and the `Literal` case is where this
+goes wrong quietly. A literal constraint whose variable is still open must be **handed back**, not
+dropped: `let s: String = 1` binds the variable through the annotation long after the literal
+constraint went by, and if nothing keeps it, nothing ever looks again.
+
+**`TODO(41c)` `solve`.** Simplify first. If no disjunction is left, you have a solution — but check
+the literal constraints `simplify` handed back before you call it one, for the reason above. If a
+disjunction is left, try each alternative in its own scope and **keep the best-scoring**, not the
+first that works. And count scopes: raise `Too_complex` when the budget is gone, rather than
+running until someone kills the compiler.
+
+**`TODO(41d)` `csapply`.** One arm per `Ast.expr` constructor, each returning the matching `Tast`
+form with the type `type_of` gives for its span. The arms are mechanical, which is the point. The
+one that is not is `Call`: `Tast.Fn_call` wants the **index** of the declaration chosen, and
+`g.Csgen.chosen` has it keyed by the call's span. Leave it out and the tree still says "a call to
+something named `f`", which is the question this concept exists to answer.
+
+**`TODO(41e)` the splitter.** Optional, and `[ cs ]` is correct. Union-find over the variables is
+the shape: two constraints belong together when they mention one in common. Constraints that
+mention none can go anywhere.
+
+## 4. Test it
+
+```bash
+make lab C=phase9-inference/41-constraint-solver
+```
+
+| file | flag | green with | what it pins |
+|---|---|---|---|
+| `csgen.t` | `--emit-constraints` | *nothing* — generation is given | what a literal, an operator, and an overload set each turn into |
+| `solver-units` (alcotest) | — | `41a`, then `41b` | `unify` on concrete types, chains, and the trail; `simplify` on each constraint kind |
+| `solve.t` | `--emit-tast` | `41a-d` | the type on every node, and which declaration each call resolved to |
+| `diagnostics.t` | `--typecheck` | `41a-d` | both stages of `diagnose`, and the wording of each |
+| `run.t` | `build` | `41a-d` | what the programs **print** — the only thing that can tell `show#0` from `show#1` |
+| `oracle.t` | `build` | everything | 10 programs compiled and run by both compilers, stdout compared byte for byte |
+
+`csgen.t` passing on an untouched skeleton is not a bug: generation is given, and the file is there
+to be read.
+
+`run.t` and `oracle.t` are the point. Accept-or-reject cannot see overload resolution at all —
+`show(1.5)` type-checks whichever `show` you pick. Three declarations that return `1`, `2` and `3`
+turn the resolution into output, and then `swiftc` can be asked whether it agrees.
+
+## 5. Benchmark it
+
+The splitter, measured. Take *n* statements that share no type variable — each one an
+independent two-way choice, because an integer literal could be either overload's argument:
+
+```swift
+func p(_ x: Int) -> Int { return x }
+func p(_ x: Double) -> Int { return 0 }
+print(p(0))
+print(p(1))
+…
+```
+
+With `components` returning `[ cs ]` the solver sees one system with *n* independent
+disjunctions and walks 2^n combinations of them. Split into connected components it solves *n*
+two-way choices, one at a time. Best of three, after a warm-up:
+
+| n | one group | split |
+|---|---|---|
+| 10 | 0.003 s | 0.002 s |
+| 12 | 0.005 s | 0.002 s |
+| 13 | 0.007 s | 0.002 s |
+| **14** | **budget exhausted** | 0.002 s |
+| 20 | budget exhausted | 0.004 s |
+| 40 | budget exhausted | 0.003 s |
+
+Read the left column as doubling — which it is, until it hits the 20 000-scope ceiling at
+2^14 ≈ 16 000 and stops. Fourteen one-line statements, nothing nested, nothing clever, and the
+compiler answers:
+
+```
+error: the compiler is unable to type-check this expression in reasonable time;
+       try breaking up the expression into distinct sub-expressions
+```
+
+The right column is flat to forty and would be flat to four hundred.
+
+That is why the constraint graph is the first heading under *Performance* in swiftc's own design
+document, and why "optional second rung" describes the code rather than the idea. It is also
+worth knowing the shape of the failure: the message blames the *expression*, and the expression
+is fine. What was too complex was solving it together with thirteen unrelated ones.
+
+## 6. Exercises
+
+1. **A second score axis.** Two solutions that differ only in something `SK_NonDefaultLiteral`
+   cannot see currently tie, and a tie is an ambiguity. Add one of swiftc's others — favour a
+   non-generic over a generic, or an exact match over a conversion — and find a program whose
+   verdict changes.
+2. **Favoured choices.** The search tries alternatives in declaration order. Try the one whose
+   parameter types already match the operands' resolved types first, and count scopes explored
+   before and after on the §5 benchmark.
+3. **Diagnose with fixes.** Replace `diagnose`'s two heuristics with swiftc's method: re-solve
+   allowing any single constraint to fail at a score penalty, and report the one that had to. This
+   is the exercise that makes the error messages good rather than adequate.
+4. **Occurs check.** Give the language one type constructor — an array type, say — so a variable
+   can appear inside a type. Now `unify` can build a cycle, and needs the check every
+   Hindley–Milner implementation has.
+5. **Cache the solved components.** Two statements with the same constraint shape are solved twice.
+   Key the component's solution by its shape and reuse it.
+
+## 7. Recap & what's next
+
+You replaced a bidirectional checker with the architecture swiftc uses: **generate** constraints
+without deciding anything, **solve** them by search with scopes and a score, **apply** the answer to
+the tree. The payoff is a thing local rules cannot express at all — a call resolved by the type its
+context wants back — and the cost is a search that is exponential in the worst case, a budget to
+stop it, and a diagnosis problem that is genuinely harder than the one you had before.
+
+Three ideas from here are worth carrying:
+
+- **Deciding late is a design, not a delay.** Every fact the generator writes down instead of acting
+  on is a fact that can be combined with one discovered elsewhere.
+- **The recorded decision is the output.** `Fn_call` carries an index, `Tast` carries types, SILGen
+  mangles from both — the same claim concept 05 made about literals, now about declarations.
+- **Search needs a budget and a story for failure.** Both are load-bearing, and both are where the
+  real compiler spends its complexity.
+
+This is a leaf: nothing downstream depends on it. Concepts 21–24 build generics on top of concept
+07's simpler checker, and the honest reading of that is that the course teaches the constraint
+solver here, where it can be seen whole, rather than threading it through nineteen concepts that do
+not need it.
+
+## 8. Appendix — full solution
+
+Mirrors `solution/cssolver.ml` and `solution/csapply.ml`, minus their frozen headers. **Try
+§3 first — this is the answer.** `make check-solution C=phase9-inference/41-constraint-solver`
+builds and runs exactly this.
+
+### `cssolver.ml`
+
+```ocaml
+(* --- the substitution (ConstraintSystem.h's type-variable bindings) ------------------- *)
+
+type solution = {
+  bindings : (int, Constraints.ty) Hashtbl.t;
+  (* the variables bound so far, most recent first. A scope is a position in this list, so
+     undoing a guess costs only what the guess added. swiftc calls it the trail, and
+     gives it a whole header: swift/include/swift/Sema/CSTrail.h. *)
+  mutable trail : int list;
+  (* which variables a literal constraint applies to, and of which kind: needed to default
+     anything still unbound when the search ends, and to score one solution against
+     another *)
+  literals : (int, Constraints.literal_kind) Hashtbl.t;
+}
+
+let empty () : solution =
+  { bindings = Hashtbl.create 64; trail = []; literals = Hashtbl.create 64 }
+
+let rec resolve (s : solution) (t : Constraints.ty) : Constraints.ty =
+  match t with
+  | Constraints.Con _ -> t
+  | Constraints.Var n -> (
+      match Hashtbl.find_opt s.bindings n with None -> t | Some t' -> resolve s t')
+
+(* The types a literal of each kind may take, most preferred FIRST — the head is the
+literal's
+   DEFAULT type. Swift declares these in the standard library rather than the compiler:
+   `public typealias IntegerLiteralType = Int` in stdlib/public/core/Policy.swift. *)
+let literal_types = function
+  | Constraints.Int_literal -> [ Types.TInt; Types.TDouble ]
+  | Constraints.Double_literal -> [ Types.TDouble ]
+
+(* --- scopes (ConstraintSystem.h:1323, `struct SolverScope`) ------------------------------
+   Trying an overload makes bindings that may have to be undone. Remember where the trail
+   was on entry; undo back to it on the way out. That is what makes a wrong guess cheap,
+   and it is why the search can afford to be exhaustive. *)
+
+type scope = int list
+
+let scope_of (s : solution) : scope = s.trail
+
+let restore (s : solution) (entry : scope) : unit =
+  let rec undo () =
+    if s.trail != entry then
+      match s.trail with
+      | [] -> ()
+      | v :: rest ->
+          Hashtbl.remove s.bindings v;
+          s.trail <- rest;
+          undo ()
+  in
+  undo ()
+
+(* --- the budget (LangOptions.h:959-969) --------------------------------------------------
+   The search is exponential in the worst case, so it gets a hard limit and REPORTS rather
+   than hangs. swiftc has four of these — an expression timeout, a memory ceiling, a scope
+   count and a trail size — and the diagnostic they raise is the one everyone has seen. *)
+
+exception Too_complex
+
+let scope_budget = 20_000
+
+type search = { mutable scopes_explored : int }
+
+(* --- TODO(41a): unify ----------------------------------------------------------------- *)
+let unify (s : solution) (a : Constraints.ty) (b : Constraints.ty) : bool =
+  match (resolve s a, resolve s b) with
+  | Constraints.Con x, Constraints.Con y -> Types.equal x y
+  | Constraints.Var n, other | other, Constraints.Var n -> (
+      match other with
+      | Constraints.Var m when m = n -> true (* already the same variable *)
+      | _ ->
+          Hashtbl.replace s.bindings n other;
+          s.trail <- n :: s.trail;
+          true)
+
+(* --- TODO(41b): simplify -------------------------------------------------------------- *)
+let rec simplify (s : solution) (cs : Constraints.t list) : Constraints.t list option =
+  match cs with
+  | [] -> Some []
+  | Constraints.Equal (a, b, _) :: rest ->
+      if unify s a b then simplify s rest else None
+  | (Constraints.Literal (t, kind, _) as c) :: rest -> (
+      match resolve s t with
+      | Constraints.Var _ -> (
+          (* still unknown — keep it; the default is applied when the search finishes *)
+          match simplify s rest with None -> None | Some kept -> Some (c :: kept))
+      | Constraints.Con concrete ->
+          if List.exists (Types.equal concrete) (literal_types kind) then simplify s rest
+          else None)
+  | (Constraints.Disjunction _ as d) :: rest -> (
+      (* a choice cannot be made by looking at it — hand it to the search *)
+      match simplify s rest with None -> None | Some kept -> Some (d :: kept))
+
+(* --- the score (Score.h, `SK_NonDefaultLiteral` at :59) ----------------------------------
+   Several assignments can satisfy the same system, and the checker has to pick one. swiftc
+   ranks them on a dozen axes; one is enough here, and it is one of theirs: a literal
+   that had to leave its default type counts against a solution. That single rule is why
+   `1 + 2` is Int arithmetic even though Double arithmetic satisfies every constraint
+   just as well. *)
+let score (s : solution) : int =
+  Hashtbl.fold
+    (fun n kind acc ->
+      match (kind, resolve s (Constraints.Var n)) with
+      | Constraints.Int_literal, Constraints.Con Types.TDouble -> acc + 1
+      | _ -> acc)
+    s.literals 0
+
+(* --- TODO(41c): the search (CSStep.cpp's DisjunctionStep) ----------------------------- *)
+let rec solve (search : search) (s : solution) (cs : Constraints.t list) :
+    (solution * int) option =
+  search.scopes_explored <- search.scopes_explored + 1;
+  if search.scopes_explored > scope_budget then raise Too_complex;
+  match simplify s cs with
+  | None -> None
+  | Some remaining -> (
+      match
+        List.partition (function Constraints.Disjunction _ -> true | _ -> false) remaining
+      with
+      | [], _ ->
+          (* nothing left to choose, so this is a solution. A snapshot, because the caller
+             will undo these bindings before trying the next alternative.
+
+             DEFAULTS ARE NOT APPLIED HERE. A variable still unbound is one nothing has
+             pinned, and `solve_system` gives it its default type once every component has
+             had its say — doing it here would default variables belonging to components
+             that have not been solved yet, and `let b: Double = f(1)` would be rejected
+             because the literal was made an Int before the annotation was ever read. *)
+          let final = { s with bindings = Hashtbl.copy s.bindings } in
+          (* a literal constraint that was still open when it was met is KEPT, and this is
+             where it is finally answered: `let s: String = 1` binds the variable to String
+             through the annotation long after the literal constraint went by, and nothing
+             would ever have looked at it again. *)
+          let literals_hold =
+            List.for_all
+              (function
+                | Constraints.Literal (t, kind, _) -> (
+                    match resolve final t with
+                    | Constraints.Con c -> List.exists (Types.equal c) (literal_types kind)
+                    | Constraints.Var _ -> true)
+                | _ -> true)
+              remaining
+          in
+          if literals_hold then Some (final, score final) else None
+      | Constraints.Disjunction d :: other_disjunctions, simple ->
+          let rest = other_disjunctions @ simple in
+          let best = ref None in
+          List.iter
+            (fun (c : Constraints.choice) ->
+              let entry = scope_of s in
+              (match solve search s (c.Constraints.implies @ rest) with
+              | None -> ()
+              | Some (candidate, candidate_score) -> (
+                  (* keep the BEST, not the first: taking the first success would be enough
+                     to answer yes or no, but the score is what makes `1 + 2` an Int *)
+                  match !best with
+                  | Some (_, best_score) when best_score <= candidate_score -> ()
+                  | _ -> best := Some (candidate, candidate_score)));
+              restore s entry)
+            d.Constraints.choices;
+          !best
+      | _ :: _, _ -> None)
+
+(* --- the splitter, TODO(41e) (CSStep.h:232, `SplitterStep`) ------------------------------
+   The single most important thing the real solver does for performance, and the reason an
+   ordinary Swift file compiles at all. Constraints that share no type variable cannot
+   affect each other, so solving them together multiplies two searches that could have
+   been added. Split the system into connected components of the constraint graph, solve
+   each alone, and put the answers back together — k^(m+n) becomes k^m + k^n. *)
+
+let rec vars_of (c : Constraints.t) : int list =
+  let of_ty = function Constraints.Var n -> [ n ] | Constraints.Con _ -> [] in
+  match c with
+  | Constraints.Equal (a, b, _) -> of_ty a @ of_ty b
+  | Constraints.Literal (a, _, _) -> of_ty a
+  | Constraints.Disjunction d ->
+      List.concat_map
+        (fun (ch : Constraints.choice) -> List.concat_map vars_of ch.Constraints.implies)
+        d.Constraints.choices
+
+let components (cs : Constraints.t list) : Constraints.t list list =
+  (* union-find over type variables; two constraints join a component when they mention a
+     variable in common. This is swiftc's ConstraintGraph, in the form this subset needs. *)
+  let parent = Hashtbl.create 64 in
+  let rec find v =
+    match Hashtbl.find_opt parent v with
+    | None -> v
+    | Some p when p = v -> v
+    | Some p ->
+        let r = find p in
+        Hashtbl.replace parent v r;
+        r
+  in
+  let union a b =
+    let ra = find a and rb = find b in
+    if ra <> rb then Hashtbl.replace parent ra rb
+  in
+  List.iter
+    (fun c ->
+      match vars_of c with
+      | [] -> ()
+      | v :: rest ->
+          if not (Hashtbl.mem parent v) then Hashtbl.replace parent v v;
+          List.iter
+            (fun w ->
+              if not (Hashtbl.mem parent w) then Hashtbl.replace parent w w;
+              union v w)
+            rest)
+    cs;
+  let buckets = Hashtbl.create 16 in
+  let ungrouped = ref [] in
+  List.iter
+    (fun c ->
+      match vars_of c with
+      | [] -> ungrouped := c :: !ungrouped
+      | v :: _ ->
+          let r = find v in
+          Hashtbl.replace buckets r (c :: Option.value ~default:[] (Hashtbl.find_opt
+          buckets r)))
+    cs;
+  let grouped = Hashtbl.fold (fun _ v acc -> List.rev v :: acc) buckets [] in
+  match !ungrouped with [] -> grouped | u -> List.rev u :: grouped
+
+let solve_system (search : search) (s : solution) (cs : Constraints.t list) :
+    (solution * int) option =
+  let default_the_rest () =
+    (* every literal nobody pinned takes its default type — `IntegerLiteralType = Int` *)
+    Hashtbl.iter
+      (fun n kind ->
+        match resolve s (Constraints.Var n) with
+        | Constraints.Var m ->
+            Hashtbl.replace s.bindings m (Constraints.Con (List.hd (literal_types kind)))
+        | Constraints.Con _ -> ())
+      s.literals
+  in
+  let rec go acc_score = function
+    | [] ->
+        default_the_rest ();
+        Some (s, acc_score)
+    | component :: rest -> (
+        match solve search s component with
+        | None -> None
+        | Some (part, part_score) ->
+            (* components share no variables, so merging is a union — no conflict is
+            possible *) Hashtbl.iter (fun k v -> Hashtbl.replace s.bindings k v)
+            part.bindings; go (acc_score + part_score) rest)
+  in
+  go 0 (components cs)
+
+(* --- diagnosing a FAILED search (given)
+---------------------------------------------------
+   The hard part of any constraint solver, and the reason swiftc has a directory for it
+   (lib/Sema/CSDiagnostics.cpp, ~9000 lines). When the search comes back empty you know the
+   system has no solution — and nothing else. Not which constraint is to blame, because the
+   solver never committed to one; not which operand is wrong, because it tried both ways.
+
+   swiftc recovers the blame by solving AGAIN with "fixes" enabled: a fix lets a failing
+   constraint succeed at a score penalty, so the search completes, and the fixes it had to
+   apply are the diagnosis. Here is the crude version — find the first overload set where no
+   alternative survives on its own, and report it the way concept 05 would have, from the
+   operand types the disjunction carries. §6 exercise 3 is the swiftc route. *)
+let diagnose (search : search) (diagnostics : Diagnostics.sink) (s : solution)
+    (cs : Constraints.t list) : bool =
+  (* the literal constraints alone: what an operand can be, before anything outside asks *)
+  let literal_only =
+    List.filter (function Constraints.Literal _ -> true | _ -> false) cs
+  in
+  ignore (simplify s literal_only);
+  let reported = ref false in
+  List.iter
+    (fun c ->
+      match c with
+      | Constraints.Disjunction d when not !reported ->
+          let viable =
+            List.exists
+              (fun (ch : Constraints.choice) ->
+                let entry = scope_of s in
+                (* against the operand constraints, NOT the whole system. A disjunction is
+                   only to blame if nothing it offers fits what its operands are — if the
+                   conflict is with something further out, say an annotation, blaming the
+                   operator says something false: `+` really can add two Ints. *)
+                let ok = simplify s (ch.Constraints.implies @ literal_only) <> None in
+                restore s entry;
+                ok)
+              d.Constraints.choices
+          in
+          if not viable then (
+            reported := true;
+            (* for the MESSAGE only, a variable still open is shown at its default type:
+               the reader wrote `1`, and being told the operand is `_` helps nobody *)
+            let shown =
+              List.map
+                (fun a ->
+                  match resolve s a with
+                  | Constraints.Con t -> Types.string_of_ty t
+                  | Constraints.Var n -> (
+                      match Hashtbl.find_opt s.literals n with
+                      | Some kind -> Types.string_of_ty (List.hd (literal_types kind))
+                      | None -> "_"))
+                d.Constraints.args
+            in
+            Diagnostics.error diagnostics d.Constraints.dspan
+              (match (d.Constraints.is_operator, shown) with
+              (* concept 05's two operator wordings, and swiftc's, chosen the same way *)
+              | true, [ a; b ] when a = b ->
+                  Printf.sprintf
+                    "binary operator '%s' cannot be applied to two '%s' operands"
+                    d.Constraints.what a
+              | true, [ a; b ] ->
+                  Printf.sprintf
+                    "binary operator '%s' cannot be applied to operands of type '%s' and \
+                     '%s'"
+                    d.Constraints.what a b
+              | true, [ a ] ->
+                  Printf.sprintf
+                    "unary operator '%s' cannot be applied to an operand of type '%s'"
+                    d.Constraints.what a
+              (* a CALL is a different shape, and swiftc words it differently. Its `abs` and
+                 `min` are generic rather than overloaded, so it reaches for the conformance
+                 wording ("requires that 'String' conform to 'SignedNumeric'"); ours are an
+                 overload set, and this is what swiftc says when a genuine overload set has
+                 no match. The modelling difference is §2's, not a bug. *)
+              | false, _ ->
+                  Printf.sprintf "no exact matches in call to global function '%s'"
+                    d.Constraints.what
+              | true, _ ->
+                  Printf.sprintf "operator '%s' cannot be applied to these operands"
+                    d.Constraints.what))
+      | _ -> ())
+    cs;
+  if !reported then true
+  else
+    (* Nothing offered by any overload set is wrong in itself, so the conflict comes from a
+       type someone WROTE. Drop each written type in turn and solve what is left: if the
+       rest of the program has an answer, that answer is what the annotation disagrees
+       with, and naming both is swiftc's wording. Dropping a constraint to see what the
+       others say is the same move as swiftc's "fixes", in the one case this subset
+       needs. *)
+    let written =
+      List.filter
+        (function Constraints.Equal (_, Constraints.Con _, _) -> true | _ -> false)
+        cs
+    in
+    List.exists
+      (fun c ->
+        match c with
+        | Constraints.Equal (a, Constraints.Con wanted, span) ->
+            let others = List.filter (fun c' -> c' != c) cs in
+            let probe = empty () in
+            Hashtbl.iter (fun k v -> Hashtbl.replace probe.literals k v) s.literals;
+            (match solve search probe others with
+            | Some (sol, _) -> (
+                match resolve sol a with
+                | Constraints.Con got when not (Types.equal got wanted) ->
+                    Diagnostics.error diagnostics span
+                      (Printf.sprintf
+                         "cannot convert value of type '%s' to specified type '%s'"
+                         (Types.string_of_ty got) (Types.string_of_ty wanted));
+                    true
+                | _ -> false)
+            | None -> false)
+        | _ -> false)
+      written
+
+(* --- the entry point (given) ---------------------------------------------------------- *)
+
+let span_of_program (program : Ast.program) : Token.span =
+  match program.Ast.items with
+  | Ast.IStmt (Ast.Let { span; _ }) :: _
+  | Ast.IStmt (Ast.Assign { span; _ }) :: _
+  | Ast.IStmt (Ast.Expr_stmt (_, span)) :: _ ->
+      span
+  | Ast.IFunc { fspan; _ } :: _ -> fspan
+  | _ -> Token.dummy_span
+
+let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.program option =
+  let g = Csgen.create diagnostics in
+  Csgen.generate_program g program;
+  let s = empty () in
+  List.iter
+    (function
+      | Constraints.Literal (Constraints.Var n, kind, _) -> Hashtbl.replace s.literals n
+      kind
+      | _ -> ())
+    g.Csgen.constraints;
+  let search = { scopes_explored = 0 } in
+  let outcome =
+    try solve_system search s g.Csgen.constraints
+    with Too_complex ->
+      Diagnostics.error diagnostics (span_of_program program)
+        "the compiler is unable to type-check this expression in reasonable time; try \
+         breaking up the expression into distinct sub-expressions";
+      None
+  in
+  match outcome with
+  | None ->
+      if not (Diagnostics.has_errors diagnostics) then
+        if
+          not
+            (let fresh_state = empty () in
+             Hashtbl.iter (fun k v -> Hashtbl.replace fresh_state.literals k v) s.literals;
+             diagnose { scopes_explored = 0 } diagnostics fresh_state g.Csgen.constraints)
+        then
+          (* no single overload set is to blame — the system is unsatisfiable as a whole,
+             which is what swiftc means by this message *)
+          Diagnostics.error diagnostics (span_of_program program)
+            "type of expression is ambiguous without a type annotation";
+      None
+  | Some (sol, _) ->
+      if Diagnostics.has_errors diagnostics then None
+      else (
+        (* record which alternative each disjunction settled on, so csapply can name it *)
+        List.iter
+          (function
+            | Constraints.Disjunction d ->
+                List.iter
+                  (fun (ch : Constraints.choice) ->
+                    if
+                      List.for_all
+                        (function
+                          | Constraints.Equal (a, b, _) -> (
+                              match (resolve sol a, resolve sol b) with
+                              | Constraints.Con x, Constraints.Con y -> Types.equal x y
+                              | _ -> false)
+                          | _ -> true)
+                        ch.Constraints.implies
+                    then
+                      if not (Hashtbl.mem g.Csgen.chosen d.Constraints.dspan) then
+                        Hashtbl.replace g.Csgen.chosen d.Constraints.dspan
+                          ch.Constraints.index)
+                  d.Constraints.choices
+            | _ -> ())
+          g.Csgen.constraints;
+        Some (Csapply.program g (Csapply.solution_of sol.bindings) program))
+```
+
+### `csapply.ml`
+
+```ocaml
+type solution = (int, Constraints.ty) Hashtbl.t
+
+let solution_of (bindings : (int, Constraints.ty) Hashtbl.t) : solution = bindings
+
+let rec resolve (s : solution) (t : Constraints.ty) : Constraints.ty =
+  match t with
+  | Constraints.Con _ -> t
+  | Constraints.Var n -> (
+      match Hashtbl.find_opt s n with None -> t | Some t' -> resolve s t')
+
+(* The type the solver gave this node. A node with no entry never had a variable — it was
+   concrete the moment it was generated. *)
+let type_of (g : Csgen.t) (s : solution) (span : Token.span) : Types.ty =
+  match Hashtbl.find_opt g.Csgen.types_of span with
+  | None -> Types.TInt
+  | Some t -> (
+      match resolve s t with Constraints.Con c -> c | Constraints.Var _ -> Types.TInt)
+
+let rec expr (g : Csgen.t) (s : solution) (expression : Ast.expr) : Tast.expr =
+  let span = Ast.expr_span expression in
+  let mk e = { Tast.e; ty = type_of g s span; span } in
+  match expression with
+  | Ast.Int_lit (n, _) -> mk (Tast.Int_lit n)
+  | Ast.Double_lit (f, _) -> mk (Tast.Double_lit f)
+  | Ast.Bool_lit (b, _) -> mk (Tast.Bool_lit b)
+  | Ast.String_lit (str, _) -> mk (Tast.String_lit str)
+  | Ast.Var (x, _) -> mk (Tast.Local x)
+  | Ast.Unary (op, e0, _) -> mk (Tast.Unary (op, expr g s e0))
+  | Ast.Binary (op, l, r, _) -> mk (Tast.Binary (op, expr g s l, expr g s r))
+  | Ast.Ascribe (e0, _, _) -> mk (Tast.Coerce (expr g s e0))
+  | Ast.Call ("print", [ a ], _) -> mk (Tast.Print (expr g s a))
+  | Ast.Call ("print", _, _) -> mk (Tast.Print (mk (Tast.Int_lit 0)))
+  | Ast.Call (f, args, _) ->
+      (* the index the solver settled on. Without it the tree would still say "a call to
+         something named f", which is exactly the question this concept exists to answer. *)
+      let chosen = Option.value ~default:0 (Hashtbl.find_opt g.Csgen.chosen span) in
+      mk (Tast.Fn_call (f, chosen, List.map (expr g s) args))
+
+let rec stmt (g : Csgen.t) (s : solution) (st : Ast.stmt) : Tast.stmt =
+  match st with
+  | Ast.Let { name; is_var; value; span; _ } ->
+      Tast.Let { name; is_var; value = expr g s value; span }
+  | Ast.Assign { name; value; span } -> Tast.Assign { name; value = expr g s value; span }
+  | Ast.Expr_stmt (e, _) -> Tast.Expr_stmt (expr g s e)
+  | Ast.If { cond; then_blk; else_blk; span } ->
+      Tast.If
+        {
+          cond = expr g s cond;
+          then_blk = List.map (stmt g s) then_blk;
+          else_blk = Option.map (List.map (stmt g s)) else_blk;
+          span;
+        }
+  | Ast.While { cond; body; span } ->
+      Tast.While { cond = expr g s cond; body = List.map (stmt g s) body; span }
+  | Ast.For { var; lo; hi; body; span } ->
+      Tast.For
+        { var; lo = expr g s lo; hi = expr g s hi; body = List.map (stmt g s) body; span }
+  | Ast.Break span -> Tast.Break span
+  | Ast.Continue span -> Tast.Continue span
+  | Ast.Return (v, span) -> Tast.Return (Option.map (expr g s) v, span)
+
+let func (g : Csgen.t) (s : solution) (f : Ast.func_decl) : Tast.func_decl =
+  let sg = Csgen.signature_of g f in
+  {
+    Tast.fname = f.Ast.fname;
+    params =
+      List.map2
+        (fun (p : Ast.param) t -> { Tast.pname = p.Ast.pname; pty = t })
+        f.Ast.params sg.Constraints.params;
+    ret = sg.Constraints.result;
+    body = List.map (stmt g s) f.Ast.body;
+    fspan = f.Ast.fspan;
+  }
+
+let program (g : Csgen.t) (s : solution) (p : Ast.program) : Tast.program =
+  {
+    Tast.items =
+      List.map
+        (function
+          | Ast.IFunc f -> Tast.IFunc (func g s f)
+          | Ast.IStmt st -> Tast.IStmt (stmt g s st))
+        p.Ast.items;
+  }
+```
+
+## 9. Exercise solutions
+
+### 4 — the occurs check
+
+The one exercise with a short answer worth writing out, because the bug it prevents is silent.
+With a type constructor in the language, `unify ($T0, Array($T0))` would bind `$T0` to a type that
+contains `$T0`. Nothing detects it at binding time; `resolve` then loops forever the next time it
+is asked. The guard is one walk, before the bind:
+
+```ocaml
+let rec occurs (s : solution) (n : int) (t : Constraints.ty) : bool =
+  match resolve s t with
+  | Constraints.Var m -> m = n
+  | Constraints.Array inner -> occurs s n inner
+  | Constraints.Con _ -> false
+```
+
+and `unify` refuses rather than binding when it holds. swiftc does the same check in
+`ConstraintSystem::matchTypes`.

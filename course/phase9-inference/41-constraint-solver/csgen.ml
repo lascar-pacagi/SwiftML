@@ -1,8 +1,9 @@
-(* Constraint GENERATION — a *contract* (fully written). One walk over the AST that allocates
+(* Constraint GENERATION — a *contract* (fully written). One walk over the AST that
+allocates
    a type variable per expression and writes down what must hold. It decides nothing.
 
-   Read it next to concept 05's `infer` and concept 07's. The shapes line up arm for arm, and
-   every place those asked a question and committed to an answer, this one states a
+   Read it next to concept 05's `infer` and concept 07's. The shapes line up arm for arm,
+   and every place those asked a question and committed to an answer, this one states a
    requirement and moves on:
 
      05 / 07                                   41
@@ -29,7 +30,8 @@ type t = {
   (* and which overload each CALL settled on, keyed the same way *)
   chosen : (Token.span, int) Hashtbl.t;
   environment : (string, Constraints.ty * bool) Hashtbl.t;
-  (* name -> every declaration with that name, in source order. The list IS the overload set,
+  (* name -> every declaration with that name, in source order. The list IS the overload
+  set,
      and its length is the width of the disjunction a call to it generates. *)
   functions : (string, Constraints.signature list) Hashtbl.t;
   mutable current_return : Types.ty option;
@@ -74,7 +76,8 @@ let resolve_ty (g : t) (span : Token.span) (name : string) : Types.ty =
    difference between a search and none, and `--emit-constraints` shows which you got. *)
 (* [sigs] carries each signature WITH the index of the declaration it came from. The index
    is not the position in this list: arity filtering may have dropped some, and the tree has
-   to name the declaration the reader wrote, not the one the solver happened to try third. *)
+   to name the declaration the reader wrote, not the one the solver happened to try
+   third. *)
 let apply_overloads (g : t) ?(is_operator = false) (what : string)
     (sigs : (int * Constraints.signature) list) (args : Constraints.ty list)
     (result : Constraints.ty) (span : Token.span) : unit =
@@ -253,15 +256,17 @@ let signature_of (g : t) (f : Ast.func_decl) : Constraints.signature =
   }
 
 let generate_program (g : t) (program : Ast.program) : unit =
-  (* PASS 1 — collect the overload sets, so a call can be generated before the declaration it
+  (* PASS 1 — collect the overload sets, so a call can be generated before the
+  declaration it
      resolves to has been read. Concept 07 did the same walk to get ONE signature per name;
-     the only change is that a second declaration extends the set instead of being an error. *)
+     the only change is that a second declaration extends the set instead of being an
+     error. *)
   List.iter
     (function
       | Ast.IFunc f ->
           let s = signature_of g f in
-          let existing = Option.value ~default:[] (Hashtbl.find_opt g.functions f.Ast.fname) in
-          if List.exists (Constraints.same_signature s) existing then
+          let existing = Option.value ~default:[] (Hashtbl.find_opt g.functions
+          f.Ast.fname) in if List.exists (Constraints.same_signature s) existing then
             error g f.Ast.fspan
               (Printf.sprintf "invalid redeclaration of '%s'" f.Ast.fname)
           else Hashtbl.replace g.functions f.Ast.fname (existing @ [ s ])
