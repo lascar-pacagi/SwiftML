@@ -54,7 +54,7 @@ type stmt =
       (* the annotation is gone: it was a WRITTEN name, and `value.ty` is the resolved answer *)
   | Assign of { name : string; value : expr; span : Token.span }
   | Expr_stmt of expr
-  (* control flow — concept 06. A block is a [stmt list], as in the Ast. *)
+  (* control flow — NEW in this concept. A block is a [stmt list], as in the Ast. *)
   | If of { cond : expr; then_blk : stmt list; else_blk : stmt list option; span : Token.span }
   | While of { cond : expr; body : stmt list; span : Token.span }
   | For of { var : string; lo : expr; hi : expr; body : stmt list; span : Token.span }

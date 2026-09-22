@@ -48,11 +48,11 @@ and expr_kind =
   | Binary of Ast.binop * expr * expr
   | Print of expr (* RESOLVED: `print(_:)` — a call that IS print, not a name that might be *)
   | Fn_call of string * int * expr list
-      (* RESOLVED: a call to a function declared in this program — and to WHICH ONE. A name no
-         longer identifies a function, because several may share it; the int is the index of
-         the declaration the solver chose, in source order. That is the whole output of
-         overload resolution, and nothing downstream ever redoes it. swiftc records the same
-         thing as a `ConcreteDeclRef` on the expression. *)
+      (* the int is NEW in this concept. A call to a function declared in this program — and
+         to WHICH ONE of them, because a name no longer identifies a function on its own. It
+         is the index of the declaration the solver chose, in source order, and it is the
+         whole output of overload resolution: nothing downstream ever redoes that work.
+         swiftc records the same thing as a `ConcreteDeclRef` on the expression. *)
   | Coerce of expr
       (* `e as T`. Semantically a no-op once the operand has been checked at T, but swiftc keeps
          the node too (`coerce_expr`), so the tree still records what the source said. *)

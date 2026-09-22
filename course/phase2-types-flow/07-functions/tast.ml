@@ -63,7 +63,7 @@ type stmt =
   | For of { var : string; lo : expr; hi : expr; body : stmt list; span : Token.span }
   | Break of Token.span
   | Continue of Token.span
-  | Return of expr option * Token.span (* concept 07 *)
+  | Return of expr option * Token.span (* NEW in this concept *)
 (* a function whose signature is RESOLVED: the written type names are gone, replaced by the
    types they named. Nothing downstream re-resolves a parameter type. *)
 type param = { pname : string; pty : Types.ty }
