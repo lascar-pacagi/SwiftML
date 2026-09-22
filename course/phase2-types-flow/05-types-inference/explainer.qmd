@@ -480,8 +480,10 @@ appear in the payload, and each escape — which is *two* characters in the file
 letter — becomes the single character it denotes. For the source `"a\nb"`:
 
 ```
-file:     "   a   \   n   b   "        6 characters
-payload:      a   ⏎   b                3 characters  (97, 10, 98)
+file:     "   a   \   n   b   "       6 characters
+              │   └─┬─┘   │
+              │     │     │
+payload:      a     ⏎     b           3 characters  (97, 10, 98)
 ```
 
 So `\n` `\t` `\"` `\\` are resolved *while scanning*, and every later stage — parser, sema, IRGen —
