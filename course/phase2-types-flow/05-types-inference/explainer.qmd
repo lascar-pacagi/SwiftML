@@ -547,7 +547,9 @@ tighter than `+` — and you would silently build `a + (1 == b) * 2`, which is w
 `tests/parser-precedence.t` checks the *tree shape*, not just that it parses.
 
 Our comparisons are **left-associative**, so `1 < 2 == true` is `(1 < 2) == true`. Swift makes them
-**non-associative** and rejects `a < b < c` outright; §6's first exercise fixes ours to match.
+**non-associative** and rejects that program outright, and `a < b < c` with it: *adjacent operators
+are in non-associative precedence group 'ComparisonPrecedence'*, blamed at the **first** of the two
+operators. §6's first exercise fixes ours to match.
 
 **How swiftc does it.** It does not bake precedence into the parser at all. Operators are ordinary
 declarations, and precedence groups are declared *in the standard library* — `ComparisonPrecedence`
