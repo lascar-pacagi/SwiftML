@@ -12,8 +12,8 @@
  (deps lab.exe oracle-corpus.txt))
 
 (tests
- (names test_parser test_sema test_types test_units)
- (modules test_parser test_sema test_types test_units)
+ (names test_parser test_sema test_types test_units test_scale)
+ (modules test_parser test_sema test_types test_units test_scale)
  (libraries alcotest swiftml_types)
  (flags
   (:standard -warn-error -a)))

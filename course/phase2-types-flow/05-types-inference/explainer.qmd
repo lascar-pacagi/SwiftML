@@ -835,6 +835,14 @@ Lexer, then parser, then types, then sema — the order you fill the holes in:
   directly: `is_int_literal` on hand-built trees, `unify` in both operand positions,
   `infer`/`check_expr`/`check_stmt` against a `context` you construct, including that a bad name is
   *reported* rather than raised. This is the suite that tells you **which hole** is wrong.
+- **`tests/test_scale.ml`** (alcotest `sema-scale`) and **`tests/sema-scale.t`** — the pair that
+  says the two judgments cannot recurse forever, and that checking a well-typed program is linear
+  in its size. Both facts rest on one invariant — *`check_expr` may hand its own argument to
+  `infer`; `infer` never hands its own argument to `check_expr`* — and neither is visible in a
+  test that types `1 + 2`, so these build 80000-term programs shaped to stress each recursion
+  path and require the checker to finish. A loop never finishes, and a rule that re-walks a
+  subtree takes minutes. The `.t` is the half that catches an actual loop: alcotest has no
+  per-case timeout, `timeout` does.
 - **`tests/sema-coercion.t`** — `--typecheck` accept/reject across the one coercion's boundary:
   literal trees flex to `Double`, a typed variable never does, and one non-literal leaf stops it.
   That is `is_int_literal` seen from outside, through whole programs.
