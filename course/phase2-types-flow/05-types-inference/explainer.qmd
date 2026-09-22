@@ -633,8 +633,8 @@ position you want to blame is often one you have to save before you consume it.
 `report_error lexer lo msg` builds the span `{lo; hi = current_position lexer}` — `lo` is where the
 caret goes, `hi` is how far the problem reaches.
 
-**In the parser, you name what you wanted.** Two given helpers do the reporting, and both build
-the text as `"expected " ^ what`:
+**In the parser, you name what you expected.** Two given helpers do the reporting, and both build
+the text as `"expected " ^ what`, so the phrase you pass IS the second half of the message:
 
 ```ocaml
 (* both given, in parser.ml *)
