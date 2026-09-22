@@ -94,7 +94,12 @@ Here's the thing to carry into the rest of Phase 2. Your AST is a **tree** — `
 `else` subtree, `While` has a body subtree. But what the program *does* at runtime is a **graph**: a
 loop jumps *backward*, an `if` *merges* two paths back together. A tree can't express a back-edge.
 
-![A `while` loop as a control-flow graph: basic blocks joined by branch edges, including the loop's back-edge. The AST is a tree; this is what SIL represents directly.](figs/cfg.png)
+@fig-cfg puts the two side by side, on the four-line program at its left. Three of those lines
+land in a block of their own. The fourth, the `}`, lands in no block at all — it becomes the
+**back edge**, and there is nothing in the AST shaped like it: `While`'s body subtree says what
+runs, never that control returns to the condition afterwards.
+
+![The same program as a tree and as a graph. Each tinted source line becomes the block of the same colour; the `}` becomes the back edge, which no subtree can represent.](figs/cfg.png){#fig-cfg}
 
 The standard representation of that graph is **basic blocks** — straight-line runs of instructions
 ending in a branch — connected by edges. The `while` above becomes four blocks (entry, header, body,

@@ -40,16 +40,40 @@ def arrow(ax, p0, p1, color=EDGE, rad=0.0, label=None, lx=0, ly=0, z=2):
                 va="center", fontsize=9.5, color=color, fontweight="bold", zorder=5)
 
 
+def source(ax, x, y, lines):
+    """The program the graph came from, with each line tinted like the block it lands in."""
+    ax.text(x, y + 0.62, "the program", ha="left", va="center", fontsize=11,
+            fontweight="bold", color=TEXT)
+    ly = y + 0.16
+    for text, color in lines:
+        if color:
+            ax.add_patch(FancyBboxPatch((x - 0.12, ly - 0.18), 2.5, 0.36,
+                         boxstyle="round,pad=0.02,rounding_size=0.06", linewidth=0,
+                         facecolor=color, zorder=1))
+        ax.text(x, ly, text, ha="left", va="center", fontsize=11, family="monospace",
+                color=TEXT, zorder=3)
+        ly -= 0.42
+
+
 def make_cfg():
-    fig, ax = plt.subplots(figsize=(8.6, 6.0))
-    ax.set_xlim(0, 9)
-    ax.set_ylim(0, 6.4)
+    fig, ax = plt.subplots(figsize=(11.0, 5.0))
+    ax.set_xlim(0, 12.2)
+    ax.set_ylim(0.2, 5.6)
     ax.axis("off")
 
-    entry = (3.0, 5.6)
-    header = (3.0, 4.0)
-    body = (3.0, 2.0)
-    after = (7.0, 4.0)
+    # the source, tinted so each line can be found again in the graph
+    source(ax, 0.4, 3.6,
+           [("var n = 0", BLK), ("while n < 5 {", COND), ("  n = n + 1", BLK),
+            ("}", None), ("print(n)", BLK)])
+    ax.annotate("", xy=(4.0, 3.4), xytext=(3.2, 3.4),
+                arrowprops=dict(arrowstyle="-|>", linewidth=1.6, color=EDGE))
+    ax.text(3.6, 3.62, "lower", ha="center", va="center", fontsize=9.5, color=EDGE,
+            fontstyle="italic")
+
+    entry = (6.0, 4.8)
+    header = (6.0, 3.3)
+    body = (6.0, 1.3)
+    after = (10.1, 3.3)
 
     block(ax, *entry, 3.4, 0.8, ["entry:", "var n = 0"], BLK)
     block(ax, *header, 3.4, 0.9, ["header:", "n < 5 ?"], COND)
@@ -57,20 +81,24 @@ def make_cfg():
     block(ax, *after, 3.2, 0.8, ["exit:", "print(n)"], BLK)
 
     arrow(ax, (entry[0], entry[1] - 0.4), (header[0], header[1] + 0.45))
-    arrow(ax, (header[0], header[1] - 0.45), (body[0], body[1] + 0.45), TRUE, label="true", lx=-0.5)
-    # back edge: body -> header, leaving the body's right edge and ARRIVING at the header's
-    # right edge (the head must land outside the box, or the box hides it)
+    arrow(ax, (header[0], header[1] - 0.45), (body[0], body[1] + 0.45), TRUE, label="true",
+          lx=-0.5)
     arrow(ax, (body[0] + 1.72, body[1] + 0.1), (header[0] + 1.72, header[1] - 0.25), EDGE,
-          rad=0.6, label="back edge", lx=1.3, ly=-0.1, z=5)
-    # false -> exit
-    arrow(ax, (header[0] + 1.7, header[1]), (after[0] - 1.6, after[1]), FALSE, label="false", ly=0.28)
+          rad=0.6, label="back edge", lx=1.35, ly=-0.1, z=5)
+    arrow(ax, (header[0] + 1.7, header[1]), (after[0] - 1.6, after[1]), FALSE, label="false",
+          ly=0.28)
+
+    ax.text(6.0, 0.45,
+            "the `}` is not a block: it is the back edge, and nothing in the AST is shaped "
+            "like it",
+            ha="center", va="center", fontsize=9.5, color=TEXT, fontstyle="italic")
 
     ax.set_title("A `while` loop is a control-flow GRAPH — basic blocks joined by branches\n"
                  "(the AST is a tree; this is why SIL, concept 08, uses basic blocks)",
                  fontsize=12, color=TEXT, pad=10)
     fig.tight_layout()
     out = os.path.join(HERE, "cfg.png")
-    fig.savefig(out, dpi=160, bbox_inches="tight")
+    fig.savefig(out, dpi=165, bbox_inches="tight")
     plt.close(fig)
     print("wrote", out)
 
