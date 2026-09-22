@@ -352,6 +352,8 @@ optimise and generated code to run.
 
 These are optional. `make exercises C=phase2-types-flow/06-control-flow` runs only their
 self-detecting suite. They also appear in `make lab` as `TODO (optional)` until you start one.
+The worked answers are in `solution/exercises/`, which
+`make check-exercises C=phase2-types-flow/06-control-flow` builds and runs.
 
 1. **`repeat { } while cond`** (Swift's do-while). Add the `repeat`/`while` keywords, an
    `Ast.Repeat`, and the check (body is a loop; `cond : Bool`). Note the body runs once before the

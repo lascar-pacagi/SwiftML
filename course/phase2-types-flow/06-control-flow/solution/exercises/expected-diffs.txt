@@ -1,0 +1,11 @@
+# Cram files whose GOLDENS this concept's §6 exercises are expected to change, with the
+# reason. `make check-exercises` tolerates a failure in exactly these files and nowhere
+# else — anything not listed here is a broken exercise key.
+
+tests/lexer-flow.t: exercise 2 makes `...` a token. The case it breaks pins the v0
+  behaviour, which is to report one "unexpected character '.'" per dot — three of them
+  for `0 ... 3`. Once the operator exists there is nothing to complain about.
+
+tests/parser-loops.t: the same exercise. `for i in 0 to 3` used to be "expected '..<'";
+  with both range operators legal the message has to name both, or it sends the reader
+  to fix a program that would still not compile.

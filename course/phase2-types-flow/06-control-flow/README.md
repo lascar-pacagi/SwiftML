@@ -39,3 +39,8 @@ Still **type-check only** (`--typecheck`): running control flow needs codegen, w
 `make lab C=phase2-types-flow/06-control-flow` is green (cram + alcotest), and the type-check oracle
 agrees with `swiftc -typecheck` on the control-flow corpus (non-`Bool` conditions, `break` outside a
 loop, leaking block-local bindings, mutating the loop variable, non-`Int` ranges — all rejected).
+
+`solution/exercises/` holds the same key with §6's exercises applied — 1 (`repeat`) and 2 (closed
+ranges) reach `token.ml`, `ast.ml`, `tast.ml`, `lexer.ml` and `parser.ml`; 3 (reachability) is
+`sema.ml` alone. `make check-exercises C=phase2-types-flow/06-control-flow` builds and runs it.
+Exercise 2 changes two goldens on purpose; `solution/exercises/expected-diffs.txt` says why.
