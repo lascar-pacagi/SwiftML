@@ -151,17 +151,21 @@ and infer_binary context op l r span : Tast.expr =
     | Some Types.TInt, Ast.Mod -> Types.TInt (* no `%` on Double, as in Swift *)
     | Some _, (Ast.Eq | Ast.Ne) -> Types.TBool (* any single type may be compared *)
     | Some t, (Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge) when is_ordered t -> Types.TBool
-    (* Everything else is an error. The recovery type differs: a failed comparison is
-       still a Bool, or the enclosing `if` reports a problem nobody wrote. *)
-    | _, (Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge) ->
-        bad ();
-        Types.TBool
+    (* EX5: everything else is an error, and an error recovers as TError — never as a
+       plausible type the parent will trip over next. Before the exercise a failed `+`
+       came back `Int`, which is what turned one mistake into a cascade AND made the
+       checker QUADRATIC: an `Int` operand keeps `unify` asking `is_int_literal` about a
+       spine one node longer at every enclosing level.
+
+         let x = 1
+         print(x + 1 + 1.5 + 1.5 + …)     -- 8000 terms
+
+       reported 8000 times and took 0.17s in `Sema.check` alone; with TError it reports
+       once and takes 0.001s. Nothing here special-cases a comparison: TError is quiet
+       wherever it is looked at, so the enclosing `if` stays silent too. *)
     | _ ->
         bad ();
-        (* EX5: propagate the error rather than inventing an Int for the parent to trip
-           over next. A comparison stays TBool above: that arm is a real Bool-shaped hole
-           and the enclosing `if` should not report a problem nobody wrote. *)
-        if tl = Types.TError || tr = Types.TError then Types.TError else Types.TInt
+        Types.TError
   in
   mk (Tast.Binary (op, ln, rn)) result span
 
@@ -216,8 +220,11 @@ and infer_call context f args span : Tast.expr =
   else (
     report_error context span (Printf.sprintf "cannot find '%s' in scope" f);
     let ns = List.map (infer context) args in
-    mk (Tast.Print (match ns with n :: _ -> n | [] -> mk (Tast.Int_lit 0) Types.TInt span))
-      Types.TInt span)
+    (* EX5: the call's type is unknown because the callee is — same reasoning as `Var`.
+       The arguments are still inferred, so a mistake inside them is reported here and
+       not on some later run. *)
+    mk (Tast.Print (match ns with n :: _ -> n | [] -> mk (Tast.Int_lit 0) Types.TError span))
+      Types.TError span)
 (* The checking direction — and the other half of a genuine knot: [check_expr] falls
    back to [infer], and [infer] calls [check_expr] for `expression as T`. Neither can be
    defined without the other: "mutually recursive", in practice. *)
@@ -235,7 +242,9 @@ and check_expr (context : context) (expression : Ast.expr) (expected : Types.ty)
         report_error context span
           (Printf.sprintf "cannot convert value of type 'Int' to specified type '%s'"
              (Types.string_of_ty expected));
-        mk (Tast.Int_lit n) Types.TInt span)
+        (* EX5: reported, so the node is erroneous — `let s: String = 1` must not go on
+           to bind `s` as an Int and make every later use of it wrong too. *)
+        mk (Tast.Int_lit n) Types.TError span)
   | Ast.Binary (((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div) as op), l, r, span)
     when Types.is_numeric expected ->
       (* push the expected numeric type into both operands: 1 + 2 checks as Double *)

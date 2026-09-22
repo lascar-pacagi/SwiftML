@@ -888,7 +888,8 @@ perf gates when there's something to optimise.
    swiftc. Add `TError` to `Types.ty`, return it from every error path, and teach the rules to stay
    quiet when they see it — `unify` should accept it against anything, and the operator and
    conversion diagnostics should not fire if either side is `TError`. This is swiftc's `ErrorType`
-   (`Types.h:1682`) in miniature, and it makes you revisit every rule you wrote.
+   (`Types.h:1682`) in miniature, it makes you revisit every rule you wrote, and it turns out to
+   be a *complexity* fix as well as a diagnostics one — §9 has the measurement.
 
 ## 7. Recap & what's next
 
@@ -1311,8 +1312,34 @@ let unify l tl r tr : Types.ty option =
       else ( report_error context span (...); Types.TInt)
 ```
 
-That last guard is the whole exercise: an error type that still triggers diagnostics has just
-renamed the problem. With it, `let x = nope + true` reports once, like swiftc, while
+And the recovery type of a REPORTED failure is `TError` too — not the plausible `TInt` the arm
+used to invent:
+
+```ocaml
+    | _ ->
+        bad ();
+        Types.TError    (* reported here — hand the parent nothing to trip over *)
+```
+
+That is the whole exercise, in two halves: an error type that still triggers diagnostics has just
+renamed the problem, and an error type that recovers as a *plausible* type has not stopped the
+cascade at all.
+
+It is also a **complexity** fix, which is worth seeing measured. `unify` asks `is_int_literal`
+whenever the two operand types differ, and that question walks a subtree. When the flex fails and
+the arm recovers as `Int`, every enclosing level asks it again about a spine one node longer —
+quadratic. Timing `Sema.check` alone on `let x = 1` followed by
+`print(x + 1 + 1.5 + 1.5 + …)`:
+
+| terms | before | after |
+|---|---|---|
+| 2000 | 0.011 s, 2000 diagnostics | 0.000 s, 1 diagnostic |
+| 4000 | 0.045 s, 4000 diagnostics | 0.001 s, 1 diagnostic |
+| 8000 | 0.167 s, 8000 diagnostics | 0.001 s, 1 diagnostic |
+
+Clean 4× per doubling on the left, flat on the right. The cascade and the quadratic are the same
+bug: a wrong answer that looks right enough to be asked about again. With it,
+`let x = nope + true` reports once, like swiftc, while
 `let x = 1 + true` still reports its operator error. `check_expr`'s "cannot convert" needs the same
 guard, and so does the unary rule.
 
