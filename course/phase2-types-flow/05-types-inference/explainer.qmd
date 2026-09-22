@@ -684,11 +684,9 @@ integer literal that flexed:
 1 % 2.0      operands differ   -> operands of type 'Int' and 'Double'
 ```
 
-Both are rejected; only the wording differs. `%` is the only operator that refuses a type `unify`
-will hand it, which is why reading the rule off `unify`'s result instead of off the operands
-passes every other case. (Real swiftc answers both with `'%' is unavailable: For floating point
-numbers use truncatingRemainder instead`, a standard-library availability diagnostic; we have no
-such machinery, so the generic wording here is ours.)
+Both are rejected; only the wording differs. swiftc says something else entirely —
+`'%' is unavailable: For floating point numbers use truncatingRemainder instead`, a
+standard-library availability diagnostic we have no machinery for — so this wording is ours.
 
 **Every error path still returns a node.** `infer` is a function to `Tast.expr`, so reporting is
 only half of what an error case has to do — the other half is handing back something so the walk
