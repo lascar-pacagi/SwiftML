@@ -727,93 +727,71 @@ exactly like `Foo`. Consulting `environment` before giving up would close it —
 
 ## 3. Build it, step by step
 
-Five files, in order — your Phase-1 work is already filled in; you write only the `TODO(05)`
-holes. The rule across the course: **anything the concept adds to the language is yours to write**;
-what carries forward is given.
+Your Phase-1 work is filled in; you write the `TODO(05)` holes. The rule across the course:
+**anything the concept adds to the language is yours to write**, what carries forward is given.
+§4 lists which test file each hole turns green — fill them in this order and watch them go.
 
-1. **`token.ml`** — one hole, and it is *not* in `lexer.ml`. The scanner reads an identifier and
-   hands the spelling to `Token.keyword_or_ident`, which is where a keyword is recognised; `let`
-   and `var` are there from Phase 1; `true`, `false` and `as` are yours. Three arms. Keep `truely`
-   an identifier — the table is asked about the whole lexeme, never a prefix.
-2. **`lexer.ml`** — add the new lexemes. The integer-scan is given; extend it so a `.` followed by a
-   digit makes a `Token.Float` (`float_of_string` the whole lexeme). Add a `"` branch that scans a
-   string literal to the closing quote (a `Buffer`, handle the `\n \t \" \\` escapes) → `Token.String`.
-   That loop has two exits and they are not the same: a closing quote (consume it) or end of input,
-   which is `report_error lexer (current_position lexer) "unterminated string literal"` (§2). Return the buffer either way;
-   recovering with a partial literal is what lets the rest of the file lex. Swift's escape set is
-   *closed* — `\0 \\ \t \n \r \" \'` and `\u{…}`, nothing else — so the catch-all branch is an
-   error, `invalid escape sequence in literal` (§2), not a "pass the character through" fallback:
-   `"\1"` is not an octal escape in Swift the way it is in C.
-   In the operator `match`, make `=` peek for a second `=` (→ `EqEq`), and add `!=` `<` `<=` `>` `>=`
-   and `:` (`Colon`). Their precedence is yours too, next door in `parser.ml`. A lone
-   `!` is the one place here that *reports*: `report_error lexer lo "expected '=' after '!'"` — §2's
-   diagnostics table says where that wording comes from, and why the span is `lo`.
-3. **`parser.ml`** — five holes. `binop_of_kind` maps the six comparison tokens to their `Ast`
-   operators, and `infix_bp` gives them a binding power (the table in §2 — looser than `+`).
-   In `parse_expr_bp`'s prefix `match`, turn the new literal tokens into
-   `Ast.Double_lit` / `Ast.String_lit` / `Ast.Bool_lit` (mirror the given `Int_lit` case — advance,
-   read payload + span). In the Pratt loop, add `e as T`: it is not a binary operator — its right
-   side is a type *name*, so it cannot go through `binop_of_kind` — but it binds like one, at the
-   given `cast_bp`; read the name with the given `parse_ident_ty` and build `Ast.Ascribe`. In
-   `parse_annot`, if the next token is `Token.Colon`, consume it and read the following identifier
-   as the type *name*, returning `Some name`. None of these compose a diagnostic of their own — the
-   given `parse_ident`/`parse_ident_ty` helpers take the `what` phrase (`"a type name"`) and report
-   `expected …` themselves. See §2.
-4. **`types.ml`** — one hole at the bottom: `of_name` maps a written annotation (`: Double`) to a
-   `ty`. `Int` carries over from Phase 1; add the three names this concept introduces, and leave
-   everything else `None` — that `None` is what makes sema say *cannot find type 'Foo' in scope*.
-5. **`sema.ml`** — the type checker, and the biggest hole in the concept. The file gives you the
-   *shape*: the `context` record (`environment` + `diagnostics`) and `report_error`, the five signatures, `infer`'s four
-   literal arms as a model, and the `List.iter (check_stmt context)` driver. Note which functions
-   recurse and which don't — no `rec` is written for you, because that is a claim about the body
-   you are about to write, and `infer`/`check_expr` need to be one `let rec … and …` group as soon
-   as you write the `as` rule (the compiler will say so). Everything is top-level and takes `context`
-   explicitly, so `tests/test_units.ml` can call each piece on its own and a failure names the
-   function rather than "the checker". The `TODO(05a…g)` bodies are the rules:
-   - `infer e` — the literal cases are given; four arms are yours. Each arm **builds a node**:
-     `mk (Tast.X …) τ span`, where `mk` is given. And every error path must still return one —
-     report, hand back a plausible node and type (`TInt`), keep walking. A checker that stops at
-     the first bad name finds one bug per run.
-     - `Var`: look it up in `environment`, else *cannot find … in scope*. A name that resolved
-       becomes `Tast.Local` — downstream, that node can only be a binding.
-     - `Unary '-'`: the operand must be numeric, and keeps its type.
-     - `Binary`: the operator typing above. A helper that `unify`s the two operand types is the
-       clean shape, with `is_int_literal` letting a literal flex to `Double`. Three things to
-       get right. Decide each operator against the type `unify` *returned*, not the operands' own
-       types — the coercion happens inside `unify`, so a test on the raw types cannot see it. The
-       type to fall back on after reporting differs per operator, since a failed comparison is
-       still a `Bool`. And when `unify` let one side flex, the node `infer` already built for
-       that side still says `Int`: the decision has been made and not yet recorded. Writing it in
-       is the hard part of this arm, and it reaches the **whole flexed subtree**, not just its
-       root — in `(1 + 2 * 3) + 1.5` every literal and every inner node ends up `Double`. You
-       already have the function that pushes a type down. `--emit-tast` shows whether you got it,
-       and `swiftc -dump-ast` shows the same program's answer.
-     - `Call`: a real call becomes `Tast.Print`, so nothing later has to re-ask whether this
-       name was `print`. `print(_:)` takes one argument of *any* type — that phrase is about the
-       argument, not the result. Its result is `Void` in Swift; with no `TVoid` yet, return `TInt` as the
-       placeholder §2 describes. `print` is the only function this subset has, so any other name
-       is *cannot find '%s' in scope* — the same message an unknown variable gets, because to the
-       checker it is the same question. Infer the arguments anyway, so a mistake inside them is
-       reported in the same run instead of hiding behind the unknown name.
-   - `check_expr e τ` — the **bidirectional** half. An `Int_lit` checks against `Int` *or*
-     `Double`, and the node it returns must **carry the expected type** — that one line is the
-     whole of "the coercion is recorded", and it is why no later stage has to notice that a `2`
-     sat beside a `Double`. For `Binary` arithmetic when τ is numeric, push τ into both operands —
-     and for `Unary` `-e` likewise, into the operand, since `-1` must be able to become a `Double`
-     too. Everything else: `infer` and compare, erroring with *cannot convert value of type 'X' to
-     specified type 'Y'*.
-   - `Ascribe (e, T)` — `e as T`, the coercion. Resolve `T` with `Types.of_name`, `check_expr` the
-     operand against it, and wrap it in `Tast.Coerce`. Two lines, and the only place `infer` calls
-     `check`. (swiftc keeps this node too — `swiftc -dump-ast` on `1 as Double` shows a
-     `coerce_expr` around the literal.)
-   - `check_stmt` — returns the statement's `Tast` form. `Let`: if annotated, resolve the name
-     with `Types.of_name` (*cannot find type …* if unknown) and `check_expr` the value against it;
-     else `infer`. Bind `name ↦ (τ, is_var)`. The annotation does **not** survive into the `Tast`:
-     it was a written name, and `value.ty` is the resolved answer.
-     `Assign`: target must exist, be a `var`, and the value `check_expr`s against its type.
-   - `check` (given) returns `Some { Tast.items }`, or `None` if anything was reported — a tree
-     that failed to check has no meaning, and making that a *type* rather than a convention means
-     no later stage can be handed one by accident.
+| file | holes | what you write |
+|---|---|---|
+| `token.ml` | 1 | `true`, `false`, `as` in `keyword_or_ident` — three arms |
+| `lexer.ml` | 3 | a fractional part → `Token.Float`; the string scanner; `== != < <= > >=` and `:` |
+| `parser.ml` | 5 | the comparisons' `binop_of_kind` + `infix_bp`; the three literal prefixes; `e as T`; `parse_annot` |
+| `types.ml` | 1 | `of_name` for the three new type names |
+| `sema.ml` | 5 | `is_int_literal`, `unify`, `infer` (the `as` arm included), `check_expr`, `check_stmt` |
+
+### The traps, file by file
+
+**`token.ml`** — the keyword hole is *not* in `lexer.ml`. The scanner reads an identifier and hands
+the whole lexeme to `keyword_or_ident`, which is asked about the whole thing, never a prefix, so
+`truely` stays an identifier for free.
+
+**`lexer.ml`** — the string loop has two exits and they are not the same: a closing quote, which you
+consume, or end of input, which reports. Return the buffer either way — recovering with a partial
+literal is what lets the rest of the file lex. And Swift's escape set is *closed* (`\0 \\ \t \n \r
+\" \'` and `\u{…}`), so the catch-all branch is an error, not a "pass the character through"
+fallback: `"\1"` is not an octal escape the way it is in C. Both messages, and the spans they take,
+are in §2's table.
+
+**`parser.ml`** — `as` is the odd one. It is not a binary operator, because its right side is a type
+*name* rather than an expression, so it cannot go through `binop_of_kind`; but it binds like one, at
+the given `cast_bp`. None of these five holes composes a diagnostic: `parse_ident` and
+`parse_ident_ty` take the phrase (`"a type name"`) and report it themselves.
+
+**`types.ml`** — leave every other name `None`. That `None` is what makes sema say *cannot find type
+'Foo' in scope*.
+
+**`sema.ml`** — the big one. The file gives you the shape: the `context` record, `report_error`, the
+five signatures, `infer`'s four literal arms as a model, and the driver. Everything is top-level and
+takes `context` explicitly, so `tests/test_units.ml` calls each piece on its own and a failure names
+the function rather than "the checker". No `rec` is written for you: that is a claim about a body
+you have not written yet, and `infer`/`check_expr` become one `let rec … and …` group the moment you
+write the `as` rule. The compiler will tell you.
+
+Two things hold for every arm. Each one **builds a node** — `mk (Tast.X …) τ span` — and **every
+error path still returns one**: report, hand back a plausible node, keep walking. A checker that
+stops at the first bad name finds one bug per run.
+
+- **`infer`** — the literals are given; the other five arms are yours.
+  - `Var` — look it up, else *cannot find … in scope*. A name that resolved becomes `Tast.Local`:
+    downstream, that node can only be a binding.
+  - `Unary '-'` — the operand must be numeric, and keeps its type.
+  - `Binary` — §2's operator table, and the concept's hardest arm. Three things to get right, all
+    argued there: decide the operator against the type `unify` **returned**, not the operands' own
+    types; the type to fall back on after reporting differs per operator; and when one side flexed,
+    the node you already built for it still says `Int` — writing the decision in reaches the
+    **whole** flexed subtree, not just its root. You already have the function that pushes a type
+    down. `--emit-tast` shows whether you got it, and `swiftc -dump-ast` shows the same answer.
+  - `Call` — a real call becomes `Tast.Print`, so nothing later re-asks whether this name was
+    `print`. Any other name is *cannot find '%s' in scope*, and infer the arguments anyway so a
+    mistake inside them is reported in the same run.
+  - `Ascribe (e, T)` — resolve `T`, `check_expr` the operand against it, wrap in `Tast.Coerce`.
+    Two lines, and the only place `infer` calls `check`.
+- **`check_expr e τ`** — an `Int_lit` checks against `Int` *or* `Double`, and the node it returns
+  must **carry τ**. That one line is the whole of "the coercion is recorded". Push τ into both
+  operands of numeric arithmetic, and into `-e` as well, since `-1` must be able to become a
+  `Double` too. Everything else: `infer` and compare.
+- **`check_stmt`** — the annotation does **not** survive into the `Tast`: it was a written name,
+  and `value.ty` is the resolved answer.
 
 Don't peek at §8 until you've tried it. The reference is `solution/sema.ml`.
 
