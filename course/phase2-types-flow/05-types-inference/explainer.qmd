@@ -604,7 +604,7 @@ above it; three are yours — two inside the string scanner, one in the operator
 | `invalid character in source file` | given — the `_ ->` fallback | `diag::lex_invalid_character` |
 | `unterminated '/*' comment` | given — in `skip_trivia` | `diag::lex_unterminated_block_comment` |
 | `unterminated string literal` | **yours** — `scan_string` hits end of input | `diag::lex_unterminated_string` |
-| `invalid escape sequence in literal` | **yours** — a `\` followed by anything else | `diag::lex_invalid_escape` |
+| `invalid escape sequence in literal` | **yours** — a `\` followed by anything but `n` `t` `"` `\` | `diag::lex_invalid_escape` |
 | `expected '=' after '!'` | **yours** — a `!` that isn't `!=` | *invented* (source 3) |
 
 Only the last is invented, and only because swiftc has nothing to copy: `!` is a perfectly good
