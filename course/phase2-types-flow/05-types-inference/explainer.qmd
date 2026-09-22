@@ -1385,24 +1385,11 @@ comes back typed `Double`, so level 2 sees `Double` against `Double`, takes `uni
 and never asks again. A decision that is recorded is never re-derived — which is the same claim
 §2 makes about SILGen, arriving here as a running time.
 
-That holds only because `unify` asks the cheap question first. Turn the spine round —
-
-```swift
-print(1 + 1.5 + 1 + 1 + 1 + …)
-```
-
-— and every level is `Double` on the left against an `Int` literal on the right. Written as
-
-```ocaml
-  else if is_int_literal l && tr = Types.TDouble then …
-```
-
-`is_int_literal l` runs before anything has checked that `tr` is even a `Double`, so it walks the
-entire left spine — which is `Double`-typed and could never have been an integer literal — only to
-have the `tr` test reject the answer anyway. Quadratic again, on a program with no mistake in it:
-0.18 s at 8000 terms. Swapping the two conjuncts is the whole fix, and takes it to 0.0007 s. The
-shipped `unify` had this until it was measured; the moral is the same one as `TError`, one level
-down — **do not ask an expensive question whose answer cannot matter.**
+> One implementation note, since it is a bug rather than an idea. All of that holds only if
+> `unify` asks the *cheap* question first. Written `is_int_literal l && tr = Types.TDouble`, the
+> subtree walk runs before anything has established that `tr` is even a `Double`, and
+> `1 + 1.5 + 1 + 1 + …` is quadratic again — on a program with nothing wrong with it. Swapping the
+> two conjuncts is the whole fix; `tests/test_scale.ml` pins it.
 
 So the cascade and the quadratic are one bug: a wrong answer that looks right enough to be asked
 about again. With `TError`, `let x = nope + true` reports once, like swiftc, while
