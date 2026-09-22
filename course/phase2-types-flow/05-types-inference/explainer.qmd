@@ -1325,11 +1325,32 @@ That is the whole exercise, in two halves: an error type that still triggers dia
 renamed the problem, and an error type that recovers as a *plausible* type has not stopped the
 cascade at all.
 
-It is also a **complexity** fix, which is worth seeing measured. `unify` asks `is_int_literal`
-whenever the two operand types differ, and that question walks a subtree. When the flex fails and
-the arm recovers as `Int`, every enclosing level asks it again about a spine one node longer —
-quadratic. Timing `Sema.check` alone on `let x = 1` followed by
-`print(x + 1 + 1.5 + 1.5 + …)`:
+#### It is also a complexity fix
+
+Worth working through, because the reason is not about messages at all. Take
+
+```swift
+let x = 1
+print(x + 1 + 1.5 + 1.5 + 1.5 + …)
+```
+
+`+` is left-associative, so the tree is a left-leaning spine: `((((x + 1) + 1.5) + 1.5) + 1.5) …`.
+Follow `unify` up it.
+
+*Level 0*, `x + 1`. Both `Int`, so `unify` returns on its first line, `tl = tr`. O(1), no error, and
+the node's type is `Int`.
+
+*Level 1*, `<level 0> + 1.5`. `Int` against `Double` now, so `unify` has to ask the interesting
+question — *may the left side flex?* — which is `is_int_literal`, and that has no choice but to
+**walk the whole left subtree**: "built only from integer literals" is a property of the entire
+thing. It descends the spine, reaches `Var x`, answers no. `None`, one diagnostic, and the arm
+recovers as… `Int`.
+
+*Level 2*, `<level 1> + 1.5`. The left side is typed `Int` **again** — that is what the recovery
+invented — so `unify` sees `Int` against `Double` again, and walks a spine one node longer.
+
+Level *k* walks *k* nodes, so the whole thing costs `1 + 2 + … + n`, which is quadratic. Timing
+`Sema.check` alone (the driver's printing is itself O(source) per message, and hides this):
 
 | terms | before | after |
 |---|---|---|
@@ -1337,9 +1358,25 @@ quadratic. Timing `Sema.check` alone on `let x = 1` followed by
 | 4000 | 0.045 s, 4000 diagnostics | 0.001 s, 1 diagnostic |
 | 8000 | 0.167 s, 8000 diagnostics | 0.001 s, 1 diagnostic |
 
-Clean 4× per doubling on the left, flat on the right. The cascade and the quadratic are the same
-bug: a wrong answer that looks right enough to be asked about again. With it,
-`let x = nope + true` reports once, like swiftc, while
+Clean 4× per doubling on the left, flat on the right. `TError` fixes it at the source: `unify`'s
+first line answers `Some TError` and never reaches `is_int_literal` at all.
+
+#### Why a *successful* flex costs nothing
+
+Compare the same shape with the `x` removed, so every flex succeeds:
+
+```swift
+print(1 + 1 + 1.5 + 1.5 + 1.5 + …)
+```
+
+Flat — 0.0007 s at 8000 terms, before the exercise and after. Same size, same spine, `unify` called
+just as often. The difference is that `check_expr` **wrote the answer down**: the flexed operand
+comes back typed `Double`, so level 2 sees `Double` against `Double`, takes `unify`'s first line,
+and never asks again. A decision that is recorded is never re-derived — which is the same claim
+§2 makes about SILGen, arriving here as a running time.
+
+So the cascade and the quadratic are one bug: a wrong answer that looks right enough to be asked
+about again. With `TError`, `let x = nope + true` reports once, like swiftc, while
 `let x = 1 + true` still reports its operator error. `check_expr`'s "cannot convert" needs the same
 guard, and so does the unary rule.
 
