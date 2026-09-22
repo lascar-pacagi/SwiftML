@@ -297,60 +297,37 @@ Reference: `solution/`. Don't peek until you've tried it.
 make lab C=phase2-types-flow/06-control-flow
 ```
 
-Eight cram files, one per hole and stage, plus two unit suites and the oracle — in the order you
-fill the holes. The lab binary has a flag per stage (`--emit-tokens`, `--emit-block`,
-`--emit-if`, `--emit-ast`, `--typecheck`), so every hole is reachable before the thing that
-normally calls it exists: `--emit-block` parses its whole input as one block and `--emit-if` as
-one if-statement, while `--emit-ast` needs `parse_stmt` to dispatch on the new keywords:
+Fill the holes in the order below and watch them go green one at a time. That is possible
+because the lab binary has a flag per stage, so a hole is reachable before the thing that
+normally calls it exists: `--emit-block` parses its whole input as one block and `--emit-if`
+as one if-statement, while `--emit-ast` needs `parse_stmt` to dispatch on the new keywords.
 
-- `lexer-flow.t` — `--emit-tokens`: `{ }`, `&&`, `||`, `..<` (with and without spaces), and the
-  three lone-character diagnostics with their columns. Green with the lexer arm alone.
-- `parser-logical.t` — `--emit-ast`: that `a && b || c` is `(a && b) || c`, that both sit below
-  the comparisons, and that parentheses still win. Green with the two `infix_bp` /
-  `binop_of_kind` rows — the smallest hole in the concept, and the one that proves a binding
-  power is just a number.
-- `parser-block.t` — **`parse_block` on its own**, through `--emit-block`: the file it reads *is*
-  a block, so this file goes green with that one function, before `parse_if` or any loop exists.
-  Statements in order, an empty block, blank lines however many, a one-line `{ print(1) }`, the
-  two-statements-on-one-line error, and a block that runs off the end of the file.
-- `parser-if.t` — **`parse_if` on its own**, through `--emit-if`: `if` with and without `else`,
-  `else if` chained three deep, empty blocks, a condition using the new logical operators, a
-  one-line `if`, `else` on the next line and four lines later (and after a comment line), that
-  an `if` with no `else` leaves every one of those newlines for the caller, and the two
-  missing-`{` errors. Green with
-  `parse_block` + `parse_if`, before `parse_stmt` dispatches on anything new.
-- `parser-loops.t` — **the `parse_stmt` arms**, through `--emit-ast`: `while`, `for` with
-  expression bounds, `break`/`continue`, nested loops, a `for` without `in`, a `for` without
-  `..<`, and an `if` inside a loop body — that last one because the dispatch has to know every
-  new keyword, not just the loops.
-- `test_parser.ml` (alcotest `parser-flow`) — the same syntax as AST structure.
-- `sema-logical.t` — `--typecheck`: `&&`/`||` on Bools, chained and mixed, fed by comparisons and
-  feeding a condition; both rejection wordings (`Double` and `Bool`, two `String`s); two bad
-  operands reporting twice; an annotation mismatch on their Bool result. Green with the
-  `infer_binary` arm.
-- `sema-flow.t` — the statement rules: conditions, the immutable loop variable and its scope,
-  Int bounds (both of them, and the body still checked when a bound is wrong), `break`/`continue`
-  in and out of loops and after one, three levels of nesting, then-and-else as sibling scopes,
-  and shadowing — including a loop variable shadowing an outer name of the same type.
-- `sema-typed-ast.t` — `--emit-tast`: what the checker *produced*. Blocks, the loop variable and
-  both branches come back as typed nodes, and `i` is a `local` inside the body and nowhere else —
-  the scope rule, visible in the tree. Also that a non-Bool condition yields **no tree at all**,
-  because a program that failed to check has no typed form.
-- `test_sema.ml` (alcotest `sema-flow`) — the exact diagnostics, in-process, plus two groups the
-  cram files cannot express as sharply: **recovery** (every rule reports exactly once, and one run
-  reports everything it can see — the property a wrong report-then-return pair breaks) and **loop
-  context** (the depth counter goes back down, so what matters is where a statement sits).
-- `oracle.t` — **the headline**: every program in `oracle-corpus.txt` (28, accept and reject
-  side by side) goes to `swiftc -typecheck` and to your `--typecheck`, and the verdicts must
-  agree. On a disagreement it prints our first diagnostic, so a rejection that is really an
-  unfinished stage (`invalid character in source file` from a lexer that does not know `{`)
-  reads as what it is.
-- `test_exercises.ml` (Alcotest `exercises-06`) — the three optional §6 exercises. Each group
-  activates independently when its probe sees that you have started it.
+| file | flag | green with | what it pins |
+|---|---|---|---|
+| `lexer-flow.t` | `--emit-tokens` | the lexer arm | `{ }`, the two logical operators, `..<`, and the three lone-character diagnostics with their columns |
+| `parser-logical.t` | `--emit-ast` | two `infix_bp` rows | `a && b` binds tighter than the twin below it, both below the comparisons, and parentheses still win |
+| `parser-block.t` | `--emit-block` | `parse_block` alone | statements in order, empty blocks, a one-line `{ print(1) }`, two statements on one line, running off the end of the file |
+| `parser-if.t` | `--emit-if` | `+ parse_if` | `else if` three deep, `else` on the next line and four lines later, and the newlines an `if` with no `else` leaves for its caller |
+| `parser-loops.t` | `--emit-ast` | the `parse_stmt` arms | `while`, `for` with expression bounds, `break`/`continue`, nesting, and an `if` inside a loop body |
+| `sema-logical.t` | `--typecheck` | the `infer_binary` arm | both rejection wordings, and two bad operands reporting twice |
+| `sema-flow.t` | `--typecheck` | the statement rules | Bool conditions, the immutable loop variable and its scope, Int bounds, `break`/`continue` in and out of loops, shadowing |
+| `sema-typed-ast.t` | `--emit-tast` | all of sema | the scope rule visible in the tree — `i` is a `local` inside the body and nowhere else — and no tree at all when the program failed |
+| `oracle.t` | — | everything | 28 programs, accept and reject side by side, judged by `swiftc -typecheck` |
 
-A hole you have not started shows as `TODO` with the list of what it will check; a hole in
-progress shows `FAIL` with, under each failing case, what the test wants and what your code
-printed.
+Three more, in-process: `test_parser.ml` (`parser-flow`) and `test_sema.ml` (`sema-flow`) check
+the same rules as AST structure and exact diagnostics, and `test_sema.ml` adds two groups the
+cram files cannot express as sharply — **recovery**, that every rule reports exactly once and
+one run reports everything it can see, and **loop context**, that the depth counter goes back
+down so what matters is where a statement sits. `test_exercises.ml` (`exercises-06`) holds §6's
+three exercises, each group activating when its own probe sees you start it.
+
+`oracle.t` is the headline. On a disagreement it prints our first diagnostic, so a rejection
+that is really an unfinished stage — `invalid character in source file`, from a lexer that does
+not know `{` yet — reads as what it is.
+
+A hole you have not started shows as `TODO` with the list of what it will check. A hole in
+progress shows `FAIL`, with what the test wanted and what your code printed under each failing
+case.
 
 ## 5. Benchmark it
 
