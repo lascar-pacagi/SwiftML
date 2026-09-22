@@ -524,7 +524,8 @@ is why inference has to do the rest of the work. And comparisons sit at the loos
 
 **The priorities you have to encode.** The parser is a Pratt parser: every infix operator carries a
 *binding power*, and the loop keeps consuming operators while their power is high enough, so a
-bigger number binds tighter. Phase 1 gave you two rows; the comparisons are the third:
+bigger number binds tighter. Phase 1 gave you the top two rows; this concept adds the other two,
+`as` and the comparisons:
 
 | binds | operators | binding power | Swift's precedence group |
 |---|---|---|---|
