@@ -1,14 +1,37 @@
-(* The lab binary the cram tests call, built from THIS concept's library. *)
+(* The concept `lab` CLI — linked against THIS concept's library, so the cram tests here
+   exercise YOUR code in this directory:
+     ./lab.exe build <file.swift> [-o <out>]
+     ./lab.exe --emit-tokens|--emit-ast|--emit-constraints|--typecheck|--emit-tast
+               |--emit-sil|--emit-llvm <file.swift> *)
+
+let usage () =
+  prerr_endline "usage: lab build <file.swift> [-o <out>]";
+  prerr_endline
+    "       lab \
+     --emit-tokens|--emit-ast|--emit-constraints|--typecheck|--emit-tast|--emit-sil|--emit-llvm \
+     <file.swift>";
+  exit 2
+
+let emit_of_flag : string -> Driver.emit option = function
+  | "--emit-tokens" -> Some Driver.Tokens
+  | "--emit-ast" -> Some Driver.Ast
+  | "--emit-constraints" -> Some Driver.Constraints_
+  | "--typecheck" -> Some Driver.Check
+  | "--emit-tast" -> Some Driver.Typed_ast
+  | "--emit-sil" -> Some Driver.Sil
+  | "--emit-llvm" -> Some Driver.Llvm
+  | _ -> None
+
 let () =
-  let args = Array.to_list Sys.argv in
-  match args with
-  | _ :: "--emit-tokens" :: path :: _ -> Driver.compile_file ~src_path:path ~emit:Driver.Tokens
-  | _ :: "--emit-ast" :: path :: _ -> Driver.compile_file ~src_path:path ~emit:Driver.Ast
-  | _ :: "--emit-constraints" :: path :: _ ->
-      Driver.compile_file ~src_path:path ~emit:Driver.Constraints_
-  | _ :: "--typecheck" :: path :: _ -> Driver.compile_file ~src_path:path ~emit:Driver.Check
-  | _ :: "--emit-tast" :: path :: _ -> Driver.compile_file ~src_path:path ~emit:Driver.Typed_ast
-  | _ ->
-      prerr_endline
-        "usage: lab --emit-tokens|--emit-ast|--emit-constraints|--typecheck|--emit-tast <file>";
-      exit 2
+  match Array.to_list Sys.argv with
+  | _ :: "build" :: file :: rest ->
+      let out =
+        match rest with
+        | [] -> Filename.remove_extension (Filename.basename file)
+        | [ "-o"; o ] -> o
+        | _ -> usage ()
+      in
+      Driver.compile_file ~out ~src_path:file ~emit:Driver.Exe ()
+  | _ :: flag :: [ file ] when emit_of_flag flag <> None ->
+      Driver.compile_file ~src_path:file ~emit:(Option.get (emit_of_flag flag)) ()
+  | _ -> usage ()

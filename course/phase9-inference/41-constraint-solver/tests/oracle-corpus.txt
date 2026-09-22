@@ -1,16 +1,22 @@
-# Programs both compilers must AGREE about. `swiftc -typecheck` is the oracle for every one:
-# `abs`, overloading, literal defaulting and return-type resolution are all real Swift.
-func f(_ x: Int) -> Int { return x }|func f(_ x: Double) -> Double { return x }|let a = f(1)|let b: Double = f(1)
-func g() -> Int { return 1 }|func g() -> Double { return 2.5 }|let c: Double = g()|let d: Int = g()
-let n = 1 + 2
-let d = 1 + 2.0
-let s = "a" + "b"
-let b = 1 < 2
-let b2 = 1.5 < 2
-func sq(_ x: Int) -> Int { return x * x }|let y = sq(4)
-func add(_ a: Int, _ b: Int) -> Int { return a + b }|let z = add(1, 2)
-let bad = 1 + true
-let bad2 = true < false
-let bad3: String = 1
-let bad4 = "a" + 1
-func h(_ x: Int) -> Int { return x }|let bad5 = h(1, 2)
+# Programs that must BUILD, RUN, and print exactly what swiftc prints. Every one is real
+# Swift — overloading on the parameter type, on the arity, and on the return type alone are
+# all things Swift does — so `swiftc` is entitled to an opinion about all of it.
+#
+# This is the corpus that proves the solver picked the declaration the reader MEANT. A test
+# that only checks the program is accepted cannot tell `show#0` from `show#1`; one that runs
+# it and compares the output can.
+#
+# Nothing here PRINTS a Double. Concept 09's IRGen formats one with printf's %g, so `3.0`
+# comes out `3` — a divergence that concept documents and this one inherits, and a corpus
+# entry that exercised it would be testing the formatter, not the solver. Doubles are still
+# all over the corpus, they just reach the output through an Int.
+func show(_ x: Int) -> Int { return 1 }|func show(_ x: Double) -> Int { return 2 }|func show(_ x: String) -> Int { return 3 }|print(show(1))|print(show(1.5))|print(show("x"))|print(show(1 + 2))
+func g() -> Int { return 10 }|func g() -> Double { return 2.5 }|let d: Int = g()|print(d)
+func k(_ x: Int) -> Int { return x }|func k(_ x: Int, _ y: Int) -> Int { return x + y }|print(k(7))|print(k(3, 4))
+func sq(_ x: Int) -> Int { return x * x }|print(sq(9))
+print(1 + 2)
+print(1 + 2 * 3 - 4)
+var n = 0|while n < 5 { n = n + 1 }|print(n)
+func fib(_ n: Int) -> Int { if n < 2 { return n }|return fib(n - 1) + fib(n - 2) }|print(fib(15))
+func cmp(_ a: Int, _ b: Int) -> Bool { return a < b }|if cmp(2, 3) { print(1) } else { print(0) }
+for i in 0 ..< 3 { print(i) }

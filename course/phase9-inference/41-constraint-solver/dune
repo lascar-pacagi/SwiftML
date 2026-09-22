@@ -1,12 +1,16 @@
-; Concept 41 — the constraint solver. A LEAF: it forks concept 05's front end rather than
-; extending concept 40's, so the solver is the only thing that is new. Nothing depends on it.
-; Contracts (given): token diagnostics types lexer ast tast parser constraints csgen driver.
-; Skeletons (you edit): cssolver csapply.
+; Concept 41 — the constraint solver. A LEAF: it forks concept 09's pipeline rather than
+; extending concept 40's, so the solver is the only thing that is new and nothing depends on
+; it. Forking 09 rather than 07 buys the strongest oracle the course has — the programs RUN,
+; and their output must match swiftc byte for byte, which is what proves the solver picked the
+; declaration the reader meant rather than merely a declaration.
+; Contracts (given): token diagnostics types lexer ast tast parser constraints csgen sil
+; silgen irgen driver. Skeletons (you edit): cssolver csapply.
 (library
  (name swiftml_solver)
  (wrapped false)
  (modules
-  token diagnostics types lexer ast tast parser constraints csgen csapply cssolver driver)
+  token diagnostics types lexer ast tast parser constraints csgen csapply cssolver sil
+  silgen irgen driver)
  (flags
   (:standard -warn-error -a)))
 

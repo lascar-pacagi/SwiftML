@@ -1,15 +1,16 @@
-(* The driver — a *contract* (given). Ties the Phase-2 front end together. Concept 05 has
-   no codegen yet (SIL arrives at concept 08), so the deepest thing it does is `--typecheck`
-   (lex -> parse -> sema), exactly like `swiftc -typecheck`.
-
-   Mirrors swift/lib/FrontendTool at small scale. *)
+(* The driver — a *contract* (given). The full Phase-2 pipeline:
+   lex -> parse -> sema -> SILGen -> SIL -> IRGen -> LLVM IR -> clang -> native.
+   Concept 09 adds `--emit-llvm` and `build` (programs finally run). *)
 
 type emit =
   | Tokens
   | Ast
-  | Typed_ast (* the TYPE-CHECKED tree sema produced — compare with `swiftc -dump-ast` *)
   | Constraints_ (* the system csgen.ml produced, before anything is solved *)
-  | Check (* lex -> parse -> solve, then stop (no codegen yet) *)
+  | Typed_ast (* the TYPE-CHECKED tree sema produced *)
+  | Check
+  | Sil
+  | Llvm (* + IRGen, print LLVM IR *)
+  | Exe (* + clang: a native executable *)
 
 let read_file (path : string) : string =
   let input_channel = open_in_bin path in
@@ -28,7 +29,31 @@ let bail_on_errors (diagnostics : Diagnostics.sink) : unit =
     Diagnostics.print diagnostics;
     exit 1)
 
-let compile_file ~(src_path : string) ~(emit : emit) : unit =
+(* source -> verified SIL -> LLVM IR text *)
+let to_llvm ?(should_emit_terminator = fun _ -> true) (source : string)
+    (diagnostics : Diagnostics.sink) : string =
+  let program = frontend source diagnostics in
+  bail_on_errors diagnostics;
+  let sil_module = Silgen.lower (Option.get program) in
+  (match Sil.verify sil_module with
+  | [] -> ()
+  | errors ->
+      List.iter
+        (fun message -> prerr_endline ("SIL verification error: " ^ message))
+        errors;
+      exit 1);
+  Irgen.emit_llvm ~should_emit_terminator sil_module
+
+let run_clang ~(ll_path : string) ~(out : string) : unit =
+  let command =
+    Printf.sprintf "clang -Wno-override-module %s -o %s"
+      (Filename.quote ll_path) (Filename.quote out)
+  in
+  if Sys.command command <> 0 then
+    failwith (Printf.sprintf "clang failed on %s" ll_path)
+
+let compile_file ?(out = "a.out") ~(src_path : string) ~(emit : emit) () : unit
+    =
   let source = read_file src_path in
   let diagnostics = Diagnostics.create ~source () in
   match emit with
@@ -65,3 +90,20 @@ let compile_file ~(src_path : string) ~(emit : emit) : unit =
         let typed = frontend source diagnostics in
         bail_on_errors diagnostics;
         Option.iter (fun p -> print_endline (Tast.dump_program p)) typed
+  | Sil ->
+      let program = frontend source diagnostics in
+      bail_on_errors diagnostics;
+      let sil_module = Silgen.lower (Option.get program) in
+      bail_on_errors diagnostics;
+      print_endline (Sil.string_of_module sil_module)
+  | Llvm -> print_string (to_llvm source diagnostics)
+  | Exe ->
+      let llvm_ir = to_llvm source diagnostics in
+      let ll_path = Filename.temp_file "swiftml2" ".ll" in
+      Fun.protect
+        ~finally:(fun () -> try Sys.remove ll_path with _ -> ())
+        (fun () ->
+          let output_channel = open_out ll_path in
+          output_string output_channel llvm_ir;
+          close_out output_channel;
+          run_clang ~ll_path ~out)
