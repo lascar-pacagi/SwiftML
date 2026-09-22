@@ -725,11 +725,6 @@ The last row diverges because we have one namespace. swiftc finds `x` among the 
 so; `Types.of_name` returns `None` for a value's name and a nonexistent one alike, so `x` reads
 exactly like `Foo`. Consulting `environment` before giving up would close it — a fair exercise.
 
-Which is the general rule: **Sema's wording is swiftc's, the parser's is ours.** §3's Sema messages
-are copied from `DiagnosticsSema.def` and the tests assert them character for character, because
-both compilers are checking the same rule. Our parser accepts a different grammar, so nothing pins
-its strings but their *shape*: report, recover, point at the first bad token.
-
 ## 3. Build it, step by step
 
 Five files, in order — your Phase-1 work is already filled in; you write only the `TODO(05)`
