@@ -592,7 +592,9 @@ $ printf 'let s = "oops\n' > /tmp/u.swift && swiftc -typecheck /tmp/u.swift
 ```
 
 **3. Invent one, in swiftc's house style** — only where our subset rejects something Swift accepts,
-so there is nothing to copy. Lowercase, no trailing period, literal syntax in single quotes.
+so there is nothing to copy. That style is visible in every message above: it starts lowercase,
+ends without a full stop, and puts any piece of source syntax in single quotes. So
+`expected '=' after '!'`, not `Expected an equals sign after the exclamation mark.`
 
 **The lexer's five.** Two are already written for you, each with its `diag::` name in a comment
 above it; three are yours — two inside the string scanner, one in the operator `match`:
