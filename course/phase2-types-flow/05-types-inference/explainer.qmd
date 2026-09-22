@@ -563,9 +563,10 @@ the same idea.
 ### Diagnostics: where the error messages come from
 
 Every stage takes a `Diagnostics.sink` and **reports and recovers** — it pushes an error and keeps
-scanning, so one run reports every bad byte, and nothing ever raises. That doctrine is concept 01's;
-what is new here is that you now write code on the *reporting* side, so you have to know what to
-say. The wording is never a guess. It comes from one of three places, in this order:
+scanning, so one run reports every bad byte, and nothing ever raises. You have been writing that
+side since concept 01; what is new here is how much of it there is — this concept's holes span
+three stages and can fail a dozen ways, and not one of those messages is yours to invent. Each
+comes from one of three places, in this order:
 
 **1. `DiagnosticsParse.def` — the design oracle.** Every message swiftc's lexer and parser can print
 is declared in one file, under the `diag::` name our comments cite:
