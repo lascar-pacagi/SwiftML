@@ -59,9 +59,13 @@ everything the block added. Lookups scan inner-to-outer, so an inner binding **s
 of the same name and the outer one reappears when the block ends.
 
 ```
-environment before block:        [outer ↦ Int]
-inside { let x = 1 }:    [x ↦ Int, outer ↦ Int]     ← x found first, outer still visible
-environment after block:         [outer ↦ Int]              ← restored; x is gone
+  the program           the environment            what happens
+  let outer = 1          [outer ↦ Int]
+  if c {              ┌                            save the stack
+    let x = 1         │  [x ↦ Int, outer ↦ Int]    x shadows; outer still visible
+    print(x + outer)  │                            x found first, outer one frame out
+  }                   └                            restore it
+  print(x)               [outer ↦ Int]             cannot find 'x' in scope
 ```
 
 That's the entire trick (`in_scope` in the code): `let saved = !environment in run (); environment := saved`.
