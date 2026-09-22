@@ -969,8 +969,10 @@ let rec is_int_literal = function
 (* unify two operands' types, letting an integer literal become Double *)
 let unify l tl r tr : Types.ty option =
   if Types.equal tl tr then Some tl
-  else if is_int_literal l && tr = Types.TDouble then Some Types.TDouble
-  else if is_int_literal r && tl = Types.TDouble then Some Types.TDouble
+  (* the CHEAP test first: `is_int_literal` walks a whole subtree, and a
+     Double-typed operand can never be an integer literal — see §9, exercise 5 *)
+  else if tr = Types.TDouble && is_int_literal l then Some Types.TDouble
+  else if tl = Types.TDouble && is_int_literal r then Some Types.TDouble
   else None
 
 let rec infer (context : context) (expression : Ast.expr) : Tast.expr =
@@ -1374,6 +1376,25 @@ just as often. The difference is that `check_expr` **wrote the answer down**: th
 comes back typed `Double`, so level 2 sees `Double` against `Double`, takes `unify`'s first line,
 and never asks again. A decision that is recorded is never re-derived — which is the same claim
 §2 makes about SILGen, arriving here as a running time.
+
+That holds only because `unify` asks the cheap question first. Turn the spine round —
+
+```swift
+print(1 + 1.5 + 1 + 1 + 1 + …)
+```
+
+— and every level is `Double` on the left against an `Int` literal on the right. Written as
+
+```ocaml
+  else if is_int_literal l && tr = Types.TDouble then …
+```
+
+`is_int_literal l` runs before anything has checked that `tr` is even a `Double`, so it walks the
+entire left spine — which is `Double`-typed and could never have been an integer literal — only to
+have the `tr` test reject the answer anyway. Quadratic again, on a program with no mistake in it:
+0.18 s at 8000 terms. Swapping the two conjuncts is the whole fix, and takes it to 0.0007 s. The
+shipped `unify` had this until it was measured; the moral is the same one as `TError`, one level
+down — **do not ask an expensive question whose answer cannot matter.**
 
 So the cascade and the quadratic are one bug: a wrong answer that looks right enough to be asked
 about again. With `TError`, `let x = nope + true` reports once, like swiftc, while

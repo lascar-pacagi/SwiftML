@@ -61,8 +61,13 @@ let rec is_int_literal = function
 let unify l tl r tr : Types.ty option =
   if tl = Types.TError || tr = Types.TError then Some Types.TError
   else if Types.equal tl tr then Some tl
-  else if is_int_literal l && tr = Types.TDouble then Some Types.TDouble
-  else if is_int_literal r && tl = Types.TDouble then Some Types.TDouble
+  (* the CHEAP test first: `is_int_literal` walks a whole subtree, and a Double-typed
+     operand can never be an integer literal — asking anyway makes an accepted program
+     like `1 + 1.5 + 1 + 1 + …` quadratic, since every level re-walks the spine below
+     it. Same reason an error path hands back an error type rather than a plausible
+     one: never re-ask a question whose answer is already settled. *)
+  else if tr = Types.TDouble && is_int_literal l then Some Types.TDouble
+  else if tl = Types.TDouble && is_int_literal r then Some Types.TDouble
   else None
 
 let rec infer (context : context) (expression : Ast.expr) : Tast.expr =
