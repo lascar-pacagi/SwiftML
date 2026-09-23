@@ -16,7 +16,10 @@
    the
    written type names never travel past this file. And `Ast.Call` — which could be print, a
    declared function, or an unknown name — becomes whichever it actually was. PLAN.md
-   §0.1. *)
+   §0.1. 
+   WITH §6's EXERCISES APPLIED: 1 (argument labels), 2 (unreachable code after `return`)
+   and 3 (swiftc's redeclaration spelling, and its note). Exercise 1 also reaches
+   solution/exercises/{ast,parser}.ml; 2 and 3 are here. Differences marked EX<n>. *)
 
 (* Does a block definitely return on every path? — the "missing return" analysis. Pure
 functions
@@ -40,7 +43,13 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
      which is
      what lets a call resolve whether the callee is declared above it or below. *)
   let current_return_type : Types.ty option ref = ref None in
-  let functions : (string, Types.ty list * Types.ty) Hashtbl.t = Hashtbl.create 16 in
+  (* EX1: the table carries the LABELS as well, because a call site must be able to check
+     them without going back to the declaration. EX3: and the span of the first
+     declaration, so a redeclaration can point at it. *)
+  let functions :
+      (string, string option list * Types.ty list * Types.ty * Token.span) Hashtbl.t =
+    Hashtbl.create 16
+  in
   let report_error span msg = Diagnostics.error diagnostics span msg in
   let lookup x = List.assoc_opt x !environment in
   let bind name v = environment := (name, v) :: !environment in
@@ -177,23 +186,42 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
       match ns with n :: _ -> n | [] -> mk (Tast.Int_lit 0) Types.TInt span
     in
     match Hashtbl.find_opt functions f with
-    | Some (ptypes, ret) ->
+    | Some (plabels, ptypes, ret, _) ->
         let np = List.length ptypes and na = List.length args in
         if np <> na then (
           report_error span
             (Printf.sprintf "function '%s' expects %d argument(s) but %d given" f np na);
-          mk (Tast.Fn_call (f, List.map infer args)) ret span)
-        else mk (Tast.Fn_call (f, List.map2 check_expr args ptypes)) ret span
+          mk (Tast.Fn_call (f, List.map (fun (_, a) -> infer a) args)) ret span)
+        else (
+          (* EX1: the label is checked BEFORE the type, and per position. swiftc words it
+             with both spellings side by side, so a reader sees what they wrote and what
+             was wanted without going to look. *)
+          List.iter2
+            (fun (written, _) expected ->
+              let shown = function None -> "" | Some l -> l ^ ":" in
+              if written <> expected then
+                report_error span
+                  (Printf.sprintf
+                     "incorrect argument label in call (have '%s', expected '%s')"
+                     (shown written) (shown expected)))
+            args plabels;
+          mk
+            (Tast.Fn_call (f, List.map2 (fun (_, a) t -> check_expr a t) args ptypes))
+            ret span)
     | None ->
         if f = "print" then
           match args with
-          | [ a ] -> mk (Tast.Print (infer a)) Types.TVoid span
+          | [ (_, a) ] -> mk (Tast.Print (infer a)) Types.TVoid span
           | _ ->
               report_error span "print(_:) expects exactly one argument";
-              mk (Tast.Print (some_arg (List.map infer args))) Types.TVoid span
+              mk
+                (Tast.Print (some_arg (List.map (fun (_, a) -> infer a) args)))
+                Types.TVoid span
         else (
           report_error span (Printf.sprintf "cannot find '%s' in scope" f);
-          mk (Tast.Print (some_arg (List.map infer args))) Types.TInt span)
+          mk
+            (Tast.Print (some_arg (List.map (fun (_, a) -> infer a) args)))
+            Types.TInt span)
   and check_expr (expression : Ast.expr) (expected : Types.ty) : Tast.expr =
     match expression with
     | Ast.Int_lit (n, span) ->
@@ -296,7 +324,35 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
                 if rt <> Types.TVoid then
                   report_error span "non-void function should return a value";
                 Tast.Return (None, span)))
+  (* EX2: everything after an unconditional `return` in the same block is dead. The rule
+     reuses [stmt_returns], which the missing-return analysis already needed — an
+     unconditional `return` is exactly what that predicate reports, so a conditional one
+     (`if b { return }`) correctly does NOT make the tail unreachable. swiftc warns rather
+     than errors, because the code is well-formed; it simply cannot run. *)
+  and stmt_span : Ast.stmt -> Token.span = function
+    | Ast.Let { span; _ }
+    | Ast.Assign { span; _ }
+    | Ast.If { span; _ }
+    | Ast.While { span; _ }
+    | Ast.For { span; _ } ->
+        span
+    | Ast.Expr_stmt (_, span)
+    | Ast.Break span
+    | Ast.Continue span
+    | Ast.Return (_, span) ->
+        span
+  and warn_unreachable (statements : Ast.stmt list) : unit =
+    let rec go = function
+      | s :: (next :: _ as rest) ->
+          if stmt_returns s then
+            Diagnostics.warning diagnostics (stmt_span next)
+              "code after 'return' will never be executed"
+          else go rest
+      | _ -> ()
+    in
+    go statements
   and check_block (statements : Ast.stmt list) : Tast.stmt list =
+    warn_unreachable statements;
     let out = ref [] in
     in_scope (fun () -> out := List.map check_stmt statements);
     !out
@@ -331,14 +387,29 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
   List.iter
     (function
       | Ast.IFunc f ->
-          if Hashtbl.mem functions f.Ast.fname then
-            report_error f.Ast.fspan
-              (Printf.sprintf "invalid redeclaration of '%s'" f.Ast.fname);
+          (* EX3: swiftc spells a parameterless function `f()` and one with parameters
+             plain `g` — run it on both to see. The name alone is not the identity. *)
+          let spelled =
+            if f.Ast.params = [] then f.Ast.fname ^ "()" else f.Ast.fname
+          in
+          (match Hashtbl.find_opt functions f.Ast.fname with
+          | Some (_, _, _, first) ->
+              report_error f.Ast.fspan
+                (Printf.sprintf "invalid redeclaration of '%s'" spelled);
+              (* the note goes at the EARLIER declaration, which is why the table had to
+                 remember its span — the two-location shape from 05's exercise 4 *)
+              Diagnostics.note diagnostics first
+                (Printf.sprintf "'%s' previously declared here" spelled)
+          | None -> ());
+          let plabels = List.map (fun (pr : Ast.param) -> pr.Ast.plabel) f.Ast.params in
           let ptypes =
             List.map (fun (pr : Ast.param) -> resolve_silent pr.Ast.ptype) f.Ast.params
           in
           let ret = match f.Ast.ret with None -> Types.TVoid | Some n -> resolve_silent n in
-          Hashtbl.replace functions f.Ast.fname (ptypes, ret)
+          (* the FIRST declaration wins, so a later one cannot overwrite the entry the
+             note points at *)
+          if not (Hashtbl.mem functions f.Ast.fname) then
+            Hashtbl.replace functions f.Ast.fname (plabels, ptypes, ret, f.Ast.fspan)
       | Ast.IStmt _ -> ())
     program.Ast.items;
   (* PASS 2: check bodies and top-level statements, in order — producing the typed

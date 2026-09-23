@@ -51,16 +51,22 @@ rc=$?
 echo "$OUT"
 
 # An exercise may legitimately change a golden — that is what "you changed the lowering"
-# means. solution/exercises/expected-diffs.txt names the cram files where that is expected
-# AND WHY; a failure anywhere else is a broken key. Alcotest suites are never excused:
-# they are the ones the standard says must stay exercise-neutral.
+# means. solution/exercises/expected-diffs.txt names the tests where that is expected AND
+# WHY; a failure anywhere else is a broken key.
+#
+# Prefer keeping a suite neutral to declaring it. 07's argument-label exercise carries the
+# labels in the AST without printing them, and a dozen parser cases stay green for free.
+# An entry is only right when the test PINS THE BEHAVIOUR THE EXERCISE EXISTS TO CHANGE —
+# 06's cram case asserting `1 < 2 == true` parses, 07's asserting the v0 spelling of a
+# redeclaration. Alcotest suites may be declared on the same terms and no looser: name the
+# suite exactly as the runner prints it, and say which case and why.
 ALLOW="$C/solution/exercises/expected-diffs.txt"
 if [ $rc -ne 0 ] && [ -f "$ALLOW" ]; then
   unexpected=0
   while IFS= read -r line; do
     case "$line" in
-      "FAIL "*"(cram)")
-        f="${line#FAIL }"; f="${f% (cram)}"
+      "FAIL "*"(cram)"|"FAIL "*"(alcotest)")
+        f="${line#FAIL }"; f="${f% (cram)}"; f="${f% (alcotest)}"
         grep -q "^$f:" "$ALLOW" || { echo "  unexpected: $f"; unexpected=1; } ;;
       "FAIL "*) echo "  unexpected: ${line#FAIL }"; unexpected=1 ;;
     esac

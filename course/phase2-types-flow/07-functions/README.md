@@ -43,3 +43,8 @@ same accept/reject verdict from swiftc and from your `--typecheck`: recursion an
 accepted; missing return, wrong arg type/count, return-type mismatch, top-level `return`, and a
 Void function returning a value all rejected. (The oracle runs swiftc as `-emit-sil`: its
 missing-return check is a SIL diagnostic that `-typecheck` never reaches.)
+
+`solution/exercises/` holds the same key with §6's exercises applied — 1 (argument labels) reaches
+`ast.ml`, `parser.ml` and `sema.ml`, 2 (unreachable code) and 3 (swiftc's redeclaration spelling
+and its note) are `sema.ml` alone. `make check-exercises C=phase2-types-flow/07-functions` builds
+and runs it; `solution/exercises/expected-diffs.txt` says which two tests it changes and why.

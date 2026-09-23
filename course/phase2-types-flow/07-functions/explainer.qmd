@@ -59,7 +59,8 @@ $ ./lab.exe --emit-tast f1.swift      # func twice(_ n: Int) -> Int { return n *
 (func twice (n:Int) -> Int {(return (* (local n : Int) (int_lit 2 : Int) : Int))})
 
 $ ./lab.exe --emit-tast f2.swift      # func scale(_ x: Double) -> Double { return x * 2 }
-(func scale (x:Double) -> Double {(return (* (local x : Double) (int_lit 2 : Double) : Double))})
+(func scale (x:Double) -> Double
+  {(return (* (local x : Double) (int_lit 2 : Double) : Double))})
 ```
 
 Same literal `2`, same source position. What differs is what the checker concluded — and because it
@@ -220,7 +221,7 @@ made of old tokens in a new order. No new operator, so the precedence table is c
 
 ```
 program    ::= [ nl ] [ item { nl item } ] [ nl ]                  <-- items, not statements
-nl         ::= NEWLINE { NEWLINE }                                 # a run of blank lines is one separator
+nl         ::= NEWLINE { NEWLINE }                    # blank lines are one separator
 item       ::= func_decl                                           <-- new
              | statement
 func_decl  ::= "func" ident "(" [ param { "," param } ] ")"        <-- new
@@ -239,7 +240,7 @@ statement  ::= ("let" | "var") ident [ ":" type ] "=" expr
              | expr
 if-stmt    ::= "if" expr block [ "else" ( block | if-stmt ) ]
 block      ::= "{" [ nl ] [ statement { nl statement } ] [ nl ] "}"
-type       ::= "Int" | "Double" | "Bool" | "String" | "Void"       <-- Void is new (rarely written)
+type       ::= "Int" | "Double" | "Bool" | "String" | "Void"    <-- Void is new
 
 expr       ::= or
 or         ::= and { "||" and }                                      (bp 3)
@@ -250,7 +251,7 @@ sum        ::= product { ("+" | "-") product }                       (bp 10)
 product    ::= unary { ("*" | "/" | "%") unary }                     (bp 20)
 unary      ::= "-" unary | primary
 primary    ::= int | float | string | "true" | "false" | ident
-             | ident "(" [ expr { "," expr } ] ")"                 <-- now reaches YOUR functions
+             | ident "(" [ expr { "," expr } ] ")"              <-- reaches YOUR funcs
              | "(" expr ")"
 ```
 
@@ -365,40 +366,34 @@ Three skeletons; concepts 01–06 are filled in.
    (accept an optional external label — a `_` or identifier before the name — and drop it), up to
    `)`. `parse_func`: `func`, a name, `parse_params`, an optional `-> Type`, then `parse_block`.
    `return`: a bare `return` if the next token ends the statement, else `return <expr>`.
-   Check the list before you write the declaration that reaches it —
-   `make lab C=phase2-types-flow/07-functions T=parser-params` runs `parse_params` on its own
-   through `--emit-params`, whose input is a bare `(a: Int, …)`.
-3. **`sema.ml`** — five holes: **call typing** in `infer_call` (look the name up in `functions`; check
-   arity and each arg against its parameter type with `check_expr`; return the function's return
-   type); **`return`** (valid only in a function — `current_return_type` says whether you are in one, and
-   what it returns; the value, or its absence, against the Void rules of §2); the **definite-return
-   analysis** `stmt_returns` / `block_returns` (§2 reasons out which statements count and which do
-   not — four cases, two of which are the ones people get wrong; the pair is mutually recursive
-   because an `if` holds blocks, which is the shape the skeleton gives you);
-   **`check_func`** (fresh `environment`, parameters bound immutable, set `current_return_type`, check the body,
-   restore both, then the "missing return" rule, which is `block_returns` on the body); and the
-   **two passes** (fill `functions` with signatures — a name seen twice is a redeclaration — then check
-   each item in order, building the `Tast.item` list). The scope helpers, `loop_depth`,
-   `current_return_type` and `resolve_*` are given.
+3. **`sema.ml`** — five holes. The scope helpers, `loop_depth`, `current_return_type` and
+   `resolve_*` are given.
 
-   Two of these holes are where a *resolution* gets recorded rather than repeated. The call hole
-   decides whether `f` is `print`, a declared function or nothing, and says so with the node it
-   returns. `check_func` returns a `Tast.func_decl` whose parameter and return types are **types**,
-   not the written names — resolve each one once, here, and nothing downstream re-resolves it.
+   | hole | what it does | the part to watch |
+   |---|---|---|
+   | `stmt_returns` / `block_returns` | does this definitely return? | four cases, and §2 argues which two people get wrong |
+   | the two passes | fill `functions`, then check each item | a name seen twice is a redeclaration |
+   | `check_func` | fresh scope, parameters bound immutable, body checked, then "missing return" | restore the scope *and* `current_return_type` on the way out |
+   | `return` | the value against the declared type | `current_return_type` also says whether you are in a function at all |
+   | `infer_call` | look the name up, check arity, check each argument | the arity error comes *before* the argument types |
 
-   **The definite-return analysis stands alone** — start there if you like. It is a pure function
-   of the AST: no environment, no diagnostics, nothing else in the file. So it sits at module
-   level, and two tests reach it without going through `check`: `sema-definite-return.t`
-   (`make lab C=… T=sema-definite-return`) asks `--emit-returns` about each function in a program,
-   and `test_sema.ml`'s *definite return* group calls `Sema.block_returns` on statements it builds
-   by hand — no parser at all. Both go green on that one hole while every other TODO in `sema.ml`
-   still raises.
+   **Two of these record a resolution instead of repeating it.** `infer_call` decides whether
+   `f` is `print`, a declared function, or nothing — and says which by the node it returns, so
+   nothing downstream asks again. `check_func` returns a `Tast.func_decl` whose parameter and
+   return types are **types**, not the written names: resolve each once, here.
+
+   **Start with the definite-return analysis.** It is a pure function of the AST — no
+   environment, no diagnostics, nothing else in the file — so it sits at module level and two
+   tests reach it without going through `check`. `sema-definite-return.t` asks `--emit-returns`
+   about each function in a program, and `test_sema.ml`'s *definite return* group calls
+   `Sema.block_returns` on statements it builds by hand, with no parser at all. Both go green
+   on that one hole while every other TODO in the file still raises.
 
    The other four run inside `check`, so they have an order:
 
-   1. **the two passes** — `check`'s entry point, so nothing at all is checked until they exist;
-   2. **`check_func`** — write the analysis before this, because `check_func` calls
-      `block_returns`; while it still raises, every function with a `-> T` crashes here;
+   1. **the two passes** — `check`'s entry point, so nothing is checked until they exist;
+   2. **`check_func`** — which calls `block_returns`, so write that first or every function
+      with a `-> T` crashes here;
    3. **`return`**;
    4. **the call**.
 
@@ -409,67 +404,54 @@ Reference: `solution/`.
 ## 4. Test it
 
 ```bash
-make lab C=phase2-types-flow/07-functions
+make lab C=phase2-types-flow/07-functions          # add T=sema-return to run one file
 ```
 
-Ten cram files, one per hole (`make lab C=… T=sema-return` runs one), two unit suites and the
-oracle — in the order you fill the holes:
+Nine cram files, two unit suites and the oracle. Fill the holes in this order and each one
+turns its own file green — the lab binary has a mode per hole, so a hole is reachable before
+the thing that normally calls it exists.
 
-- `lexer-arrow.t` — `--emit-tokens`: `->` with and without spaces, `-` alone, `- >`, `a->-b`.
-  Green with the lexer peek alone (the two "still minus" cases pass before you start — the given
-  `-` arm already does that).
-- `parser-return.t` — `--emit-ast`: `return e`, and a bare `return` before a newline, a `}`, and
-  end of input. Green with the `Kw_return` arm; sema never runs, so top-level returns are fine.
-- `parser-params.t` — `--emit-params`: parameter lists on their own. Eight that parse (empty,
-  one, three in order, each of the three label forms, `_` as the name, types the parser has
-  never heard of) and eleven that do not (no `(`, a lone identifier, no type after `:`, never
-  closed, a trailing / leading / doubled comma, no comma at all, no colon, end of input, a
-  keyword label). Green with `parse_params` alone: the mode parses one list and stops, so the
-  source of each case is the list itself and this file never waits for `parse_func`.
-- `parser-func.t` — declarations with and without `-> T`, multi-line bodies, an empty body,
-  items interleaved with statements, and the first error of a nameless / typeless / bodyless
-  declaration.
-- `test_parser.ml` (alcotest `parser-funcs`) — the same, as AST structure, one group per hole.
-- `test_sema.ml` (alcotest `sema-funcs`) — its *definite return* group is the exception to that
-  order: it builds statements as AST values and calls `Sema.block_returns` directly, so it grades
-  that hole alone, before `check` runs at all.
-- `sema-definite-return.t` — `--emit-returns`: the analysis on its own, one case per rule — a
-  plain `return`, a body with none, an `if` with and without an `else`, one arm only, an `else if`
-  chain with and without a final `else`, a `return` inside a `while` and inside a `for`, a loop
-  then a return, a return with unreachable statements after it, and several functions at once.
-  `Sema.check` never runs, so this file reports while every other sema hole still raises.
-- `sema-passes.t` — `--typecheck`: the two-pass driver. Only its first two cases need the driver
-  alone, and only because they declare no functions (a bad top-level `let`, a statement-only
-  program). Every case after them declares one, so pass 2 reaches `check_func` — including the
-  redeclaration and the item-order cases, whose *diagnostic* your driver produces correctly long
-  before they can go green. That is worth knowing when you read the report: the driver prints
-  through `bail_on_errors` only after the whole program is checked, so a `failwith` in any later
-  hole takes the process down first and the errors you did produce never reach stdout. A `FAIL`
-  here means "something in this program is still unwritten", not "your two passes are wrong".
-- `sema-func.t` — `check_func`: parameters in scope and immutable, the fresh scope (no top-level
-  names, no leak), unknown types, and the missing-return rule case by case — `if` without
-  `else`, a loop, both branches returning, an `else if` chain, a statement after `return`.
-- `sema-return.t` — the three `return` diagnostics, the value against the return type, the
-  literal-to-`Double` coercion, two bad returns in one body.
-- `sema-typed-ast.t` — `--emit-tast`: that a call resolved to the right node and a signature to
-  real types. Its middle pair is the concept in two lines — the same `2` carrying `Int` in one
-  program and `Double` in the other, because the parameter type differs.
-- `sema-call.t` — arity (too many, too few, an argument to `f()`, and that a wrong count does
-  not also check the arguments), argument types, the result as `Int`/`Bool`/`()`, nested calls.
-- `test_sema.ml` (alcotest `sema-funcs`) — the same rules in-process, one group per hole.
-- `oracle.t` — **the headline**: every program in `oracle-corpus.txt` (30: twelve accepted,
-  eighteen rejected, one per rule) goes to swiftc and to your `--typecheck`, and the verdicts must
-  agree. swiftc runs as `-emit-sil -o /dev/null`, not `-typecheck`, because its missing-return
-  check lives on SIL (§2) — `-typecheck` would accept four of the reject cases. On a
-  disagreement the first line we printed is shown, so a rejection that is really an unfinished
-  stage reads as what it is.
-- `test_exercises.ml` (Alcotest `exercises-07`) — the three optional §6 exercises. Each group
-  activates independently when its probe sees that you have started it.
+| file | flag | green with | what it pins |
+|---|---|---|---|
+| `lexer-arrow.t` | `--emit-tokens` | the lexer peek | `->` with and without spaces, and that `-` alone, `- >` and `a->-b` still lex as minus |
+| `parser-return.t` | `--emit-ast` | the `Kw_return` arm | `return e`, and a bare `return` before a newline, a `}`, and end of input |
+| `parser-params.t` | `--emit-params` | `parse_params` alone | eight lists that parse — all three label forms, `_`, unknown type names — and eleven that do not |
+| `parser-func.t` | `--emit-ast` | `parse_func` | declarations with and without `-> T`, empty bodies, items interleaved with statements |
+| `sema-definite-return.t` | `--emit-returns` | `block_returns` alone | one case per rule: `if` with and without `else`, a return inside a loop, a statement after `return` |
+| `sema-passes.t` | `--typecheck` | the two-pass driver | forward references, recursion, redeclaration, item order |
+| `sema-func.t` | `--typecheck` | `check_func` | parameters in scope and immutable, the fresh scope, unknown types, missing return |
+| `sema-return.t` | `--typecheck` | the `return` rules | the three diagnostics, the value against the declared type, a literal coercing to `Double` |
+| `sema-call.t` | `--typecheck` | the call rules | arity both ways, argument types, the result type, nested calls |
+| `sema-typed-ast.t` | `--emit-tast` | all of sema | a call resolved to the right node, and a signature carrying real types |
+| `oracle.t` | `--typecheck` | everything | 30 programs — twelve accepted, eighteen rejected, one per rule — judged by swiftc |
 
-A hole you have not started shows as `TODO` with the list of what it will check; a hole in
-progress shows `FAIL` with, under each failing case, what the test wants and what your code
-printed. Until the two-pass driver exists every sema file is `TODO`: nothing in `check` runs
-before it. To see one construct on its own:
+Two suites run in-process: `test_parser.ml` (`parser-funcs`) checks the same syntax as AST
+structure, and `test_sema.ml` (`sema-funcs`) the same rules as exact diagnostics.
+
+### Three things worth knowing before you read a red report
+
+**`sema-definite-return.t` grades one hole with no compiler around it.** `--emit-returns` runs
+`block_returns` and prints its verdict, so the missing-return analysis is testable while every
+other sema hole still raises. `test_sema.ml`'s *definite return* group goes further and builds
+the statements as AST values in-process. That is the one hole you can finish first.
+
+**Every other sema file waits for the two-pass driver.** Nothing in `check` runs before it, so
+until it exists they all read `TODO` — not because your work is wrong but because it is never
+reached.
+
+**`sema-passes.t` fails later than you would expect, and the reason matters.** The driver prints
+through `bail_on_errors`, which runs *after* the whole program is checked. So a `failwith` in any
+later hole kills the process first and the diagnostics you did produce never reach stdout. A
+`FAIL` there means "something in this program is still unwritten", not "your two passes are
+wrong" — most of its cases declare a function, so pass 2 reaches `check_func`.
+
+### The oracle runs swiftc differently here
+
+`oracle.t` asks `swiftc -emit-sil -o /dev/null`, not `-typecheck`. Swift's missing-return check
+runs on SIL (§2), so `-typecheck` **accepts** four of the eighteen reject cases. Asking the wrong
+mode would have quietly agreed with a compiler that had not looked yet.
+
+To watch one construct on its own:
 
 ```bash
 printf 'func f(_ n: Int) -> Int {\n  if n > 0 { return 1 }\n}\n' > m.swift
@@ -520,10 +502,164 @@ Mirrors `solution/sema.ml` — the function machinery. Note the two passes at th
 `check_func` gives the body a fresh `environment`.
 
 ```ocaml
+(* Does a block definitely return on every path? — the "missing return" analysis. Pure
+functions
+   of the AST, so they live at module level and can be tested on their own. *)
+let rec stmt_returns = function
+  | Ast.Return _ -> true
+  | Ast.If { then_blk; else_blk = Some expression; _ } ->
+      block_returns then_blk && block_returns expression
+  | _ -> false
+
+and block_returns statements =
+  List.exists stmt_returns statements (* the rest is unreachable *)
+
+let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.program option =
+  (* a scope stack: innermost binding first, so List.assoc_opt finds the closest one *)
+  let environment : (string * (Types.ty * bool)) list ref = ref [] in
+  let loop_depth = ref 0 in
+  (* `current_return_type` — None means "not inside a function"; Some t means "inside
+  one, and it
+     returns t". `functions` — every signature, filled by pass 1 and read by pass 2,
+     which is
+     what lets a call resolve whether the callee is declared above it or below. *)
+  let current_return_type : Types.ty option ref = ref None in
+  let functions : (string, Types.ty list * Types.ty) Hashtbl.t = Hashtbl.create 16 in
+  let report_error span msg = Diagnostics.error diagnostics span msg in
+  let lookup x = List.assoc_opt x !environment in
+  let bind name v = environment := (name, v) :: !environment in
+  let in_scope (f : unit -> unit) =
+    let saved = !environment in
+    f ();
+    environment := saved
+  in
+  let resolve_silent name = Option.value (Types.of_name name) ~default:Types.TInt in
+  let resolve_ty span name =
+    match Types.of_name name with
+    | Some t -> t
+    | None ->
+        report_error span (Printf.sprintf "cannot find type '%s' in scope" name);
+        Types.TInt
+  in
+  let mk (e : Tast.expr_kind) (ty : Types.ty) (span : Token.span) : Tast.expr =
+    { Tast.e; ty; span } in
+
+  (* `%` is absent: Swift has no `%` on Double, so a tree containing one can never take
+  it *)
+  let rec is_int_literal = function
+    | Ast.Int_lit _ -> true
+    | Ast.Unary (Ast.Neg, expression, _) -> is_int_literal expression
+    | Ast.Binary ((Ast.Add | Ast.Sub | Ast.Mul | Ast.Div), a, b, _) ->
+        is_int_literal a && is_int_literal b
+    | _ -> false
+  in
+  let unify l tl r tr : Types.ty option =
+    if Types.equal tl tr then Some tl
+    (* the CHEAP test first: `is_int_literal` walks a whole subtree, and a Double-typed
+       operand can never be an integer literal — asking anyway makes an accepted program
+       like `1 + 1.5 + 1 + 1 + …` quadratic, since every level re-walks the spine below
+       it. Same reason an error path hands back an error type rather than a plausible
+       one: never re-ask a question whose answer is already settled. *)
+    else if tr = Types.TDouble && is_int_literal l then Some Types.TDouble
+    else if tl = Types.TDouble && is_int_literal r then Some Types.TDouble
+    else None
+  in
+  let rec infer (expression : Ast.expr) : Tast.expr =
+    match expression with
+    | Ast.Int_lit (n, span) -> mk (Tast.Int_lit n) Types.TInt span
+    | Ast.Double_lit (f, span) -> mk (Tast.Double_lit f) Types.TDouble span
+    | Ast.Bool_lit (b, span) -> mk (Tast.Bool_lit b) Types.TBool span
+    | Ast.String_lit (s, span) -> mk (Tast.String_lit s) Types.TString span
+    | Ast.Var (x, span) -> (
+        (* RESOLUTION: a name becomes a binding, or it is an error. Nothing downstream
+        re-asks. *)
+        match lookup x with
+        | Some (t, _) -> mk (Tast.Local x) t span
+        | None ->
+            report_error span (Printf.sprintf "cannot find '%s' in scope" x);
+            mk (Tast.Local x) Types.TInt span)
+    | Ast.Unary (Ast.Neg, e0, span) ->
+        let n = infer e0 in
+        if not (Types.is_numeric n.Tast.ty) then
+          report_error span
+            (Printf.sprintf
+               "unary operator '-' cannot be applied to an operand of type '%s'"
+               (Types.string_of_ty n.Tast.ty));
+        mk (Tast.Unary (Ast.Neg, n)) n.Tast.ty span
+    | Ast.Binary (op, l, r, span) -> infer_binary op l r span
+    | Ast.Call (f, args, span) -> infer_call f args span
+    (* `expression as T`: the type is written, so there is nothing to synthesise — CHECK the
+       operand against it. The one arm where `infer` calls `check_expr`. *)
+    | Ast.Ascribe (e0, tyname, span) -> (
+        match Types.of_name tyname with
+        | Some t -> mk (Tast.Coerce (check_expr e0 t)) t span
+        | None ->
+            report_error span (Printf.sprintf "cannot find type '%s' in scope" tyname);
+            let n = infer e0 in
+            mk (Tast.Coerce n) n.Tast.ty span)
+  and infer_binary op l r span : Tast.expr =
+    let ln = infer l and rn = infer r in
+    let tl = ln.Tast.ty and tr = rn.Tast.ty in
+    let bad () =
+      (* swiftc has two wordings and picks by whether the operands agree:
+           1 < "a"      -> cannot be applied to operands of type 'Int' and 'String'
+           true < false -> cannot be applied to two 'Bool' operands *)
+      report_error span
+        (if tl = tr then
+           Printf.sprintf "binary operator '%s' cannot be applied to two '%s' operands"
+             (Ast.string_of_binop op) (Types.string_of_ty tl)
+         else
+           Printf.sprintf
+             "binary operator '%s' cannot be applied to operands of type '%s' and '%s'"
+             (Ast.string_of_binop op) (Types.string_of_ty tl) (Types.string_of_ty tr));
+      Types.TInt
+    in
+    let unified = unify l tl r tr in
+    (* APPLY the solution: a side that flexed is re-checked AT the unified type, so its
+    literal
+       nodes come back carrying it. swiftc's CSApply, in miniature. *)
+    let ln, rn =
+      match unified with
+      | Some t ->
+          ( (if Types.equal tl t then ln else check_expr l t),
+            if Types.equal tr t then rn else check_expr r t )
+      | None -> (ln, rn)
+    in
+    let result =
+      match op with
+      | Ast.Add -> (
+          match unified with
+          | Some ((Types.TInt | Types.TDouble) as t) -> t
+          | Some Types.TString -> Types.TString
+          | _ -> bad ())
+      | Ast.Sub | Ast.Mul | Ast.Div -> (
+          match unified with Some ((Types.TInt | Types.TDouble) as t) -> t | _ -> bad ())
+      | Ast.Mod -> ( match unified with Some Types.TInt -> Types.TInt | _ -> bad ())
+      | Ast.Eq | Ast.Ne -> (
+          match unified with
+          | Some _ -> Types.TBool
+          | None ->
+              ignore (bad ());
+              Types.TBool)
+      | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge -> (
+          match unified with
+          | Some (Types.TInt | Types.TDouble | Types.TString) -> Types.TBool
+          | _ ->
+              ignore (bad ());
+              Types.TBool)
+      | Ast.And | Ast.Or ->
+          if tl = Types.TBool && tr = Types.TBool then Types.TBool
+          else (
+            ignore (bad ());
+            Types.TBool)
+    in
+    mk (Tast.Binary (op, ln, rn)) result span
   and infer_call f args span : Tast.expr =
     (* RESOLUTION. `Ast.Call (f, args)` is three different things depending on `f`; deciding
        which is this function's job, and the node records the answer. *)
-    let some_arg ns = match ns with n :: _ -> n | [] -> mk (Tast.Int_lit 0) Types.TInt span in
+    let some_arg ns =
+      match ns with n :: _ -> n | [] -> mk (Tast.Int_lit 0) Types.TInt span
+    in
     match Hashtbl.find_opt functions f with
     | Some (ptypes, ret) ->
         let np = List.length ptypes and na = List.length args in
@@ -545,9 +681,11 @@ Mirrors `solution/sema.ml` — the function machinery. Note the two passes at th
   and check_expr (expression : Ast.expr) (expected : Types.ty) : Tast.expr =
     match expression with
     | Ast.Int_lit (n, span) ->
-        (* the coercion, RECORDED: the node keeps its kind and takes the expected type, exactly
+        (* the coercion, RECORDED: the node keeps its kind and takes the expected type,
+        exactly
            as `swiftc -dump-ast` shows (`integer_literal_expr type="Double"`) *)
-        if expected = Types.TInt || expected = Types.TDouble then mk (Tast.Int_lit n) expected span
+        if expected = Types.TInt || expected = Types.TDouble then
+          mk (Tast.Int_lit n) expected span
         else (
           report_error span
             (Printf.sprintf "cannot convert value of type 'Int' to specified type '%s'"
@@ -557,7 +695,9 @@ Mirrors `solution/sema.ml` — the function machinery. Note the two passes at th
       when Types.is_numeric expected ->
         mk (Tast.Binary (op, check_expr l expected, check_expr r expected)) expected span
     | Ast.Binary (Ast.Mod, l, r, span) when expected = Types.TInt ->
-        mk (Tast.Binary (Ast.Mod, check_expr l Types.TInt, check_expr r Types.TInt)) Types.TInt span
+        mk
+          (Tast.Binary (Ast.Mod, check_expr l Types.TInt, check_expr r Types.TInt))
+          Types.TInt span
     | Ast.Unary (Ast.Neg, e0, span) when Types.is_numeric expected ->
         mk (Tast.Unary (Ast.Neg, check_expr e0 expected)) expected span
     | _ ->
@@ -578,7 +718,8 @@ Mirrors `solution/sema.ml` — the function machinery. Note the two passes at th
               match Types.of_name tyname with
               | Some t -> check_expr value t
               | None ->
-                  report_error span (Printf.sprintf "cannot find type '%s' in scope" tyname);
+                  report_error span
+                    (Printf.sprintf "cannot find type '%s' in scope" tyname);
                   infer value)
         in
         bind name (n.Tast.ty, is_var);
@@ -620,7 +761,8 @@ Mirrors `solution/sema.ml` — the function machinery. Note the two passes at th
         if !loop_depth = 0 then report_error span "'break' is only allowed inside a loop";
         Tast.Break span
     | Ast.Continue span ->
-        if !loop_depth = 0 then report_error span "'continue' is only allowed inside a loop";
+        if !loop_depth = 0 then
+          report_error span "'continue' is only allowed inside a loop";
         Tast.Continue span
     | Ast.Return (eo, span) -> (
         match !current_return_type with
@@ -635,7 +777,8 @@ Mirrors `solution/sema.ml` — the function machinery. Note the two passes at th
                   Tast.Return (None, span))
                 else Tast.Return (Some (check_expr expression rt), span)
             | None ->
-                if rt <> Types.TVoid then report_error span "non-void function should return a value";
+                if rt <> Types.TVoid then
+                  report_error span "non-void function should return a value";
                 Tast.Return (None, span)))
   and check_block (statements : Ast.stmt list) : Tast.stmt list =
     let out = ref [] in
@@ -644,7 +787,9 @@ Mirrors `solution/sema.ml` — the function machinery. Note the two passes at th
   in
   (* check one function body: a fresh scope with the parameters; then "missing return" *)
   let check_func (f : Ast.func_decl) : Tast.func_decl =
-    let ret = match f.Ast.ret with None -> Types.TVoid | Some n -> resolve_ty f.Ast.fspan n in
+    let ret =
+      match f.Ast.ret with None -> Types.TVoid | Some n -> resolve_ty f.Ast.fspan n
+    in
     let saved_env = !environment and saved_ret = !current_return_type in
     environment := [];
     current_return_type := Some ret;
@@ -673,12 +818,15 @@ Mirrors `solution/sema.ml` — the function machinery. Note the two passes at th
           if Hashtbl.mem functions f.Ast.fname then
             report_error f.Ast.fspan
               (Printf.sprintf "invalid redeclaration of '%s'" f.Ast.fname);
-          let ptypes = List.map (fun (pr : Ast.param) -> resolve_silent pr.Ast.ptype) f.Ast.params in
+          let ptypes =
+            List.map (fun (pr : Ast.param) -> resolve_silent pr.Ast.ptype) f.Ast.params
+          in
           let ret = match f.Ast.ret with None -> Types.TVoid | Some n -> resolve_silent n in
           Hashtbl.replace functions f.Ast.fname (ptypes, ret)
       | Ast.IStmt _ -> ())
     program.Ast.items;
-  (* PASS 2: check bodies and top-level statements, in order — producing the typed program. *)
+  (* PASS 2: check bodies and top-level statements, in order — producing the typed
+  program. *)
   let items =
     List.map
       (function

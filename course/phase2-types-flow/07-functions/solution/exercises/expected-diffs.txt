@@ -1,0 +1,17 @@
+# Tests whose goldens this concept's §6 exercises are expected to change, with the reason.
+# `make check-exercises` tolerates a failure in exactly these and nowhere else.
+#
+# An entry is only right when the test pins the behaviour the exercise exists to change.
+# Exercise 1 is the counter-example and the better pattern: it carries argument labels in
+# the AST without printing them, so `parser-params.t`, `parser-func.t` and the whole
+# `parser-funcs` suite stay green — the question those ask is whether a list PARSES, which
+# labels do not affect. Only exercise 3 is declared below.
+
+tests/sema-passes.t: exercise 3 adopts swiftc's spelling of a redeclaration — `'f()'` for a
+  parameterless function, plain `'g'` once it has parameters — and adds the note at the
+  first declaration. Two cases pin v0's `'f'` and the absence of a note, which is exactly
+  the divergence the exercise closes.
+
+sema-funcs: the `passes — redeclaration` case, for the same reason and the same two facts.
+  Declared rather than made neutral because the exact wording IS the exercise; a test that
+  accepted either spelling would no longer be checking anything.
