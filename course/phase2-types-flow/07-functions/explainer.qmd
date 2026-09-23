@@ -163,6 +163,14 @@ records, is exactly what `break` ignores. Swift makes the point harder with labe
 innermost enclosing loop will say so. `continue` is the interesting non-case; it returns to the
 header, so the loop still never exits and the verdict does not move.
 
+@fig-break draws the first of those two programs both ways, and the difference is the whole
+argument in one picture. In the tree, `break` is a **leaf**: its parent is the `if` it sits in,
+and nothing anywhere in the tree says which loop it exits or what runs after that loop ends. In
+the graph it is an **edge**, pointing at a block — and that block leaves the function with no
+value. The same fact, present in one structure and absent from the other.
+
+![`while true { if c { break }; return 1 }` as a tree and as a graph. `break` is a leaf in the first, so nothing records where control goes; it is an edge in the second, and the block it reaches falls out of the function without a value.](figs/break.png){#fig-break}
+
 To answer this on the AST you would track, for every statement, which enclosing loop each jump
 escapes to and whether that path reaches the end of the function — a reachability question about
 a graph you would be building as you went. The rest of the language keeps adding members to the

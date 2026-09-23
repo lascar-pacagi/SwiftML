@@ -4,6 +4,11 @@
     .venv/bin/python phase2-types-flow/07-functions/figs/make_figs.py
 
 Produces:
+    figs/break.png — the same function as an AST and as a CFG. In the tree, `break` is a
+    LEAF: nothing in it records where control goes next, so "does every path return"
+    cannot be answered without reconstructing that. In the graph it is an edge, and the
+    question collapses into asking whether the block after the loop is reachable.
+
     figs/twopass.png — why sema makes TWO passes, as a comparison matrix. The same two
     calls are asked under both walk orders, and the only thing that differs is what the
     signature table holds at the moment each one is asked. Showing only the working order
@@ -150,5 +155,115 @@ def make_twopass():
     print("wrote", out)
 
 
+def node(ax, x, y, label, face, edge, r=0.40, size=12, tcol=None):
+    ax.add_patch(plt.Circle((x, y), r, facecolor=face, edgecolor=edge, linewidth=1.4,
+                            zorder=4))
+    ax.text(x, y, label, ha="center", va="center", fontsize=size, fontweight="bold",
+            color=tcol or TEXT, zorder=5)
+
+
+def blk(ax, x, y, w, h, lines, face, edge):
+    ax.add_patch(FancyBboxPatch((x - w / 2, y - h / 2), w, h,
+                 boxstyle="round,pad=0.03,rounding_size=0.07", linewidth=1.5,
+                 edgecolor=edge, facecolor=face, zorder=4))
+    ly = y + (len(lines) - 1) * 0.17
+    for t in lines:
+        ax.text(x, ly, t, ha="center", va="center", fontsize=11.5, family="monospace",
+                color=TEXT, zorder=5)
+        ly -= 0.34
+
+
+def link(ax, p0, p1, colour=EDGE, rad=0.0, lw=1.5, style="-|>", dash=None, z=3):
+    kw = dict(arrowstyle=style, mutation_scale=14, linewidth=lw, color=colour, zorder=z,
+              connectionstyle=f"arc3,rad={rad}")
+    if dash:
+        kw["linestyle"] = dash
+    ax.add_patch(FancyArrowPatch(p0, p1, **kw))
+
+
+def make_break():
+    fig, ax = plt.subplots(figsize=(15.2, 8.0))
+    ax.set_xlim(0, 15.2)
+    ax.set_ylim(0, 8.4)
+    ax.axis("off")
+
+    ax.text(7.6, 7.92, "func f(_ c: Bool) -> Int { while true { if c { break }; return 1 } }",
+            ha="center", va="center", fontsize=15, family="monospace", color=TEXT)
+    ax.text(7.6, 7.52, "swiftc rejects it: missing return. Where does the `break` go?",
+            ha="center", va="center", fontsize=13, color=DIM, style="italic")
+
+    # ------------------------------- the AST ------------------------------------------
+    ax.text(3.6, 6.85, "as an AST \u2014 a tree", ha="center", va="center", fontsize=15,
+            fontweight="bold", color=TEXT)
+
+    W, IF, BR, RET, CND, VC = (3.6, 6.05), (2.5, 4.75), (2.5, 3.35), (4.9, 4.75), \
+                              (5.2, 6.05), (1.3, 4.75)
+    for p0, p1 in [(W, CND), (W, IF), (W, RET), (IF, VC), (IF, BR)]:
+        link(ax, p0, p1, EDGE, style="-", lw=1.4, z=2)
+    node(ax, *W, "while", COND := "#fff3d6", EDGE, r=0.46)
+    node(ax, *CND, "true", CHK, EDGE, r=0.40, size=11)
+    node(ax, *IF, "if", COND, EDGE, r=0.38)
+    node(ax, *VC, "c", CHK, EDGE, r=0.34, size=11)
+    node(ax, *RET, "return", CHK, EDGE, r=0.50, size=11)
+    node(ax, *BR, "break", BADBG, BAD, r=0.46, size=11, tcol=BAD)
+
+    # the question the tree cannot answer
+    link(ax, (2.5, 2.89), (2.5, 2.20), BAD, lw=1.6, dash=(0, (4, 3)))
+    ax.text(2.5, 1.92, "goes WHERE?", ha="center", va="center", fontsize=12.5,
+            color=BAD, fontweight="bold")
+    ax.text(3.6, 1.48, "`break` is a LEAF. Its parent is the `if` it sits in,\n"
+            "and nothing in the tree records the loop it exits\n"
+            "or what runs after that loop ends.",
+            ha="center", va="center", fontsize=12.5, color=TEXT)
+    ax.text(3.6, 0.52, "\u2717  the tree cannot answer it", ha="center", va="center",
+            fontsize=13.5, fontweight="bold", color=BAD, family="monospace")
+
+    ax.plot([7.55, 7.55], [0.25, 7.15], color="#d3dce4", linewidth=1.3,
+            linestyle=(0, (6, 5)))
+
+    # ------------------------------- the CFG ------------------------------------------
+    ax.text(11.5, 6.85, "as a CFG \u2014 a graph", ha="center", va="center", fontsize=15,
+            fontweight="bold", color=TEXT)
+
+    hdr, tst, ret, aft = (10.4, 6.05), (10.4, 4.75), (10.4, 3.35), (13.5, 4.75)
+    blk(ax, *hdr, 2.5, 0.62, ["header"], CHK, EDGE)
+    blk(ax, *tst, 2.5, 0.62, ["if c"], CHK, EDGE)
+    blk(ax, *ret, 2.5, 0.62, ["return 1"], CHK, EDGE)
+    blk(ax, *aft, 3.0, 0.86, ["after the loop:", "no return, no value"], BADBG, BAD)
+
+    link(ax, (hdr[0], hdr[1] - 0.33), (tst[0], tst[1] + 0.33))
+    ax.text(10.62, 5.42, "true: always", ha="left", va="center", fontsize=11,
+            color=DIM, style="italic")
+    link(ax, (tst[0], tst[1] - 0.33), (ret[0], ret[1] + 0.33))
+    ax.text(10.62, 4.08, "false", ha="left", va="center", fontsize=11, color=DIM,
+            style="italic")
+    link(ax, (tst[0] + 1.28, tst[1]), (aft[0] - 1.47, aft[1]), BAD, lw=1.9)
+    ax.text(12.35, 5.02, "break", ha="center", va="center", fontsize=12,
+            color=BAD, fontweight="bold")
+    # NO back edge: the body cannot fall through to the header, because its other path
+    # returns. This loop runs at most one iteration, which the graph shows and the tree
+    # does not.
+    link(ax, (ret[0] - 1.28, ret[1]), (8.75, ret[1]), EDGE, lw=1.4)
+    ax.text(8.62, 4.42, "returns", ha="center", va="center", fontsize=11, color=DIM,
+            style="italic")
+
+    ax.text(11.5, 1.48, "`break` is an EDGE, and \u201cafter the loop\u201d is a block it can\n"
+            "reach. A path leaves the function without a value \u2014 which is\n"
+            "the whole diagnosis, read straight off the graph.",
+            ha="center", va="center", fontsize=12.5, color=TEXT)
+    ax.text(11.5, 0.52, "\u2713  is the exit reachable? one query", ha="center", va="center",
+            fontsize=13.5, fontweight="bold", color=GOOD, family="monospace")
+
+    ax.set_title("The same function, two data structures \u2014 and only one of them "
+                 "records where a jump goes",
+                 fontsize=16, color=TEXT, pad=14)
+    fig.tight_layout()
+    out = os.path.join(HERE, "break.png")
+    fig.savefig(out, dpi=165, bbox_inches="tight")
+    plt.close(fig)
+    print("wrote", out)
+
+
 if __name__ == "__main__":
     make_twopass()
+    make_break()
