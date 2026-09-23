@@ -144,14 +144,29 @@ the SIL control-flow graph — concept 09 shows where it would go. Today the rul
 over the AST; on a real CFG it is a dataflow pass over basic blocks, and the two are the same
 question asked of two different data structures.
 
-Which is the honest reason your version is the weaker one, and it is not that the AST hides
-anything. `while true` wears its condition on its face — a `Bool_lit` node, one match arm away —
-and you could special-case it in an afternoon. The trouble is where that ends. swiftc also
-accepts `while 1 < 2`, `while !false`, and `while c` after `let c = true`, because by the time
-the check runs a constant-propagation pass has already turned every one of them into the same
-thing. Matching them on the AST means writing that pass yourself, in the checker, one shape at a
-time. Phase 4 builds it properly — concept 17 is exactly this — and it runs on the CFG for the
-same reason this check does.
+It is worth being exact about why the CFG version is stronger, because the obvious answers are
+not it. The AST hides nothing — `while true` wears its condition on its face, a `Bool_lit` node
+one match arm away. Nor is it that constant folding needs a CFG: you could fold over the AST too,
+and Phase 4's constant folder would work on either.
+
+The difference is `break`. Compare these two, both `while true`:
+
+```swift
+while true { if c { break }; return 1 }   // rejected: the break reaches the end
+while true { while c { break }; return 1 }  // accepted: that break leaves the INNER loop
+```
+
+Same syntax at the outer loop, opposite answers, and what decides is where a jump written
+somewhere else lands. That is not a property of the tree's shape — nesting is exactly what
+`break` ignores. To get it right on the AST you would have to track, for every statement, which
+enclosing loop each jump escapes to and whether that path reaches the end of the function —
+which is a reachability question about a graph you would be building as you went.
+
+On SIL that graph already exists. `break` is an edge like any other, `while true` simply has no
+edge to the exit, and "does every path return" collapses into asking whether the exit block is
+reachable. One query, no cases. Our AST rule handles the structured shapes and stops there, which
+is why the corpus keeps its loop conditions non-constant — the two agree everywhere except
+exactly where a jump makes the tree lie about the flow.
 
 ### A note on argument labels (a Swift feature we simplify)
 
