@@ -149,18 +149,25 @@ anything — `while true` wears its condition on its face, a `Bool_lit` node one
 And not because constant folding needs a CFG: you could fold over the AST too, and Phase 4's
 constant folder would work on either.
 
-The difference is `break`. Compare these two, both `while true`:
+The difference is jumps that leave the structure they are written in. In this subset there is
+one, `break`, and two programs identical at the outer loop get opposite verdicts from swiftc:
 
 ```swift
-while true { if c { break }; return 1 }   // rejected: the break reaches the end
-while true { while c { break }; return 1 }  // accepted: that break leaves the INNER loop
+while true { if c { break }; return 1 }      // rejected: that break reaches the end
+while true { while c { break }; return 1 }   // accepted: it leaves the INNER loop
 ```
 
-Same syntax at the outer loop, opposite answers, and what decides is where a jump written
-somewhere else lands. That is not a property of the tree's shape — nesting is exactly what
-`break` ignores. To get it right on the AST you would have to track, for every statement, which
-enclosing loop each jump escapes to and whether that path reaches the end of the function —
-which is a reachability question about a graph you would be building as you went.
+What decides is where a jump written somewhere else lands — and nesting, which is all the tree
+records, is exactly what `break` ignores. Swift makes the point harder with labelled breaks:
+`outer: while true { while true { break outer } }` is rejected, and no rule that looks at the
+innermost enclosing loop will say so. `continue` is the interesting non-case; it returns to the
+header, so the loop still never exits and the verdict does not move.
+
+To answer this on the AST you would track, for every statement, which enclosing loop each jump
+escapes to and whether that path reaches the end of the function — a reachability question about
+a graph you would be building as you went. The rest of the language keeps adding members to the
+family: `throw` in concept 30 leaves a function from anywhere, and `defer` runs on the way out of
+paths nobody wrote.
 
 On SIL that graph already exists. `break` is an edge like any other, `while true` simply has no
 edge to the exit, and "does every path return" collapses into asking whether the exit block is
