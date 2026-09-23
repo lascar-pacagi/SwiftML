@@ -117,8 +117,9 @@ of a func". The return type is the contextual type that flows *into* every `retu
 
 ### "Missing return": your first real flow analysis
 
-A non-`Void` function must return a value **on every path**. `func f() -> Int { print(1)
-print(2) }` is rejected — "missing return in global function expected to return 'Int'". Deciding
+A non-`Void` function must return a value **on every path**. So
+`func f() -> Int { print(1); print(2) }` is rejected — "missing return in global function
+expected to return 'Int'". Deciding
 this is a tiny **flow-sensitive analysis**: a `return` definitely returns; an `if`/`else`
 definitely returns iff **both** branches do (no `else` ⇒ no); a `while`/`for` never counts — the
 loop might run zero times; and a block definitely returns if **any** of its statements does,
@@ -127,8 +128,10 @@ swiftc accepts it with a "will never be executed" warning).
 
 Where swiftc does this is worth knowing, because it decides how you test it. The check is not in
 the type checker at all: it runs on SIL, in the mandatory diagnostic passes
-(`lib/SILOptimizer/Mandatory/DataflowDiagnostics.cpp`, `diag::missing_return_decl`), where
-"every path" is literal — a walk of the function's basic blocks. So `swiftc -typecheck`
+(`lib/SILOptimizer/Mandatory/DataflowDiagnostics.cpp`, `diag::missing_return_decl`). By then the
+function is a control-flow graph, so "every path" is not a figure of speech: the pass walks the
+basic blocks and asks whether any of them can reach the end of the function without returning.
+Ours is the same question asked of the AST instead. So `swiftc -typecheck`
 **accepts** a `-> Int` function that never returns, and the oracle in §4 runs swiftc as
 `-emit-sil` to get a verdict that includes this rule. Two consequences of it living on the CFG:
 swiftc knows `while true { return 1 }` and `if true { return 1 }` always return (the constant
@@ -301,7 +304,7 @@ that, so the limit stays known rather than being rediscovered later.
 
 | program | our message | swiftc |
 |---|---|---|
-| `func f() -> Int { print(1)` `print(2) }` | `missing return in global function expected to return 'Int'` | **same** — `DiagnosticsSIL.def:320` `missing_return_decl`, `%kindonly1` = *global function* here (a method would say *instance method*) |
+| `func f() -> Int { print(1); print(2) }` | `missing return in global function expected to return 'Int'` | **same** — `DiagnosticsSIL.def:320` `missing_return_decl`, `%kindonly1` = *global function* here (a method would say *instance method*) |
 | `return 1` at top level | `return invalid outside of a func` | **same** — `:5301` `return_invalid_outside_func` (no quotes around `return`) |
 | `func f() { return 1 }` | `unexpected non-void return value in void function` | **same** — `:804` `cannot_return_value_from_void_func`; swiftc points at the `1`, we point at `return` |
 | `func f() -> Int { return }` | `non-void function should return a value` | **same** — `:5304` `return_expr_missing` |
