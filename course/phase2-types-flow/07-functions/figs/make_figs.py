@@ -43,45 +43,45 @@ def marker(ax, x, y, text, colour, r=0.26):
 
 
 def make_twopass():
-    fig, ax = plt.subplots(figsize=(15.0, 9.1))
+    fig, ax = plt.subplots(figsize=(15.0, 9.4))
     ax.set_xlim(0, 15.0)
-    ax.set_ylim(-0.35, 9.0)
+    ax.set_ylim(-0.55, 9.15)
     ax.axis("off")
 
     # =========================== the program, across the top ======================
-    panel(ax, 0.3, 6.05, 14.4, 2.35, SRC, EDGE)
-    src = ["print(fib(10))", "func fib(_ n: Int) -> Int {", "  if n < 2 { return n }",
-           "  return fib(n-1) + fib(n-2)", "}"]
-    y = 7.96
+    panel(ax, 0.3, 5.92, 14.4, 2.92, SRC, EDGE)
+    src = ["print(g())", "func g() -> Int { return 1 }", "func fib(_ n: Int) -> Int {",
+           "  if n < 2 { return n }", "  return fib(n-1) + fib(n-2)", "}"]
+    y = 8.46
     for i, ln in enumerate(src):
         ax.text(0.75, y, ln, ha="left", va="center", fontsize=15, family="monospace",
                 color=TEXT, zorder=4)
         if i == 0:
-            marker(ax, 5.35, y, "1", HL)
-            ax.text(5.80, y, "a forward reference \u2014 the call is above the func",
+            marker(ax, 5.90, y, "1", HL)
+            ax.text(6.35, y, "a forward reference \u2014 g is declared BELOW",
                     ha="left", va="center", fontsize=14, color=HL, zorder=4)
-        if i == 3:
-            marker(ax, 5.35, y, "2", HL)
-            ax.text(5.80, y, "recursion \u2014 fib calls itself, inside its own body",
+        if i == 4:
+            marker(ax, 5.90, y, "2", HL)
+            ax.text(6.35, y, "recursion \u2014 fib calls ITSELF, inside its own body",
                     ha="left", va="center", fontsize=14, color=HL, zorder=4)
         y -= 0.45
 
     # the thesis, in the panel's own empty right-hand column
-    ax.text(5.80, 7.40, "Both calls are fine. What decides whether they",
+    ax.text(6.35, 7.66, "Both calls are fine. What decides whether they",
             ha="left", va="center", fontsize=14.5, color=TEXT, zorder=4)
-    ax.text(5.80, 7.07, "resolve is what the table holds when each is ASKED.",
+    ax.text(6.35, 7.33, "resolve is what the table holds when each is ASKED.",
             ha="left", va="center", fontsize=14.5, color=TEXT, zorder=4)
 
     # =========================== the matrix =======================================
     COL1, COL2 = 6.55, 11.05        # centres of the two question columns
-    ROWA, ROWB = 3.70, 1.16         # centres of the two regime rows
-    CW, RH = 4.10, 2.05
+    ROWA, ROWB = 3.60, 1.06         # centres of the two regime rows
+    CW, RH = 4.10, 2.25
 
     # column headings
     for cx, badge, label in [(COL1, "1", "the forward reference"),
                              (COL2, "2", "the recursive call")]:
-        marker(ax, cx - 1.55, 5.14, badge, HL)
-        ax.text(cx - 1.18, 5.14, label, ha="left", va="center", fontsize=14.5,
+        marker(ax, cx - 1.55, 5.08, badge, HL)
+        ax.text(cx - 1.18, 5.08, label, ha="left", va="center", fontsize=14.5,
                 fontweight="bold", color=TEXT, zorder=4)
 
     # row headings
@@ -106,20 +106,27 @@ def make_twopass():
     # the four cells
     def cell(cx, cy, face, edge, table, verdict_text, verdict_colour, ok):
         panel(ax, cx - CW / 2, cy - RH / 2, CW, RH, face, edge, lw=1.3)
-        ax.text(cx, cy + 0.62, "the table holds", ha="center", va="center",
+        ax.text(cx, cy + 0.70, "the table holds", ha="center", va="center",
                 fontsize=12.5, color=DIM, style="italic", zorder=4)
-        ax.text(cx, cy + 0.19, table, ha="center", va="center", fontsize=14.5,
-                family="monospace", color=TEXT, zorder=4)
-        ax.plot([cx - CW / 2 + 0.35, cx + CW / 2 - 0.35], [cy - 0.22, cy - 0.22],
+        ty = cy + 0.30 if len(table) > 1 else cy + 0.16
+        for line, colour in table:
+            ax.text(cx, ty, line, ha="center", va="center", fontsize=13.5,
+                    family="monospace", color=colour, zorder=4)
+            ty -= 0.36
+        ax.plot([cx - CW / 2 + 0.35, cx + CW / 2 - 0.35], [cy - 0.34, cy - 0.34],
                 color=edge, linewidth=1, alpha=0.45, zorder=3)
-        ax.text(cx, cy - 0.62, ("\u2713  " if ok else "\u2717  ") + verdict_text,
+        ax.text(cx, cy - 0.72, ("\u2713  " if ok else "\u2717  ") + verdict_text,
                 ha="center", va="center", fontsize=14.5, fontweight="bold",
                 color=verdict_colour, zorder=4, family="monospace")
 
-    cell(COL1, ROWA, BADBG, BAD, "(nothing yet)", "cannot find 'fib'", BAD, False)
-    cell(COL2, ROWA, BADBG, BAD, "(still nothing)", "cannot find 'fib'", BAD, False)
-    cell(COL1, ROWB, "#f2f8f3", GOOD, "fib : (Int) -> Int", "resolved", GOOD, True)
-    cell(COL2, ROWB, "#f2f8f3", GOOD, "fib : (Int) -> Int", "resolved", GOOD, True)
+    # at (2) under one pass the table is NOT empty — it holds g, read on the way past.
+    # It just does not hold the one thing being asked for, which is the sharper failure.
+    cell(COL1, ROWA, BADBG, BAD, [("(nothing yet)", DIM)], "cannot find 'g'", BAD, False)
+    cell(COL2, ROWA, BADBG, BAD, [("g : () -> Int", TEXT), ("...but not fib", DIM)],
+         "cannot find 'fib'", BAD, False)
+    both = [("g   : () -> Int", TEXT), ("fib : (Int) -> Int", TEXT)]
+    cell(COL1, ROWB, "#f2f8f3", GOOD, both, "resolved", GOOD, True)
+    cell(COL2, ROWB, "#f2f8f3", GOOD, both, "resolved", GOOD, True)
 
     # the divider between the two regimes: the figure is a BEFORE and an AFTER, and the
     # rule is what says so — without it the four cells read as one four-part list
@@ -130,7 +137,7 @@ def make_twopass():
             fontsize=12, color=DIM, style="italic", zorder=4)
 
     # the one entry answers both — drawn as a brace under the green row
-    ax.text(8.8, -0.20, "the SAME entry, written by pass 1 before either call was asked",
+    ax.text(8.8, -0.38, "the whole table, written by pass 1 before either call was asked",
             ha="center", va="center", fontsize=13.5, color=GOOD, style="italic", zorder=4)
 
     ax.set_title("Two passes: the same two calls, and the only thing that differs is "

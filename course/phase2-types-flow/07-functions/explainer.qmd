@@ -77,12 +77,13 @@ If you checked top-level items strictly top-to-bottom, two everyday things would
 The fix is to split checking into **two passes** (this is exactly how real compilers bind names —
 `swift/lib/Sema/TypeCheckDecl.cpp` does a declaration pass before a body pass):
 
-@fig-twopass runs one program both ways. Read the red half first: nothing in it is a mistake
-the programmer made. `fib(10)` is a perfectly good call and so is `fib(n-1)` — what defeats
-them is that a walk building the table as it goes is never ahead of itself, so both arrive
-before the entry that answers them exists.
+@fig-twopass asks both of those calls under both walk orders. Read the red row first: nothing
+in it is a mistake the programmer made. `g()` is a perfectly good call and so is `fib(n-1)` —
+what defeats them is that a walk building the table as it goes is never ahead of itself. Note
+the second cell especially: the table is not empty there, it holds `g` already. It just does
+not hold the one name being asked for.
 
-![The same program checked top to bottom, where both calls fail, and checked in two passes, where the same two calls are answered by a table that was already finished when they were asked.](figs/twopass.png){#fig-twopass}
+![The same two calls asked under both walk orders. The only thing that differs between the rows is what the signature table holds at the moment each call is made.](figs/twopass.png){#fig-twopass}
 
 1. **Pass 1 — collect signatures.** Walk every `func` declaration and record its signature (param
    types, return type) in a table. Nothing in a *body* is checked yet, so order doesn't matter.
