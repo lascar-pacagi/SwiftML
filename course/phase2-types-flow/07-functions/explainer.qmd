@@ -383,11 +383,8 @@ Three skeletons; concepts 01–06 are filled in.
    return types are **types**, not the written names: resolve each once, here.
 
    **Start with the definite-return analysis.** It is a pure function of the AST — no
-   environment, no diagnostics, nothing else in the file — so it sits at module level and two
-   tests reach it without going through `check`. `sema-definite-return.t` asks `--emit-returns`
-   about each function in a program, and `test_sema.ml`'s *definite return* group calls
-   `Sema.block_returns` on statements it builds by hand, with no parser at all. Both go green
-   on that one hole while every other TODO in the file still raises.
+   environment, no diagnostics, nothing else in the file — so it sits at module level, and
+   two tests reach it without going through `check` at all.
 
    The other four run inside `check`, so they have an order:
 
