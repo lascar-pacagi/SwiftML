@@ -37,11 +37,20 @@ arguments against it (count + types), yielding the return type; inside the **bod
 statements with the parameters bound and the return type known.
 
 Both jobs end with something being **written into the tree**, and this concept is where that starts
-to carry real weight. `Ast.Call (f, args)` is three different things depending on `f` — `print`, a
-function declared somewhere in this file, or a name that means nothing — and *only the checker can
-tell which*. It records the answer as a different node: `Tast.Print` or `Tast.Fn_call`. And a
-`Tast.func_decl` carries **resolved** parameter and return types, so the written type names
-(`"Int"`, the string) stop at this file and never travel further.
+to carry real weight. The parser cannot tell what a call *is*. It sees `f(1)` and builds
+`Ast.Call ("f", …)` whatever `f` turns out to be, because deciding needs a table the parser does
+not have. By the time sema is done there are three possible answers, and it writes down which one
+it found:
+
+| `f` is | the parser built | sema writes |
+|---|---|---|
+| `print` | `Ast.Call ("print", …)` | `Tast.Print` |
+| a function declared anywhere in this file | `Ast.Call ("g", …)` | `Tast.Fn_call` |
+| nothing at all | `Ast.Call ("nope", …)` | *cannot find 'nope' in scope* |
+
+Nothing downstream asks the question again. And a `Tast.func_decl` carries **resolved** parameter
+and return types, so the written type names (`"Int"`, the string) stop at this file and never
+travel further.
 
 The sharpest way to see it is two programs that differ in one word:
 
