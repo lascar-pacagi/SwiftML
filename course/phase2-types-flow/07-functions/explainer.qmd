@@ -386,13 +386,15 @@ Three skeletons; concepts 01–06 are filled in.
    environment, no diagnostics, nothing else in the file — so it sits at module level, and
    two tests reach it without going through `check` at all.
 
-   The other four run inside `check`, so they have an order:
+   The other four run inside `check`, and two of them gate the rest:
 
-   1. **the two passes** — `check`'s entry point, so nothing is checked until they exist;
-   2. **`check_func`** — which calls `block_returns`, so write that first or every function
-      with a `-> T` crashes here;
-   3. **`return`**;
-   4. **the call**.
+   1. **the two passes** are `check`'s entry point, so nothing is checked until they exist;
+   2. **`check_func`** is what reaches into a function body, so `return` and the call are
+      unreachable until it does.
+
+   **`return` and the call are independent** — write them in either order. With the call
+   still a hole, a program that makes none type-checks normally; with `return` still a hole,
+   a program that returns from nothing still gets its calls checked, arity errors and all.
 
    §4 says which file each one turns green.
 
