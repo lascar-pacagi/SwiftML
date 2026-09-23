@@ -144,10 +144,10 @@ the SIL control-flow graph — concept 09 shows where it would go. Today the rul
 over the AST; on a real CFG it is a dataflow pass over basic blocks, and the two are the same
 question asked of two different data structures.
 
-It is worth being exact about why the CFG version is stronger, because the obvious answers are
-not it. The AST hides nothing — `while true` wears its condition on its face, a `Bool_lit` node
-one match arm away. Nor is it that constant folding needs a CFG: you could fold over the AST too,
-and Phase 4's constant folder would work on either.
+It is worth being exact about why the CFG version is stronger. Not because the AST hides
+anything — `while true` wears its condition on its face, a `Bool_lit` node one match arm away.
+And not because constant folding needs a CFG: you could fold over the AST too, and Phase 4's
+constant folder would work on either.
 
 The difference is `break`. Compare these two, both `while true`:
 
