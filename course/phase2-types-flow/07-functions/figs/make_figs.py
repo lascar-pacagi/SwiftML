@@ -4,11 +4,11 @@
     .venv/bin/python phase2-types-flow/07-functions/figs/make_figs.py
 
 Produces:
-    figs/twopass.png — why sema makes TWO passes, shown as the COUNTERFACTUAL: the same
-    program checked top-to-bottom, where both the forward reference and the recursive
-    call fail, and then checked in two passes, where the same two calls are answered by
-    a table that was already complete when they were asked. Showing only the working
-    order makes two passes look like a choice; showing the failing one makes it the fix.
+    figs/twopass.png — why sema makes TWO passes, as a comparison matrix. The same two
+    calls are asked under both walk orders, and the only thing that differs is what the
+    signature table holds at the moment each one is asked. Showing only the working order
+    makes two passes look like a choice somebody made; asking the same questions of both
+    makes it the fix, and puts the reason — the table — in the one column they share.
 """
 import os
 import matplotlib
@@ -30,139 +30,104 @@ BADBG = "#fdf4f3"
 GOOD = "#2f6f4f"
 
 
-def box(ax, cx, cy, w, h, title, color):
-    """A titled panel. Returns the y of the first body line."""
-    ax.add_patch(FancyBboxPatch((cx - w / 2, cy - h / 2), w, h,
-                 boxstyle="round,pad=0.03,rounding_size=0.07", linewidth=1.3,
-                 edgecolor=EDGE, facecolor=color, zorder=1))
-    ax.text(cx, cy + h / 2 - 0.34, title, ha="center", va="center",
-            fontsize=14.5, fontweight="bold", color=TEXT, zorder=4)
-    return cy + h / 2 - 0.86
+def panel(ax, x, y, w, h, face, edge, lw=1.4, z=0):
+    ax.add_patch(FancyBboxPatch((x, y), w, h,
+                 boxstyle="round,pad=0.04,rounding_size=0.10", linewidth=lw,
+                 edgecolor=edge, facecolor=face, zorder=z))
 
 
-def code(ax, x, y, lines, size=12.5, color=TEXT, weight="normal"):
-    """Left-aligned monospace lines; returns the y of each line drawn."""
-    ys = []
-    for i, ln in enumerate(lines):
-        yy = y - i * 0.43
-        ax.text(x, yy, ln, ha="left", va="center", fontsize=size,
-                family="monospace", color=color, zorder=4, fontweight=weight)
-        ys.append(yy)
-    return ys
-
-
-def stage_arrow(ax, x0, x1, y, label):
-    ax.add_patch(FancyArrowPatch((x0, y), (x1, y), arrowstyle="-|>", mutation_scale=15,
-                 linewidth=1.6, color=EDGE, zorder=5))
-    ax.text((x0 + x1) / 2, y + 0.22, label, ha="center", va="bottom",
-            fontsize=12, style="italic", color=DIM, zorder=5)
-
-
-def marker(ax, x, y, text, colour, r=0.22):
-    ax.add_patch(plt.Circle((x, y), r, facecolor=colour, edgecolor="none", zorder=5))
-    ax.text(x, y, text, ha="center", va="center", fontsize=11.5, fontweight="bold",
-            color="white", zorder=6)
-
-
-def verdict(ax, x, y, ok, text, colour, size=12.5):
-    ax.text(x, y, ("\u2713 " if ok else "\u2717 ") + text, ha="left", va="center",
-            fontsize=size, color=colour, fontweight="bold", zorder=4, family="monospace")
+def marker(ax, x, y, text, colour, r=0.26):
+    ax.add_patch(plt.Circle((x, y), r, facecolor=colour, edgecolor="none", zorder=6))
+    ax.text(x, y, text, ha="center", va="center", fontsize=13, fontweight="bold",
+            color="white", zorder=7)
 
 
 def make_twopass():
-    fig, ax = plt.subplots(figsize=(15.8, 8.6))
-    ax.set_xlim(0, 16.3)
-    ax.set_ylim(0, 8.8)
+    fig, ax = plt.subplots(figsize=(15.0, 8.6))
+    ax.set_xlim(0, 15.0)
+    ax.set_ylim(-0.25, 9.0)
     ax.axis("off")
 
-    # ---- the program, once, on the left -------------------------------------------
-    box(ax, 2.62, 5.05, 4.9, 5.5, "one program", SRC)
-    lines = ["print(fib(10))", "", "func fib(_ n: Int) -> Int {", "  if n < 2 { return n }",
-             "  return fib(n-1) + fib(n-2)", "}"]
-    ys = code(ax, 0.42, 6.95, lines, size=12.5)
-    marker(ax, 4.72, ys[0], "1", HL)
-    marker(ax, 4.72, ys[4], "2", HL)
+    # =========================== the program, across the top ======================
+    panel(ax, 0.3, 6.05, 14.4, 2.35, SRC, EDGE)
+    src = ["print(fib(10))", "func fib(_ n: Int) -> Int {", "  if n < 2 { return n }",
+           "  return fib(n-1) + fib(n-2)", "}"]
+    y = 7.96
+    for i, ln in enumerate(src):
+        ax.text(0.75, y, ln, ha="left", va="center", fontsize=15, family="monospace",
+                color=TEXT, zorder=4)
+        if i == 0:
+            marker(ax, 5.35, y, "1", HL)
+            ax.text(5.80, y, "a forward reference \u2014 the call is above the func",
+                    ha="left", va="center", fontsize=14, color=HL, zorder=4)
+        if i == 3:
+            marker(ax, 5.35, y, "2", HL)
+            ax.text(5.80, y, "recursion \u2014 fib calls itself, inside its own body",
+                    ha="left", va="center", fontsize=14, color=HL, zorder=4)
+        y -= 0.45
 
-    ax.plot([0.50, 4.80], [4.58, 4.58], color="#d3dce4", linewidth=1.1, zorder=2)
-    marker(ax, 0.76, 4.18, "1", HL, r=0.20)
-    ax.text(1.10, 4.18, "a forward reference \u2014 the call", ha="left", va="center",
-            fontsize=12, color=HL, zorder=4)
-    ax.text(1.10, 3.86, "is written above the func", ha="left", va="center",
-            fontsize=12, color=HL, zorder=4)
-    marker(ax, 0.76, 3.38, "2", HL, r=0.20)
-    ax.text(1.10, 3.38, "recursion \u2014 fib calls itself,", ha="left", va="center",
-            fontsize=12, color=HL, zorder=4)
-    ax.text(1.10, 3.06, "inside its own body", ha="left", va="center",
-            fontsize=12, color=HL, zorder=4)
+    # the thesis, in the panel's own empty right-hand column
+    ax.text(5.80, 7.40, "Both calls are fine. What decides whether they",
+            ha="left", va="center", fontsize=14.5, color=TEXT, zorder=4)
+    ax.text(5.80, 7.07, "resolve is what the table holds when each is ASKED.",
+            ha="left", va="center", fontsize=14.5, color=TEXT, zorder=4)
 
-    # ---- ROW 1: one pass, top to bottom — both fail --------------------------------
-    ax.add_patch(FancyBboxPatch((5.35, 4.72), 10.45, 3.18,
-                 boxstyle="round,pad=0.04,rounding_size=0.09", linewidth=1.4,
-                 edgecolor=BAD, facecolor=BADBG, zorder=0))
-    ax.text(5.72, 7.50, "checked top to bottom, one pass", ha="left", va="center",
-            fontsize=14.5, fontweight="bold", color=BAD, zorder=4)
-    ax.text(5.72, 7.08, "the table is built as the walk goes, so it is never ahead of it",
-            ha="left", va="center", fontsize=12, color=BAD, style="italic", zorder=4)
+    # =========================== the matrix =======================================
+    COL1, COL2 = 6.55, 11.05        # centres of the two question columns
+    ROWA, ROWB = 3.92, 1.44         # centres of the two regime rows
+    CW, RH = 4.10, 2.05
 
-    ax.text(5.95, 6.52, "at", ha="left", va="center", fontsize=12.5, color=TEXT, zorder=4)
-    marker(ax, 6.36, 6.52, "1", HL, r=0.20)
-    ax.text(6.66, 6.52, "the table holds:", ha="left", va="center", fontsize=12.5,
-            color=TEXT, zorder=4)
-    ax.text(6.25, 6.08, "(nothing yet)", ha="left", va="center", fontsize=12.5,
-            family="monospace", color=DIM, zorder=4)
-    verdict(ax, 5.95, 5.52, False, "cannot find 'fib' in scope", BAD)
+    # column headings
+    for cx, badge, label in [(COL1, "1", "the forward reference"),
+                             (COL2, "2", "the recursive call")]:
+        marker(ax, cx - 1.55, 5.42, badge, HL)
+        ax.text(cx - 1.18, 5.42, label, ha="left", va="center", fontsize=14.5,
+                fontweight="bold", color=TEXT, zorder=4)
 
-    ax.plot([10.75, 10.75], [5.12, 6.84], color="#e6cdca", linewidth=1.2, zorder=1)
+    # row headings
+    ax.text(3.95, ROWA + 0.38, "one pass", ha="right", va="center", fontsize=16,
+            fontweight="bold", color=BAD, zorder=4)
+    ax.text(3.95, ROWA - 0.05, "top to bottom", ha="right", va="center", fontsize=13,
+            color=BAD, style="italic", zorder=4)
+    ax.text(3.95, ROWA - 0.52, "the table is built as", ha="right", va="center",
+            fontsize=12.5, color=DIM, zorder=4)
+    ax.text(3.95, ROWA - 0.86, "the walk goes", ha="right", va="center",
+            fontsize=12.5, color=DIM, zorder=4)
 
-    ax.text(11.00, 6.52, "at", ha="left", va="center", fontsize=12.5, color=TEXT, zorder=4)
-    marker(ax, 11.41, 6.52, "2", HL, r=0.20)
-    ax.text(11.71, 6.52, "the table holds:", ha="left", va="center", fontsize=12.5,
-            color=TEXT, zorder=4)
-    ax.text(11.30, 6.08, "(still nothing \u2014 fib is", ha="left", va="center",
-            fontsize=12.5, family="monospace", color=DIM, zorder=4)
-    ax.text(11.30, 5.72, " not finished being read)", ha="left", va="center",
-            fontsize=12.5, family="monospace", color=DIM, zorder=4)
-    verdict(ax, 11.00, 5.24, False, "cannot find 'fib' in scope", BAD)
+    ax.text(3.95, ROWB + 0.38, "two passes", ha="right", va="center", fontsize=16,
+            fontweight="bold", color=GOOD, zorder=4)
+    ax.text(3.95, ROWB - 0.05, "signatures, then bodies", ha="right", va="center",
+            fontsize=13, color=GOOD, style="italic", zorder=4)
+    ax.text(3.95, ROWB - 0.52, "the table is finished", ha="right", va="center",
+            fontsize=12.5, color=DIM, zorder=4)
+    ax.text(3.95, ROWB - 0.86, "before any body is read", ha="right", va="center",
+            fontsize=12.5, color=DIM, zorder=4)
 
-    ax.text(10.55, 4.96, "neither call is wrong \u2014 the ORDER of the walk is",
-            ha="center", va="center", fontsize=12, color=BAD, style="italic", zorder=4)
+    # the four cells
+    def cell(cx, cy, face, edge, table, verdict_text, verdict_colour, ok):
+        panel(ax, cx - CW / 2, cy - RH / 2, CW, RH, face, edge, lw=1.3)
+        ax.text(cx, cy + 0.62, "the table holds", ha="center", va="center",
+                fontsize=12.5, color=DIM, style="italic", zorder=4)
+        ax.text(cx, cy + 0.19, table, ha="center", va="center", fontsize=14.5,
+                family="monospace", color=TEXT, zorder=4)
+        ax.plot([cx - CW / 2 + 0.35, cx + CW / 2 - 0.35], [cy - 0.22, cy - 0.22],
+                color=edge, linewidth=1, alpha=0.45, zorder=3)
+        ax.text(cx, cy - 0.62, ("\u2713  " if ok else "\u2717  ") + verdict_text,
+                ha="center", va="center", fontsize=14.5, fontweight="bold",
+                color=verdict_colour, zorder=4, family="monospace")
 
-    # ---- ROW 2: two passes — both answered -----------------------------------------
-    ax.add_patch(FancyBboxPatch((5.35, 0.42), 10.45, 3.92,
-                 boxstyle="round,pad=0.04,rounding_size=0.09", linewidth=1.4,
-                 edgecolor=GOOD, facecolor="#f2f8f3", zorder=0))
-    ax.text(5.72, 3.96, "checked in two passes", ha="left", va="center",
-            fontsize=14.5, fontweight="bold", color=GOOD, zorder=4)
+    cell(COL1, ROWA, BADBG, BAD, "(nothing yet)", "cannot find 'fib'", BAD, False)
+    cell(COL2, ROWA, BADBG, BAD, "(still nothing)", "cannot find 'fib'", BAD, False)
+    cell(COL1, ROWB, "#f2f8f3", GOOD, "fib : (Int) -> Int", "resolved", GOOD, True)
+    cell(COL2, ROWB, "#f2f8f3", GOOD, "fib : (Int) -> Int", "resolved", GOOD, True)
 
-    box(ax, 7.92, 1.95, 4.25, 2.72, "pass 1 \u2014 signatures only", TAB)
-    ax.text(7.92, 2.52, "fib : (Int) -> Int", ha="center", va="center", fontsize=13.5,
-            family="monospace", color=TEXT, zorder=4)
-    ax.text(7.92, 1.98, "not one line of a body", ha="center", va="center", fontsize=12,
-            color=DIM, style="italic", zorder=4)
-    ax.text(7.92, 1.66, "is looked at yet", ha="center", va="center", fontsize=12,
-            color=DIM, style="italic", zorder=4)
-    ax.text(7.92, 1.16, "so the order it reads them", ha="center", va="center",
-            fontsize=12, color=GOOD, zorder=4)
-    ax.text(7.92, 0.86, "in cannot matter", ha="center", va="center",
-            fontsize=12, color=GOOD, zorder=4)
+    # the one entry answers both — drawn as a brace under the green row
+    ax.text(8.8, 0.02, "the SAME entry, written by pass 1 before either call was asked",
+            ha="center", va="center", fontsize=13.5, color=GOOD, style="italic", zorder=4)
 
-    stage_arrow(ax, 10.15, 11.20, 1.95, "then ask it")
-
-    box(ax, 13.55, 1.95, 4.25, 2.72, "pass 2 \u2014 check bodies", CHK)
-    marker(ax, 11.78, 2.52, "1", HL, r=0.20)
-    verdict(ax, 12.06, 2.52, True, "fib(10)", GOOD)
-    marker(ax, 11.78, 2.04, "2", HL, r=0.20)
-    verdict(ax, 12.06, 2.04, True, "fib(n-1), fib(n-2)", GOOD)
-    ax.text(13.55, 1.46, "both answered by the ONE entry", ha="center", va="center",
-            fontsize=12, color=GOOD, style="italic", zorder=4)
-    ax.text(13.55, 1.16, "pass 1 wrote, before either", ha="center", va="center",
-            fontsize=12, color=GOOD, style="italic", zorder=4)
-    ax.text(13.55, 0.86, "was asked", ha="center", va="center",
-            fontsize=12, color=GOOD, style="italic", zorder=4)
-
-    ax.set_title("Where a call sits in the file stops mattering \u2014 if the table is "
-                 "finished before any body is read",
-                 fontsize=16, color=TEXT, pad=16)
+    ax.set_title("Two passes: the same two calls, and the only thing that differs is "
+                 "what the table holds",
+                 fontsize=17, color=TEXT, pad=16)
     fig.tight_layout()
     out = os.path.join(HERE, "twopass.png")
     fig.savefig(out, dpi=165, bbox_inches="tight")
