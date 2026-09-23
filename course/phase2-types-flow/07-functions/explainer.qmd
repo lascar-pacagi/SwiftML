@@ -144,9 +144,14 @@ the SIL control-flow graph — concept 09 shows where it would go. Today the rul
 over the AST; on a real CFG it is a dataflow pass over basic blocks, and the two are the same
 question asked of two different data structures.
 
-Which is the honest reason your version is the weaker one. An AST recursion can only see the
-shapes the grammar gives it, so `while true { return 1 }` looks like a loop that might run zero
-times — the one thing a CFG would already have folded away.
+Which is the honest reason your version is the weaker one, and it is not that the AST hides
+anything. `while true` wears its condition on its face — a `Bool_lit` node, one match arm away —
+and you could special-case it in an afternoon. The trouble is where that ends. swiftc also
+accepts `while 1 < 2`, `while !false`, and `while c` after `let c = true`, because by the time
+the check runs a constant-propagation pass has already turned every one of them into the same
+thing. Matching them on the AST means writing that pass yourself, in the checker, one shape at a
+time. Phase 4 builds it properly — concept 17 is exactly this — and it runs on the CFG for the
+same reason this check does.
 
 ### A note on argument labels (a Swift feature we simplify)
 
