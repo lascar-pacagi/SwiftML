@@ -43,9 +43,9 @@ def marker(ax, x, y, text, colour, r=0.26):
 
 
 def make_twopass():
-    fig, ax = plt.subplots(figsize=(15.0, 8.6))
+    fig, ax = plt.subplots(figsize=(15.0, 9.1))
     ax.set_xlim(0, 15.0)
-    ax.set_ylim(-0.25, 9.0)
+    ax.set_ylim(-0.35, 9.0)
     ax.axis("off")
 
     # =========================== the program, across the top ======================
@@ -74,14 +74,14 @@ def make_twopass():
 
     # =========================== the matrix =======================================
     COL1, COL2 = 6.55, 11.05        # centres of the two question columns
-    ROWA, ROWB = 3.92, 1.44         # centres of the two regime rows
+    ROWA, ROWB = 3.70, 1.16         # centres of the two regime rows
     CW, RH = 4.10, 2.05
 
     # column headings
     for cx, badge, label in [(COL1, "1", "the forward reference"),
                              (COL2, "2", "the recursive call")]:
-        marker(ax, cx - 1.55, 5.42, badge, HL)
-        ax.text(cx - 1.18, 5.42, label, ha="left", va="center", fontsize=14.5,
+        marker(ax, cx - 1.55, 5.14, badge, HL)
+        ax.text(cx - 1.18, 5.14, label, ha="left", va="center", fontsize=14.5,
                 fontweight="bold", color=TEXT, zorder=4)
 
     # row headings
@@ -121,8 +121,16 @@ def make_twopass():
     cell(COL1, ROWB, "#f2f8f3", GOOD, "fib : (Int) -> Int", "resolved", GOOD, True)
     cell(COL2, ROWB, "#f2f8f3", GOOD, "fib : (Int) -> Int", "resolved", GOOD, True)
 
+    # the divider between the two regimes: the figure is a BEFORE and an AFTER, and the
+    # rule is what says so — without it the four cells read as one four-part list
+    mid = (ROWA - RH / 2 + ROWB + RH / 2) / 2
+    ax.plot([1.78, 13.65], [mid, mid], color="#c9d3dc", linewidth=1.3,
+            linestyle=(0, (6, 5)), zorder=1)
+    ax.text(0.88, mid, "same\nquestions,\nasked again", ha="center", va="center",
+            fontsize=12, color=DIM, style="italic", zorder=4)
+
     # the one entry answers both — drawn as a brace under the green row
-    ax.text(8.8, 0.02, "the SAME entry, written by pass 1 before either call was asked",
+    ax.text(8.8, -0.20, "the SAME entry, written by pass 1 before either call was asked",
             ha="center", va="center", fontsize=13.5, color=GOOD, style="italic", zorder=4)
 
     ax.set_title("Two passes: the same two calls, and the only thing that differs is "
