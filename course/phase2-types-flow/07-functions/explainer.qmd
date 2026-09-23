@@ -141,8 +141,12 @@ both. The corpus keeps its conditions non-constant so the two agree.
 This is the same shape as the dead-code idea from concept 06, and a direct ancestor of Swift's
 **definite-initialization** check ("variable used before being initialized"), which also runs on
 the SIL control-flow graph — concept 09 shows where it would go. Today the rule is a recursion
-over the AST; on a real CFG it becomes a dataflow pass over basic blocks — which is *why* control
-flow (06) and functions (07) both land right before SIL (08).
+over the AST; on a real CFG it is a dataflow pass over basic blocks, and the two are the same
+question asked of two different data structures.
+
+Which is the honest reason your version is the weaker one. An AST recursion can only see the
+shapes the grammar gives it, so `while true { return 1 }` looks like a loop that might run zero
+times — the one thing a CFG would already have folded away.
 
 ### A note on argument labels (a Swift feature we simplify)
 
