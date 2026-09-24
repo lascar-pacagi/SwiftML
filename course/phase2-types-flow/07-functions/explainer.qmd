@@ -185,8 +185,11 @@ reachable. One query, no cases.
 Jumps are not the only gain. On the graph every construct is just blocks and edges, so the
 check is written once. On the tree it needs a rule per statement kind: `stmt_returns` gains a
 case for `switch` in concept 12, and for `throw` and `do` in concept 30. The graph also serves
-other analyses, and it sees what earlier passes did: once `while 1 < 2` is folded to an
-unconditional jump, the exit edge is gone and the check needs no special case.
+other analyses, and it benefits from earlier passes. In `while 1 < 2 { … }` the loop's test
+block has two edges: into the body, and out to the code after the loop, which falls off the end
+of the function. Constant folding turns `1 < 2` into `true` and deletes that second edge. The
+code after the loop is now unreachable, so the missing-return check passes — without the check
+itself knowing anything about `1 < 2`.
 
 Our AST rule handles the structured shapes and stops there, which is why the corpus keeps its
 loop conditions non-constant — the two agree everywhere except where the tree and the flow
