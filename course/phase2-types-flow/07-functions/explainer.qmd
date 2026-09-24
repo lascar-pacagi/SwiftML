@@ -189,10 +189,25 @@ case for `switch` in concept 12, and for `throw` and `do` in concept 30.
 But the check is a side benefit. The graph exists because everything after sema needs it. The
 machine has no `if` or `while`, only jumps to labels, so code generation has to produce the graph
 anyway; concept 08 builds it and concept 09 prints it as branches. And optimisations rewrite
-control flow into shapes no tree can hold. Inline a function that returns early into the middle
-of a loop, and its `return` becomes a jump from inside the loop body to the code after the call
-— no nesting of `if` and `while` says that without inventing flag variables. On the graph it is
-one more edge. Phase 4's passes all work this way: SSA construction (16) needs the graph's
+control flow into shapes a tree holds badly. Take inlining — copying a function's body into its
+caller:
+
+```swift
+func find(_ x: Int) -> Int {
+  var k = 0
+  while k < 10 {
+    if k * k == x { return k }   // once inlined: leave the loop AND skip `return -1`
+    k = k + 1
+  }
+  return -1
+}
+```
+
+Once the body is pasted into the caller there is no function to return from, so `return k` has
+to become something else. `break` leaves the loop but then runs `return -1`'s replacement too.
+Written as source, you would need an extra variable — `var found = false`, set before the
+`break`, tested after the loop. In the graph it is one edge, from the `if` straight to the code
+after the call. Phase 4's passes all work this way: SSA construction (16) needs the graph's
 dominators, and deleting a dead branch (17) is deleting an edge.
 
 ### A note on argument labels (a Swift feature we simplify)
