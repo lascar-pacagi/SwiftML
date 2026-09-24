@@ -184,12 +184,16 @@ reachable. One query, no cases.
 
 Jumps are not the only gain. On the graph every construct is just blocks and edges, so the
 check is written once. On the tree it needs a rule per statement kind: `stmt_returns` gains a
-case for `switch` in concept 12, and for `throw` and `do` in concept 30. The graph also serves
-other analyses, and it lets passes divide the work. swiftc accepts
-`var ok = false; ok = true; if ok { return 1 }` with no `else`, because a constant-propagation
-pass runs first and deletes the branch that could skip the `return`. You could do the same
-tracking inside an AST checker, but then the checker owns it; on the graph, the check just reads
-what the earlier pass left.
+case for `switch` in concept 12, and for `throw` and `do` in concept 30.
+
+But the check is a side benefit. The graph exists because everything after sema needs it. The
+machine has no `if` or `while`, only jumps to labels, so code generation has to produce the graph
+anyway; concept 08 builds it and concept 09 prints it as branches. And optimisations rewrite
+control flow into shapes no tree can hold. Inline a function that returns early into the middle
+of a loop, and its `return` becomes a jump from inside the loop body to the code after the call
+— no nesting of `if` and `while` says that without inventing flag variables. On the graph it is
+one more edge. Phase 4's passes all work this way: SSA construction (16) needs the graph's
+dominators, and deleting a dead branch (17) is deleting an edge.
 
 Our AST rule handles the structured shapes and stops there, which is why the corpus keeps its
 loop conditions non-constant — the two agree everywhere except where the tree and the flow
