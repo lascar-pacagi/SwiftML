@@ -185,13 +185,11 @@ reachable. One query, no cases.
 Jumps are not the only gain. On the graph every construct is just blocks and edges, so the
 check is written once. On the tree it needs a rule per statement kind: `stmt_returns` gains a
 case for `switch` in concept 12, and for `throw` and `do` in concept 30. The graph also serves
-other analyses, and it benefits from earlier passes. Take a function whose whole body is
-`if 1 < 2 { return 1 }`, with no `else`. Your rule rejects it: an `if` without `else` does not
-definitely return. In the graph, the test block has two edges: to `return 1`, and to the end of
-the function, which returns nothing. Constant folding turns `1 < 2` into `true` and deletes the
-second edge, so no path reaches the end without returning. swiftc accepts it — and the check
-never had to know anything about `1 < 2`. With `n < 2` instead, nothing folds, the edge stays,
-and swiftc rejects it like you do.
+other analyses, and it lets passes divide the work. swiftc accepts
+`var ok = false; ok = true; if ok { return 1 }` with no `else`, because a constant-propagation
+pass runs first and deletes the branch that could skip the `return`. You could do the same
+tracking inside an AST checker, but then the checker owns it; on the graph, the check just reads
+what the earlier pass left.
 
 Our AST rule handles the structured shapes and stops there, which is why the corpus keeps its
 loop conditions non-constant — the two agree everywhere except where the tree and the flow
