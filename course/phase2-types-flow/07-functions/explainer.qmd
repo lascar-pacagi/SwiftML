@@ -195,10 +195,6 @@ of a loop, and its `return` becomes a jump from inside the loop body to the code
 one more edge. Phase 4's passes all work this way: SSA construction (16) needs the graph's
 dominators, and deleting a dead branch (17) is deleting an edge.
 
-Our AST rule handles the structured shapes and stops there, which is why the corpus keeps its
-loop conditions non-constant — the two agree everywhere except where the tree and the flow
-disagree.
-
 ### A note on argument labels (a Swift feature we simplify)
 
 Swift parameters carry **argument labels**: `func add(a: Int, b: Int)` must be **called**
