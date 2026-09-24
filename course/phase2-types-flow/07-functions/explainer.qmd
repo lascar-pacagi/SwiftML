@@ -189,26 +189,41 @@ case for `switch` in concept 12, and for `throw` and `do` in concept 30.
 But the check is a side benefit. The graph exists because everything after sema needs it. The
 machine has no `if` or `while`, only jumps to labels, so code generation has to produce the graph
 anyway; concept 08 builds it and concept 09 prints it as branches. And optimisations rewrite
-control flow into shapes a tree holds badly. Take inlining — copying a function's body into its
-caller:
+control flow into shapes a tree holds badly. Take inlining — pasting a function's body into its
+caller, so the call disappears. Here is a function and a call to it:
 
 ```swift
 func find(_ x: Int) -> Int {
   var k = 0
   while k < 10 {
-    if k * k == x { return k }   // once inlined: leave the loop AND skip `return -1`
+    if k * k == x { return k }
     k = k + 1
   }
+  print("not found")
   return -1
 }
+print(find(49))
 ```
 
-Once the body is pasted into the caller there is no function to return from, so `return k` has
-to become something else. `break` leaves the loop but then runs `return -1`'s replacement too.
-Written as source, you would need an extra variable — `var found = false`, set before the
-`break`, tested after the loop. In the graph it is one edge, from the `if` straight to the code
-after the call. Phase 4's passes all work this way: SSA construction (16) needs the graph's
-dominators, and deleting a dead branch (17) is deleting an edge.
+Inlined, there is no function any more, so `return k` cannot stay a `return`: it must leave the
+loop *and* skip the `print("not found")`. `break` does only the first. Written as source, the
+result needs a variable whose only job is to carry "we left early" past the loop:
+
+```swift
+var k = 0
+var r = 0
+var found = false
+while k < 10 {
+  if k * k == 49 { r = k; found = true; break }
+  k = k + 1
+}
+if !found { print("not found"); r = -1 }
+print(r)
+```
+
+In the graph none of that is needed: the `if` just gets an edge straight to the block that does
+`print(r)`, and `found` never exists. Phase 4's passes all work this way: SSA construction (16)
+needs the graph's dominators, and deleting a dead branch (17) is deleting an edge.
 
 ### A note on argument labels (a Swift feature we simplify)
 
