@@ -127,6 +127,10 @@ loop might run zero times; and a block definitely returns if **any** of its stat
 because whatever follows that statement is unreachable (`return 1` then `print(2)` still returns;
 swiftc accepts it with a "will never be executed" warning).
 
+*The rest of this rule's story — where swiftc runs the check, and why a graph answers it better
+than a tree — is for the curious. You do not need it to write `stmt_returns`; if you would rather
+keep going, skip to [the note on argument labels](#sec-labels).*
+
 Where swiftc does this is worth knowing, because it decides how you test it. The check is not in
 the type checker at all: it runs on SIL, in the mandatory diagnostic passes
 (`lib/SILOptimizer/Mandatory/DataflowDiagnostics.cpp`, `diag::missing_return_decl`). By then the
@@ -225,7 +229,7 @@ In the graph none of that is needed: the `if` just gets an edge straight to the 
 `print(r)`, and `found` never exists. Phase 4's passes all work this way: SSA construction (16)
 needs the graph's dominators, and deleting a dead branch (17) is deleting an edge.
 
-### A note on argument labels (a Swift feature we simplify)
+### A note on argument labels (a Swift feature we simplify) {#sec-labels}
 
 Swift parameters carry **argument labels**: `func add(a: Int, b: Int)` must be **called**
 `add(a: 1, b: 2)`, not `add(1, 2)` — the label is part of the function's name (it's why the builtin
