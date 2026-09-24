@@ -180,9 +180,28 @@ paths nobody wrote.
 
 On SIL that graph already exists. `break` is an edge like any other, `while true` simply has no
 edge to the exit, and "does every path return" collapses into asking whether the exit block is
-reachable. One query, no cases. Our AST rule handles the structured shapes and stops there, which
-is why the corpus keeps its loop conditions non-constant — the two agree everywhere except
-exactly where a jump makes the tree lie about the flow.
+reachable. One query, no cases.
+
+Jumps are where the difference *shows*, not where it stops. The deeper property is that the
+graph has one shape for every construct: `if`, `while`, `for`, `break`, `return` all lower to
+blocks and edges, so a question asked of the graph is asked once. A question asked of the tree is
+asked once **per statement kind**, and every new kind needs a new answer. This course pays that
+cost in full. Your `stmt_returns` has arms for `return` and `if`; concept 12 adds one for
+`switch`, concept 30 one for `throw` and another for `do`/`catch` — each a hand-written rule, and
+each a place to be wrong. The reachability query on SIL never changes, because none of those
+constructs reaches it as anything but edges.
+
+The same uniformity pays twice more. Other questions share the graph: definite initialisation
+("is this variable assigned on every path to this use?") is the same walk with a different fact,
+and concept 16's dominators and liveness are two more. And transformations compose with it: when
+a pass folds `while 1 < 2`'s branch into an unconditional jump, the edge to the exit disappears,
+and the missing-return check sees the result without knowing the pass exists. That is why
+swiftc accepts `while 1 < 2` and `let c = true; while c` — not because the check understands
+them, but because by the time it runs, there is nothing left to understand.
+
+Our AST rule handles the structured shapes and stops there, which is why the corpus keeps its
+loop conditions non-constant — the two agree everywhere except where the tree and the flow
+disagree.
 
 ### A note on argument labels (a Swift feature we simplify)
 
