@@ -148,3 +148,44 @@ A bound value carries its declared type: binding an `Int` payload and using it a
   case .circle(let r): let b: Bool = r
                                      ^
   [1]
+
+A switch over a value of unknown type reports only the unknown type: no "cannot 'switch' over",
+and its Int cases and default are checked as usual:
+
+  $ cat > unknown-subject.swift <<'EOF'
+  > func f(_ x: Nope) -> Int {
+  >   switch x {
+  >   case 1:
+  >     return 1
+  >   default:
+  >     return 0
+  >   }
+  > }
+  > EOF
+  $ ./lab.exe --typecheck unknown-subject.swift
+  1:1: error: cannot find type 'Nope' in scope
+  func f(_ x: Nope) -> Int {
+  ^
+  [1]
+
+A payload of unknown type binds its name at TError, so returning it from a `-> Bool` function
+adds nothing to the one "cannot find type":
+
+  $ cat > unknown-payload.swift <<'EOF'
+  > enum E {
+  >   case a(Nope), b
+  > }
+  > func f(_ e: E) -> Bool {
+  >   switch e {
+  >   case .a(let v):
+  >     return v
+  >   case .b:
+  >     return false
+  >   }
+  > }
+  > EOF
+  $ ./lab.exe --typecheck unknown-payload.swift
+  1:1: error: cannot find type 'Nope' in scope
+  enum E {
+  ^
+  [1]

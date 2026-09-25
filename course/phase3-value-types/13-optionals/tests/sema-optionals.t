@@ -147,3 +147,23 @@ documented divergence, §2) instead of crashing IRGen:
   print(a)
         ^
   [1]
+
+`Nope?` is an optional of an unknown type, not an unknown type: the error names `Nope`, as
+swiftc's does, and `if let`, `??`, `!` and `== nil` all still see an optional, so none of them
+adds a second error:
+
+  $ cat > unknown-optional.swift <<'EOF'
+  > let z: Nope? = 5
+  > if let w = z {
+  >   let b: Bool = w
+  >   print(b)
+  > }
+  > let y: Int = z ?? 1
+  > let u: Bool = z!
+  > print(z == nil)
+  > EOF
+  $ ./lab.exe --typecheck unknown-optional.swift
+  1:1: error: cannot find type 'Nope' in scope
+  let z: Nope? = 5
+  ^
+  [1]

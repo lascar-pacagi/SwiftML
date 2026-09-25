@@ -47,13 +47,22 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
         else if Hashtbl.mem enums name then Some (Types.TEnum name)
         else None
   in
-  let resolve_silent name = Option.value (resolve_opt name) ~default:Types.TInt in
+  (* An unknown name resolves to TError, never a guess (see Types.equal) — and only the
+     unknown PART does: `Nope?` is an optional of TError, so `if let`, `??` and `!` still
+     see an optional, and the error names `Nope`, as swiftc's does. *)
+  let rec resolve_with report name =
+    if String.length name > 0 && name.[String.length name - 1] = '?' then
+      Types.TOptional (resolve_with report (String.sub name 0 (String.length name - 1)))
+    else
+      match resolve_opt name with
+      | Some t -> t
+      | None ->
+          report name;
+          Types.TError
+  in
+  let resolve_silent name = resolve_with ignore name in
   let resolve_ty span name =
-    match resolve_opt name with
-    | Some t -> t
-    | None ->
-        err span (Printf.sprintf "cannot find type '%s' in scope" name);
-        Types.TInt
+    resolve_with (fun n -> err span (Printf.sprintf "cannot find type '%s' in scope" n)) name
   in
 
   let mk (e : Tast.expr_kind) (ty : Types.ty) (span : Token.span) : Tast.expr = { Tast.e; ty; span } in
@@ -104,8 +113,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
         | Some t -> mk (Tast.Coerce (check_expr e0 t)) t span
         | None ->
             err span (Printf.sprintf "cannot find type '%s' in scope" tyname);
-            let n = infer e0 in
-            mk (Tast.Coerce n) n.Tast.ty span)
+            mk (Tast.Coerce (infer e0)) Types.TError span)
     (* `E.case` — a no-payload enum case names a value of the enum type (concept 11).
        The guard asks the VALUE SCOPE FIRST: a local binding shadows a type name, so
        `let Color = 7` makes `Color.red` a member access on an Int, not an enum case. Getting
@@ -141,6 +149,10 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
         | Types.TEnum enum_name
           when field = "rawValue" && (Hashtbl.find enums enum_name).Types.el_raw ->
             mk (Tast.Raw_value base) Types.TInt span
+        (* a member of something already reported is as unknown as it is *)
+        | Types.TError -> mk (Tast.Field (base, 0, field)) Types.TError span
+        (* a member of something already reported is as unknown as it is *)
+        | Types.TError -> mk (Tast.Field (base, 0, field)) Types.TError span
         | t -> unresolved (Types.string_of_ty t))
     (* `E.case(args)` — a payload-carrying enum case. Same shadowing rule as `E.case` above. *)
     | Ast.Method_call (Ast.Var (type_name, _), case_name, args, span)
@@ -174,6 +186,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
         let n = infer e0 in
         match n.Tast.ty with
         | Types.TOptional t -> mk (Tast.Force_unwrap n) t span
+        | Types.TError -> mk (Tast.Force_unwrap n) Types.TError span
         | t ->
             err span
               (Printf.sprintf "cannot force-unwrap a non-optional value of type '%s'"
@@ -183,6 +196,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
         let na = infer a in
         match na.Tast.ty with
         | Types.TOptional t -> mk (Tast.Coalesce (na, check_expr bexp t)) t span
+        | Types.TError -> mk (Tast.Coalesce (na, infer bexp)) Types.TError span
         | t ->
             err span
               (Printf.sprintf "left operand of '??' must be optional, found '%s'"
@@ -199,7 +213,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
     | (Ast.Eq | Ast.Ne), Ast.Nil _, other | (Ast.Eq | Ast.Ne), other, Ast.Nil _ -> (
         let n = infer other in
         match n.Tast.ty with
-        | Types.TOptional _ -> mk (Tast.Is_nil (n, op = Ast.Eq)) Types.TBool span
+        | Types.TOptional _ | Types.TError -> mk (Tast.Is_nil (n, op = Ast.Eq)) Types.TBool span
         | t ->
             err span
               (Printf.sprintf "value of type '%s' cannot be compared with 'nil'"
@@ -232,6 +246,14 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
       | None -> (ln, rn)
     in
     let result =
+      (* an operand whose type was already reported says nothing about this operator: a
+         comparison or `&&` is still a Bool, anything else is as unknown as its operand *)
+      if tl = Types.TError || tr = Types.TError then
+        match op with
+        | Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge | Ast.And | Ast.Or ->
+            Types.TBool
+        | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod -> Types.TError
+      else
       match op with
       | Ast.Add -> (
           match u with
@@ -285,7 +307,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
                      for a struct and `red` for an enum case — a divergence, stated in §2 *)
                   let n = infer a in
                   (match n.Tast.ty with
-                  | Types.TInt | Types.TDouble | Types.TBool | Types.TString -> ()
+                  | Types.TError | Types.TInt | Types.TDouble | Types.TBool | Types.TString -> ()
                   | t ->
                       err (Ast.expr_span a)
                         (Printf.sprintf
@@ -330,7 +352,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
      `InjectIntoOptionalExpr` at exactly this point, and its SILGen only lowers it. PLAN.md §0.1. *)
   and check_expr (e : Ast.expr) (expected : Types.ty) : Tast.expr =
     match (e, expected) with
-    | Ast.Nil _, Types.TOptional _ -> mk Tast.Nil expected (Ast.expr_span e)
+    | Ast.Nil _, (Types.TOptional _ | Types.TError) -> mk Tast.Nil expected (Ast.expr_span e)
     | Ast.Nil _, _ ->
         err (Ast.expr_span e)
           (Printf.sprintf "'nil' cannot be used with a non-optional type '%s'"
@@ -348,6 +370,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
     | Ast.Int_lit (n, span) ->
         (* the coercion, RECORDED: the node keeps its kind and takes the expected type *)
         if expected = Types.TInt || expected = Types.TDouble then mk (Tast.Int_lit n) expected span
+        else if expected = Types.TError then mk (Tast.Int_lit n) Types.TInt span
         else (
           err span
             (Printf.sprintf "cannot convert value of type 'Int' to specified type '%s'"
@@ -382,17 +405,18 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
   let rec check_stmt (s : Ast.stmt) : Tast.stmt =
     match s with
     | Ast.Let { name; is_var; annot; value; span } ->
-        let n =
+        (* the name is bound at the type the programmer WROTE, so `let x: Nope = true`
+           makes `x` a TError, not a Bool that every later use would then contradict *)
+        let n, bound =
           match annot with
-          | None -> infer value
-          | Some tyname -> (
-              match resolve_opt tyname with
-              | Some t -> check_expr value t
-              | None ->
-                  err span (Printf.sprintf "cannot find type '%s' in scope" tyname);
-                  infer value)
+          | None ->
+              let n = infer value in
+              (n, n.Tast.ty)
+          | Some tyname ->
+              let t = resolve_ty span tyname in
+              (check_expr value t, t)
         in
-        bind name (n.Tast.ty, is_var);
+        bind name (bound, is_var);
         Tast.Let { name; is_var; value = n; span }
     | Ast.Assign { name; value; span } -> (
         match lookup name with
@@ -430,6 +454,12 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
                 Tast.Set_member
                   { obj; field = i; field_name = field; value = check_expr value ft; span }
             | _ -> unresolved sn)
+        | Some (Types.TError, _) ->
+            Tast.Set_member
+              { obj; field = 0; field_name = field; value = check_expr value Types.TError; span }
+        | Some (Types.TError, _) ->
+            Tast.Set_member
+              { obj; field = 0; field_name = field; value = check_expr value Types.TError; span }
         | Some (t, _) -> unresolved (Types.string_of_ty t))
     | Ast.Expr_stmt (e, _) -> Tast.Expr_stmt (infer e)
     | Ast.If { cond; then_blk; else_blk; span } ->
@@ -486,6 +516,16 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
                 tb := List.map check_stmt then_blk);
             Tast.If_let
               { name; ty = t; opt = n; then_blk = !tb;
+                else_blk = Option.map check_block else_blk; span }
+        | Types.TError ->
+            (* unknown, already reported: bind the name at TError so the block is checked
+               without a "cannot find" for every use of it *)
+            let tb = ref [] in
+            in_scope (fun () ->
+                bind name (Types.TError, false);
+                tb := List.map check_stmt then_blk);
+            Tast.If_let
+              { name; ty = Types.TError; opt = n; then_blk = !tb;
                 else_blk = Option.map check_block else_blk; span }
         | t ->
             err span
@@ -571,6 +611,30 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
         let d = Option.map check_block default in
         if default = None then err span "switch must be exhaustive";
         build cs d
+    | Types.TError ->
+        (* the subject's type was reported already: check every case body, with the names a
+           pattern binds set to TError, and claim nothing about exhaustiveness *)
+        let cs =
+          List.map
+            (fun (pat, body) ->
+              match pat with
+              | Ast.PInt n -> (Tast.PInt n, check_block body)
+              | Ast.PEnumCase (_, bindings) ->
+                  let checked = ref [] and bs = ref [] in
+                  in_scope (fun () ->
+                      bs :=
+                        List.map
+                          (function
+                            | Ast.Bind x ->
+                                bind x (Types.TError, false);
+                                Tast.Bind (x, Types.TError)
+                            | Ast.Ignore -> Tast.Ignore)
+                          bindings;
+                      checked := List.map check_stmt body);
+                  (Tast.PEnumCase (0, !bs), !checked))
+            cases
+        in
+        build cs (Option.map check_block default)
     | t ->
         err span
           (Printf.sprintf "cannot 'switch' over a value of type '%s'" (Types.string_of_ty t));
@@ -597,7 +661,9 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
     let body = List.map check_stmt f.Ast.body in
     env := saved_env;
     current_ret := saved_ret;
-    if ret <> Types.TVoid && not (block_returns f.Ast.body) then
+    (* `-> Nope` was reported already; what it should return is unknown, so is whether
+       the body returns it *)
+    if ret <> Types.TVoid && ret <> Types.TError && not (block_returns f.Ast.body) then
       err f.Ast.fspan
         (Printf.sprintf "missing return in %s expected to return '%s'" "global function"
            (Types.string_of_ty ret));
@@ -638,7 +704,9 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
                 in
                 List.iter2
                   (fun written resolved ->
-                    if resolved <> Types.TInt then
+                    (* an unknown type was reported by resolve_ty; "not supported" would be a
+                       second error about the same word *)
+                    if resolved <> Types.TInt && resolved <> Types.TError then
                       err e.Ast.espan
                         (Printf.sprintf
                            "associated value type '%s' is not supported (only Int)"
@@ -649,6 +717,10 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
           in
           (match e.Ast.eraw with
           | Some "Int" | None -> ()
+          | Some raw when resolve_opt raw = None ->
+              err e.Ast.espan (Printf.sprintf "cannot find type '%s' in scope" raw)
+          | Some raw when resolve_opt raw = None ->
+              err e.Ast.espan (Printf.sprintf "cannot find type '%s' in scope" raw)
           | Some raw ->
               err e.Ast.espan
                 (Printf.sprintf "raw type '%s' is not supported (only Int)" raw));
