@@ -408,9 +408,11 @@ that, so the limit stays known rather than being rediscovered later.
 
 ### `TError`: one unknown type, one error {#sec-terror}
 
-Sema has to give `Nope` *some* type to keep checking, and any real type is a guess that is wrong
-somewhere. Pick `Int`, and `func g() -> Nope { return true }` also reports "cannot convert `Bool`
-to `Int`" — about a type the programmer never wrote. So this concept adds a new type to
+Take `func g() -> Nope { return true }`, where nothing anywhere declares a type called `Nope` —
+a typo, say. Sema reports "cannot find type 'Nope' in scope", but it still has to give the
+return type *some* value to keep checking the body, and any real type is a guess that is wrong
+somewhere. Pick `Int`, and the same function also gets "cannot convert `Bool` to `Int`" — about a
+type the programmer never wrote. So this concept adds a new type to
 `types.ml`, the type of something already reported, and makes `equal` accept it everywhere:
 
 ```ocaml
