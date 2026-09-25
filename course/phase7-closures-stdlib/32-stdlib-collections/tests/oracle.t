@@ -23,14 +23,15 @@ hole reads as what it is.
 
 Then the whole pipeline. Every program in `oracle-corpus.txt` is compiled FOUR ways — `swiftc
 -Onone`, `swiftc -O`, `./lab.exe build`, `./lab.exe build -O` — and all four run; stdout and
-exit code must be byte-identical. The twenty programs are the trio from every angle: each of the
-three alone, the three chained in both orders, a closure that captures an outer variable, a
+exit code must be byte-identical. The first twenty programs are the trio from every angle: each
+of the three alone, the three chained in both orders, a closure that captures an outer variable, a
 closure held in a local before being passed, sum-of-squares and running-maximum folds, empty
 arrays through all three, a `map` result surviving an `append` to its source, a multi-line
 literal, a struct field read inside the closure, and a fold inside a `throws` function behind a
 `do`/`catch`. `swiftc` is the whole point here: `Sequence.map`/`filter`/`reduce` are ordinary
 for-loops in Swift's own stdlib, so agreeing with it byte for byte is the claim that our loop is
-the same loop.
+the same loop. A twenty-first pins concept 28's implicit `super.init()`, which this range of
+concepts had lost: it runs after the subclass init's own body, and the printed order shows it.
 
 `swiftc -Onone` is the reference and our two builds must match it; `swiftc -O` is compared too
 and reported separately, because it is allowed to differ (it does not, on this corpus). A

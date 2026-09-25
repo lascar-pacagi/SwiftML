@@ -18,3 +18,4 @@ enum E: Error { case empty }\nfunc totalOf(_ a: [Int]) throws -> Int {\n  if a.i
 var a: [Int] = []\nvar i = 1\nwhile i <= 10 {\n  a.append(i)\n  i = i + 1\n}\nprint(a.filter({ (x: Int) -> Bool in x % 3 == 0 }).count)\nprint(a.map({ (x: Int) -> Int in x * 2 }).reduce(0, { (s: Int, x: Int) -> Int in s + x }))
 let a = [1, 2, 3]\nlet f = { (x: Int) -> Int in x * 7 }\nprint(a.map(f).reduce(0, { (s: Int, x: Int) -> Int in s + x }))
 let a = [4, 8, 15, 16, 23, 42]\nlet big = a.filter({ (x: Int) -> Bool in x > 10 })\nprint(big.count)\nprint(big.reduce(0, { (s: Int, x: Int) -> Int in s + x }))\nprint(big.map({ (x: Int) -> Int in x / 2 })[0])
+class A {\n  var a: Int\n  init() {\n    a = 1\n    print(10)\n  }\n}\nclass B: A {\n  var b: Int\n  init(b: Int) {\n    self.b = b\n    print(20)\n  }\n}\nlet x = B(b: 2)\nprint(x.a + x.b)

@@ -1394,6 +1394,39 @@ and lower_func ?(generic = false) ?(init = false) ?(epilogue : (builder -> unit)
   { Sil.fname = name; params = sil_params; ret; generic; blocks = b.blocks; val_ty; lines = b.lines }
 
 (* --- the entry point: a checked program -> a SIL module --- *)
+(* Swift INSERTS `super.init()` at the end of an initializer that never calls it, provided the
+   superclass's initializer takes no arguments (sema has checked that). SILGen makes the call
+   explicit here so the lowering below needs no special case — concept 28's rule, carried. *)
+let rec init_owner_of classes funcs (cn : string) : string option =
+  if Hashtbl.mem funcs (cn ^ ".init") then Some cn
+  else
+    match Option.bind (Hashtbl.find_opt classes cn) (fun (cl : Types.class_layout) -> cl.Types.cl_super) with
+    | Some s -> init_owner_of classes funcs s
+    | None -> None
+
+let with_implicit_super classes funcs (c : Ast.class_decl) (init : Ast.func_decl) : Ast.func_decl =
+  let rec calls_super (st : Ast.stmt) =
+    match st with
+    | Ast.Expr_stmt (Ast.Method_call (Ast.Var ("super", _), "init", _, _), _) -> true
+    | Ast.If { then_blk; else_blk; _ } | Ast.If_let { then_blk; else_blk; _ } ->
+        any then_blk || opt else_blk
+    | Ast.While { body; _ } | Ast.For { body; _ } -> any body
+    | Ast.Switch { cases; default; _ } -> List.exists (fun (_, blk) -> any blk) cases || opt default
+    | _ -> false
+  and any ss = List.exists calls_super ss
+  and opt = function Some ss -> any ss | None -> false in
+  let zero_arg_super =
+    match Option.bind c.Ast.csuper (init_owner_of classes funcs) with
+    | Some o -> fst (Hashtbl.find funcs (o ^ ".init")) = []
+    | None -> false
+  in
+  if c.Ast.csuper = None || any init.Ast.body || not zero_arg_super then init
+  else
+    let sp = init.Ast.fspan in
+    { init with
+      Ast.body =
+        init.Ast.body @ [ Ast.Expr_stmt (Ast.Method_call (Ast.Var ("super", sp), "init", [], sp), sp) ] }
+
 let lower (prog : Ast.program) : Sil.modul =
   (* struct + enum registries first (names, then layouts) so any type name resolves *)
   let structs : (string, Types.struct_layout) Hashtbl.t = Hashtbl.create 16 in
@@ -1638,7 +1671,9 @@ let lower (prog : Ast.program) : Sil.modul =
                 { Ast.fname = "destroy"; generics = []; params = []; throws = false; ret = None; body = []; fspan = c.Ast.cspan }
             in
             (dtor :: destroyer
-            :: (match c.Ast.cinit with Some init -> [ lower_m ~init:true init ] | None -> []))
+            :: (match c.Ast.cinit with
+               | Some init -> [ lower_m ~init:true (with_implicit_super classes funcs c init) ]
+               | None -> []))
 
             @ List.map (fun (_, m) -> lower_m m) c.Ast.cmethods
         | Ast.IStruct st ->

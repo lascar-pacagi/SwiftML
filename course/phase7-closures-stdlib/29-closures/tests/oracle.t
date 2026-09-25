@@ -23,12 +23,14 @@ crash; on a disagreement our first line is shown, so an unstarted hole reads as 
 
 Then the whole pipeline. Every program in `oracle-corpus.txt` is compiled FOUR ways — `swiftc
 -Onone`, `swiftc -O`, `./lab.exe build`, `./lab.exe build -O` — and all four run; stdout and
-exit code must be byte-identical. The twenty programs are the concept's whole story: closure
+exit code must be byte-identical. The first twenty programs are the concept's whole story: closure
 literals of every result type, higher-order functions taking a named function and a literal,
 independent adder contexts, a reassigned function-typed `var`, struct and enum and optional
 captures, closures created inside a loop, a closure built in each arm of an `if`, and the ARC
 probe where a `Box` dies at scope exit because the closure captured `b.v`'s Int rather than `b`
-— the one program whose output pins WHEN something happens rather than what it computes.
+— the one program whose output pins WHEN something happens rather than what it computes. A
+twenty-first carries concept 28's implicit `super.init()` forward: a subclass init that never
+calls it runs the superclass's after its own body, which is what the printed order pins.
 
 `swiftc -Onone` is the reference and our two builds must match it; `swiftc -O` is compared too
 and reported separately, because it is allowed to differ (it does not, on this corpus). A

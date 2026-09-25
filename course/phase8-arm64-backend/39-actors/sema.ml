@@ -1198,13 +1198,16 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
                if not (Hashtbl.mem assigned_fields fn) then
                  err f.Ast.fspan "return from initializer without initializing all stored properties")
              own;
-           (* an unknown superclass was already reported: there is no init to call *)
-           let super_known =
-             match cl.Types.cl_super with
-             | Some sup -> Hashtbl.mem classes sup
-             | None -> false
+           (* Swift INSERTS `super.init()` at the end of a body that never calls it, provided the
+              superclass's initializer takes no arguments; otherwise DI fails —
+              `diag::superselfinit_not_called_before_return`. SILGen appends the same call.
+              An unknown superclass has no init at all (init_owner is None): nothing to call. *)
+           let implicit_ok =
+             match Option.bind cl.Types.cl_super init_owner with
+             | None -> true
+             | Some o -> fst (Hashtbl.find funcs (o ^ ".init")) = []
            in
-           if super_known && not !super_called then
+           if cl.Types.cl_super <> None && (not !super_called) && not implicit_ok then
              err f.Ast.fspan "'super.init' isn't called on all paths before returning from initializer"
        | None -> ());
     current_class := saved_class;

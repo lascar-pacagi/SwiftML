@@ -18,3 +18,4 @@ class Box {\n  var v: Int\n  init(_ x: Int) { v = x }\n  deinit { print(v) }\n}\
 enum Color { case red, green }\nfunc tint(_ c: Color) -> (Int) -> Int {\n  if c == Color.red { return { (x: Int) -> Int in x * 10 } }\n  return { (x: Int) -> Int in x * 100 }\n}\nlet tr = tint(Color.red)\nlet tg = tint(Color.green)\nprint(tr(2))\nprint(tg(2))
 struct Pt { let x: Int; var y: Int }\nfunc dist(_ p: Pt) -> () -> Int {\n  return { () -> Int in p.x * p.x + p.y * p.y }\n}\nlet d = dist(Pt(x: 3, y: 4))\nprint(d())
 func compose3(_ n: Int) -> Int {\n  let a = { (x: Int) -> Int in x + n }\n  let b = { (x: Int) -> Int in x * 2 }\n  return a(b(a(1)))\n}\nprint(compose3(4))
+class A {\n  var a: Int\n  init() {\n    a = 1\n    print(10)\n  }\n}\nclass B: A {\n  var b: Int\n  init(b: Int) {\n    self.b = b\n    print(20)\n  }\n}\nlet x = B(b: 2)\nprint(x.a + x.b)

@@ -3,12 +3,13 @@ THE HEADLINE TEST. Every program in `oracle-corpus.txt` is compiled by `swiftc -
 must be byte-identical. `#line` and `#column` are real Swift — they are its magic identifiers,
 and swiftc gives the same numbers we do — so this is genuine parity, not a house rule.
 
-The eighteen programs put the two macros everywhere a macro can go: at the top level, inside a
+The first eighteen programs put the two macros everywhere a macro can go: at the top level, inside a
 function, inside a STRUCT method and a class `init` (the walk has to reach those bodies), inside
 a loop, an `if`, a `switch` case, an array literal, a closure passed to `map`, an optional
 return, and in arithmetic with each other. `#assert` is deliberately absent: swiftc has no
 `#assert` macro, so it cannot arbitrate one — it is checked against our own semantics, next to
-`swiftc`'s `assert`, in `macros-stmt.t`.
+`swiftc`'s `assert`, in `macros-stmt.t`. A nineteenth program has no macro in it: it pins
+concept 28's implicit `super.init()`, which this range of concepts had lost.
 
   $ n=0; while IFS= read -r prog; do
   >   [ -n "$prog" ] || continue; n=$((n+1))
