@@ -139,8 +139,6 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
             mk (Tast.Raw_value base) Types.TInt span
         (* a member of something already reported is as unknown as it is *)
         | Types.TError -> mk (Tast.Field (base, 0, field)) Types.TError span
-        (* a member of something already reported is as unknown as it is *)
-        | Types.TError -> mk (Tast.Field (base, 0, field)) Types.TError span
         | t -> unresolved (Types.string_of_ty t))
     (* `E.case(args)` — a payload-carrying enum case. Same shadowing rule as `E.case` above. *)
     | Ast.Method_call (Ast.Var (type_name, _), case_name, args, span)
@@ -384,9 +382,6 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
                 Tast.Set_member
                   { obj; field = i; field_name = field; value = check_expr value ft; span }
             | _ -> unresolved sn)
-        | Some (Types.TError, _) ->
-            Tast.Set_member
-              { obj; field = 0; field_name = field; value = check_expr value Types.TError; span }
         | Some (Types.TError, _) ->
             Tast.Set_member
               { obj; field = 0; field_name = field; value = check_expr value Types.TError; span }
