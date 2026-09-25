@@ -80,3 +80,34 @@ An unknown associated-value type and a type-name redeclaration are both reported
   enum A { case value(Missing) }
   ^
   [1]
+
+An associated value of unknown type is reported once: no "not supported (only Int)" on top, and
+constructing the case with an Int and then a Bool adds nothing, because the payload is TError:
+
+  $ cat > unknown-payload.swift <<'EOF'
+  > enum E {
+  >   case a(Nope)
+  > }
+  > let e = E.a(1)
+  > let f = E.a(true)
+  > EOF
+  $ python3 timeout.py 2 ./lab.exe --typecheck unknown-payload.swift
+  1:1: error: cannot find type 'Nope' in scope
+  enum E {
+  ^
+  [1]
+
+A raw type that nothing declares is "cannot find type", as in swiftc — not "raw type is not
+supported", which is for a real type this concept does not handle:
+
+  $ cat > unknown-raw.swift <<'EOF'
+  > enum R: Nope {
+  >   case a, b
+  > }
+  > let r = R.a
+  > EOF
+  $ python3 timeout.py 2 ./lab.exe --typecheck unknown-raw.swift
+  1:1: error: cannot find type 'Nope' in scope
+  enum R: Nope {
+  ^
+  [1]

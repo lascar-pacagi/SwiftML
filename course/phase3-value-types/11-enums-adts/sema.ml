@@ -43,13 +43,14 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
         else if Hashtbl.mem enums name then Some (Types.TEnum name)
         else None
   in
-  let resolve_silent name = Option.value (resolve_opt name) ~default:Types.TInt in
+  (* an unknown name resolves to TError, never a guess: see Types.equal *)
+  let resolve_silent name = Option.value (resolve_opt name) ~default:Types.TError in
   let resolve_ty span name =
     match resolve_opt name with
     | Some t -> t
     | None ->
         err span (Printf.sprintf "cannot find type '%s' in scope" name);
-        Types.TInt
+        Types.TError
   in
 
   let mk (e : Tast.expr_kind) (ty : Types.ty) (span : Token.span) : Tast.expr = { Tast.e; ty; span } in
@@ -95,8 +96,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
         | Some t -> mk (Tast.Coerce (check_expr e0 t)) t span
         | None ->
             err span (Printf.sprintf "cannot find type '%s' in scope" tyname);
-            let n = infer e0 in
-            mk (Tast.Coerce n) n.Tast.ty span)
+            mk (Tast.Coerce (infer e0)) Types.TError span)
     (* `E.case` — a no-payload enum case names a value of the enum type (concept 11).
        The guard asks the VALUE SCOPE FIRST: a local binding shadows a type name, so
        `let Color = 7` makes `Color.red` a member access on an Int, not an enum case. Getting
@@ -130,6 +130,8 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
             (* TODO(11f): `.rawValue` is available only on an enum declared with an Int raw
                type, and yields an Int. The resolved node is `Tast.Raw_value`. §3. *)
             failwith "TODO(11f): type rawValue on an enum"
+        (* a member of something already reported is as unknown as it is *)
+        | Types.TError -> mk (Tast.Field (base, 0, field)) Types.TError span
         | t -> unresolved (Types.string_of_ty t))
     (* `E.case(args)` — a payload-carrying enum case. Same shadowing rule as `E.case` above. *)
     | Ast.Method_call (Ast.Var (type_name, _), _, _, _)
@@ -167,6 +169,14 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
       | None -> (ln, rn)
     in
     let result =
+      (* an operand whose type was already reported says nothing about this operator: a
+         comparison or `&&` is still a Bool, anything else is as unknown as its operand *)
+      if tl = Types.TError || tr = Types.TError then
+        match op with
+        | Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge | Ast.And | Ast.Or ->
+            Types.TBool
+        | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod -> Types.TError
+      else
       match op with
       | Ast.Add -> (
           match u with
@@ -219,7 +229,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
                      for a struct and `red` for an enum case — a divergence, stated in §2 *)
                   let n = infer a in
                   (match n.Tast.ty with
-                  | Types.TInt | Types.TDouble | Types.TBool | Types.TString -> ()
+                  | Types.TError | Types.TInt | Types.TDouble | Types.TBool | Types.TString -> ()
                   | t ->
                       err (Ast.expr_span a)
                         (Printf.sprintf
@@ -263,6 +273,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
     | Ast.Int_lit (n, span) ->
         (* the coercion, RECORDED: the node keeps its kind and takes the expected type *)
         if expected = Types.TInt || expected = Types.TDouble then mk (Tast.Int_lit n) expected span
+        else if expected = Types.TError then mk (Tast.Int_lit n) Types.TInt span
         else (
           err span
             (Printf.sprintf "cannot convert value of type 'Int' to specified type '%s'"
@@ -292,17 +303,21 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
   let rec check_stmt (s : Ast.stmt) : Tast.stmt =
     match s with
     | Ast.Let { name; is_var; annot; value; span } ->
-        let n =
+        (* the name is bound at the type the programmer WROTE, so `let x: Nope = true`
+           makes `x` a TError, not a Bool that every later use would then contradict *)
+        let n, bound =
           match annot with
-          | None -> infer value
+          | None ->
+              let n = infer value in
+              (n, n.Tast.ty)
           | Some tyname -> (
               match resolve_opt tyname with
-              | Some t -> check_expr value t
+              | Some t -> (check_expr value t, t)
               | None ->
                   err span (Printf.sprintf "cannot find type '%s' in scope" tyname);
-                  infer value)
+                  (infer value, Types.TError))
         in
-        bind name (n.Tast.ty, is_var);
+        bind name (bound, is_var);
         Tast.Let { name; is_var; value = n; span }
     | Ast.Assign { name; value; span } -> (
         match lookup name with
@@ -340,6 +355,9 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
                 Tast.Set_member
                   { obj; field = i; field_name = field; value = check_expr value ft; span }
             | _ -> unresolved sn)
+        | Some (Types.TError, _) ->
+            Tast.Set_member
+              { obj; field = 0; field_name = field; value = check_expr value Types.TError; span }
         | Some (t, _) -> unresolved (Types.string_of_ty t))
     | Ast.Expr_stmt (e, _) -> Tast.Expr_stmt (infer e)
     | Ast.If { cond; then_blk; else_blk; span } ->
@@ -406,7 +424,9 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
     let body = List.map check_stmt f.Ast.body in
     env := saved_env;
     current_ret := saved_ret;
-    if ret <> Types.TVoid && not (block_returns f.Ast.body) then
+    (* `-> Nope` was reported already; what it should return is unknown, so is whether
+       the body returns it *)
+    if ret <> Types.TVoid && ret <> Types.TError && not (block_returns f.Ast.body) then
       err f.Ast.fspan
         (Printf.sprintf "missing return in %s expected to return '%s'" "global function"
            (Types.string_of_ty ret));

@@ -489,7 +489,10 @@ through every compiler stage in nine holes:
    structs and enums share one namespace. In the second, resolve the payload type names, preserve
    case order, record whether a raw type was written, and replace the placeholder layout. This
    concept accepts only `Int` payloads and `Int` raw types; diagnose other resolved types before
-   they reach the fixed `i64` LLVM payload slots.
+   they reach the fixed `i64` LLVM payload slots. An unknown name is not one of them: `resolve_ty`
+   has reported it already and returns `TError` (concept 07), so `case a(Nope)` gets no "not
+   supported" on top. A raw type is written as a name too; if nothing declares it, report
+   "cannot find type", as swiftc does, rather than "not supported".
 
 5. **`sema.ml`, `TODO(11e)` — type enum construction.** The parser has already separated the two
    spellings, so this is two arms, and each owns one of the two arity diagnostics:
