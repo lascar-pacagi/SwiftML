@@ -412,8 +412,18 @@ Take `func g() -> Nope { return true }`, where nothing anywhere declares a type 
 a typo, say. Sema reports "cannot find type 'Nope' in scope", but it still has to give the
 return type *some* value to keep checking the body, and any real type is a guess that is wrong
 somewhere. Pick `Int`, and the same function also gets "cannot convert `Bool` to `Int`" — about a
-type the programmer never wrote. So this concept adds a new type to
-`types.ml`, the type of something already reported, and makes `equal` accept it everywhere:
+type the programmer never wrote.
+
+**Why now, and not in 05 or 06?** Until this concept a type name only appears in an annotation,
+`let x: Nope = true`, and an annotation always sits next to a value. Your checker could fall back
+on the value's own type — `Bool` here — which is usually what was meant. (It is not perfect:
+`let y: Int = x` afterwards still gets a second error. No test in 05 or 06 does that, and 05's
+exercise 5 fixes it.) A signature has no value next to it: in `func g(_ a: Nope) -> Nope`,
+nothing says what `a` or the result should be, so the checker would have to invent a type, and
+any invented type is wrong somewhere.
+
+So this concept adds a new type to `types.ml`, the type of something already reported, and
+makes `equal` accept it everywhere:
 
 ```ocaml
 type ty =
@@ -429,7 +439,8 @@ let equal (left : ty) (right : ty) : bool =
 
 The given `resolve_ty` returns `TError` for an unknown name. A parameter of type `Nope` can then
 be used as a condition, in arithmetic, or returned as a `Bool`, and the only error is the first
-one. This is 05's exercise 5, and swiftc's `ErrorType`.
+one. This is swiftc's `ErrorType`. The given `let` arm uses it too, so `let x: Nope = true`
+now binds `x` at `TError` rather than `Bool`.
 
 The same goes for "missing return": for `-> Nope`, nobody knows what the body was supposed to
 return, so there is nothing to report.
