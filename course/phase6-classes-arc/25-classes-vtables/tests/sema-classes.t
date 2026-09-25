@@ -219,3 +219,30 @@ was made — the slot is chosen at compile time:
   print(a.fetch())
         ^
   exit=1
+
+A field and a method parameter of unknown type are reported once each, on their declarations:
+reading the field as a Bool, returning the parameter as a Bool and passing it an Int add
+nothing, because both are TError:
+
+  $ cat > unknown-types.swift <<'EOF'
+  > class C {
+  >   var x: Nope
+  >   init(x: Int) {
+  >     self.x = x
+  >   }
+  >   func m(_ a: Nope) -> Bool {
+  >     return a
+  >   }
+  > }
+  > let c = C(x: 1)
+  > let b: Bool = c.x
+  > print(c.m(3))
+  > EOF
+  $ ./lab.exe --typecheck unknown-types.swift; echo "exit=$?"
+  1:7: error: cannot find type 'Nope' in scope
+  class C {
+        ^
+  6:3: error: cannot find type 'Nope' in scope
+    func m(_ a: Nope) -> Bool {
+    ^
+  exit=1
