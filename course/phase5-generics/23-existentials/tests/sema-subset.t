@@ -183,3 +183,28 @@ not interchangeable — a `let a: A = p as? A` is an optional where a struct is 
   let bad: A = p as? A
                ^
   exit=1
+
+A cast to an unknown type is reported once per cast, and nothing downstream: `as? Nope` is an
+optional of TError, so `if let` binds `s` and `s.v()` adds nothing; `as! Nope` is TError:
+
+  $ cat > unknown-cast.swift <<'PROG'
+  > protocol P {
+  >   func v() -> Int
+  > }
+  > struct S: P {
+  >   func v() -> Int { return 1 }
+  > }
+  > let p: any P = S()
+  > if let s = p as? Nope {
+  >   print(s.v())
+  > }
+  > let t = p as! Nope
+  > PROG
+  $ ./lab.exe --typecheck unknown-cast.swift; echo "exit=$?"
+  8:12: error: cannot find type 'Nope' in scope
+  if let s = p as? Nope {
+             ^
+  11:9: error: cannot find type 'Nope' in scope
+  let t = p as! Nope
+          ^
+  exit=1

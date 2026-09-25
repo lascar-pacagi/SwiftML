@@ -122,3 +122,16 @@ name is "cannot find type" — both at the conforming type's name, where swiftc 
          ^
   exit=1
 
+
+`any Nope` is reported once; calling a method on it adds nothing, since a value of unknown type
+has every member:
+
+  $ cat > unknown-any.swift <<'EOF'
+  > let a: any Nope = 1
+  > let b: Int = a.f()
+  > EOF
+  $ ./lab.exe --typecheck unknown-any.swift; echo "exit=$?"
+  1:1: error: cannot find type 'Nope' in scope
+  let a: any Nope = 1
+  ^
+  exit=1

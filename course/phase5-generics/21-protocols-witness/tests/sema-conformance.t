@@ -243,3 +243,28 @@ divergence recorded in §2. Calling the requirement and printing THAT is what we
   print(s)
         ^
   exit=1
+
+A requirement written with an unknown type is reported once per unknown name, and S still
+conforms: `-> Nope` and `(_ a: Nope)` are TError, which every method signature matches — so
+conformance must compare signatures with `Types.equal`, not `=`:
+
+  $ cat > unknown-req.swift <<'EOF'
+  > protocol P {
+  >   func f() -> Nope
+  >   func g(_ a: Nope) -> Int
+  > }
+  > struct S: P {
+  >   func f() -> Int { return 1 }
+  >   func g(_ a: Bool) -> Int { return 0 }
+  > }
+  > let p: any P = S()
+  > print(p.g(3))
+  > EOF
+  $ ./lab.exe --typecheck unknown-req.swift; echo "exit=$?"
+  1:10: error: cannot find type 'Nope' in scope
+  protocol P {
+           ^
+  1:10: error: cannot find type 'Nope' in scope
+  protocol P {
+           ^
+  exit=1

@@ -187,7 +187,9 @@ lowers through `lower`, so nothing at all compiles until `TODO(21c)` returns som
 2. **`sema.ml` — `struct_conforms`** (`TODO(21-sema)`). Given a struct name and a protocol name,
    answer *does it conform?* The protocol has to exist; then every requirement in its `pl_reqs`
    needs a method of that struct whose parameter types and return type match exactly.
-   `method_sig` (given) looks a method up. Return a `bool` and nothing else: the diagnostic and
+   `method_sig` (given) looks a method up. Compare types with `Types.equal`, not `=`: a
+   requirement written with a type nothing declares (`func f() -> Nope`) was reported already
+   and is `TError` (concept 07), which every method matches. Return a `bool` and nothing else: the diagnostic and
    the coercion rule are both written already, and they both call you.
 3. **`silgen.ml` — the existential wrap** (`TODO(21a)`, `wrap_existential`). Turn a lowered value
    into an `any P`. Two cases: a value that is *already* an existential, and a concrete struct.
@@ -288,7 +290,10 @@ let struct_conforms sname pname =
       List.for_all
         (fun (rn, rps, rret) ->
           match method_sig sname rn with
-          | Some (ps, r) -> ps = rps && r = rret
+          | Some (ps, r) ->
+              List.length ps = List.length rps
+              && List.for_all2 Types.equal ps rps
+              && Types.equal r rret
           | None -> false)
         pl.Types.pl_reqs
 

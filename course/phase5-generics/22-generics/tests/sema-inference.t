@@ -130,3 +130,19 @@ have no way to recover the concrete type, so we refuse. §2 records the divergen
   print(one(e))
         ^
   exit=1
+
+`<T: Nope>` is reported once: T is still a type parameter, but constrained to something unknown,
+so it is TError — no "cannot find type 'T'" for its uses, and no "requires that 'Int' conform"
+at the call:
+
+  $ cat > unknown-constraint.swift <<'EOF'
+  > func f<T: Nope>(_ x: T) -> T {
+  >   return x
+  > }
+  > let y: Int = f(1)
+  > EOF
+  $ ./lab.exe --typecheck unknown-constraint.swift; echo "exit=$?"
+  1:1: error: cannot find type 'Nope' in scope
+  func f<T: Nope>(_ x: T) -> T {
+  ^
+  exit=1
