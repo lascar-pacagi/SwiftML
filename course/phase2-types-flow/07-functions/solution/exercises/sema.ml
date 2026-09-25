@@ -103,7 +103,7 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
         | Some (t, _) -> mk (Tast.Local x) t span
         | None ->
             report_error span (Printf.sprintf "cannot find '%s' in scope" x);
-            mk (Tast.Local x) Types.TInt span)
+            mk (Tast.Local x) Types.TError span)
     | Ast.Unary (Ast.Neg, e0, span) ->
         let n = infer e0 in
         if not (Types.is_numeric n.Tast.ty) then
@@ -229,7 +229,7 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
           report_error span (Printf.sprintf "cannot find '%s' in scope" f);
           mk
             (Tast.Print (some_arg (List.map (fun (_, a) -> infer a) args)))
-            Types.TInt span)
+            Types.TError span)
   and check_expr (expression : Ast.expr) (expected : Types.ty) : Tast.expr =
     match expression with
     | Ast.Int_lit (n, span) ->

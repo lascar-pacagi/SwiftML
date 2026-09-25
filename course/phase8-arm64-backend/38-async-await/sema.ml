@@ -232,7 +232,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
                   Types.TInt)
                 else (
                   err span (Printf.sprintf "cannot find '%s' in scope" x);
-                  Types.TInt)))
+                  Types.TError)))
     | Ast.Unary (Ast.Neg, e0, span) ->
         let t = infer e0 in
         if Types.is_numeric t then t
@@ -752,7 +752,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             else (
               err span (Printf.sprintf "cannot find '%s' in scope" f);
               List.iter (fun a -> ignore (infer a)) exprs;
-              Types.TInt))
+              Types.TError))
   (* a call to a GENERIC function — concept 22. Type parameters are INFERRED from the
      arguments: every argument sitting in a `T` position must have the same concrete type
      (else swiftc's "conflicting arguments to generic parameter"), and that type must satisfy

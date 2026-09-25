@@ -96,7 +96,7 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
         | None ->
             report_error span
               (Printf.sprintf "cannot find '%s' in scope" variable_name);
-            make (Tast.Local variable_name) Types.TInt span)
+            make (Tast.Local variable_name) Types.TError span)
     | Ast.Unary (Ast.Neg, operand_expression, span) ->
         let operand = infer_expression operand_expression in
         if not (Types.is_numeric operand.Tast.ty) then
@@ -243,7 +243,7 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
             else (
               report_error span (Printf.sprintf "cannot find '%s' in scope" function_name);
               make (Tast.Print (first (List.map infer_expression argument_expressions)))
-                Types.TInt span))
+                Types.TError span))
   (* the memberwise initializer: one labeled argument per stored property, in order. The labels
      are checked here and then DISCHARGED — the resolved node keeps only the values, in layout
      order, because that is all the meaning a label carried. *)

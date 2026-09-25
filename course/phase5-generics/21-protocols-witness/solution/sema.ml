@@ -112,7 +112,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             | Some ft -> ft
             | None ->
                 err span (Printf.sprintf "cannot find '%s' in scope" x);
-                Types.TInt))
+                Types.TError))
     | Ast.Unary (Ast.Neg, e0, span) ->
         let t = infer e0 in
         if Types.is_numeric t then t
@@ -338,7 +338,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             else (
               err span (Printf.sprintf "cannot find '%s' in scope" f);
               List.iter (fun a -> ignore (infer a)) exprs;
-              Types.TInt))
+              Types.TError))
   (* the memberwise initializer: one labeled argument per stored property, in order *)
   and infer_init sn (sl : Types.struct_layout) (args : Ast.arg list) span : Types.ty =
     let fields = sl.Types.sl_fields in

@@ -79,7 +79,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
         | Some (t, _) -> mk (Tast.Local x) t span
         | None ->
             err span (Printf.sprintf "cannot find '%s' in scope" x);
-            mk (Tast.Local x) Types.TInt span)
+            mk (Tast.Local x) Types.TError span)
     | Ast.Unary (Ast.Neg, e0, span) ->
         let n = infer e0 in
         if not (Types.is_numeric n.Tast.ty) then
@@ -258,7 +258,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
                   mk (Tast.Print (first (List.map infer exprs))) Types.TVoid span
             else (
               err span (Printf.sprintf "cannot find '%s' in scope" f);
-              mk (Tast.Print (first (List.map infer exprs))) Types.TInt span))
+              mk (Tast.Print (first (List.map infer exprs))) Types.TError span))
   (* the memberwise initializer: one labeled argument per stored property, in order. The labels
      are checked and then DISCHARGED — the resolved node keeps the values in layout order. *)
   and infer_init sn (sl : Types.struct_layout) (args : Ast.arg list) span : Tast.expr =

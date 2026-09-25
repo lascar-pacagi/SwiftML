@@ -135,3 +135,23 @@ has every member:
   let a: any Nope = 1
   ^
   exit=1
+
+An undeclared name is reported once per use and is TError afterwards, never a guessed Int: the
+call `nope(1)` and the variable `nope` go into a Bool annotation, a condition and a `+` with a
+Bool, and nothing else is reported — the same rule as an unknown type, one level down:
+
+  $ printf 'let b: Bool = nope(1)\nlet c: Bool = nope\nif nope {\n  print(nope + true)\n}\n' > unknown-names.swift
+  $ ./lab.exe --typecheck unknown-names.swift; echo "exit=$?"
+  1:15: error: cannot find 'nope' in scope
+  let b: Bool = nope(1)
+                ^
+  2:15: error: cannot find 'nope' in scope
+  let c: Bool = nope
+                ^
+  3:4: error: cannot find 'nope' in scope
+  if nope {
+     ^
+  4:9: error: cannot find 'nope' in scope
+    print(nope + true)
+          ^
+  exit=1

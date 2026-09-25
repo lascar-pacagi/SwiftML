@@ -442,6 +442,10 @@ be used as a condition, in arithmetic, or returned as a `Bool`, and the only err
 one. This is swiftc's `ErrorType`. The given `let` arm uses it too, so `let x: Nope = true`
 now binds `x` at `TError` rather than `Bool`.
 
+An unknown *name* is the same mistake one level down. `let b: Bool = nope` and
+`let b: Bool = nope(1)` each report "cannot find 'nope' in scope", and the given code types
+`nope` and the call as `TError`, so the `Bool` annotation adds nothing.
+
 The same goes for "missing return": for `-> Nope`, nobody knows what the body was supposed to
 return, so there is nothing to report.
 
@@ -669,7 +673,7 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
         | Some (t, _) -> mk (Tast.Local x) t span
         | None ->
             report_error span (Printf.sprintf "cannot find '%s' in scope" x);
-            mk (Tast.Local x) Types.TInt span)
+            mk (Tast.Local x) Types.TError span)
     | Ast.Unary (Ast.Neg, e0, span) ->
         let n = infer e0 in
         if not (Types.is_numeric n.Tast.ty) then
@@ -776,7 +780,7 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
               mk (Tast.Print (some_arg (List.map infer args))) Types.TVoid span
         else (
           report_error span (Printf.sprintf "cannot find '%s' in scope" f);
-          mk (Tast.Print (some_arg (List.map infer args))) Types.TInt span)
+          mk (Tast.Print (some_arg (List.map infer args))) Types.TError span)
   and check_expr (expression : Ast.expr) (expected : Types.ty) : Tast.expr =
     match expression with
     | Ast.Int_lit (n, span) ->
