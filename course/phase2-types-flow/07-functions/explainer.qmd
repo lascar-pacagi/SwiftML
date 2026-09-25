@@ -431,9 +431,8 @@ The given `resolve_ty` returns `TError` for an unknown name. A parameter of type
 be used as a condition, in arithmetic, or returned as a `Bool`, and the only error is the first
 one. This is 05's exercise 5, and swiftc's `ErrorType`.
 
-What this means for your `check_func`: the declaration carries its return type as a *written*
-name, `f.Ast.ret`, and you resolve it with `resolve_ty`. For `-> Nope` that gives `TError`, and
-then skip the "missing return" check — nobody knows what the body was supposed to return.
+The same goes for "missing return": for `-> Nope`, nobody knows what the body was supposed to
+return, so there is nothing to report.
 
 Not everything goes quiet, though. `func g() -> Nope { return }` still gets "non-void function
 should return a value", from swiftc too. That error is not about `Nope`: the function says it
