@@ -58,3 +58,16 @@ The assigned expression is checked against the property's declared type.
   p.x = "wrong"
         ^
   [1]
+
+Writing a member of a value whose type is unknown reports nothing more: `var p: Nope` is the one
+error, and `p.x = true` checks its right-hand side against that unknown type:
+
+  $ cat > unknown-base.swift <<'EOF'
+  > var p: Nope = 1
+  > p.x = true
+  > EOF
+  $ ./lab.exe --typecheck unknown-base.swift
+  1:1: error: cannot find type 'Nope' in scope
+  var p: Nope = 1
+  ^
+  [1]

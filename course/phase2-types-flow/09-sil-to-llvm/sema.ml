@@ -42,13 +42,14 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
     f ();
     environment := saved
   in
-  let resolve_silent name = Option.value (Types.of_name name) ~default:Types.TInt in
+  (* an unknown name resolves to TError, never a guess: see Types.equal *)
+  let resolve_silent name = Option.value (Types.of_name name) ~default:Types.TError in
   let resolve_ty span name =
     match Types.of_name name with
     | Some t -> t
     | None ->
         report_error span (Printf.sprintf "cannot find type '%s' in scope" name);
-        Types.TInt
+        Types.TError
   in
   let mk (e : Tast.expr_kind) (ty : Types.ty) (span : Token.span) : Tast.expr = { Tast.e; ty; span } in
 
@@ -100,8 +101,7 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
         | Some t -> mk (Tast.Coerce (check_expr e0 t)) t span
         | None ->
             report_error span (Printf.sprintf "cannot find type '%s' in scope" tyname);
-            let n = infer e0 in
-            mk (Tast.Coerce n) n.Tast.ty span)
+            mk (Tast.Coerce (infer e0)) Types.TError span)
   and infer_binary op l r span : Tast.expr =
     let ln = infer l and rn = infer r in
     let tl = ln.Tast.ty and tr = rn.Tast.ty in
@@ -130,6 +130,14 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
       | None -> (ln, rn)
     in
     let result =
+      (* an operand whose type was already reported says nothing about this operator: a
+         comparison or `&&` is still a Bool, anything else is as unknown as its operand *)
+      if tl = Types.TError || tr = Types.TError then
+        match op with
+        | Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge | Ast.And | Ast.Or ->
+            Types.TBool
+        | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod -> Types.TError
+      else
       match op with
       | Ast.Add -> (
           match unified with
@@ -186,6 +194,7 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
         (* the coercion, RECORDED: the node keeps its kind and takes the expected type, exactly
            as `swiftc -dump-ast` shows (`integer_literal_expr type="Double"`) *)
         if expected = Types.TInt || expected = Types.TDouble then mk (Tast.Int_lit n) expected span
+        else if expected = Types.TError then mk (Tast.Int_lit n) Types.TInt span
         else (
           report_error span
             (Printf.sprintf "cannot convert value of type 'Int' to specified type '%s'"
@@ -209,17 +218,21 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
   let rec check_stmt (s : Ast.stmt) : Tast.stmt =
     match s with
     | Ast.Let { name; is_var; annot; value; span } ->
-        let n =
+        (* the name is bound at the type the programmer WROTE, so `let x: Nope = true`
+           makes `x` a TError, not a Bool that every later use would then contradict *)
+        let n, bound =
           match annot with
-          | None -> infer value
+          | None ->
+              let n = infer value in
+              (n, n.Tast.ty)
           | Some tyname -> (
               match Types.of_name tyname with
-              | Some t -> check_expr value t
+              | Some t -> (check_expr value t, t)
               | None ->
                   report_error span (Printf.sprintf "cannot find type '%s' in scope" tyname);
-                  infer value)
+                  (infer value, Types.TError))
         in
-        bind name (n.Tast.ty, is_var);
+        bind name (bound, is_var);
         Tast.Let { name; is_var; value = n; span }
     | Ast.Assign { name; value; span } -> (
         match lookup name with
@@ -297,7 +310,9 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
     let body = List.map check_stmt f.Ast.body in
     environment := saved_env;
     current_return_type := saved_ret;
-    if ret <> Types.TVoid && not (block_returns f.Ast.body) then
+    (* `-> Nope` was reported already; what it should return is unknown, so is whether
+       the body returns it *)
+    if ret <> Types.TVoid && ret <> Types.TError && not (block_returns f.Ast.body) then
       report_error f.Ast.fspan
         (Printf.sprintf "missing return in global function expected to return '%s'"
            (Types.string_of_ty ret));

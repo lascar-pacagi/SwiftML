@@ -404,9 +404,12 @@ machinery is the natural place to generalize), and `print` of a `Double` goes th
   field to use a struct declared later. Record `let` fields separately for assignment checking.
 - **`sema.ml`, TODO(10e)** — infer a member read from the base struct's layout. For a memberwise
   initializer, check arity first, then compare each argument's optional label and value type with
-  the corresponding field. The expression's result is `TStruct name`.
+  the corresponding field. The expression's result is `TStruct name`. A base of type `TError`
+  (its type was unknown and already reported, concept 07) has every member: the read is `TError`
+  and reports nothing.
 - **`sema.ml`, TODO(10f)** — resolve the base binding and the field for a write. A write needs both
   a `var` binding and a `var` field, and its right-hand side must check against the field type.
+  Again a `TError` base reports nothing; check the right-hand side against `TError`.
 - **`silgen.ml`, TODO(10g–h)** — in `gen_expr`, the `Member (operand_expression, field_name, _)`
   case is a **read**: lower `operand_expression` to a struct *value*, ask `value_type` which struct
   it is, and turn the field *name* into an *index* and a *type* through the layout in

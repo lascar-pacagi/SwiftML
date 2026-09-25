@@ -50,14 +50,15 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
         else None
   in
   let resolve_type_silently name =
-    Option.value (resolve_type_opt name) ~default:Types.TInt
+    (* an unknown name resolves to TError, never a guess: see Types.equal *)
+    Option.value (resolve_type_opt name) ~default:Types.TError
   in
   let resolve_type span name =
     match resolve_type_opt name with
     | Some resolved_type -> resolved_type
     | None ->
         report_error span (Printf.sprintf "cannot find type '%s' in scope" name);
-        Types.TInt
+        Types.TError
   in
 
   let make (e : Tast.expr_kind) (ty : Types.ty) (span : Token.span) : Tast.expr =
@@ -114,8 +115,7 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
         | None ->
             report_error span
               (Printf.sprintf "cannot find type '%s' in scope" type_name);
-            let operand = infer_expression operand_expression in
-            make (Tast.Coerce operand) operand.Tast.ty span)
+            make (Tast.Coerce (infer_expression operand_expression)) Types.TError span)
     (* RESOLUTION: `p.x` becomes a field INDEX. The name was how the source spelled it; the
        position is what it means, and it is what SILGen needs. *)
     | Ast.Member (operand_expression, field_name, span) -> (
@@ -134,6 +134,8 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
                     make (Tast.Field (base, index, field_name)) field_type span
                 | _ -> unresolved struct_name)
             | None -> make (Tast.Field (base, 0, field_name)) Types.TInt span)
+        (* a member of something already reported is as unknown as it is *)
+        | Types.TError -> make (Tast.Field (base, 0, field_name)) Types.TError span
         | base_type -> unresolved (Types.string_of_ty base_type))
   and infer_binary operator left_expression right_expression span : Tast.expr =
     let left = infer_expression left_expression and right = infer_expression right_expression in
@@ -164,6 +166,14 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
       | None -> (left, right)
     in
     let result =
+      (* an operand whose type was already reported says nothing about this operator: a
+         comparison or `&&` is still a Bool, anything else is as unknown as its operand *)
+      if left_type = Types.TError || right_type = Types.TError then
+        match operator with
+        | Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge | Ast.And | Ast.Or ->
+            Types.TBool
+        | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod -> Types.TError
+      else
       match operator with
       | Ast.Add -> (
           match common with
@@ -228,7 +238,7 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
                   (* IRGen prints the scalar types only; swiftc would print `Point(x: 1, y: 2)` *)
                   let printed = infer_expression printed_expression in
                   (match printed.Tast.ty with
-                  | Types.TInt | Types.TDouble | Types.TBool | Types.TString -> ()
+                  | Types.TError | Types.TInt | Types.TDouble | Types.TBool | Types.TString -> ()
                   | unsupported_type ->
                       report_error (Ast.expr_span printed_expression)
                         (Printf.sprintf
@@ -279,6 +289,7 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
            as `swiftc -dump-ast` shows (`integer_literal_expr type="Double"`) *)
         if expected = Types.TInt || expected = Types.TDouble then
           make (Tast.Int_lit n) expected span
+        else if expected = Types.TError then make (Tast.Int_lit n) Types.TInt span
         else (
           report_error span
             (Printf.sprintf "cannot convert value of type 'Int' to specified type '%s'"
@@ -321,18 +332,22 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
   let rec check_statement (statement : Ast.stmt) : Tast.stmt =
     match statement with
     | Ast.Let { name; is_var; annot; value; span } ->
-        let bound =
+        (* the name is bound at the type the programmer WROTE, so `let x: Nope = true`
+           makes `x` a TError, not a Bool that every later use would then contradict *)
+        let bound, bound_type =
           match annot with
-          | None -> infer_expression value
+          | None ->
+              let bound = infer_expression value in
+              (bound, bound.Tast.ty)
           | Some type_name -> (
               match resolve_type_opt type_name with
-              | Some resolved_type -> check_expr value resolved_type
+              | Some resolved_type -> (check_expr value resolved_type, resolved_type)
               | None ->
                   report_error span
                     (Printf.sprintf "cannot find type '%s' in scope" type_name);
-                  infer_expression value)
+                  (infer_expression value, Types.TError))
         in
-        bind_name name (bound.Tast.ty, is_var);
+        bind_name name (bound_type, is_var);
         Tast.Let { name; is_var; value = bound; span }
     | Ast.Assign { name; value; span } -> (
         match lookup_binding name with
@@ -378,6 +393,10 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
                   { obj = object_name; field = index; field_name;
                     value = check_expr value field_type; span }
             | _ -> unresolved struct_name)
+        | Some (Types.TError, _) ->
+            Tast.Set_member
+              { obj = object_name; field = 0; field_name;
+                value = check_expr value Types.TError; span }
         | Some (base_type, _) -> unresolved (Types.string_of_ty base_type))
     | Ast.Expr_stmt (expression, _) -> Tast.Expr_stmt (infer_expression expression)
     | Ast.If { cond = condition; then_blk = then_block; else_blk = else_block; span } ->
@@ -450,7 +469,10 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
     let body = List.map check_statement function_decl.Ast.body in
     environment := saved_environment;
     current_return_type := saved_return_type;
-    if return_type <> Types.TVoid && not (block_returns function_decl.Ast.body) then
+    (* `-> Nope` was reported already; what it should return is unknown, so is whether
+       the body returns it *)
+    if return_type <> Types.TVoid && return_type <> Types.TError
+       && not (block_returns function_decl.Ast.body) then
       report_error function_decl.Ast.fspan
         (Printf.sprintf "missing return in %s expected to return '%s'" "global function"
            (Types.string_of_ty return_type));

@@ -143,3 +143,19 @@ Whole-struct equality and printing are rejected because this backend cannot lowe
   print(p)
         ^
   [1]
+
+A member of a value whose type is unknown is itself unknown: `let p: Nope = …` is reported once,
+and `p.y` — which no struct declares — read as a Bool adds nothing:
+
+  $ cat > unknown-base.swift <<'EOF'
+  > struct Point {
+  >   var x: Int
+  > }
+  > let p: Nope = Point(x: 1)
+  > let q: Bool = p.y
+  > EOF
+  $ ./lab.exe --typecheck unknown-base.swift
+  4:1: error: cannot find type 'Nope' in scope
+  let p: Nope = Point(x: 1)
+  ^
+  [1]
