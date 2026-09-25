@@ -4,6 +4,7 @@
    signature table in sema, not represented as a first-class type (that's Phase 7). *)
 
 type ty =
+  | TError (* the type of something already reported — concept 07 *)
   | TInt
   | TBool
   | TDouble
@@ -21,6 +22,7 @@ type struct_layout = { sl_name : string; sl_fields : (string * ty) list }
 type enum_layout = { el_name : string; el_cases : (string * ty list) list; el_raw : bool }
 
 let rec string_of_ty : ty -> string = function
+  | TError -> "<error>"
   | TInt -> "Int"
   | TBool -> "Bool"
   | TDouble -> "Double"
@@ -30,10 +32,18 @@ let rec string_of_ty : ty -> string = function
   | TEnum n -> n
   | TOptional t -> string_of_ty t ^ "?"
 
-let equal (a : ty) (b : ty) : bool = a = b
+(* COMPATIBLE, not identical: TError agrees with every type, because it stands for
+   something already reported. A parameter declared `Nope` is TError, so `return a`
+   from a `-> Bool` function passes this check instead of producing a second error
+   about a type the programmer never wrote. *)
+let rec equal (a : ty) (b : ty) : bool =
+  match (a, b) with
+  | TError, _ | _, TError -> true
+  | TOptional x, TOptional y -> equal x y
+  | _ -> a = b
 
 let is_numeric : ty -> bool = function
-  | TInt | TDouble -> true
+  | TError | TInt | TDouble -> true
   | TBool | TString | TVoid | TStruct _ | TEnum _ | TOptional _ -> false
 
 (* enum helpers: a case's tag (index) and its payload types *)

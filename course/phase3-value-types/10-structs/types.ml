@@ -4,6 +4,7 @@
    signature table in sema, not represented as a first-class type (that's Phase 7). *)
 
 type ty =
+  | TError (* the type of something already reported — concept 07 *)
   | TInt
   | TBool
   | TDouble
@@ -17,6 +18,7 @@ type ty =
 type struct_layout = { sl_name : string; sl_fields : (string * ty) list }
 
 let string_of_ty : ty -> string = function
+  | TError -> "<error>"
   | TInt -> "Int"
   | TBool -> "Bool"
   | TDouble -> "Double"
@@ -24,10 +26,17 @@ let string_of_ty : ty -> string = function
   | TVoid -> "()"
   | TStruct name -> name
 
-let equal (left : ty) (right : ty) : bool = left = right
+(* COMPATIBLE, not identical: TError agrees with every type, because it stands for
+   something already reported. A parameter declared `Nope` is TError, so `return a`
+   from a `-> Bool` function passes this check instead of producing a second error
+   about a type the programmer never wrote. *)
+let equal (left : ty) (right : ty) : bool =
+  match (left, right) with
+  | TError, _ | _, TError -> true
+  | _ -> left = right
 
 let is_numeric : ty -> bool = function
-  | TInt | TDouble -> true
+  | TError | TInt | TDouble -> true
   | TBool | TString | TVoid | TStruct _ -> false
 
 (* field lookups on a layout *)

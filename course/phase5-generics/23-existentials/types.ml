@@ -4,6 +4,7 @@
    to P. Function *types* stay implicit (calls check against a signature table) until Phase 7. *)
 
 type ty =
+  | TError (* the type of something already reported — concept 07 *)
   | TInt
   | TBool
   | TDouble
@@ -31,6 +32,7 @@ type enum_layout = { el_name : string; el_cases : (string * ty list) list; el_ra
 type proto_layout = { pl_name : string; pl_reqs : (string * ty list * ty) list }
 
 let rec string_of_ty : ty -> string = function
+  | TError -> "<error>"
   | TInt -> "Int"
   | TBool -> "Bool"
   | TDouble -> "Double"
@@ -42,10 +44,18 @@ let rec string_of_ty : ty -> string = function
   | TProto n -> "any " ^ n
   | TVar (n, _) -> n
 
-let equal (a : ty) (b : ty) : bool = a = b
+(* COMPATIBLE, not identical: TError agrees with every type, because it stands for
+   something already reported. A parameter declared `Nope` is TError, so `return a`
+   from a `-> Bool` function passes this check instead of producing a second error
+   about a type the programmer never wrote. *)
+let rec equal (a : ty) (b : ty) : bool =
+  match (a, b) with
+  | TError, _ | _, TError -> true
+  | TOptional x, TOptional y -> equal x y
+  | _ -> a = b
 
 let is_numeric : ty -> bool = function
-  | TInt | TDouble -> true
+  | TError | TInt | TDouble -> true
   | TBool | TString | TVoid | TStruct _ | TEnum _ | TOptional _ | TProto _ | TVar _ -> false
 
 (* enum helpers: a case's tag (index) and its payload types *)
