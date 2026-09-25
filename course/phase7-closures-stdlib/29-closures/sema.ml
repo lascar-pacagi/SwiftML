@@ -65,7 +65,13 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
     | None -> false
     | Some pl ->
         List.for_all
-          (fun (rn, rps, rret) -> match method_sig sname rn with Some (ps, r) -> ps = rps && r = rret | None -> false)
+          (fun (rn, rps, rret) -> match method_sig sname rn with
+            | Some (ps, r) ->
+                (* COMPATIBLE, not identical: a requirement written `-> Nope` is TError, and
+                   was reported already — every method matches it *)
+                List.length ps = List.length rps && List.for_all2 Types.equal ps rps
+                && Types.equal r rret
+            | None -> false)
           pl.Types.pl_reqs
   in
   let field_of_self x =
@@ -102,19 +108,37 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
           else (
             (* a type parameter of the enclosing generic function — concept 22 *)
             match List.assoc_opt name !current_generics with
-            | Some c -> Some (Types.TVar (name, c))
+            (* `<T: Nope>`: T is still T, but what it is constrained to is unknown and was
+               reported, so T is TError — its uses add nothing, and there is no constraint
+               left for a call to fail *)
+            | Some c -> Some (if Hashtbl.mem protos c then Types.TVar (name, c) else Types.TError)
             | None -> None)
   in
-  let resolve_silent name = Option.value (resolve_opt name) ~default:Types.TInt in
-  let resolve_ty span name =
-    match resolve_opt name with
-    | Some (Types.TOptional t) when (match t with Types.TClass _ -> true | _ -> false) ->
-        err span "optional class references are not supported in this subset";
-        Types.TOptional t
-    | Some t -> t
+  (* an unknown name resolves to TError, never a guess: see Types.equal *)
+  (* An unknown name resolves to TError, never a guess (see Types.equal) — and only the
+     unknown PART does, however deep it sits: `Nope?`, `[Nope]` and `(Nope) -> Int` keep their
+     shape around a TError, so the checks that care about the shape still see one, and the
+     error names `Nope`, as swiftc's does. *)
+  let rec resolve_with report name =
+    match Types.split_fn_written name with
+    | Some (ps, ret) -> Types.TFunc (List.map (resolve_with report) ps, resolve_with report ret)
     | None ->
-        err span (Printf.sprintf "cannot find type '%s' in scope" name);
-        Types.TInt
+    if String.length name > 0 && name.[String.length name - 1] = '?' then
+      Types.TOptional (resolve_with report (String.sub name 0 (String.length name - 1)))
+    else
+      match resolve_opt name with
+      | Some t -> t
+      | None ->
+          report name;
+          Types.TError
+  in
+  let resolve_silent name = resolve_with ignore name in
+  let resolve_ty span name =
+    match resolve_with (fun n -> err span (Printf.sprintf "cannot find type '%s' in scope" n)) name with
+    | Types.TOptional (Types.TClass _) as t ->
+        err span "optional class references are not supported in this subset";
+        t
+    | t -> t
   in
 
   let rec is_int_literal = function
@@ -186,7 +210,8 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             t
         | None ->
             err span (Printf.sprintf "cannot find type '%s' in scope" tyname);
-            infer e0)
+            ignore (infer e0);
+            Types.TError)
     (* `E.case` — a no-payload enum case names a value of the enum type (concept 11) *)
     | Ast.Member (Ast.Var (tn, _), case, span) when lookup tn = None && Hashtbl.mem enums tn -> (
         let el = Hashtbl.find enums tn in
@@ -220,6 +245,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         | Types.TProto pn ->
             err span (Printf.sprintf "value of type 'any %s' has no member '%s'" pn fld);
             Types.TInt
+        | Types.TError -> Types.TError (* already reported: every member exists *)
         | t ->
             err span (Printf.sprintf "value of type '%s' has no member '%s'" (Types.string_of_ty t) fld);
             Types.TInt)
@@ -300,6 +326,9 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
                 err span (Printf.sprintf "value of type '%s' has no member '%s'" tn m);
                 List.iter (fun a -> ignore (infer a)) exprs;
                 Types.TInt)
+        | Types.TError ->
+            List.iter (fun a -> ignore (infer a)) exprs;
+            Types.TError
         | t ->
             err span (Printf.sprintf "value of type '%s' has no member '%s'" (Types.string_of_ty t) m);
             List.iter (fun a -> ignore (infer a)) exprs;
@@ -311,6 +340,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
     | Ast.Force_unwrap (e0, span) -> (
         match infer e0 with
         | Types.TOptional t -> t
+        | Types.TError -> Types.TError
         | t ->
             err span (Printf.sprintf "cannot force-unwrap a non-optional value of type '%s'" (Types.string_of_ty t));
             t)
@@ -338,7 +368,9 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         in
         env := saved;
         closure_floors := saved_floors;
-        Types.TFunc (ptys, rty)
+        (* a signature with an unknown type in it is unknown as a whole — swiftc gives the
+           closure an error type, so nothing it is later used for is reported again *)
+        if List.mem Types.TError (rty :: ptys) then Types.TError else Types.TFunc (ptys, rty)
     | Ast.Cast (e0, tyname, conditional, span) -> (
         let target =
           match resolve_opt tyname with
@@ -356,15 +388,19 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
               Diagnostics.warning diags span
                 (Printf.sprintf "cast from 'any %s' to unrelated type '%s' always fails" pn sn);
             if conditional then Types.TOptional (Types.TStruct sn) else Types.TStruct sn
+        | Types.TError, Some sn ->
+            if conditional then Types.TOptional (Types.TStruct sn) else Types.TStruct sn
         | t, Some sn ->
             err span
               (Printf.sprintf "cannot cast a value of type '%s' (only existentials support as?/as! in this subset)"
                  (Types.string_of_ty t));
             if conditional then Types.TOptional (Types.TStruct sn) else Types.TStruct sn
-        | _, None -> Types.TInt)
+        (* the target was reported already: `as? Nope` is an optional of something unknown *)
+        | _, None -> if conditional then Types.TOptional Types.TError else Types.TError)
     | Ast.Coalesce (a, b, span) -> (
         match infer a with
         | Types.TOptional t -> check_expr b t; t
+        | Types.TError -> ignore (infer b); Types.TError
         | t ->
             err span (Printf.sprintf "left operand of '??' must be optional, found '%s'" (Types.string_of_ty t));
             ignore (infer b);
@@ -380,11 +416,18 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
     match (op, l, r) with
     | (Ast.Eq | Ast.Ne), Ast.Nil _, other | (Ast.Eq | Ast.Ne), other, Ast.Nil _ -> (
         match infer other with
-        | Types.TOptional _ -> Types.TBool
+        | Types.TOptional _ | Types.TError -> Types.TBool
         | t -> err span (Printf.sprintf "value of type '%s' cannot be compared with 'nil'" (Types.string_of_ty t)); Types.TBool)
     | _ -> infer_binary_base op l r span
   and infer_binary_base op l r span : Types.ty =
     let tl = infer l and tr = infer r in
+    (* an operand whose type was already reported says nothing about this operator: a
+       comparison or `&&` is still a Bool, anything else is as unknown as its operand *)
+    if tl = Types.TError || tr = Types.TError then
+      match op with
+      | Ast.Eq | Ast.Ne | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge | Ast.And | Ast.Or -> Types.TBool
+      | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod -> Types.TError
+    else
     let bad () =
       (* swiftc has two wordings and picks by whether the operands agree:
            1 < "a"      -> cannot be applied to operands of type 'Int' and 'String'
@@ -454,6 +497,10 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         ret
     (* a local that is NOT a function value: `let n = 5` then `n(1)`. It IS in scope, so
        "cannot find 'n' in scope" is the wrong complaint — swiftc names the real problem. *)
+    (* calling something whose type was reported already: every call is fine *)
+    | Some (Types.TError, _) ->
+        List.iter (fun (_, a) -> ignore (infer a)) args;
+        Types.TError
     | Some (t, _) when not (Hashtbl.mem funcs f || Hashtbl.mem gfuncs f || Hashtbl.mem classes f) ->
         err span (Printf.sprintf "cannot call value of non-function type '%s'" (Types.string_of_ty t));
         List.iter (fun (_, a) -> ignore (infer a)) args;
@@ -516,7 +563,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
                      for a struct, `red` for an enum case, `Optional(5)` for an optional, `C(r: 1)`
                      for a conformer inside an `any P` and `C` for a class — a divergence, §2 *)
                   match infer a with
-                  | Types.TInt | Types.TDouble | Types.TBool | Types.TString -> ()
+                  | Types.TError | Types.TInt | Types.TDouble | Types.TBool | Types.TString -> ()
                   | t ->
                       err (Ast.expr_span a)
                         (Printf.sprintf
@@ -598,7 +645,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
      implicit wrapping — a value of the wrapped type (`5 : Int?` becomes `.some(5)`) — concept 13 *)
   and check_expr (e : Ast.expr) (expected : Types.ty) : unit =
     match (e, expected) with
-    | Ast.Nil _, Types.TOptional _ -> ()
+    | Ast.Nil _, (Types.TOptional _ | Types.TError) -> ()
     | Ast.Nil _, _ ->
         err (Ast.expr_span e)
           (Printf.sprintf "'nil' cannot be used with a non-optional type '%s'" (Types.string_of_ty expected))
@@ -629,7 +676,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
   and check_expr_base (e : Ast.expr) (expected : Types.ty) : unit =
     match e with
     | Ast.Int_lit _ ->
-        if expected = Types.TInt || expected = Types.TDouble then ()
+        if expected = Types.TInt || expected = Types.TDouble || expected = Types.TError then ()
         else
           err (Ast.expr_span e)
             (Printf.sprintf "cannot convert value of type 'Int' to specified type '%s'"
@@ -665,13 +712,15 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         let t =
           match annot with
           | None -> infer value
-          | Some tyname -> (
-              match resolve_opt tyname with
-              (* `resolve_ty` reports the v0 guards; a `let k: K? = K()` used to slip past this
-                 one and miscompile — the slot held a class reference the ARC insertion never
-                 saw, so the ownership verifier rejected the function it produced *)
-              | Some t -> ignore (resolve_ty span tyname); check_expr value t; t
-              | None -> err span (Printf.sprintf "cannot find type '%s' in scope" tyname); infer value)
+          | Some tyname ->
+              (* `resolve_ty` reports the v0 guards; a `let k: K? = K()` used to slip past
+                 this one and miscompile — the slot held a class reference the ARC
+                 insertion never saw, so the ownership verifier rejected the function it
+                 produced. It also turns an unknown name into TError, and the name is bound
+                 at the type WRITTEN, never the value's *)
+              let t = resolve_ty span tyname in
+              check_expr value t;
+              t
         in
         bind name (t, is_var)
     | Ast.Assign { name; value; span } -> (
@@ -724,6 +773,7 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
             | None ->
                 err span (Printf.sprintf "value of type '%s' has no member '%s'" sn field);
                 ignore (infer value))
+        | Some (Types.TError, _) -> check_expr value Types.TError
         | Some (t, _) ->
             err span (Printf.sprintf "value of type '%s' has no member '%s'" (Types.string_of_ty t) field);
             ignore (infer value))
@@ -736,6 +786,9 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         (* `if let x = opt`: opt must be optional; x is the unwrapped type, bound in the then-block *)
         (match infer opt with
         | Types.TOptional t -> in_scope (fun () -> bind name (t, false); List.iter check_stmt then_blk)
+        | Types.TError ->
+            (* already reported: bind the name at TError so its uses add nothing *)
+            in_scope (fun () -> bind name (Types.TError, false); List.iter check_stmt then_blk)
         | t ->
             err span
               (Printf.sprintf "initializer for conditional binding must have Optional type, not '%s'"
@@ -813,6 +866,21 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
           cases;
         Option.iter check_block default;
         if default = None then err span "switch must be exhaustive"
+    | Types.TError ->
+        (* the subject's type was reported already: check every case body, with the names a
+           pattern binds set to TError, and claim nothing about exhaustiveness *)
+        List.iter
+          (fun (pat, body) ->
+            in_scope (fun () ->
+                (match pat with
+                | Ast.PEnumCase (_, bindings) ->
+                    List.iter
+                      (function Ast.Bind x -> bind x (Types.TError, false) | Ast.Ignore -> ())
+                      bindings
+                | Ast.PInt _ -> ());
+                List.iter check_stmt body))
+          cases;
+        Option.iter check_block default
     | t -> err span (Printf.sprintf "cannot 'switch' over a value of type '%s'" (Types.string_of_ty t))
   and check_block (stmts : Ast.stmt list) : unit = in_scope (fun () -> List.iter check_stmt stmts) in
 
@@ -827,8 +895,8 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
         match c with
         | Some c ->
             if not (Hashtbl.mem protos c) then
-              err f.Ast.fspan (Printf.sprintf "cannot find type '%s' in scope" c)
-            else current_generics := (n, c) :: !current_generics
+              err f.Ast.fspan (Printf.sprintf "cannot find type '%s' in scope" c);
+            current_generics := (n, c) :: !current_generics
         | None ->
             (* v0: every type parameter needs a protocol constraint (an unconstrained T has no
                usable representation without boxing — see the explainer/exercises) *)
@@ -862,7 +930,11 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
            let cl = Hashtbl.find classes cname in
            let inherited =
              match cl.Types.cl_super with
-             | Some sup -> List.length (Hashtbl.find classes sup).Types.cl_fields
+             (* an unknown superclass was already reported at the declaration *)
+             | Some sup -> (
+                 match Hashtbl.find_opt classes sup with
+                 | Some sl -> List.length sl.Types.cl_fields
+                 | None -> 0)
              | None -> 0
            in
            let own = List.filteri (fun i _ -> i >= inherited) cl.Types.cl_fields in
@@ -871,14 +943,22 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
                if not (Hashtbl.mem assigned_fields fn) then
                  err f.Ast.fspan "return from initializer without initializing all stored properties")
              own;
-           if cl.Types.cl_super <> None && not !super_called then
+           (* an unknown superclass was already reported: there is no init to call *)
+           let super_known =
+             match cl.Types.cl_super with
+             | Some sup -> Hashtbl.mem classes sup
+             | None -> false
+           in
+           if super_known && not !super_called then
              err f.Ast.fspan "'super.init' isn't called on all paths before returning from initializer"
        | None -> ());
     current_class := saved_class;
     in_init := saved_init;
     super_called := saved_super;
     current_generics := saved_generics;
-    if ret <> Types.TVoid && not (block_returns f.Ast.body) then
+    (* `-> Nope` was reported already; what it should return is unknown, so is whether
+       the body returns it *)
+    if ret <> Types.TVoid && ret <> Types.TError && not (block_returns f.Ast.body) then
       err f.Ast.fspan
         (Printf.sprintf "missing return in %s expected to return '%s'" (if self_of <> None || class_of <> None then "instance method" else "global function") (Types.string_of_ty ret))
   in
@@ -1017,6 +1097,14 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : unit =
               e.Ast.ecases
           in
           List.iter (fun (_, tys) -> List.iter (no_class_inside e.Ast.espan "enum payloads") tys) cases;
+          (* the raw-type boundary 11 drew: only Int, and a name nothing declares is unknown
+             rather than unsupported *)
+          (match e.Ast.eraw with
+          | Some "Int" | None -> ()
+          | Some raw when resolve_opt raw = None ->
+              err e.Ast.espan (Printf.sprintf "cannot find type '%s' in scope" raw)
+          | Some raw ->
+              err e.Ast.espan (Printf.sprintf "raw type '%s' is not supported (only Int)" raw));
           Hashtbl.replace enums e.Ast.ename
             { Types.el_name = e.Ast.ename; el_cases = cases; el_raw = e.Ast.eraw <> None }
       | Ast.IProto pr ->

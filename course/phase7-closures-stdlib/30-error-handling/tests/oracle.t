@@ -66,6 +66,5 @@ counted as agreement; an unstarted TODO stops the loop so the file reads TODO.
   >   sh -c "./swO$n; echo exit=\$?" > swO$n.out 2>/dev/null
   >   cmp -s sw$n.out swO$n.out || printf "swiftc -O differs from swiftc -Onone on program %d (its optimizer, not ours)\n" "$n"
   > done < oracle-corpus.txt
-  swiftc -O differs from swiftc -Onone on program 9 (its optimizer, not ours)
   $ echo done
   done
