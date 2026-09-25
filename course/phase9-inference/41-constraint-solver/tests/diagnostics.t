@@ -99,3 +99,34 @@ condition, in `+`, returned as a Bool and passed a Bool, it adds no second error
   func h(_ a: Nope) -> Bool {
   ^
   exit=1
+
+A bare `return` in a function that promised a value is swiftc's "non-void function should
+return a value" — CSGen used to let it through, since it emitted a constraint only for a
+`return` WITH a value:
+
+  $ printf 'func g() -> Int {\n  return\n}\n' > d10.swift
+  $ ./lab.exe --typecheck d10.swift; echo "exit=$?"
+  2:3: error: non-void function should return a value
+    return
+    ^
+  exit=1
+
+A value returned from a function that promised none is named as such, and only once: the value
+is not generated, so no unconstrained literal comes back from the solver as "ambiguous":
+
+  $ printf 'func f() {\n  return 1\n}\n' > d11.swift
+  $ ./lab.exe --typecheck d11.swift; echo "exit=$?"
+  2:3: error: unexpected non-void return value in void function
+    return 1
+    ^
+  exit=1
+
+A `-> Int` body that never returns is concept 07's missing return, on the declaration — the
+same tree walk, run after CSGen has generated the body:
+
+  $ printf 'func m() -> Int {\n  print(1)\n  print(2)\n}\n' > d12.swift
+  $ ./lab.exe --typecheck d12.swift; echo "exit=$?"
+  1:1: error: missing return in global function expected to return 'Int'
+  func m() -> Int {
+  ^
+  exit=1

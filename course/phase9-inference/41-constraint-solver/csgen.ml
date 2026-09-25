@@ -237,7 +237,16 @@ let rec generate_stmt (g : t) (s : Ast.stmt) : unit =
   | Ast.Break _ | Ast.Continue _ -> ()
   | Ast.Return (value, span) -> (
       match (value, g.current_return) with
+      (* a bare `return` from a function that promised a value — `-> Nope` included: the
+         missing value is the error, whatever the type turned out to be *)
+      | None, Some rt when rt <> Types.TVoid ->
+          error g span "non-void function should return a value"
       | None, _ -> ()
+      (* a value from a function that promised none. The value is not generated: it has no
+         type to be constrained against, and an unconstrained literal would come back from
+         the solver as "ambiguous" — a second error about the same mistake *)
+      | Some _, Some Types.TVoid ->
+          error g span "unexpected non-void return value in void function"
       | Some e, Some rt ->
           emit g (Constraints.Equal (generate g e, Constraints.Con rt, Ast.expr_span e))
       | Some e, None ->
@@ -262,6 +271,17 @@ let signature_of ?(report = true) (g : t) (f : Ast.func_decl) : Constraints.sign
       | None -> Types.TVoid
       | Some n -> resolve_ty ~report g f.Ast.fspan n);
   }
+
+(* Does this statement definitely return? Concept 07's analysis, unchanged: it has nothing
+   to do with constraints — it reads the tree, not the types. *)
+let rec stmt_returns = function
+  | Ast.Return _ -> true
+  | Ast.If { then_blk; else_blk = Some else_blk; _ } ->
+      block_returns then_blk && block_returns else_blk
+  | _ -> false
+
+and block_returns statements =
+  List.exists stmt_returns statements (* the rest is unreachable *)
 
 let generate_program (g : t) (program : Ast.program) : unit =
   (* PASS 1 — collect the overload sets, so a call can be generated before the declaration
@@ -295,6 +315,16 @@ let generate_program (g : t) (program : Ast.program) : unit =
           g.current_return <- Some s.Constraints.result;
           List.iter (generate_stmt g) f.Ast.body;
           g.current_return <- None;
+          (* `-> Nope` was reported already: what the body should return is unknown, so is
+             whether it does *)
+          (match s.Constraints.result with
+          | Types.TVoid | Types.TError -> ()
+          | rt ->
+              if not (block_returns f.Ast.body) then
+                error g f.Ast.fspan
+                  (Printf.sprintf
+                     "missing return in global function expected to return '%s'"
+                     (Types.string_of_ty rt)));
           Hashtbl.reset g.environment;
           Hashtbl.iter (Hashtbl.replace g.environment) saved
       | Ast.IStmt s -> generate_stmt g s)
