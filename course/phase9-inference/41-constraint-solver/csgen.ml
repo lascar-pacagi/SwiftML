@@ -63,12 +63,16 @@ let record (g : t) (span : Token.span) (ty : Constraints.ty) : Constraints.ty =
 
 let error (g : t) span msg = Diagnostics.error g.diagnostics span msg
 
-let resolve_ty (g : t) (span : Token.span) (name : string) : Types.ty =
+(* An unknown name is reported, then typed TError: a type the solver can unify with anything
+   (Types.equal accepts it), so the one mistake is never reported again as a mismatch. With
+   [~report:false] it is resolved silently — the second pass re-reads signatures the first
+   pass has already reported. *)
+let resolve_ty ?(report = true) (g : t) (span : Token.span) (name : string) : Types.ty =
   match Types.of_name name with
   | Some t -> t
   | None ->
-      error g span (Printf.sprintf "cannot find type '%s' in scope" name);
-      Types.TInt
+      if report then error g span (Printf.sprintf "cannot find type '%s' in scope" name);
+      Types.TError
 
 (* An overload set becomes a DISJUNCTION: one alternative per signature, each asserting that
    the arguments and the result have that signature's types. A set with one member is not a
@@ -247,26 +251,31 @@ and generate_block (g : t) (body : Ast.stmt list) : unit =
   Hashtbl.reset g.environment;
   Hashtbl.iter (Hashtbl.replace g.environment) saved
 
-let signature_of (g : t) (f : Ast.func_decl) : Constraints.signature =
+let signature_of ?(report = true) (g : t) (f : Ast.func_decl) : Constraints.signature =
   {
     Constraints.params =
-      List.map (fun (p : Ast.param) -> resolve_ty g f.Ast.fspan p.Ast.ptype) f.Ast.params;
+      List.map
+        (fun (p : Ast.param) -> resolve_ty ~report g f.Ast.fspan p.Ast.ptype)
+        f.Ast.params;
     result =
-      (match f.Ast.ret with None -> Types.TVoid | Some n -> resolve_ty g f.Ast.fspan n);
+      (match f.Ast.ret with
+      | None -> Types.TVoid
+      | Some n -> resolve_ty ~report g f.Ast.fspan n);
   }
 
 let generate_program (g : t) (program : Ast.program) : unit =
-  (* PASS 1 — collect the overload sets, so a call can be generated before the
-  declaration it
-     resolves to has been read. Concept 07 did the same walk to get ONE signature per name;
-     the only change is that a second declaration extends the set instead of being an
-     error. *)
+  (* PASS 1 — collect the overload sets, so a call can be generated before the declaration
+     it resolves to has been read. Concept 07 did the same walk to get ONE signature per
+     name; the only change is that a second declaration extends the set instead of being
+     an error. *)
   List.iter
     (function
       | Ast.IFunc f ->
           let s = signature_of g f in
-          let existing = Option.value ~default:[] (Hashtbl.find_opt g.functions
-          f.Ast.fname) in if List.exists (Constraints.same_signature s) existing then
+          let existing =
+            Option.value ~default:[] (Hashtbl.find_opt g.functions f.Ast.fname)
+          in
+          if List.exists (Constraints.same_signature s) existing then
             error g f.Ast.fspan
               (Printf.sprintf "invalid redeclaration of '%s'" f.Ast.fname)
           else Hashtbl.replace g.functions f.Ast.fname (existing @ [ s ])
@@ -277,7 +286,8 @@ let generate_program (g : t) (program : Ast.program) : unit =
     (function
       | Ast.IFunc f ->
           let saved = Hashtbl.copy g.environment in
-          let s = signature_of g f in
+          (* pass 1 reported this signature's unknown names already *)
+          let s = signature_of ~report:false g f in
           List.iter2
             (fun (p : Ast.param) t ->
               Hashtbl.replace g.environment p.Ast.pname (Constraints.Con t, false))

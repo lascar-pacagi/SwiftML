@@ -88,3 +88,14 @@ solver never sees it.
   let a = nope + 1
           ^
   exit=1
+
+A parameter of unknown type is reported ONCE — pass 2 re-reads the signature without
+reporting it again — and is TError, which the solver unifies with anything: used as a
+condition, in `+`, returned as a Bool and passed a Bool, it adds no second error:
+
+  $ printf 'func h(_ a: Nope) -> Bool {\n  if a { print(a + 1) }\n  return a\n}\nprint(h(true))\n' > d9.swift
+  $ ./lab.exe --typecheck d9.swift; echo "exit=$?"
+  1:1: error: cannot find type 'Nope' in scope
+  func h(_ a: Nope) -> Bool {
+  ^
+  exit=1
