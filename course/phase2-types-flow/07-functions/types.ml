@@ -1,9 +1,12 @@
 (* The Phase-2 type lattice — a *contract*. Concepts 05–06 had Int/Bool/Double/String;
    concept 07 adds `TVoid` (Swift's `()`), the result type of a function with no `-> T`
-   (and of print). Function *types* themselves stay implicit — calls are checked against a
-   signature table in sema, not represented as a first-class type (that's Phase 7). *)
+   (and of print), and `TError`, the type sema gives a name it could not resolve, so that
+   one unknown type is one error and not a cascade. Function *types* themselves stay
+   implicit — calls are checked against a signature table in sema, not represented as a
+   first-class type (that's Phase 7). *)
 
 type ty =
+  | TError (* NEW: the type of something already reported — see equal *)
   | TInt
   | TBool
   | TDouble
@@ -15,16 +18,24 @@ type ty =
    `of_name (string_of_ty TVoid)` is `None`; a function with no `-> T` is `TVoid` directly. *)
 
 let string_of_ty : ty -> string = function
+  | TError -> "<error>"
   | TInt -> "Int"
   | TBool -> "Bool"
   | TDouble -> "Double"
   | TString -> "String"
   | TVoid -> "()"
 
-let equal (left : ty) (right : ty) : bool = left = right
+(* COMPATIBLE, not identical: TError agrees with every type, because it stands for
+   something already reported. A parameter declared `Nope` is TError, so `return a`
+   from a `-> Bool` function passes this check instead of producing a second error
+   about a type the programmer never wrote. *)
+let equal (left : ty) (right : ty) : bool =
+  match (left, right) with
+  | TError, _ | _, TError -> true
+  | _ -> left = right
 
 let is_numeric : ty -> bool = function
-  | TInt | TDouble -> true
+  | TError | TInt | TDouble -> true
   | TBool | TString | TVoid -> false
 
 let of_name : string -> ty option = function

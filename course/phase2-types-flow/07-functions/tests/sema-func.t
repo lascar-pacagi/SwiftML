@@ -55,6 +55,53 @@ type (both reported on the declaration — a parameter carries no span of its ow
   ^
   exit=1
 
+An unknown return type is reported once and nothing more: `return true` is not "cannot
+convert Bool", and an empty body is not "missing return", because `Nope` is TError and TError
+agrees with every type — the fallback must not be a guess like Int that only `return 1` fits:
+
+  $ printf 'func g() -> Nope { return true }\nfunc k() -> Nope { }\n' > t2.swift
+  $ ./lab.exe --typecheck t2.swift; echo "exit=$?"
+  1:1: error: cannot find type 'Nope' in scope
+  func g() -> Nope { return true }
+  ^
+  2:1: error: cannot find type 'Nope' in scope
+  func k() -> Nope { }
+  ^
+  exit=1
+
+A parameter of unknown type is reported once, then used as a condition, in arithmetic,
+returned as a Bool and passed a Bool at the call, with no second error anywhere:
+
+  $ printf 'func h(_ a: Nope) -> Bool {\n  if a { print(a + 1) }\n  return a\n}\nprint(h(true))\n' > t3.swift
+  $ ./lab.exe --typecheck t3.swift; echo "exit=$?"
+  1:1: error: cannot find type 'Nope' in scope
+  func h(_ a: Nope) -> Bool {
+  ^
+  exit=1
+
+`let x: Nope = true` binds `x` at the type WRITTEN, so `x` is TError rather than Bool and
+`let y: Int = x` is not a second error:
+
+  $ printf 'func f() {\n  let x: Nope = true\n  let y: Int = x\n  print(y)\n}\n' > t4.swift
+  $ ./lab.exe --typecheck t4.swift; echo "exit=$?"
+  2:3: error: cannot find type 'Nope' in scope
+    let x: Nope = true
+    ^
+  exit=1
+
+A bare `return` in a `-> Nope` function IS a second error, as in swiftc: whatever `Nope`
+was meant to be, writing `-> T` made the function non-void:
+
+  $ printf 'func g() -> Nope { return }\n' > t5.swift
+  $ ./lab.exe --typecheck t5.swift; echo "exit=$?"
+  1:1: error: cannot find type 'Nope' in scope
+  func g() -> Nope { return }
+  ^
+  1:20: error: non-void function should return a value
+  func g() -> Nope { return }
+                     ^
+  exit=1
+
 A `Void` function need not return — a body of two prints is fine:
 
   $ printf 'func f() {\n  print(1)\n  print(2)\n}\n' > v1.swift
