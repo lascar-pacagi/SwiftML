@@ -169,17 +169,39 @@ The two halves:
 
 - **Expressions → values (mostly straight-line).** A literal emits a literal; a `Var` emits a `load`
   of its slot; a binary op lowers both sides then emits the op; a call lowers its arguments, emits a
-  `function_ref`, then `apply`. The one exception is `&&`/`||`: they **short-circuit**, so the given
-  `gen_expression` lowers them as a small `cond_br` diamond that evaluates the right operand only on the
-  deciding edge (the result merges through a stack slot). That's the same diamond you're about to
-  build for `if` — read it first as a warm-up. (Lowering `&&` as a plain bitwise op would be a real
-  bug: `i < n && a[i]` would evaluate `a[i]` when `i == n` and trap, where swiftc runs clean.)
+  `function_ref`, then `apply`. The one exception is `&&`/`||`, which get blocks of their own —
+  see below.
 - **Statements → CFG.** Four moves, always in this order. Lower the operands (a condition, a
   bound) into values. `new_block` for each block the statement needs. **End the block you are
   standing in**: every block finishes with exactly one branch, and that branch is what names the
   new blocks — `terminate builder (Cond_br (c, then_id, else_id))` is both "this block is done" and
   "here is where control goes". Then fill each new block, and `switch_to` the one execution
   continues from.
+
+**`&&` and `||` short-circuit.** `a && b` must not evaluate `b` when `a` is already `false`: the
+answer is known, and `b` might trap — `i < n && a[i]` must not read `a[i]` when `i == n`. So `&&`
+cannot be one instruction that takes two values; `b` has to be skipped, which takes a branch. The
+given `gen_expression` builds three blocks for it. For `print(a && b)`:
+
+```
+bb0:
+  %6 = load %2 $Bool           // a
+  %7 = alloc_stack $Bool       // $and — holds the answer
+  store %6 to %7               // provisional answer: a
+  cond_br %6, bb1, bb2         // a false? the answer is already false: skip b
+bb1:
+  %9 = load %4 $Bool           // a was true, so b decides: evaluate it...
+  store %9 to %7               // ...and it becomes the answer
+  br bb2
+bb2:
+  %11 = load %7 $Bool          // both paths meet here and read the answer
+  %12 = apply @print(%11)
+```
+
+`b` is evaluated only on the edge where it decides the result, and the slot is how the two paths
+hand their answer to the block where they meet. `a || b` is the mirror image: `b` runs only when
+`a` is `false`. It is the same diamond you are about to build for `if`, so read the given code
+first as a warm-up.
 
 ### Lowering control flow
 
@@ -337,27 +359,7 @@ what you are *not* asked to do: both operands already carry their final type, an
 (`ty`), because Sema recorded all three. There is no coercion to spot and nothing to re-generate —
 the previous section shows why.
 
-`&&` and `||` are not yours either, and they are not one instruction. `a && b` must not evaluate
-`b` when `a` is already `false` — the answer is known, and `b` might have a side effect or trap. So
-the given `gen_expression` turns `a && b` into three blocks of its own. For `print(a && b)`:
-
-```
-bb0:
-  %6 = load %2 $Bool           // a
-  %7 = alloc_stack $Bool       // $and — holds the answer
-  store %6 to %7               // provisional answer: a
-  cond_br %6, bb1, bb2         // a false? the answer is already false: skip b
-bb1:
-  %9 = load %4 $Bool           // a was true, so b decides: evaluate it...
-  store %9 to %7               // ...and it becomes the answer
-  br bb2
-bb2:
-  %11 = load %7 $Bool          // both paths meet here and read the answer
-  %12 = apply @print(%11)
-```
-
-`b` is evaluated only on the edge where it decides the result. `a || b` is the mirror image: `b`
-runs only when `a` is `false`.
+`&&` and `||` are not yours either: §2 shows how the given `gen_expression` lowers them.
 
 **`TODO(08c)` — the control flow**, the five cases of `gen_statement` described one by one above.
 They match on `Tast` statements, whose blocks are already checked — `Tast.If` holds its two
