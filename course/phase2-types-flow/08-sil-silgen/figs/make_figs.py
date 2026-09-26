@@ -4,8 +4,9 @@
     .venv/bin/python phase2-types-flow/08-sil-silgen/figs/make_figs.py
 
 Produces:
-    figs/lowering.png — SILGen's core job: an `if`/`else` AST (a tree) becomes a SIL
-    control-flow graph (a cond_br "diamond": entry -> then/else -> merge).
+    figs/lowering.png — SILGen's core job, on a real program: the source, its AST (a
+    tree), and the SIL control-flow graph 08's SILGen actually emits for it (a cond_br
+    "diamond": entry -> then/else -> merge, with the block numbers SILGen assigns).
 """
 import os
 import matplotlib
@@ -39,56 +40,117 @@ def line(ax, p0, p1, color=EDGE):
     ax.add_patch(FancyArrowPatch(p0, p1, arrowstyle="-", linewidth=1.3, color=color, zorder=1))
 
 
-def arr(ax, p0, p1, color=EDGE, label=None, lx=0, ly=0):
+def arr(ax, p0, p1, color=EDGE, label=None, lx=0, ly=0, size=10):
     ax.add_patch(FancyArrowPatch(p0, p1, arrowstyle="-|>", mutation_scale=13, linewidth=1.5, color=color, zorder=2))
     if label:
         ax.text((p0[0] + p1[0]) / 2 + lx, (p0[1] + p1[1]) / 2 + ly, label, ha="center", color=color,
-                fontsize=10, fontweight="bold", zorder=5)
+                fontsize=size, fontweight="bold", zorder=5)
+
+
+PROGRAM = [
+    "func f(_ x: Int) {",
+    "  if x > 3 {",
+    "    print(1)",
+    "  } else {",
+    "    print(2)",
+    "  }",
+    "  print(3)",
+    "}",
+]
+
+
+def node(ax, x, y, text, color, w, h=0.62, size=14):
+    ax.add_patch(FancyBboxPatch((x - w / 2, y - h / 2), w, h,
+                 boxstyle="round,pad=0.02,rounding_size=0.14", linewidth=1.4,
+                 edgecolor=EDGE, facecolor=color, zorder=3))
+    ax.text(x, y, text, ha="center", va="center", fontsize=size, family="monospace",
+            fontweight="bold", color=TEXT, zorder=4)
+
+
+def block(ax, x, y, name, lines, w, color=BLK):
+    h = 0.44 * (len(lines) + 1) + 0.22
+    ax.add_patch(FancyBboxPatch((x - w / 2, y - h / 2), w, h,
+                 boxstyle="round,pad=0.03,rounding_size=0.08", linewidth=1.4,
+                 edgecolor=EDGE, facecolor=color, zorder=3))
+    ty = y + h / 2 - 0.36
+    ax.text(x - w / 2 + 0.18, ty, name, ha="left", va="center", fontsize=13.5,
+            family="monospace", fontweight="bold", color=TEXT, zorder=4)
+    for ln in lines:
+        ty -= 0.44
+        ax.text(x - w / 2 + 0.34, ty, ln, ha="left", va="center", fontsize=12.5,
+                family="monospace", color=TEXT, zorder=4)
+    return h
 
 
 def make_lowering():
-    fig, ax = plt.subplots(figsize=(10.6, 5.6))
-    ax.set_xlim(0, 12)
-    ax.set_ylim(0, 6)
+    fig, ax = plt.subplots(figsize=(16.0, 12.4))
+    ax.set_xlim(-0.3, 16.1)
+    ax.set_ylim(-0.45, 12.4)
     ax.axis("off")
 
-    # ---- left: the AST (a tree) ----
-    ax.text(2.4, 5.6, "AST: a tree", ha="center", fontsize=12, fontweight="bold", color=TEXT)
-    iff = (2.4, 4.4)
-    c, th, el = (1.0, 2.9), (2.4, 2.9), (3.8, 2.9)
-    for k in (c, th, el):
-        line(ax, iff, k)
-    circle(ax, *iff, "if", NODE)
-    circle(ax, *c, "c", LEAF)
-    circle(ax, *th, "A", LEAF)
-    circle(ax, *el, "B", LEAF)
-    ax.text(c[0], c[1] - 0.65, "cond", ha="center", fontsize=9.5, color=TEXT)
-    ax.text(th[0], th[1] - 0.65, "then", ha="center", fontsize=9.5, color=TEXT)
-    ax.text(el[0], el[1] - 0.65, "else", ha="center", fontsize=9.5, color=TEXT)
+    # ---- top: the program ----------------------------------------------------------
+    ax.add_patch(FancyBboxPatch((0.4, 8.35), 5.6, 3.55, boxstyle="round,pad=0.03,rounding_size=0.1",
+                 linewidth=1.4, edgecolor=EDGE, facecolor="#f6f8fa", zorder=1))
+    ax.text(0.4, 12.15, "the program", ha="left", fontsize=15, fontweight="bold", color=TEXT)
+    y = 11.55
+    for ln in PROGRAM:
+        ax.text(0.75, y, ln, ha="left", va="center", fontsize=15, family="monospace", color=TEXT)
+        y -= 0.41
+    ax.text(6.5, 10.9, "Parse and Sema turn it into a tree (bottom left).\n"
+            "SILGen walks that tree and builds a graph (bottom right):\n"
+            "one basic block per straight-line stretch, joined by branches.",
+            ha="left", va="center", fontsize=14.5, color=TEXT, linespacing=1.5)
 
-    # ---- middle arrow ----
-    arr(ax, (4.6, 3.2), (5.7, 3.2), EDGE)
-    ax.text(5.15, 3.55, "SILGen", ha="center", fontsize=11.5, fontweight="bold", color=TEXT)
+    # ---- bottom left: the AST ------------------------------------------------------
+    ax.text(3.5, 7.55, "AST: a tree", ha="center", fontsize=16, fontweight="bold", color=TEXT)
+    fn, iff, p3 = (3.5, 6.75), (2.2, 5.35), (5.3, 5.35)
+    gt, th, el = (0.8, 3.85), (2.55, 3.85), (4.45, 3.85)
+    vx, v3 = (0.35, 2.45), (1.25, 2.45)
+    for a_, b_ in [(fn, iff), (fn, p3), (iff, gt), (iff, th), (iff, el), (gt, vx), (gt, v3)]:
+        line(ax, a_, b_)
+    node(ax, *fn, "func f", NODE, 1.9)
+    node(ax, *iff, "if", NODE, 1.0)
+    node(ax, *p3, "print(3)", LEAF, 1.9, size=13)
+    node(ax, *gt, ">", NODE, 0.8)
+    node(ax, *th, "print(1)", LEAF, 1.6, size=13)
+    node(ax, *el, "print(2)", LEAF, 1.6, size=13)
+    node(ax, *vx, "x", LEAF, 0.7)
+    node(ax, *v3, "3", LEAF, 0.7)
+    for (x, yy), lab in [(gt, "cond"), (th, "then"), (el, "else")]:
+        ax.text(x, yy + 0.52, lab, ha="center", fontsize=12.5, style="italic", color="#5b6b7b")
+    ax.text(3.5, 1.35, "nested: the `if` OWNS its branches,\nand nothing says what runs next",
+            ha="center", va="center", fontsize=13.5, color=TEXT, style="italic", linespacing=1.4)
 
-    # ---- right: the SIL CFG (a graph) ----
-    ax.text(8.9, 5.6, "SIL: a control-flow graph", ha="center", fontsize=12, fontweight="bold", color=TEXT)
-    entry = (8.9, 4.6)
-    then_b, else_b = (7.5, 3.0), (10.3, 3.0)
-    merge = (8.9, 1.4)
-    blk(ax, *entry, ["bb0:", "cond_br c"], BLK)
-    blk(ax, *then_b, ["bb1:", "A", "br bb3"], BLK)
-    blk(ax, *else_b, ["bb2:", "B", "br bb3"], BLK, h=1.1)
-    blk(ax, *merge, ["bb3:", "…"], BLK)
-    arr(ax, (entry[0] - 0.5, entry[1] - 0.45), (then_b[0] + 0.3, then_b[1] + 0.55), T, "true", lx=-0.45)
-    arr(ax, (entry[0] + 0.5, entry[1] - 0.45), (else_b[0] - 0.3, else_b[1] + 0.55), F, "false", lx=0.5)
-    arr(ax, (then_b[0] + 0.3, then_b[1] - 0.5), (merge[0] - 0.5, merge[1] + 0.45), EDGE)
-    arr(ax, (else_b[0] - 0.3, else_b[1] - 0.55), (merge[0] + 0.5, merge[1] + 0.45), EDGE)
+    # ---- the arrow -----------------------------------------------------------------
+    arr(ax, (6.45, 4.6), (7.75, 4.6), EDGE)
+    ax.text(7.1, 5.0, "SILGen", ha="center", fontsize=15.5, fontweight="bold", color=TEXT)
 
-    ax.set_title("SILGen lowers the AST tree into a SIL control-flow graph (basic blocks + branches)",
-                 fontsize=12.5, color=TEXT, pad=8)
+    # ---- bottom right: the CFG -----------------------------------------------------
+    ax.text(11.9, 7.95, "SIL: a control-flow graph", ha="center", fontsize=16,
+            fontweight="bold", color=TEXT)
+    b0 = (11.9, 5.85)
+    h0 = block(ax, *b0, "bb0:", ["%1 = alloc_stack $Int", "store %0 to %1", "%3 = load %1",
+                                  "%4 = integer_literal 3", "%5 = binop \">\" %3, %4",
+                                  "cond_br %5, bb1, bb3"], 4.3)
+    b1, b3 = (9.75, 2.95), (14.05, 2.95)
+    h1 = block(ax, *b1, "bb1:  (then)", ["apply @print(1)", "br bb2"], 3.3)
+    block(ax, *b3, "bb3:  (else)", ["apply @print(2)", "br bb2"], 3.3)
+    b2 = (11.9, 0.75)
+    h2 = block(ax, *b2, "bb2:  (merge)", ["apply @print(3)", "return"], 3.3)
+    top1 = b1[1] + h1 / 2
+    arr(ax, (b0[0] - 1.2, b0[1] - h0 / 2), (b1[0] + 0.3, top1), T, "true", lx=-0.6, ly=0.0,
+        size=14)
+    arr(ax, (b0[0] + 1.2, b0[1] - h0 / 2), (b3[0] - 0.3, top1), F, "false", lx=0.65, ly=0.0,
+        size=14)
+    arr(ax, (b1[0] + 0.5, b1[1] - h1 / 2), (b2[0] - 0.7, b2[1] + h2 / 2), EDGE)
+    arr(ax, (b3[0] - 0.5, b3[1] - h1 / 2), (b2[0] + 0.7, b2[1] + h2 / 2), EDGE)
+    ax.text(15.95, 0.75, "numbered in the order\nSILGen CREATES them:\nthe merge block exists\n"
+            "before the else does", ha="right", va="center", fontsize=12.5, color="#5b6b7b",
+            style="italic", linespacing=1.35)
+
     fig.tight_layout()
     out = os.path.join(HERE, "lowering.png")
-    fig.savefig(out, dpi=160, bbox_inches="tight")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print("wrote", out)
 

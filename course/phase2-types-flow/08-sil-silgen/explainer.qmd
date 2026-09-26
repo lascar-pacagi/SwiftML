@@ -41,9 +41,11 @@ and `return`. A SIL **function** is just a list of these blocks; block `bb0` is 
 between blocks (who branches to whom) form the **control-flow graph (CFG)** — the same graph you saw
 for a `while` loop in concept 06, now made real.
 
-SILGen's whole job is to walk the AST tree and *build that graph*:
+SILGen's whole job is to walk the AST tree and *build that graph*. @fig-lowering shows it on one
+small function: the source, the tree Parse and Sema hand over, and the SIL your SILGen will emit
+for it — copied from the real `--emit-sil` output, block numbers included.
 
-![SILGen lowers the AST tree into a SIL control-flow graph: an `if`/`else` becomes a `cond_br` diamond — entry branches to a then-block and an else-block, which both branch to a merge_block.](figs/lowering.png)
+![A function, its AST, and its SIL. The `if` owns its branches in the tree; in the graph it becomes a `cond_br` diamond — `bb0` branches to a then-block and an else-block, which both branch to the merge block. Blocks are numbered in creation order, so the merge block is `bb2` and the else block `bb3`.](figs/lowering.png){#fig-lowering}
 
 ### Raw, memory-based SIL — and why we *want* the loads and stores
 
