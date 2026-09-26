@@ -181,30 +181,36 @@ The two halves:
 **`&&` and `||` short-circuit.** `a && b` must not evaluate `b` when `a` is already `false`: the
 answer is known, and `b` might trap — `i < n && a[i]` must not read `a[i]` when `i == n`. So `&&`
 cannot be one instruction that takes two values; `b` has to be skipped, which takes a branch. The
-given `gen_expression` builds three blocks for it. For `print(a && b)`:
+given `gen_expression` builds three blocks for it. Here is the SIL for `print(a && b)` in a
+function `f(_ a: Bool, _ b: Bool)`. A `//` is part of what `--emit-sil` prints; the notes after
+`<-` are ours:
 
 ```
 bb0:
-  %6 = load %2 $Bool           // a
-  %7 = alloc_stack $Bool       // $and      <- %7 is the answer slot
-  store %6 to %7               // provisional answer: a
-  cond_br %6, bb1, bb2         // a false? the answer is already false: skip b
+  %2 = alloc_stack $Bool  // a      <- the slot of parameter a (%0)
+  store %0 to %2
+  %4 = alloc_stack $Bool  // b      <- the slot of parameter b (%1)
+  store %1 to %4
+  %6 = load %2 $Bool                <- read a
+  %7 = alloc_stack $Bool  // $and   <- the answer slot
+  store %6 to %7                    <- provisional answer: a
+  cond_br %6, bb1, bb2              <- a false? the answer is already false: skip b
 bb1:
-  %9 = load %4 $Bool           // a was true, so b decides: evaluate it...
-  store %9 to %7               // ...and it becomes the answer
+  %9 = load %4 $Bool                <- a was true, so b decides: read it...
+  store %9 to %7                    <- ...and it becomes the answer
   br bb2
 bb2:
-  %11 = load %7 $Bool          // both paths meet here and read the answer
+  %11 = load %7 $Bool               <- both paths meet here and read the answer
   %12 = apply @print(%11)
 ```
 
 `b` is evaluated only on the edge where it decides the result, and the slot is how the two paths
 hand their answer to the block where they meet. The code only ever refers to the slot as `%7`; the
 `// $and` after `alloc_stack` is a comment the printer adds, naming the slot for the reader — a
-variable's slot shows the variable's name, as in `// x`, and this one, which belongs to no variable,
-gets a name that cannot be one (Swift reserves the `$` prefix for the compiler). `a || b` is the
-mirror image: `b` runs only when `a` is `false`. It is the same diamond you are about to build for
-`if`, so read the given code first as a warm-up.
+variable's slot shows the variable's name, as `// a` does on `%2`, and this one, which belongs to no
+variable, gets a name that cannot be one (Swift reserves the `$` prefix for the compiler). `a || b`
+is the mirror image: `b` runs only when `a` is `false`. It is the same diamond you are about to
+build for `if`, so read the given code first as a warm-up.
 
 ### Lowering control flow
 
