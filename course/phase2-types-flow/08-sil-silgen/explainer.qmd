@@ -199,7 +199,10 @@ bb2:
 ```
 
 `b` is evaluated only on the edge where it decides the result, and the slot is how the two paths
-hand their answer to the block where they meet. `a || b` is the mirror image: `b` runs only when
+hand their answer to the block where they meet. Its name, `$and` (`$or` for `||`), is only a label
+for reading the SIL: no variable in the source owns this slot, so SILGen names it, and the `$` —
+which Swift reserves for names the compiler makes — means it can never clash with a variable of
+yours. `a || b` is the mirror image: `b` runs only when
 `a` is `false`. It is the same diamond you are about to build for `if`, so read the given code
 first as a warm-up.
 
