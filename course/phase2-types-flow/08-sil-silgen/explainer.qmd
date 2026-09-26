@@ -326,8 +326,32 @@ bb0:                                    a block label; bb0 is the entry
 | `return` / `return %v` | leave the function |
 | `unreachable` | a block control never enters — a **valid** terminator, and what a block keeps when both arms of an `if` returned |
 
-Real swiftc SIL is the same shape with a great deal more ceremony. Run
-`swiftc -emit-sil add.swift` on the two-line `add` from §2 and you get
+Real swiftc SIL is the same shape with a great deal more ceremony. Take this `add.swift`:
+
+```swift
+func add(_ a: Int, _ b: Int) -> Int {
+  return a + b
+}
+```
+
+Your `--emit-sil` gives
+
+```
+sil @add(%0 : $Int, %1 : $Int) -> $Int {
+bb0:
+  %2 = alloc_stack $Int  // a
+  store %0 to %2
+  %4 = alloc_stack $Int  // b
+  store %1 to %4
+  %6 = load %2 $Int
+  %7 = load %4 $Int
+  %8 = binop "+" %6, %7 $Int
+  return %8
+}
+```
+
+and `swiftc -emit-sil add.swift` gives, with its `debug_value` lines and `// user:` comments
+left out,
 
 ```
 sil hidden @$s3addAAyS2i_SitF : $@convention(thin) (Int, Int) -> Int {
