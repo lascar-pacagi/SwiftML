@@ -35,3 +35,8 @@ SIL, tested FileCheck-style against the SIL shape.
 `silgen-memory.t`) matches the `--emit-sil` shape, the alcotest groups — one per hole — pass on the
 lowered module, the verifier accepts every lowering, and `oracle.t` agrees with
 `swiftc -emit-sil` on all 34 corpus programs.
+
+`solution/exercises/` holds the same key with §6's exercises applied — 1 (`guard`) reaches `token`,
+`ast`, `tast`, `parser`, `sema` and `silgen`; 2 (a SIL reader) and 3 (critical-edge splitting) live
+in `sil.ml`, with their lab flags in `solution/exercises/tests/lab.ml`.
+`make check-exercises C=phase2-types-flow/08-sil-silgen` builds and runs it.

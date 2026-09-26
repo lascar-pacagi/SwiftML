@@ -43,6 +43,15 @@ for sol in "$WORK_C"/solution/exercises/*.ml; do
   cp "$sol" "$WORK_C/$f"
   FILES="$FILES $f"
 done
+# An exercise that adds a lab flag (08's `--roundtrip-sil`) changes the lab binary too, which
+# lives in tests/. solution/exercises/tests/ mirrors that directory, file for file.
+for sol in "$WORK_C"/solution/exercises/tests/*.ml; do
+  [ -f "$sol" ] || continue
+  f="$(basename "$sol")"
+  [ -f "$WORK_C/tests/$f" ] || { echo "$C: solution/exercises/tests/$f has no counterpart in tests/"; exit 2; }
+  cp "$sol" "$WORK_C/tests/$f"
+  FILES="$FILES tests/$f"
+done
 [ -n "$FILES" ] || { echo "$C: solution/exercises/ holds no .ml files"; exit 0; }
 echo "check-exercises: isolated exercise key:$FILES"
 

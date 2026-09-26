@@ -61,7 +61,7 @@ let test_guard () =
 
 let sample_sil =
   "sil @main() -> $() {\n\
-   \bb0:\n\
+   bb0:\n\
   \  %0 = integer_literal $Int, 7\n\
   \  %1 = apply @print(%0)\n\
   \  return\n\
