@@ -8,18 +8,18 @@ what, and two correct lowerings differ in it anyway. What it compares are facts 
 correct lowering of this program, each on its own line, so a failure is one number.
 
 The strongest one first: the verifier walks every block and every branch target, so if any block
-lost its terminator or names a block that does not exist, this is where it shows.
+lost its terminator or names a block that does not exist, this is where it shows — as a non-zero
+exit and a message on stderr, which is printed here and should be empty. (The counts below print
+the same stderr when they come up short, so a hole you have not written yet reads as that hole.)
 
   $ P=../../../tests/programs/controlflow.swift
-  $ ./lab.exe --emit-sil $P > sil.txt 2> err.txt; echo "exit=$?"
+  $ ./lab.exe --emit-sil $P > sil.txt 2> err.txt; echo "exit=$?"; cat err.txt
   exit=0
-  $ wc -c < err.txt | tr -d ' '
-  0
 
 One SIL function per `func`, plus `@main` for the top level — nine. A missing one means a
 declaration was not lowered at all:
 
-  $ grep -c '^sil @' sil.txt
+  $ grep -c '^sil @' sil.txt || cat err.txt
   9
 
 Every decision in the program emits exactly one `cond_br`: the `if`s, the loop headers, and each
@@ -27,14 +27,14 @@ Every decision in the program emits exactly one `cond_br`: the `if`s, the loop h
 it is a real check on the lowering rather than on your block numbering. One short of it usually
 means a short-circuit operator was lowered as arithmetic:
 
-  $ grep -c 'cond_br' sil.txt
+  $ grep -c 'cond_br' sil.txt || cat err.txt
   23
 
 Two blocks are genuinely unreachable, and both are merges after an `if` whose arms all return —
 `maxOf` and `sign`. More than two means a block was left dangling, which is what an orphaned latch
 looks like from here:
 
-  $ grep -c 'unreachable' sil.txt
+  $ grep -c 'unreachable' sil.txt || cat err.txt
   2
 
 Function declarations may be interleaved with top-level instructions. They become separate SIL

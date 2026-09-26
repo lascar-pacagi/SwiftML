@@ -386,7 +386,10 @@ END {
         # Zero passing cases does not mean untouched: an attempted implementation can make every
         # case fail or crash. Reserve TODO for output that names an explicit unfinished hole.
         if (failing && kind == "cram") unstarted = all_failed_are_todo(si, tf)
-        else if (failing) unstarted = (nbad[si] > 0 && nok[si] == 0 && alctodo[si])
+        # A given case may already pass (08's `given: module shape`): TODO is about whether the
+        # FAILURES reached a hole, which is what CLAUDE.md's table says, not about whether
+        # anything passes. Requiring zero passes turned an untouched suite into a wall of FAIL.
+        else if (failing) unstarted = (nbad[si] > 0 && alctodo[si])
         total++
         if ((interrupted || (run_failed && n == 0)) && !failing) {
           why = (interrupted ? "test run interrupted" : "test runner stopped before results")
@@ -427,10 +430,17 @@ END {
                 if (why == "") { why = bl[li]; sub(/^ *(\033\[[0-9;]*m)?(error|failed):(\033\[0m)? */, "", why) }
                 continue
               }
+              # the hole the first failure reached: said once at the end, not under a case
+              if (bl[li] ~ /blocked by an unwritten hole: /) {
+                if (why == "") { why = bl[li]; sub(/^.*blocked by an unwritten hole: /, "", why); sub(/\033\[0m$/, "", why) }
+                continue
+              }
               if (bl[li] ~ /^ *(Expected|Received):/ || bl[li] ~ /^ *└ /) continue
               if (bl[li] != "" || li < n2) b2 = b2 bl[li] "\n"
             }
-            if (why != "") b2 = b2 "       " D "nothing here passes yet — " why Z "\n"
+            if (why != "")
+              b2 = b2 "       " D (nok[si] > 0 ? "the rest waits for an unwritten hole — " \
+                                                : "nothing here passes yet — ") why Z "\n"
           }
           out = out b2
         }
