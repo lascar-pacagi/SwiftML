@@ -248,8 +248,12 @@ the verifier is content — it checks that `br`/`cond_br` name blocks that exist
 Phase 1 *did* go straight AST → LLVM, and it worked. So what does an extra IR buy? Not the classic
 optimizations: mem2reg, constant folding, dead-code elimination, CSE and inlining are all LLVM
 passes already, and concept 20 hands our SIL to `clang -O2` to run them. Phase 4 builds them on SIL
-anyway, because it is the clearest place to learn SSA and dataflow, and because running them early
-feeds the passes below.
+anyway, for two reasons. It is the clearest place to learn SSA and dataflow. And the Swift-specific
+passes below need them to have run *first*: to replace a protocol call `p.area()` with a direct
+call, devirtualization (concept 24) must see which concrete value reached `p`. In memory-based SIL
+that value sits in a stack slot, out of sight; after mem2reg it is a plain SSA value whose
+definition says `S`. LLVM runs too late to help — by then the protocol call has been lowered to a
+pointer load.
 
 What LLVM *cannot* do is anything that depends on what the program means in Swift, because
 lowering to LLVM erases it:
