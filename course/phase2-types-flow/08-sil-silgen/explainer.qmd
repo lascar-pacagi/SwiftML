@@ -199,12 +199,12 @@ bb2:
 ```
 
 `b` is evaluated only on the edge where it decides the result, and the slot is how the two paths
-hand their answer to the block where they meet. The code only ever refers to the slot as `%7`;
-the `// $and` after `alloc_stack` is a comment the printer adds, naming the slot for the reader —
-a variable's slot shows the variable's name, as in `// x`, and this one, which belongs to no
-variable, gets a name that cannot be one (Swift reserves the `$` prefix for the compiler). `a || b` is the mirror image: `b` runs only when
-`a` is `false`. It is the same diamond you are about to build for `if`, so read the given code
-first as a warm-up.
+hand their answer to the block where they meet. The code only ever refers to the slot as `%7`; the
+`// $and` after `alloc_stack` is a comment the printer adds, naming the slot for the reader — a
+variable's slot shows the variable's name, as in `// x`, and this one, which belongs to no variable,
+gets a name that cannot be one (Swift reserves the `$` prefix for the compiler). `a || b` is the
+mirror image: `b` runs only when `a` is `false`. It is the same diamond you are about to build for
+`if`, so read the given code first as a warm-up.
 
 ### Lowering control flow
 
