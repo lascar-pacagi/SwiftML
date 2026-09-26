@@ -415,54 +415,42 @@ Reference: `solution/silgen.ml`.
 ## 4. Test it
 
 ```bash
-make lab C=phase2-types-flow/08-sil-silgen
+make lab C=phase2-types-flow/08-sil-silgen          # add T=silgen-if to run one file
 ```
 
-Six cram files, one per hole (`make lab C=… T=silgen-if` runs one), a unit suite grouped the same
-way, and the oracle — in the order you fill the holes:
+Nine cram files, two unit suites and the oracle. Fill the holes in this order — `08b` is the
+smallest and the only one no other hole touches, and `08a` needs it for its `+` and `>`:
 
-- `silgen-binops.t` — `TODO(08b)`: `Int` and `Double` arithmetic, a comparison producing a `Bool`,
-  remainder, and an `Int` literal beside a `Double` making the whole operation Double. Nothing here
-  branches or names a variable, so it reports on that hole alone.
-- `silgen-memory.t` — `TODO(08a)`, and the file to start with: `let`/`var` as `alloc_stack` +
-  `store` + `load`, reassignment storing over the same slot, a parameter in a slot of its own, a
-  call whose result is bound through one, and the `&&` diamond `gen_expression` already builds. Nothing
-  here branches, so it goes green on the memory model alone, with every `TODO(08c)` still raising.
-The five control-flow files compare against `--emit-sil-canon` rather than `--emit-sil`. Two
-correct lowerings can build the same graph and print it differently — block ids follow the order
-you created the blocks in, and opening a block for a loop's setup shifts every number after it —
-so the canonical form folds a block into its only predecessor, renumbers blocks depth-first from
-the entry, and puts slots and literals at the top of their block before renumbering the values.
-What survives is the graph, which is what these files are about; `silgen-memory.t` still compares
-raw `--emit-sil`, because there the instructions ARE the lesson.
+| file | flag | green with | what it pins |
+|---|---|---|---|
+| `silgen-binops.t` | `--emit-sil` | 08b | `Int` and `Double` arithmetic, a comparison producing a `Bool`, `%`, and an `Int` literal beside a `Double` |
+| `silgen-memory.t` | `--emit-sil` | 08a + 08b | `let`/`var` as `alloc_stack` + `store` + `load`, reassignment into the same slot, a parameter's slot, a call's result, and the given `&&` diamond |
+| `silgen-typed-input.t` | `--emit-sil` | 08a + 08b | a literal beside a `Double` is born a `float_literal`: no `integer_literal` anywhere (§2) |
+| `silgen-if.t` | `--emit-sil-canon` | 08c `if` | the diamond, an `if` with no `else`, both arms returning (the merge block keeps `unreachable`), an `else if` chain |
+| `silgen-while.t` | `--emit-sil-canon` | 08c `while` | the header, the back-edge, `while false` (still three blocks: folding is Phase 4), a nest |
+| `silgen-for.t` | `--emit-sil-canon` | 08c `for` | the desugaring: the counter's slot, `hi` evaluated once in the entry, the latch as a block of its own |
+| `silgen-break.t` | `--emit-sil-canon` | 08c `break` + a loop | which block `break` names: the loop's exit, never the latch, and the *inner* loop's in a nest |
+| `silgen-continue.t` | `--emit-sil-canon` | 08c `continue` + a loop | the header in a `while`, the **latch** in a `for` — the header there would skip `i = i + 1` and loop forever |
+| `silgen-capstone.t` | `--emit-sil` | everything | a whole program: recursion, mutual recursion, every loop, `break`, `continue`, an early `return` |
+| `oracle.t` | `--emit-sil` | everything | 35 programs — 21 accepted, 14 refused — whose verdict must match swiftc's |
 
-- `silgen-if.t` — `--emit-sil-canon` on an `if`/`else` (then, merge_block, else; both arms `br` to the merge_block;
-  the next statement lands there), an `if` with no `else` (the false edge *is* the merge_block), an `if`
-  whose arms both `return` (the merge_block keeps `unreachable`), an `else if` chain, and the verifier.
-- `silgen-while.t` — the entry `br` into the header, the header's `cond_br`, the back-edge, the
-  two edges that name the header, `while false` (still three blocks — folding is Phase 4), and a
-  nest.
-- `silgen-for.t` — the whole desugaring, the named slot for the counter, `hi` evaluated **once**
-  in the entry block (`0 ..< k + 1` puts the addition there, not in the header), and the latch as
-  a block of its own.
-- `silgen-break.t` — which block `break` names: the loop's exit in a `while`, the exit and not
-  the latch in a `for`, and in a nest the *inner* loop's exit. Needs a loop hole first.
-- `silgen-continue.t` — the same for `continue`: the header in a `while`, and the **latch** in a
-  `for`, which is the case that matters — branching to the header instead skips `i = i + 1` and
-  the program loops forever. Needs a loop hole first.
-- `test_silgen.ml` (alcotest `silgen`) — the same rules against the `Sil.modul` in memory, one
-  group per hole, so a case can ask what the printed SIL does not say: which block a `br` names,
-  how many edges reach the header, whether the latch is the block that stores the counter back.
-- `oracle.t` — **the headline**: 34 programs from `oracle-corpus.txt` (20 accepted, 14 refused)
-  go to swiftc and to your `--emit-sil`, and the verdicts must agree. swiftc runs as
-  `-emit-sil -o /dev/null`, the same stage we stop at, because "missing return" is a SIL-level
-  diagnostic and `-typecheck` would accept three of the reject cases (§2).
-- `test_exercises.ml` (Alcotest `exercises-08`) — the three optional §6 exercises. The SIL reader
-  and CFG pass are checked through their documented `lab` flags, with a five-second deadline.
+Two suites run in-process: `test_silgen.ml` (`silgen`) asks the `Sil.modul` in memory what the
+printed SIL does not say — which block a `br` names, how many edges reach a header — and
+`test_exercises.ml` (`exercises-08`) holds the three optional §6 exercises.
 
-A hole you have not started shows as `TODO` with the list of what it will check; a hole in progress
-shows `FAIL` with, under each failing case, what the test wants and what your code printed. To look
-at one program on its own:
+### Two things worth knowing before you read a red report
+
+**The control-flow files compare a canonical form.** Two correct lowerings can build the same
+graph and print it differently: block numbers follow the order you created the blocks in, so
+opening one extra block renumbers everything after it. `--emit-sil-canon` folds each block into its
+only predecessor, renumbers depth-first from the entry, and moves slots and literals to the top of
+their block — what is left is the graph, which is what those files are about. `silgen-memory.t`
+compares the raw `--emit-sil`, because there the instructions themselves are the lesson.
+
+**The oracle runs swiftc as `swiftc -emit-sil -o /dev/null`**, not `-typecheck`: "missing return"
+is a SIL-level diagnostic (§2), so `-typecheck` would accept three of the refused programs.
+
+To look at one program on its own:
 
 ```bash
 printf 'for i in 0 ..< 3 {\n  if i == 1 { continue }\n  print(i)\n}\n' > m.swift

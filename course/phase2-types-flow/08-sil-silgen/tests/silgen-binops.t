@@ -1,6 +1,6 @@
-TODO(08c) — the ordinary binary operator, through `--emit-sil`. `&&` and `||` are not here: they
-short-circuit, so the given `gen_expression` lowers them as a branch diamond and `silgen-if.t` is where
-that shape is checked. Everything else is one `binop` instruction, and the interest is in the two
+TODO(08b) — the ordinary binary operator, through `--emit-sil`. `&&` and `||` are not here: they
+short-circuit, so the given `gen_expression` lowers them as a branch diamond, and `silgen-memory.t`
+is where that shape is checked. Everything else is one `binop` instruction, and the interest is in the two
 types it carries — the type the operation happens AT, and the type of its result.
 
 Nothing in this file branches, so it reports on TODO(08c) alone: it can go green with the memory
