@@ -385,13 +385,20 @@ a compiler bug, not a source bug. What `--emit-sil` prints is either SIL or a di
 SILGen is called. So the wording table for this concept is concept 07's, unchanged, and the oracle
 in §4 tests only that the same programs are accepted and refused.
 
-Two messages are new all the same, and neither is a Swift diagnostic. The given **verifier** walks
-the blocks after you build them and reports a lowering that does not hold together — a branch to a
-block you never created, a function with no blocks — as `SIL verification error: …` on stderr, exit
-1. swiftc has the same idea in `lib/SIL/Verifier/SILVerifier.cpp`, where it is an *assertion*: a
-failing verification aborts the compiler with a stack trace, because it can only mean swiftc itself
-is wrong. Ours prints and exits so a cram case can read it; treat a hit as a bug in your `gen_statement`,
-never as something a Swift program should be able to cause.
+One kind of message *is* new, and it is not about the Swift program at all — it is about your
+SILGen. After you build a function's blocks, the given **verifier** checks that the graph holds
+together. If it does not, it prints a line like this on stderr and exits with 1:
+
+```
+SIL verification error: @main bb0: branch to nonexistent bb3
+```
+
+There are three such messages: a `br` to a block that does not exist, a `cond_br` to one, and a
+function with no blocks at all. A correct program can never cause them, so if you see one, the bug
+is in your `gen_statement` — typically a block number used in a branch but never made with
+`new_block`. swiftc has the same check (`lib/SIL/Verifier/SILVerifier.cpp`), except that there a
+failure crashes the compiler, since it can only mean swiftc itself is wrong; ours prints and exits
+instead, so that a test can read the message.
 
 ## 3. Build it, step by step
 
