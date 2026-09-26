@@ -102,45 +102,60 @@ keep.
 
 ### What SILGen is handed
 
-Before the mechanics, look at the *input*, because it decides how much work this pass has to do.
-
-SILGen does not consume the tree the parser built. It consumes the tree **Sema produced** — a
-`Tast.program`, in which every node already carries its type and every name is already resolved
-(concept 05 §2, **What the checker produces**). That single fact is why the file you are about to
-write is as short as it is. A few things that are *not* in it:
-
-- **No coercion logic.** An integer literal that checked at `Double` arrives carrying `Double`, so
-  it is born a `float_literal`. There is no "notice that this literal sits beside a Double" step.
-- **No name resolution.** `Tast.Print` is `print` and `Tast.Fn_call` is a declared function; SILGen
-  never consults a table to find out which.
-- **No type re-derivation.** `expression.Tast.ty` is the type of the node. The binary arm emits
-  `Binop` at that type rather than working it out from the operands.
-
-**What that saves you, concretely.** Suppose SILGen had to work the coercion out for itself, from
-the parsed tree. It would generate the left operand, discover the right one is a `Double`, and
-generate the left one **again** at `Double` — leaving the abandoned first copy sitting in the block.
-Nothing deletes it at `-Onone`. So this program:
+SILGen does not read the tree the parser built. It reads the tree **Sema** built from it, the
+`Tast.program` (concept 05 §2, **What the checker produces**). The difference is easiest to see on
+one small program:
 
 ```swift
 let d = 1.5
-print((1 / 0) * d)
+print(2 * d)
 ```
 
-would trap on an integer division by zero at `-Onone` and print `inf` at `-O`, because the optimizer
-removes the copy the unoptimized build still runs. An optimization level changing a program's output
-is the one thing an optimizer must never do.
+The parser's tree records what was *written*:
 
-Taking the typed tree does not fix that bug so much as make it **unrepresentable**: there is no
-integer arithmetic to abandon, because the literal never was an integer. The SIL for a literal tree
-beside a `Double` contains none at all:
-
-```bash
-$ printf 'let d = 1.5\nprint((1 + 2 * 3) * d)\n' > s.swift
-$ ./lab.exe --emit-sil s.swift | grep -c integer_literal
-0
+```
+(let d 1.5)
+(print (* 2 d))
 ```
 
-`tests/silgen-typed-input.t` pins both cases above.
+Sema's tree — what SILGen actually receives — records what it *means*. Every node carries its type:
+
+```
+(let d (double_lit 1.5 : Double))
+(print (* (int_lit 2 : Double) (local d : Double) : Double) : ())
+```
+
+Each difference between the two is a decision Sema made once and wrote down, so SILGen never makes
+it again:
+
+| parser's tree | Sema's tree | so SILGen |
+|---|---|---|
+| `2` | `(int_lit 2 : Double)` | emits `float_literal` straight away: the literal is a `Double` because that is what it was checked against |
+| `d` | `(local d : Double)` | loads a local; it never asks what `d` names |
+| `print(…)` | `(print … : ())` | knows this is the builtin, not a function you declared |
+| `(* 2 d)` | `(* … : Double)` | emits `binop` at the type written on the node, without looking at the operands |
+
+The SIL follows the typed tree line for line:
+
+```
+sil @main() -> $() {
+bb0:
+  %0 = float_literal $Double, 1.5
+  %1 = alloc_stack $Double  // d
+  store %0 to %1
+  %3 = float_literal $Double, 2
+  %4 = load %1 $Double
+  %5 = binop "*" %3, %4 $Double
+  %6 = apply @print(%5)
+  return
+}
+```
+
+Why it matters that the decision is made once, and before SILGen: working from the parser's tree,
+SILGen would reach `2` before learning that `d` is a `Double`, so it would first emit `2` as an
+`Int` and then again as a `Double` — two copies of one literal, the first one dead but still in the
+block. With the typed tree, `2` is a `Double` from the start and there is only one. That is why the
+SIL above contains no `integer_literal` at all, and `tests/silgen-typed-input.t` pins it.
 
 ### SILGen is a *builder*
 
