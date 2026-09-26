@@ -245,15 +245,27 @@ the verifier is content — it checks that `br`/`cond_br` name blocks that exist
 
 ### Why SIL at all (instead of AST → LLVM directly)?
 
-Phase 1 *did* go straight AST → LLVM, and it worked. SIL earns its place because it's the right level
-for the work to come: it's **Swift-aware** (it will carry ARC retain/release, value-witness calls,
-exclusivity — concepts LLVM has no idea about), and it's **structured for analysis** (basic blocks +
-the CFG) so that **every optimization and diagnostic in Phase 4** — mem2reg, constant folding, DCE,
-CSE, inlining — is a graph transformation on SIL, not a hack on a tree or a fight with LLVM. swiftc
-also runs *mandatory* SIL passes before it ever reaches LLVM, and two of them are diagnostics rather
-than optimizations: definite initialization, and the "missing return" check you already met in
-concept 07 — which is why the oracle in §4 has to ask swiftc for SIL, not just a type-check. Build
-the right IR once, and everything downstream gets easier.
+Phase 1 *did* go straight AST → LLVM, and it worked. So what does an extra IR buy? Not the classic
+optimizations: mem2reg, constant folding, dead-code elimination, CSE and inlining are all LLVM
+passes already, and concept 20 hands our SIL to `clang -O2` to run them. Phase 4 builds them on SIL
+anyway, because it is the clearest place to learn SSA and dataflow, and because running them early
+feeds the passes below.
+
+What LLVM *cannot* do is anything that depends on what the program means in Swift, because
+lowering to LLVM erases it:
+
+| optimization | what SIL still knows | what LLVM sees |
+|---|---|---|
+| generic specialization (24) | "`pick<T: P>` is called with `T = S`", so clone it for `S` | a function taking an opaque buffer and a table pointer |
+| devirtualization (24, 28) | "this calls `S`'s implementation of `P`", or "class `C` has no subclasses" | a function pointer loaded from memory, then an indirect call |
+| ARC optimization (27, 28) | ownership: this `copy_value` and that `destroy_value` cancel out | two calls into the runtime it may not remove |
+| copy-on-write (31) | "this buffer belongs to an array, which is a value" | a reference-count load and a branch |
+
+The same goes for diagnostics that need the control-flow graph. swiftc runs *mandatory* SIL passes
+before it ever reaches LLVM, and two of them report errors: definite initialization, and the
+"missing return" check you met in concept 07 — which is why the oracle in §4 asks swiftc for SIL,
+not just a type-check. LLVM could not phrase those errors in terms of your source at all. SIL is
+where Swift's meaning and the CFG exist at the same time, and that is what those passes need.
 
 > Oracle: `swift/lib/SILGen/SILGenStmt.cpp` is the direct analogue of your `gen_statement` — `visitIfStmt`,
 > `visitWhileStmt`, etc., each create blocks and emit `cond_br`/`br`. `swift/docs/SIL.rst` documents
@@ -263,9 +275,10 @@ the right IR once, and everything downstream gets easier.
 
 This concept adds no Swift syntax — the grammar is concept 07's, unchanged. What it adds is an
 **IR**, so this is the vocabulary to keep in front of you: every form `--emit-sil` can print, and
-which of them you have to emit. All of it is `<-- new` (SIL starts here); within that, `<-- 08a`
-marks the memory model and `<-- 08b` the control-flow cases of `gen_statement`. The unmarked rest comes
-from the given `gen_expression`, `lower_func` and `lower`.
+which of them you have to emit. All of SIL is new in this concept, so the marks say who writes each
+form instead: `<-- 08a` is the memory model and `<-- 08b` the control-flow cases of
+`gen_statement`, both yours. Everything unmarked is emitted by the given `gen_expression`,
+`lower_func` and `lower`.
 
 One notation to read first: a **`$` marks a type**. `$Int`, `$Bool`, `$T` for a type left open —
 swiftc's own SIL writes them the same way (`$Int`, `$Builtin.Int64`, `$Array<Element>`). Real SIL
@@ -276,10 +289,10 @@ A SIL **function** is a header and a list of blocks; a **block** is a label, str
 instructions, and exactly one terminator:
 
 ```
-sil @name(%0 : $T, %1 : $T) -> $T {            <-- new  (given: lower_func)
-bb0:                                           <-- new  block label, bb0 is the entry
-  <instruction>                                         zero or more, in order
-  <terminator>                                          exactly one, at the end
+sil @name(%0 : $T, %1 : $T) -> $T {     the header: parameters %0, %1 and the result type
+bb0:                                    a block label; bb0 is the entry
+  <instruction>                         zero or more, in order
+  <terminator>                          exactly one, at the end
 }
 ```
 
@@ -287,17 +300,17 @@ bb0:                                           <-- new  block label, bb0 is the 
 
 | form | meaning |
 |---|---|
-| `%n = integer_literal $Int, 7` | an `Int` (also `$Bool`, printed `true`/`false`) `<-- new` |
-| `%n = float_literal $Double, 1.5` | a `Double` `<-- new` |
-| `%n = string_literal $String, "hi"` | a `String` `<-- new` |
+| `%n = integer_literal $Int, 7` | an `Int` (also `$Bool`, printed `true`/`false`) |
+| `%n = float_literal $Double, 1.5` | a `Double` |
+| `%n = string_literal $String, "hi"` | a `String` |
 | `%n = alloc_stack $T  // x` | a stack slot for `x`; the result is its **address** `<-- 08a` |
 | `%n = load %a $T` | read the value at address `%a` `<-- 08a` |
 | `store %v to %a` | write `%v` at address `%a` (no result) `<-- 08a` |
-| `%n = binop "+" %a, %b $T` | arithmetic and comparison `<-- new` |
-| `%n = unop "-" %a $T` | negation — the only unary operator in the subset `<-- new` |
-| `%n = function_ref @f` | a reference to a SIL function `<-- new` |
-| `%n = apply %f(%a, %b)` | call it `<-- new` |
-| `%n = apply @print(%a)` | the one builtin `<-- new` |
+| `%n = binop "+" %a, %b $T` | arithmetic and comparison |
+| `%n = unop "-" %a $T` | negation — the only unary operator in the subset |
+| `%n = function_ref @f` | a reference to a SIL function |
+| `%n = apply %f(%a, %b)` | call it |
+| `%n = apply @print(%a)` | the one builtin |
 
 **Terminators** — the edges of the CFG, one per block:
 
@@ -305,8 +318,8 @@ bb0:                                           <-- new  block label, bb0 is the 
 |---|---|
 | `br bbN` | jump to `bbN` `<-- 08b` (the branch into a loop, the back-edge, both arms of a diamond, `break`, `continue`) |
 | `cond_br %c, bbT, bbF` | branch on a `$Bool` `<-- 08b` (`if`, the loop header) |
-| `return` / `return %v` | leave the function `<-- new` (given: `Return`) |
-| `unreachable` | a block control never enters — a **valid** terminator, and what a block keeps when both arms of an `if` returned `<-- new` |
+| `return` / `return %v` | leave the function |
+| `unreachable` | a block control never enters — a **valid** terminator, and what a block keeps when both arms of an `if` returned |
 
 Real swiftc SIL is the same shape with a great deal more ceremony. Run
 `swiftc -emit-sil add.swift` on the two-line `add` from §2 and you get
