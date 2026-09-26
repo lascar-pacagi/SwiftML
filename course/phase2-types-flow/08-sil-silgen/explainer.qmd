@@ -279,10 +279,9 @@ where Swift's meaning and the CFG exist at the same time, and that is what those
 
 This concept adds no Swift syntax — the grammar is concept 07's, unchanged. What it adds is an
 **IR**, so this is the vocabulary to keep in front of you: every form `--emit-sil` can print, and
-which of them you have to emit. All of SIL is new in this concept, so the marks say who writes each
-form instead: `<-- 08a` is the memory model and `<-- 08b` the control-flow cases of
-`gen_statement`, both yours. Everything unmarked is emitted by the given `gen_expression`,
-`lower_func` and `lower`.
+which of them you have to emit. The marks show which forms YOUR code emits, and in which hole:
+`<-- 08a` the memory model, `<-- 08b` the binary operator, `<-- 08c` the control flow. A form with
+no mark is emitted by code you are given (`gen_expression`, `lower_func`, `lower`).
 
 One notation to read first: a **`$` marks a type**. `$Int`, `$Bool`, `$T` for a type left open —
 swiftc's own SIL writes them the same way (`$Int`, `$Builtin.Int64`, `$Array<Element>`). Real SIL
@@ -310,7 +309,7 @@ bb0:                                    a block label; bb0 is the entry
 | `%n = alloc_stack $T  // x` | a stack slot for `x`; the result is its **address** `<-- 08a` |
 | `%n = load %a $T` | read the value at address `%a` `<-- 08a` |
 | `store %v to %a` | write `%v` at address `%a` (no result) `<-- 08a` |
-| `%n = binop "+" %a, %b $T` | arithmetic and comparison |
+| `%n = binop "+" %a, %b $T` | arithmetic and comparison `<-- 08b` |
 | `%n = unop "-" %a $T` | negation — the only unary operator in the subset |
 | `%n = function_ref @f` | a reference to a SIL function |
 | `%n = apply %f(%a, %b)` | call it |
@@ -320,8 +319,8 @@ bb0:                                    a block label; bb0 is the entry
 
 | form | meaning |
 |---|---|
-| `br bbN` | jump to `bbN` `<-- 08b` (the branch into a loop, the back-edge, both arms of a diamond, `break`, `continue`) |
-| `cond_br %c, bbT, bbF` | branch on a `$Bool` `<-- 08b` (`if`, the loop header) |
+| `br bbN` | jump to `bbN` `<-- 08c` (the branch into a loop, the back-edge, both arms of a diamond, `break`, `continue`) |
+| `cond_br %c, bbT, bbF` | branch on a `$Bool` `<-- 08c` (`if`, the loop header) |
 | `return` / `return %v` | leave the function |
 | `unreachable` | a block control never enters — a **valid** terminator, and what a block keeps when both arms of an `if` returned |
 
@@ -377,8 +376,8 @@ One skeleton, `silgen.ml`, with holes of two kinds. The builder
 **`TODO(08a)` — the memory model**, three arms and about six lines. A variable is an
 `alloc_stack` slot: `Tast.Local` reads it with a `load`, `Tast.Let` allocates it and `store`s the
 value, `Tast.Assign` stores over the slot the name already has. `lower` does the same thing for
-each parameter, so the shape is already in the file. Do this first — it is the vocabulary
-everything below produces, and `silgen-memory.t` reports on it alone.
+each parameter, so the shape is already in the file. `silgen-memory.t` reports on it, together
+with 08b: its programs use `+` and `>`.
 
 **`TODO(08b)` — the ordinary binary operator**, one `emit`. Read the arm above it first, and notice
 what you are *not* asked to do: both operands already carry their final type, and so does this node
@@ -393,9 +392,10 @@ They match on `Tast` statements, whose blocks are already checked — `Tast.If` 
 `new_block` to make blocks, `terminate` to set the current block's branch, `gen_block` to lower a
 list of statements into the current block, and `switch_to` to move the cursor.
 
-**Start with `TODO(08a)`.** That step is forced — not because the control-flow code calls it, but
-because nearly every program in these test files declares a variable, so nothing lowers at all
-until slots do.
+**Do 08a and 08b first, in either order.** Both are short, and 08b stands entirely alone
+(`silgen-binops.t`). The control flow has to wait for them — not because its code calls them, but
+because nearly every program in its test files declares a variable and compares something, so
+nothing lowers until slots and binary operators do.
 
 Then the control-flow cases, in an order that is only a suggestion apart from the last one (§4
 says which file each turns green):
