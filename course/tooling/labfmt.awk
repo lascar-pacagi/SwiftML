@@ -324,7 +324,10 @@ cram { dline++; next }
   if (!ok) curcase = a[1]        # the box repeats this line just before the failure detail
   if (!seen[cur SUBSEP key]++) {
     if (ok) nok[cur]++; else nbad[cur]++
-    put(ok ? "  " G "OK  " Z " " wrap_label(line, 84) : "  " R "FAIL" Z " " wrap_label(line, 84))
+    # a case named `given: …` checks code the learner was handed, so it says so instead of OK
+    shown = line; if (ok && shown ~ /^given: */) sub(/^given: */, "", shown)
+    put(ok ? "  " G (line ~ /^given:/ ? "GIVEN" : "OK  ") Z " " wrap_label(shown, 84) \
+           : "  " R "FAIL" Z " " wrap_label(line, 84))
   }
   next
 }
@@ -411,6 +414,11 @@ END {
           out = out sprintf("%s%sFAIL%s %s%s%s (%s)\n", B, R, Z, B, part[2], Z, kind); nfail++
         } else if (blocked) {
           out = out sprintf("%sSKIP%s %s (%s)\n", D, Z, part[2], kind); nskip++; continue
+        } else if (kind == "alcotest" && part[2] ~ /^harness-/) {
+          # a suite that tests the test harness, not the learner's code: green from the start,
+          # so it is shown as GIVEN and kept out of the passing count — it is not progress
+          out = out sprintf("%sGIVEN%s %s (%s) — tests the test tools, not your code\n", G, Z,
+                            part[2], kind); ngiven++; good++
         } else {
           out = out sprintf("%sPASS%s %s (%s)\n", G, Z, part[2], kind); npass++; good++
         }
@@ -454,9 +462,10 @@ END {
     printf "%s", out
   }
 
-  tail = (ntodo ? sprintf(", %d not started", ntodo) : "") (nopts ? sprintf(", %d optional", nopts) : "") (nskip ? sprintf(", %d not run", nskip) : "")
+  tail = (ntodo ? sprintf(", %d not started", ntodo) : "") (nopts ? sprintf(", %d optional", nopts) : "") (nskip ? sprintf(", %d not run", nskip) : "") \
+         (ngiven ? sprintf(" (%d given check%s OK)", ngiven, ngiven > 1 ? "s" : "") : "")
   if (nfail || ntodo) printf "\n%s%d passing, %d failing%s%s\n", B, npass, nfail, tail, Z
-  else if (npass) printf "\n%s%d passing, 0 failing%s\n", G, npass, Z
+  else if (npass || ngiven) printf "\n%s%d passing, 0 failing%s%s\n", G, npass, tail, Z
   else printf "\n%sno tests ran%s\n", B, Z
 }
 
