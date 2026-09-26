@@ -319,7 +319,7 @@ let test_load_across_store () =
   differ "an extra load is still visible" loop_inline moved
 
 let () =
-  Alcotest.run "canon"
+  Alcotest.run "harness-canon"
     [
       ( "the same graph, spelled differently",
         [

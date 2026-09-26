@@ -467,9 +467,12 @@ smallest and the only one no other hole touches, and `08a` needs it for its `+` 
 | `silgen-capstone.t` | `--emit-sil` | everything | a whole program: recursion, mutual recursion, every loop, `break`, `continue`, an early `return` |
 | `oracle.t` | `--emit-sil` | everything | 35 programs — 21 accepted, 14 refused — whose verdict must match swiftc's |
 
-Two suites run in-process: `test_silgen.ml` (`silgen`) asks the `Sil.modul` in memory what the
+Three suites run in-process: `test_silgen.ml` (`silgen`) asks the `Sil.modul` in memory what the
 printed SIL does not say — which block a `br` names, how many edges reach a header — and
-`test_exercises.ml` (`exercises-08`) holds the three optional §6 exercises.
+`test_exercises.ml` (`exercises-08`) holds the three optional §6 exercises. The third,
+`harness-canon`, does not test your code at all: it checks the normaliser behind
+`--emit-sil-canon` on graphs built by hand, so that a bug there cannot fail a correct lowering.
+It is green from the start.
 
 ### Two things worth knowing before you read a red report
 
