@@ -126,8 +126,13 @@ def make_lowering():
     ax.text(7.1, 5.0, "SILGen", ha="center", fontsize=18.3, fontweight="bold", color=TEXT)
 
     # ---- bottom right: the CFG -----------------------------------------------------
-    ax.text(11.9, 9.45, "SIL: a control-flow graph", ha="center", fontsize=18.9,
+    ax.text(11.9, 10.1, "SIL: a control-flow graph", ha="center", fontsize=18.9,
             fontweight="bold", color=TEXT)
+    # the function header, as --emit-sil prints it: it is where %0 is DEFINED — the parameter
+    ax.text(9.75, 9.45, r"sil @f(%0 : \$Int) -> \$() {", ha="left", va="center",
+            fontsize=15.5, family="monospace", fontweight="bold", color=TEXT)
+    ax.text(15.95, 9.45, "%0 is the parameter x", ha="right", va="center", fontsize=14.8,
+            color="#5b6b7b", style="italic")
     b0 = (11.9, 7.05)
     h0 = block(ax, *b0, "bb0:", ["%1 = alloc_stack $Int", "store %0 to %1", "%3 = load %1",
                                   "%4 = integer_literal 3", "%5 = binop \">\" %3, %4",
