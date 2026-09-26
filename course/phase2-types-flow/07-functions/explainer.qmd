@@ -738,6 +738,11 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
       | Ast.Sub | Ast.Mul | Ast.Div -> (
           match unified with Some ((Types.TInt | Types.TDouble) as t) -> t | _ -> bad ())
       | Ast.Mod -> ( match unified with Some Types.TInt -> Types.TInt | _ -> bad ())
+      (* A comparison or `&&` whose OPERANDS are wrong is still a Bool: the operator fixes
+         the result type, so this is not a guess — swiftc agrees, and reports
+         `let n: Int = 1 < "a"` twice. TError is defensible too (it quiets that second
+         error), and the tests accept either on purpose: no case reuses the result of a
+         failed comparison. Keep it so. *)
       | Ast.Eq | Ast.Ne -> (
           match unified with
           | Some _ -> Types.TBool
