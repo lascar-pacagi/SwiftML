@@ -402,46 +402,36 @@ instead, so that a test can read the message.
 
 ## 3. Build it, step by step
 
-One skeleton, `silgen.ml`, with holes of two kinds. The builder
-(`emit`/`new_block`/`switch_to`/`terminate`), the arithmetic and call lowering in `gen_expression`,
-`Expr_stmt`/`Return`, and `lower_func`/`lower` are given.
+One skeleton, `silgen.ml`, with three holes. Everything else in it is given: the builder (`emit`,
+`new_block`, `switch_to`, `terminate`, `enter_loop`/`leave_loop`), the rest of `gen_expression`
+(literals, unary minus, `&&`/`||`, calls, `print`), the `Expr_stmt` and `Return` statements, and
+`lower_func`/`lower`, which make one SIL function per `func` and give each parameter its slot.
 
-**`TODO(08a)` — the memory model**, three arms and about six lines. A variable is an
-`alloc_stack` slot: `Tast.Local` reads it with a `load`, `Tast.Let` allocates it and `store`s the
-value, `Tast.Assign` stores over the slot the name already has. `lower` does the same thing for
-each parameter, so the shape is already in the file. `silgen-memory.t` reports on it, together
-with 08b: its programs use `+` and `>`.
+| hole | where | what it does | the part to watch |
+|---|---|---|---|
+| `TODO(08a)` memory | `Local`, `Let`, `Assign` | a variable is an `alloc_stack` slot: `Let` allocates it and `store`s, `Local` `load`s it, `Assign` stores over the slot the name already has | `lower_func` already does this for parameters: the shape is in the file |
+| `TODO(08b)` binary operator | `Binary` in `gen_expression` | lower both operands, `emit` one `Binop` | the node's type is already decided (§2, **What SILGen is handed**); nothing to coerce, nothing to generate twice |
+| `TODO(08c)` control flow | `If`, `While`, `For`, `Break`, `Continue` | build the blocks and branches of §2, **Lowering control flow** | a loop must `enter_loop` before its body and `leave_loop` after, or `break`/`continue` find no target |
 
-**`TODO(08b)` — the ordinary binary operator**, one `emit`. Read the arm above it first, and notice
-what you are *not* asked to do: both operands already carry their final type, and so does this node
-(`ty`), because Sema recorded all three. There is no coercion to spot and nothing to re-generate —
-the previous section shows why.
+The control-flow cases match on `Tast` statements whose blocks are already checked — `Tast.If`
+holds its two `Tast.stmt list`s — so lowering them is purely about the graph, never about what the
+parts mean. Blocks are named by number: a block `b` is `b.Sil.bid`, so a `while` loop registers
+itself with `enter_loop builder ~continue_to:header.Sil.bid ~break_to:exit_block.Sil.bid`.
 
-`&&` and `||` are not yours either: §2 shows how the given `gen_expression` lowers them.
+**In what order.** Do 08a and 08b first, in either order: 08b stands entirely alone
+(`silgen-binops.t`), and 08a's tests use `+` and `>`, so they need 08b too. The control flow waits
+for both, because nearly every program in its tests declares a variable and compares something.
+Then:
 
-**`TODO(08c)` — the control flow**, the five cases of `gen_statement` described one by one above.
-They match on `Tast` statements, whose blocks are already checked — `Tast.If` holds its two
-`Tast.stmt list`s, so lowering is purely about the CFG and never about what the parts mean. Use
-`new_block` to make blocks, `terminate` to set the current block's branch, `gen_block` to lower a
-list of statements into the current block, and `switch_to` to move the cursor.
-
-**Do 08a and 08b first, in either order.** Both are short, and 08b stands entirely alone
-(`silgen-binops.t`). The control flow has to wait for them — not because its code calls them, but
-because nearly every program in its test files declares a variable and compares something, so
-nothing lowers until slots and binary operators do.
-
-Then the control-flow cases, in an order that is only a suggestion apart from the last one (§4
-says which file each turns green):
-
-1. **`if`** — the diamond. The smallest case, and the only one needing no `builder.loops`, which is why
-   it makes the easiest start. Nothing depends on it, though: `while` will go green with `if`
-   still raising.
-2. **`while`** — the same three moves plus the back-edge, and the first push/pop of
-   `enter_loop ~continue_to:header.bid ~break_to:exit.bid`.
-3. **`for`** — `while` again over a slot for the counter, with the increment in its own block.
-   `enter_loop ~continue_to:latch.bid`, not the header: the latch is what `continue` must reach.
-4. **`break`** and **`continue`** — one line each, reading the top of `builder.loops`. **Forced:** they
-   cannot be tested before a loop exists, because nothing else pushes that stack.
+1. **`if`**: the diamond, and the easiest start, since it needs no loop bookkeeping.
+2. **`while`**: the same moves plus the back-edge, and the first `enter_loop`/`leave_loop`. Its
+   tests use no `if`, so it goes green even if `if` is not done.
+3. **`for`**: a `while` over a slot for the counter, with the increment in a block of its own —
+   the latch. It passes `~continue_to:` the latch, not the header, because that is where
+   `continue` must go.
+4. **`break`** and **`continue`**: one line each, reading `break_target`/`continue_target`. They
+   come last because their tests need a loop *and* an `if`: every one of them is a jump taken
+   from inside an `if`.
 
 Reference: `solution/silgen.ml`.
 
