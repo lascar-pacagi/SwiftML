@@ -324,6 +324,7 @@ cram { dline++; next }
   if (!ok) curcase = a[1]        # the box repeats this line just before the failure detail
   if (!seen[cur SUBSEP key]++) {
     if (ok) nok[cur]++; else nbad[cur]++
+    if (ok && line ~ /^given:/) ngivenok[cur]++
     # a case named `given: …` checks code the learner was handed, so it says so instead of OK
     shown = line; if (ok && shown ~ /^given: */) sub(/^given: */, "", shown)
     put(ok ? "  " G (line ~ /^given:/ ? "GIVEN" : "OK  ") Z " " wrap_label(shown, 84) \
@@ -388,11 +389,19 @@ END {
         tf = prefix part[2]; unstarted = 0
         # Zero passing cases does not mean untouched: an attempted implementation can make every
         # case fail or crash. Reserve TODO for output that names an explicit unfinished hole.
-        if (failing && kind == "cram") unstarted = all_failed_are_todo(si, tf)
+        waiting = 0
+        if (failing && kind == "cram") {
+          unstarted = all_failed_are_todo(si, tf)
+          # some cases pass and every failure is a hole elsewhere: the learner's part is done
+          # as far as it can be checked, which is neither "not started" nor "wrong"
+          if (!unstarted) waiting = failures_all_todo(si, tf)
+        }
         # A given case may already pass (08's `given: module shape`): TODO is about whether the
         # FAILURES reached a hole, which is what CLAUDE.md's table says, not about whether
         # anything passes. Requiring zero passes turned an untouched suite into a wall of FAIL.
-        else if (failing) unstarted = (nbad[si] > 0 && alctodo[si])
+        else if (failing && nbad[si] > 0 && alctodo[si]) {
+          if (nok[si] - ngivenok[si] > 0) waiting = 1; else unstarted = 1
+        }
         total++
         if ((interrupted || (run_failed && n == 0)) && !failing) {
           why = (interrupted ? "test run interrupted" : "test runner stopped before results")
@@ -410,6 +419,10 @@ END {
         } else if (unstarted && !detail_all) {
           out = out sprintf("%s%sTODO%s %s%s%s (%s) — not started\n", B, Y, Z, B, part[2], Z, kind)
           ntodo++
+        } else if (waiting && !detail_all) {
+          out = out sprintf("%s%sWAIT%s %s%s%s (%s) — what can run passes; the rest waits on another hole\n",
+                            B, Y, Z, B, part[2], Z, kind)
+          nwait++
         } else if (failing) {
           out = out sprintf("%s%sFAIL%s %s%s%s (%s)\n", B, R, Z, B, part[2], Z, kind); nfail++
         } else if (blocked) {
@@ -422,15 +435,15 @@ END {
         } else {
           out = out sprintf("%sPASS%s %s (%s)\n", G, Z, part[2], kind); npass++; good++
         }
-        if (kind == "cram") out = out cases_str(si, tf, unstarted)
+        if (kind == "cram") out = out cases_str(si, tf, unstarted, waiting)
         else if (si) {
           b2 = body[si]
           # An untouched suite fails every case at an explicit TODO, and alcotest reports the
           # detail of only the first — dangling under the last case, where it reads as if it
           # belonged to it.
           # List what the suite will check, then say once why nothing runs yet.
-          if (unstarted && !detail_all) {
-            gsub(/  \033\[31mFAIL\033\[0m |  FAIL /, "  " D "·" Z "    ", b2)
+          if ((unstarted || waiting) && !detail_all) {
+            gsub(/  \033\[31mFAIL\033\[0m |  FAIL /, (waiting ? "  " Y "WAIT" Z " " : "  " D "·" Z "    "), b2)
             why = ""
             n2 = split(b2, bl, "\n"); b2 = ""
             for (li = 1; li <= n2; li++) {
@@ -462,9 +475,9 @@ END {
     printf "%s", out
   }
 
-  tail = (ntodo ? sprintf(", %d not started", ntodo) : "") (nopts ? sprintf(", %d optional", nopts) : "") (nskip ? sprintf(", %d not run", nskip) : "") \
+  tail = (ntodo ? sprintf(", %d not started", ntodo) : "") (nwait ? sprintf(", %d waiting on another hole", nwait) : "") (nopts ? sprintf(", %d optional", nopts) : "") (nskip ? sprintf(", %d not run", nskip) : "") \
          (ngiven ? sprintf(" (%d given check%s OK)", ngiven, ngiven > 1 ? "s" : "") : "")
-  if (nfail || ntodo) printf "\n%s%d passing, %d failing%s%s\n", B, npass, nfail, tail, Z
+  if (nfail || ntodo || nwait) printf "\n%s%d passing, %d failing%s%s\n", B, npass, nfail, tail, Z
   else if (npass || ngiven) printf "\n%s%d passing, 0 failing%s%s\n", G, npass, tail, Z
   else printf "\n%sno tests ran%s\n", B, Z
 }
@@ -477,6 +490,14 @@ function nfailing(si, file,   b, c) {
   for (b = 1; b <= nblk[file]; b++) if (si SUBSEP b in bad) c++
   return c
 }
+# Some case failed, and every one that did reached an explicit TODO(NN).
+function failures_all_todo(si, file,   b, key, n) {
+  for (b = 1; b <= nblk[file]; b++) {
+    key = si SUBSEP b
+    if (key in bad) { if (!(key in todo)) return 0; n++ }
+  }
+  return n > 0
+}
 # Every case failed specifically because it reached an explicit TODO(NN).
 function all_failed_are_todo(si, file,   b, key) {
   if (nblk[file] == 0 || nfailing(si, file) != nblk[file]) return 0
@@ -488,14 +509,17 @@ function all_failed_are_todo(si, file,   b, key) {
 }
 # One OK/FAIL line per case, in file order. For an explicit untouched TODO, the repeated diffs
 # are noise — list what the file will check and leave it at that (DETAIL=1 expands).
-function cases_str(si, file, unstarted,   b, key, out, nsl, sl, i) {
+function cases_str(si, file, unstarted, waiting,   b, key, out, nsl, sl, i) {
   load_t(file)
   unstarted = unstarted && !detail_all
   for (b = 1; b <= nblk[file]; b++) {
     key = si SUBSEP b
     if (si && (key in bad)) {
       if (unstarted) { out = out sprintf("  %s·%s   %s\n", D, Z, wrap_label(label[file, b], 84)); continue }
-      out = out sprintf("  %sFAIL%s %s\n", R, Z, wrap_label(label[file, b], 84))
+      if (waiting && (key in todo) && !detail_all)
+        out = out sprintf("  %sWAIT%s %s\n", Y, Z, wrap_label(label[file, b], 84))
+      else
+        out = out sprintf("  %sFAIL%s %s\n", R, Z, wrap_label(label[file, b], 84))
       if (key in todo)
         out = out sprintf("         %sblocked by an unwritten hole: %s%s\n", D, todotext[key], Z)
       else {

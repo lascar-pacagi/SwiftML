@@ -125,14 +125,15 @@ the opening quote"*, not *"unterminated strings"*. For alcotest it is the `test_
 **alcotest itself truncates near 34 characters** — keep those terse (`cannot find in scope; let
 const`) and put the detail in the group name.
 
-**`make lab` (`tooling/labfmt.awk`) is the contract.** Four states distinguish completed tests,
-attempted implementations, untouched holes, and tests that never ran:
+**`make lab` (`tooling/labfmt.awk`) is the contract.** Five states distinguish completed tests,
+attempted implementations, untouched holes, holes waiting on another, and tests that never ran:
 
 | state | meaning | detected by |
 |---|---|---|
 | `PASS` | ran, every case matched | on the roster, no failure section |
 | `FAIL` | ran and found wrong output or a crash — diffs are worth reading | a failure not caused by an explicit `TODO(NN)` |
-| `TODO` | ran into an unwritten hole | every failing case reached an explicit `TODO(NN)` |
+| `TODO` | ran into an unwritten hole | every case failed, each at an explicit `TODO(NN)` |
+| `WAIT` | the learner's part passes; the rest needs another hole | some cases pass and every failure reached an explicit `TODO(NN)` — 08a's `n = n + 1` waits on 08b |
 | `SKIP` | **never ran** — a compile error aborted dune first | a build-error block was emitted |
 
 A `TODO` file lists what it *will* check and stops there (`typecheck.t` went from ~40 lines of
