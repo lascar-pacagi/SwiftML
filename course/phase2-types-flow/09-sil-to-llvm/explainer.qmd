@@ -128,8 +128,8 @@ LLVM IR is also memory-capable (it has `alloca`/`load`/`store`) and block-struct
 
 This concept adds no Swift syntax — the grammar is still concept 07's. What it adds is the mapping
 between two IRs, so this table is the specification of your work: every SIL form concept 08 can
-emit, and the LLVM line it becomes. `<-- yours` marks the cases behind the two `TODO(09)` holes;
-the rest is given.
+emit, and the LLVM line it becomes, with who writes it — you, in the two `TODO(09)` holes, or
+the given code around them.
 
 **Instructions** (`gen_instr`). Most SIL instructions become one LLVM line, but a few become
 **no line at all**. Take `%8 = integer_literal $Int, 1` from the example above. LLVM has no
@@ -142,30 +142,34 @@ uses `%8` is lowered, it looks that up and writes `add i64 %t3, 1`. That recordi
 In the table, `$T` stands for a SIL type. `<ty>`, `<ty-a>`, `<ty-b>`, and `<ret>` stand for the
 corresponding LLVM type spellings produced by `llvm_type`, such as `i64`, `i1`, `double`, or `void`.
 
+| SIL | LLVM | written by |
+|---|---|---|
+| `%n = integer_literal $Int, 7` | no line: wherever `%n` is used, `7` is written instead | given |
+| `%n = integer_literal $Bool, true` | no line: `1` is written instead | given |
+| `%n = float_literal $Double, 1.5` | no line: a hex float is written instead | given |
+| `%n = string_literal $String, "hi"` | a `private unnamed_addr constant` global | given |
+| `%n = alloc_stack $T  // x` | `%tK = alloca <ty>`, hoisted to the entry block | given |
+| `%n = load %a $T` | `%tK = load <ty>, ptr %a` | you |
+| `store %v to %a` | `store <ty> %v, ptr %a` — no result | you |
+| `%n = binop "+" %a, %b $Int` | `%tK = add i64 %a, %b` — by calling the given `gen_binop` | you |
+| `%n = unop "-" %a $T` | `%tK = sub i64 0, %a` for `Int`; `%tK = fneg double %a` for `Double` | you |
+| `%n = function_ref @f` | no line: `@f` is written instead | you |
+| `%n = apply %f(%a, %b)` | `%tK = call <ret> %f(<ty-a> %a, <ty-b> %b)`, or `call void …` with no result | you |
+| `%n = apply @print(%a)` | a `printf` call — by calling the given `gen_print` | you |
+
+The three literal rows are already written in the skeleton, and `function_ref` is the same shape:
+copy how the `Int` literal case uses `bind_operand`.
+
+**Terminators** (`gen_term`) — the CFG, and the one asymmetry in the whole pass. All of them are
+yours:
+
 | SIL | LLVM |
 |---|---|
-| `%n = integer_literal $Int, 7` | the operand `7` — no line (given, as the pattern) |
-| `%n = integer_literal $Bool, true` | the operand `1` — no line (given) |
-| `%n = float_literal $Double, 1.5` | a hex float operand — no line (given) |
-| `%n = string_literal $String, "hi"` | a `private unnamed_addr constant` global (given) |
-| `%n = alloc_stack $T  // x` | `%tK = alloca <ty>`, hoisted to the entry block (given) |
-| `%n = load %a $T` | `%tK = load <ty>, ptr %a` `<-- yours` |
-| `store %v to %a` | `store <ty> %v, ptr %a` — no result `<-- yours` |
-| `%n = binop "+" %a, %b $Int` | `%tK = add i64 %a, %b` (the given `gen_binop` table) `<-- yours` |
-| `%n = unop "-" %a $T` | `%tK = sub i64 0, %a` for `Int`; `%tK = fneg double %a` for `Double` `<-- yours` |
-| `%n = function_ref @f` | the operand `@f` — no line `<-- yours` |
-| `%n = apply %f(%a, %b)` | `%tK = call <ret> %f(<ty-a> %a, <ty-b> %b)`, or `call void …` with no result `<-- yours` |
-| `%n = apply @print(%a)` | a `printf` call (the given `gen_print`) `<-- yours` |
-
-**Terminators** (`gen_term`) — the CFG, and the one asymmetry in the whole pass:
-
-| SIL | LLVM |
-|---|---|
-| `br bbN` | `br label %bbN` `<-- yours` |
-| `cond_br %c, bbT, bbF` | `br i1 %c, label %bbT, label %bbF` `<-- yours` |
-| `return %v` | `ret <the function's return type> %v` `<-- yours` |
-| `return` | `ret void` — **but `ret i32 0` in `@main`** `<-- yours` |
-| `unreachable` | `unreachable` — a real LLVM instruction `<-- yours` |
+| `br bbN` | `br label %bbN` |
+| `cond_br %c, bbT, bbF` | `br i1 %c, label %bbT, label %bbF` |
+| `return %v` | `ret <the function's return type> %v` |
+| `return` | `ret void` — **but `ret i32 0` in `@main`** |
+| `unreachable` | `unreachable` — a real LLVM instruction |
 
 The asymmetry is `@main`. In SIL it is an ordinary function returning `$()`; in LLVM it is the C
 entry point, whose `i32` result *is* the process's exit code, so a valueless `return` there has to
