@@ -8,8 +8,10 @@ format:
 ## 1. What you'll build, and why
 
 This is the last hop, and the payoff. You'll write **IRGen** — lower the SIL module to **LLVM IR** —
-and `clang` turns that into a native executable. For the first time since Phase 1, programs **run**:
-`if`/`while`/`for`, functions, recursion all execute, and `swiftml2`'s output matches `swiftc`
+and `clang` turns that into a native executable. Phase 1 already ran programs, but only
+straight-line ones: `let`, `var`, arithmetic and `print`, top to bottom. Concepts 05–08 added
+types, control flow and functions without running any of it. Here they run for the first time —
+`if`/`while`/`for`, functions and recursion execute, and `swiftml2`'s output matches `swiftc`
 byte-for-byte. That's **Milestone M2**, and the end of Phase 2.
 
 - **You implement:** the SIL-instruction and terminator lowering in `irgen.ml` (`gen_instr`,
