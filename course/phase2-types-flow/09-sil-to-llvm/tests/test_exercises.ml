@@ -12,8 +12,10 @@ let base_ready () = Lazy.force base_ready_result
 let initialized_program =
   "var answer: Int\nif true { answer = 7 } else { answer = 9 }\nprint(answer)"
 
+(* the condition must not be a constant: with `if true`, swiftc folds the branch before its
+   definite-initialization check and ACCEPTS the program, printing 7 *)
 let uninitialized_program =
-  "var answer: Int\nif true { answer = 7 }\nprint(answer)"
+  "var c = true\nvar answer: Int\nif c { answer = 7 }\nprint(answer)"
 
 let typecheck source = Exercise_test_support.lab [ "--emit-llvm" ] source
 

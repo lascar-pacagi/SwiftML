@@ -37,3 +37,9 @@ the `--emit-llvm` mapping (including the entry-block alloca rule), `run-arith.t`
 `run-funcs.t` **build and run** programs and check their output, the alcotest groups — one per hole —
 pin the emitted IR, and `oracle.t` compiles all 29 corpus programs with `swiftc -Onone` and with
 `./lab.exe build`, runs both, and finds stdout and exit code identical.
+
+`solution/exercises/` holds the answer key with §6's exercises applied — 1 (definite
+initialization) reaches `ast`, `tast`, `parser`, `sema`, `silgen` and `driver`; 2 (Swift's
+`Double` printing) and 3 (a C runtime linked into every build) are `irgen` plus the runtime
+carried in `driver.ml`. `make check-exercises C=phase2-types-flow/09-sil-to-llvm` builds and runs
+it; `solution/exercises/expected-diffs.txt` names the three print cases it changes, and why.

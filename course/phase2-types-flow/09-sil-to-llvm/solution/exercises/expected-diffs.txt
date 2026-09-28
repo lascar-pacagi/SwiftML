@@ -1,0 +1,16 @@
+# Tests whose goldens this concept's §6 exercises are expected to change, with the reason.
+# `make check-exercises` tolerates a failure in exactly these and nowhere else.
+#
+# All three are exercise 3's doing, and only exercise 3's: it replaces print's inline printf
+# calls with calls into a C runtime, and these cases pin the printf lines by name. Every program
+# still RUNS the same — run-arith.t, run-control.t, run-funcs.t and all of oracle.t pass with the
+# exercises in, so the behaviour is unchanged and only the IR text moved.
+
+tests/irgen-instrs.t: the "`print` is the one builtin" case greps print's IR, which is now
+  `call void @swiftml_print_int(i64 1)` rather than `call i32 (ptr, ...) @printf(…)`.
+
+tests/irgen-terms.t: the `@main` case prints main's whole body, and its print line changed the
+  same way.
+
+irgen: the "hole: gen_instr — print dispatches by type" case asserts the printf call by text.
+  Declared rather than made neutral because the printf call IS what the exercise removes.
