@@ -1,6 +1,7 @@
 TODO(09) gen_instr — one LLVM line per SIL instruction, read through the test-only
 `--emit-llvm-instrs` mode. It stops before each block's terminator, so these cases can turn green
-while `gen_term` is still untouched.
+while `gen_term` is still untouched. Every function starts with `gen_allocas`, so they read TODO
+until that hole is written.
 
 Literals emit NO line: a SIL `integer_literal` becomes an LLVM *operand*. Here `1` and `true`
 appear directly in stores, with no LLVM instruction defining them first.
@@ -29,44 +30,6 @@ straight across, which is why IRGen is this short.
   }
   
 
-Every `alloca` belongs in the ENTRY block, even for a `let` declared inside a loop body: stack
-space is only released when the function returns, so an alloca in a loop grows the stack every
-trip. The given `gen_allocas` does this for you, and the SIL `Alloc_stack` case emits nothing.
-
-  $ printf 'var s = 0\nfor i in 0 ..< 3 {\n  let d = i * 2\n  s = s + d\n}\nprint(s)\n' > hoist.swift
-  $ ./lab.exe --emit-llvm-instrs hoist.swift | sed -n '/^bb0:/,/^bb1:/p' | grep -c "alloca" || true
-  3
-  $ ./lab.exe --emit-llvm-instrs hoist.swift | sed -n '/^bb1:/,$p' | grep -c "alloca" || true
-  0
-
-Arithmetic is TYPED: the SIL `binop` carries its operand type, and each pairing picks one LLVM
-mnemonic — signed division and remainder for `Int`, not the unsigned ones.
-
-  $ cat > ar.swift <<'EOF'
-  > 9 + 4
-  > 9 - 4
-  > 9 * 4
-  > 9 / 4
-  > 9 % 4
-  > EOF
-  $ ./lab.exe --emit-llvm-instrs ar.swift | grep -oE "(add|sub|mul|sdiv|srem) i64"
-  add i64
-  sub i64
-  mul i64
-  sdiv i64
-  srem i64
-
-Comparisons are `icmp` with a signed predicate, and produce an `i1`.
-
-  $ printf '1 == 1\n1 != 2\n1 < 2\n1 <= 2\n2 > 1\n2 >= 1\n' > cmp.swift
-  $ ./lab.exe --emit-llvm-instrs cmp.swift | grep -oE "icmp [a-z]+ i64"
-  icmp eq i64
-  icmp ne i64
-  icmp slt i64
-  icmp sle i64
-  icmp sgt i64
-  icmp sge i64
-
 Unary minus has no LLVM opcode of its own on integers: it is a subtraction from zero.
 
   $ printf 'let n = 7\n-n\n' > neg.swift
@@ -81,36 +44,12 @@ Double stack slots, stores, and loads keep their `double` type.
     store double 0x3FF8000000000000, ptr %t0
     %t1 = load double, ptr %t0
 
-Double arithmetic, negation, and comparisons use LLVM's floating-point instruction families.
+Double negation is `fneg`, LLVM's one-operand floating-point instruction — not a subtraction
+from zero, which gives `+0.0` for `-(0.0)` where Swift gives `-0.0`.
 
-  $ cat > dbl.swift <<'EOF'
-  > let a = 9.0
-  > let b = 4.0
-  > -a
-  > a + b
-  > a - b
-  > a * b
-  > a / b
-  > a == b
-  > a != b
-  > a < b
-  > a <= b
-  > a > b
-  > a >= b
-  > EOF
-  $ ./lab.exe --emit-llvm-instrs dbl.swift | \
-  > grep -oE 'fneg double|f(add|sub|mul|div) double|fcmp [a-z]+ double'
-  fneg double
-  fadd double
-  fsub double
-  fmul double
-  fdiv double
-  fcmp oeq double
-  fcmp une double
-  fcmp olt double
-  fcmp ole double
-  fcmp ogt double
-  fcmp oge double
+  $ printf 'let a = 9.0\n-a\n' > dneg.swift
+  $ ./lab.exe --emit-llvm-instrs dneg.swift | grep "fneg"
+    %t2 = fneg double %t1
 
 A `function_ref` emits no line either — it names the callee — and the `apply` becomes the
 `call`. Every argument keeps its own type, and a `Void` function is called as `call void`.

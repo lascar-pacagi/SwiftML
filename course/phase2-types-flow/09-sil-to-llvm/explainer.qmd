@@ -14,8 +14,9 @@ types, control flow and functions without running any of it. Here they run for t
 `if`/`while`/`for`, functions and recursion execute, and `swiftml2`'s output matches `swiftc`
 byte-for-byte. That's **Milestone M2**, and the end of Phase 2.
 
-- **You implement:** the SIL-instruction and terminator lowering in `irgen.ml` (`gen_instr`,
-  `gen_term`). Everything upstream (front-end, SIL, SILGen) is given and complete.
+- **You implement:** the lowering in `irgen.ml` — the entry-block allocas (`gen_allocas`), the
+  instruction each operator becomes (`gen_binop`), the other instructions (`gen_instr`) and the
+  terminators (`gen_term`). Everything upstream (front-end, SIL, SILGen) is given and complete.
 - **Outcome:** `swiftml2 build foo.swift -o foo && ./foo` produces the same output as `swiftc`.
 
 Here is a complete example to keep in view while you fill the skeleton. It has one function with
@@ -128,7 +129,7 @@ LLVM IR is also memory-capable (it has `alloca`/`load`/`store`) and block-struct
 
 This concept adds no Swift syntax — the grammar is still concept 07's. What it adds is the mapping
 between two IRs, so this table is the specification of your work: every SIL form concept 08 can
-emit, and the LLVM line it becomes, with who writes it — you, in the two `TODO(09)` holes, or
+emit, and the LLVM line it becomes, with who writes it — you, in the four `TODO(09)` holes, or
 the given code around them.
 
 **Instructions** (`gen_instr`). Most SIL instructions become one LLVM line, but a few become
@@ -148,10 +149,10 @@ corresponding LLVM type spellings produced by `llvm_type`, such as `i64`, `i1`, 
 | `%n = integer_literal $Bool, true` | no line: `1` is written instead | given |
 | `%n = float_literal $Double, 1.5` | no line: a hex float is written instead | given |
 | `%n = string_literal $String, "hi"` | a `private unnamed_addr constant` global | given |
-| `%n = alloc_stack $T  // x` | `%tK = alloca <ty>`, hoisted to the entry block | given |
+| `%n = alloc_stack $T  // x` | `%tK = alloca <ty>`, hoisted to the entry block | you, in `gen_allocas` |
 | `%n = load %a $T` | `%tK = load <ty>, ptr %a` | you |
 | `store %v to %a` | `store <ty> %v, ptr %a` — no result | you |
-| `%n = binop "+" %a, %b $Int` | `%tK = add i64 %a, %b` — by calling the given `gen_binop` | you |
+| `%n = binop "+" %a, %b $Int` | `%tK = add i64 %a, %b` — the instruction picked from the operator and the type | you, in `gen_binop` |
 | `%n = unop "-" %a $T` | `%tK = sub i64 0, %a` for `Int`; `%tK = fneg double %a` for `Double` | you |
 | `%n = function_ref @f` | no line: `@f` is written instead | you |
 | `%n = apply %f(%a, %b)` | `%tK = call <ret> %f(<ty-a> %a, <ty-b> %b)`, or `call void …` with no result | you |
@@ -177,11 +178,46 @@ become `ret i32 0`. Blocks and their labels carry across unchanged, which is why
 dump closely follows the structure of the `--emit-sil` dump for the same program, even though the
 instructions use LLVM syntax.
 
-One LLVM rule is worth learning right now: **every `alloca` goes at the top of the entry block**
-(the given `gen_allocas` does this for you). An `alloca` reserves stack space that is only returned
-when the *function exits* — not at the end of a scope — so an `alloca` emitted inside a loop body
-would grow the stack on every iteration until it overflowed. Hoisting them all to the entry block
-makes the stack frame fixed-size. It cannot create a name collision: SILGen gives every value in a
+**Every `alloca` in the entry block.** One LLVM rule is worth learning right now, and
+`gen_allocas` is where you apply it. An `alloca` reserves stack space that is only returned when
+the *function exits* — not at the end of a scope. Here is a `let` inside a loop, and where SILGen
+puts its slot:
+
+```swift
+var i = 0
+while i < 3 {
+  let d = i * 2
+  print(d)
+  i = i + 1
+}
+```
+
+```
+bb0:
+  %1 = alloc_stack $Int  // i
+  ...
+bb2:                     // the loop body
+  %8 = binop "*" %6, %7 $Int
+  %9 = alloc_stack $Int  // d
+  store %8 to %9
+  ...
+  br bb1
+```
+
+Lowered where it stands, `%9` would become an `alloca` in `bb2` and take a fresh slot on every
+trip round the loop. Three trips are harmless; three million need at least 24 MB, and the stack is
+8 MB (`run-control.t` runs exactly that loop). So `gen_allocas` runs once, at
+the top of `bb0`, and emits the `alloca` for every `alloc_stack` in the function, from every block:
+
+```llvm
+bb0:
+  %t0 = alloca i64
+  %t1 = alloca i64
+  ...
+```
+
+and the `alloc_stack` case of `gen_instr` emits nothing. The stack frame becomes fixed-size.
+Hoisting cannot create a name collision: SILGen gives every value in a
 function a unique `%n`, so every allocation has a distinct key in `operands`. `gen_allocas` assigns
 those allocations LLVM names using `fresh_temp`; ordinary instruction lowering uses the same
 counter afterward, so it cannot reuse any of their `%tN` names. Entry-block allocation is also what
@@ -198,12 +234,21 @@ representation to verify, analyze, and optimize before lowering it to a backend.
 IRGen maintains one table. It maps each **SIL value `%n` to an LLVM operand**. A constant maps to
 itself (`Int_lit 5` becomes the operand `5`); a `string_literal` maps to a global; every other
 instruction emits an LLVM line and maps the SIL value to a fresh `%tK`. The subtle part is
-**types**. LLVM is strongly typed, so an `add` on `Int` is `add i64` but on `Double` is
-`fadd double`, and a comparison is `icmp slt i64`
-(integers) vs `fcmp olt double` (floats) — producing an `i1` (LLVM's Bool). Floating-point `!=`
-uses `fcmp une`: "unordered or not equal" keeps `NaN != NaN` true, as Swift requires. The SIL
-function's `val_ty` map gives you each value's type; the given `gen_binop` table picks the right
-opcode.
+**types**. LLVM is strongly typed and each instruction names its operand type, so an `add` on `Int`
+is `add i64` but on `Double` is `fadd double`; a comparison is `icmp` on integers and `fcmp` on
+floats, and either one produces an `i1`, LLVM's Bool. Two more choices hide in that table:
+
+- **Signed or unsigned.** An LLVM `i64` has no sign — it is 64 bits — so the sign lives in the
+  instruction instead: `sdiv` or `udiv`, `srem` or `urem`, `icmp slt` or `icmp ult`. Swift's `Int`
+  is signed, so it is always the `s` form. `udiv` would read `-7` as 18446744073709551609, and
+  `icmp ult` would say `-1 < 0` is false.
+- **Ordered or unordered.** A floating-point comparison is *ordered* (`fcmp olt`: false if either
+  side is NaN) or *unordered* (`fcmp ult`: true if either side is NaN). Swift's `==`, `<`, `<=`,
+  `>`, `>=` are all false on a NaN, so they are the ordered forms. Its `!=` is the negation of `==`,
+  so it is TRUE on a NaN: `fcmp une`, "unordered or not equal", which keeps `NaN != NaN` true.
+
+The SIL function's `val_ty` map gives you each value's type, and `gen_binop` picks the instruction
+from it (§3).
 
 `print` lowers to a `printf` call keyed on the argument's type: `%lld` for `Int`, a `select` between
 `"true"`/`"false"` globals for `Bool`, `%s` for a `String`. And `@main` returns `i32` (the C entry
@@ -259,8 +304,9 @@ only shows up when something later depends on it.
 
 ## 3. Build it, step by step
 
-One skeleton, `irgen.ml`, with two holes, both inside `gen_func`: **`gen_instr`** (one SIL
-instruction) and **`gen_term`** (one terminator). Everything around them is given:
+One skeleton, `irgen.ml`, with four holes, all inside `gen_func`: **`gen_allocas`** (the slots),
+**the instruction table in `gen_binop`**, **`gen_instr`** (one SIL instruction) and **`gen_term`**
+(one terminator). Everything around them is given:
 
 | given | what it does |
 |---|---|
@@ -268,19 +314,48 @@ instruction) and **`gen_term`** (one terminator). Everything around them is give
 | `fresh_temp ()` | a new LLVM register name, `%t0`, `%t1`, … |
 | `bind_operand value op` / `lookup_operand value` | record / read the LLVM operand that stands for a SIL value |
 | `value_type value`, `llvm_type ty` | a SIL value's type, and its LLVM spelling (`i64`, `double`, `i1`, `ptr`, `void`) |
-| `gen_binop value op left right` | the whole `binop`: picks `add`/`fadd`/`icmp slt`/… and binds the result |
+| the rest of `gen_binop` | the zero guard on `Int` `/` and `%`, the emitted line, the result's binding |
 | `gen_print value` | the whole `print`, per type |
-| `gen_allocas` | every `alloc_stack`, hoisted to the top of the entry block (§2) |
 
-The literal cases and `alloc_stack` are already in `gen_instr`, as the pattern to copy. What is left
-is seven instructions, and for each the question is the same: does it **emit a line**, and does it
-**produce a result** that later instructions will name?
+Do them in this order; each has a lab mode that stops before the next one is reached.
+
+**1. `gen_allocas`.** Every function calls it at the top of its entry block, so nothing else runs
+until it exists. For every `alloc_stack` in the function — in every block, not only `bb0` — emit
+`%tK = alloca <ty>` with a `fresh_temp ()`, and `bind_operand` the SIL value to it, so the `load`s
+and `store`s that name the slot find it. Walk the blocks and their instructions in the order the
+block loop below it does (note its `List.rev`s: SILGen builds both lists newest first). §2 says why
+they all go here. `irgen-allocas.t` reads `--emit-llvm-allocas`, which drops every other
+instruction and every terminator, so it tests this hole alone.
+
+**2. The binop table.** `gen_binop` is given everything but one string, `mnemonic`: the
+instruction and its operand type, such as `"add i64"` or `"fcmp olt double"`. Choose it from
+`operator` (an `Ast.binop`: `Add`, `Sub`, …, `Eq`, `Lt`, …) and `operand_type`. Use the OPERANDS'
+type, which is what the given code computes: a comparison's own result is a `Bool` (the SIL prints
+`binop "<" %3, %4 $Bool`), but `1 < 2` still needs `icmp slt i64`. These are the pairs that
+arrive:
+
+| operand type | operators | LLVM family |
+|---|---|---|
+| `Int` (`i64`) | `+ - * / %` | integer arithmetic, signed (§2) |
+| `Int` (`i64`) | `== != < <= > >=` | `icmp` with a signed predicate |
+| `Double` (`double`) | `+ - * /` | `fadd`, `fsub`, … |
+| `Double` (`double`) | `== != < <= > >=` | `fcmp`, ordered except `!=` (§2) |
+| `Bool` (`i1`) | `== !=` | `icmp` |
+
+The predicates are spelled `eq ne slt sle sgt sge` for `icmp`, and for `fcmp` an `o` or a `u`
+before `eq ne lt le gt ge`. Nothing else reaches `gen_binop`: `&&` and `||` became branches in
+SILGen (08), and `String` operators are not lowered in this subset, so a catch-all `failwith` is
+the right last case. `irgen-binop.t` uses only literal operands, so the only lines it reads are
+your binops.
+
+**3. `gen_instr`.** The literal cases, `alloc_stack` and `binop` are already written, as the
+pattern to copy. What is left is six instructions, and for each the question is the same: does it
+**emit a line**, and does it **produce a result** that later instructions will name?
 
 | instruction | emits a line | binds a result | note |
 |---|---|---|---|
 | `load` | yes | yes | |
 | `store` | yes | no | |
-| `binop` | — | — | call `gen_binop`; it does both |
 | `unop` | yes | yes | `-x` on an `Int` or a `Double` (§2) |
 | `function_ref` | **no** | yes | just an operand: `@name` |
 | `apply` | yes | only if non-`Void` | `%tK = call …` versus `call void …` |
@@ -288,16 +363,15 @@ is seven instructions, and for each the question is the same: does it **emit a l
 
 When an instruction binds a result, give it `fresh_temp ()` and record it with `bind_operand`, so
 the instructions after it can `lookup_operand` it. The LLVM text for each line is in §2's table.
+A function cannot be valid LLVM without its terminators, so `irgen-instrs.t` reads
+`--emit-llvm-instrs`, which prints the instructions and leaves the terminators out. Keep the final
+catch-all `failwith` below your cases until you have all six — the file has to compile for any
+test to run.
 
-Then **`gen_term`**: four terminators — `br`, `cond_br`, `return` (with or without a value) and
+**4. `gen_term`**: four terminators — `br`, `cond_br`, `return` (with or without a value) and
 `unreachable`. One special case: `@main` returns `i32` to the operating system, so a `return` with
-no value in `main` is `ret i32 0`; `is_main` is in scope for it.
-
-**In what order.** `gen_instr` first. A function cannot be valid LLVM without its terminators, so
-the lab has a test-only mode, `--emit-llvm-instrs`, that prints the instructions and leaves the
-terminators out: that is what `irgen-instrs.t` reads, so it goes green before you start `gen_term`.
-Keep the final catch-all `failwith` below your cases until you have all seven — the file has to
-compile for any test to run. Then `gen_term`, and every test can run whole programs:
+no value in `main` is `ret i32 0`; `is_main` is in scope for it. Then every test can run whole
+programs:
 
 ```bash
 printf 'var i = 0\nwhile i < 3 {\n  print(i)\n  i = i + 1\n}\n' > p.swift
@@ -311,30 +385,34 @@ Reference: `solution/irgen.ml`.
 ## 4. Test it
 
 ```bash
-make lab C=phase2-types-flow/09-sil-to-llvm        # add T=irgen-instrs to run one file
+make lab C=phase2-types-flow/09-sil-to-llvm        # add T=irgen-binop to run one file
 ```
 
-Six cram files, two unit suites and the oracle. The first two read the IR; the rest **build the
-program and run it**, which is the point of this concept:
+Eight cram files, two unit suites and the oracle. The first four read the IR, one hole each, in
+the order of §3; the rest **build the program and run it**, which is the point of this concept:
 
 | file | flag | green with | what it pins |
 |---|---|---|---|
-| `irgen-instrs.t` | `--emit-llvm-instrs` | `gen_instr` | literals as operands, the `alloca`/`load`/`store` model, allocas all in `bb0`, the typed arithmetic, signed `icmp`, `sub i64 0, x` for minus, `function_ref` + `apply` as one `call`, `print`'s two shapes |
+| `irgen-allocas.t` | `--emit-llvm-allocas` | `gen_allocas` | a loop's `let` hoisted into `bb0`, one typed `alloca` per slot, both arms of an `if`, each function's slots in its own entry |
+| `irgen-binop.t` | `--emit-llvm-instrs` | `gen_binop` | signed `sdiv`/`srem` behind the zero guard, signed `icmp`, the `f` family with no guard, ordered `fcmp` and `une` for `!=`, `Bool` equality |
+| `irgen-instrs.t` | `--emit-llvm-instrs` | `gen_instr` | literals as operands, the `alloca`/`load`/`store` model, `sub i64 0, x` and `fneg` for minus, `function_ref` + `apply` as one `call`, `print`'s two shapes |
 | `irgen-terms.t` | `--emit-llvm-terms` | `gen_term` | the four terminators one by one, `@main`'s `ret i32 0`, an `unreachable` that survives into LLVM, and one `build`: printable is not the same as well-typed |
-| `run-arith.t` | `build` | both | truncating division and signed remainder, minus, Double comparisons including NaN, `Bool` printing, `&&`/`||` short-circuiting |
-| `run-control.t` | `build` | both | `if`/`else if`, `while`, `for` including an empty range, `break`, `continue` in a `for`, nested loops |
-| `run-funcs.t` | `build` | both | argument order and mixed types, nested calls, recursion, mutual recursion, `Void` and an early `return`, `gcd`/`collatz` |
-| `oracle.t` | `build` | both | **Milestone M2**: 30 programs built by `swiftc -Onone` and by you, both run, stdout and exit code identical |
+| `run-arith.t` | `build` | all | truncating division and signed remainder, minus, Double comparisons including NaN, `Bool` printing, `&&`/`||` short-circuiting |
+| `run-control.t` | `build` | all | `if`/`else if`, `while`, `for` including an empty range, `break`, `continue` in a `for`, nested loops, a `let` in a loop run three million times |
+| `run-funcs.t` | `build` | all | argument order and mixed types, nested calls, recursion, mutual recursion, `Void` and an early `return`, `gcd`/`collatz` |
+| `oracle.t` | `build` | all | **Milestone M2**: 30 programs built by `swiftc -Onone` and by you, both run, stdout and exit code identical |
 
 Two suites run in-process: `test_irgen.ml` (`irgen`) reads the emitted text to ask *where* a line
-landed, which a cram `grep` cannot, and its `given` group checks the allocas you did not write;
+landed, which a cram `grep` cannot, with one group per hole;
 `test_exercises.ml` (`exercises-09`) holds the three optional §6 exercises.
 
 ### Three things worth knowing before you read a red report
 
-**`gen_instr` can go green on its own.** A function is not valid LLVM without its terminators, so
-`--emit-llvm-instrs` prints each block's instructions and leaves the terminator out.
-`irgen-instrs.t` reads that; everything else needs both holes.
+**Each hole goes green on its own, in order.** `gen_allocas` runs first in every function, so
+until it is written every file reads `TODO`. After it, the lab modes stop before what is not
+written yet: `--emit-llvm-allocas` drops everything but the slots, the binop cases use only
+literal operands, and `--emit-llvm-instrs` leaves the terminators out. Only the `build` files
+need all four holes.
 
 **The terminator tests are split by kind.** `--emit-llvm-terms <kind>` prints one kind — `br`,
 `cond-br`, `return-value`, `return-none` or `unreachable` — so an unfinished one cannot hide a
@@ -363,7 +441,7 @@ for start in 1 ..< 500000 {
 print(total)
 ```
 
-Run it from `course/` after completing both holes:
+Run it from `course/` after completing all four holes:
 
 ```console
 $ make bench C=phase2-types-flow/09-sil-to-llvm
@@ -464,7 +542,7 @@ let gen_instr (value, instruction) =
   | Sil.Float_lit number ->
       bind_operand value (Printf.sprintf "0x%016LX" (Int64.bits_of_float number))
   | Sil.String_lit text -> bind_operand value (add_string_const text)
-  (* emitted in the entry block by the given gen_allocas — see §2 *)
+  (* emitted in the entry block by gen_allocas, below — see §2 *)
   | Sil.Alloc_stack _ -> ()
   | Sil.Load address ->
       let result_operand = fresh_temp () in
@@ -512,6 +590,55 @@ let gen_term (terminator : Sil.term) =
       emit (Printf.sprintf "  ret %s %s\n"
               (llvm_type function_definition.Sil.ret) (lookup_operand return_value))
   | Sil.Unreachable -> emit "  unreachable\n"
+
+let gen_allocas () =
+  List.iter
+    (fun (block : Sil.block) ->
+      List.iter
+        (fun (value, instruction) ->
+          match (instruction : Sil.instr) with
+          | Sil.Alloc_stack _ ->
+              let stack_operand = fresh_temp () in
+              emit (Printf.sprintf "  %s = alloca %s\n" stack_operand
+                      (llvm_type (value_type value)));
+              bind_operand value stack_operand
+          | _ -> ())
+        (List.rev block.Sil.instrs))
+    (List.rev function_definition.Sil.blocks)
+```
+
+And the table inside `gen_binop`:
+
+```ocaml
+let mnemonic =
+  match (operator, operand_type) with
+  | Ast.Add, Types.TInt -> "add i64"
+  | Ast.Sub, Types.TInt -> "sub i64"
+  | Ast.Mul, Types.TInt -> "mul i64"
+  | Ast.Div, Types.TInt -> "sdiv i64"
+  | Ast.Mod, Types.TInt -> "srem i64"
+  | Ast.Add, Types.TDouble -> "fadd double"
+  | Ast.Sub, Types.TDouble -> "fsub double"
+  | Ast.Mul, Types.TDouble -> "fmul double"
+  | Ast.Div, Types.TDouble -> "fdiv double"
+  | Ast.Eq, Types.TInt -> "icmp eq i64"
+  | Ast.Ne, Types.TInt -> "icmp ne i64"
+  | Ast.Lt, Types.TInt -> "icmp slt i64"
+  | Ast.Le, Types.TInt -> "icmp sle i64"
+  | Ast.Gt, Types.TInt -> "icmp sgt i64"
+  | Ast.Ge, Types.TInt -> "icmp sge i64"
+  | Ast.Eq, Types.TDouble -> "fcmp oeq double"
+  | Ast.Ne, Types.TDouble -> "fcmp une double"
+  | Ast.Lt, Types.TDouble -> "fcmp olt double"
+  | Ast.Le, Types.TDouble -> "fcmp ole double"
+  | Ast.Gt, Types.TDouble -> "fcmp ogt double"
+  | Ast.Ge, Types.TDouble -> "fcmp oge double"
+  | Ast.Eq, Types.TBool -> "icmp eq i1"
+  | Ast.Ne, Types.TBool -> "icmp ne i1"
+  (* nothing else arrives: SILGen lowered && and || to branches, and the String
+     operators are not lowered in this subset *)
+  | _ -> failwith "IRGen: no LLVM instruction for this binop"
+in
 ```
 
 ## 9. Exercise solutions

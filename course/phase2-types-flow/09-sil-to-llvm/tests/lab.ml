@@ -3,6 +3,7 @@
    not see your work in this directory):
      ./lab.exe build <file.swift> [-o <out>]
      ./lab.exe --emit-tokens|--emit-ast|--typecheck|--emit-sil|--emit-llvm <file.swift>
+     ./lab.exe --emit-llvm-allocas <file.swift>  (test gen_allocas before the rest)
      ./lab.exe --emit-llvm-instrs <file.swift>  (test gen_instr before gen_term)
      ./lab.exe --emit-llvm-terms <kind> <file.swift>  (test one terminator kind) *)
 
@@ -11,6 +12,7 @@ let usage () =
   prerr_endline
     "       lab --emit-tokens|--emit-ast|--typecheck|--emit-sil|--emit-llvm \
      <file.swift>";
+  prerr_endline "       lab --emit-llvm-allocas <file.swift>";
   prerr_endline "       lab --emit-llvm-instrs <file.swift>";
   prerr_endline
     "       lab --emit-llvm-terms \
@@ -36,6 +38,24 @@ let () =
         | _ -> usage ()
       in
       Driver.compile_file ~out ~src_path:file ~emit:Driver.Exe ()
+  | _ :: "--emit-llvm-allocas" :: [ file ] ->
+      (* only what gen_allocas writes: every instruction but alloc_stack is dropped from the
+         SIL and no terminator is printed, so neither gen_instr nor gen_term is reached *)
+      let source = Driver.read_file file in
+      let diagnostics = Diagnostics.create ~source () in
+      let program = Driver.frontend source diagnostics in
+      Driver.bail_on_errors diagnostics;
+      let sil_module = Silgen.lower (Option.get program) in
+      let is_alloc_stack = function _, Sil.Alloc_stack _ -> true | _ -> false in
+      List.iter
+        (fun (func : Sil.func) ->
+          List.iter
+            (fun (block : Sil.block) ->
+              block.Sil.instrs <- List.filter is_alloc_stack block.Sil.instrs)
+            func.Sil.blocks)
+        sil_module.Sil.funcs;
+      print_string
+        (Irgen.emit_llvm ~should_emit_terminator:(fun _ -> false) sil_module)
   | _ :: "--emit-llvm-instrs" :: [ file ] ->
       let source = Driver.read_file file in
       let diagnostics = Diagnostics.create ~source () in

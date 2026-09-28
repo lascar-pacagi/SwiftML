@@ -5,8 +5,9 @@
    an LLVM block, br/cond_br/return -> LLVM br/ret, apply -> call, print -> a printf call.
    Each SIL value maps to an LLVM operand (a constant, a global, or a fresh %tN).
 
-   You fill the two TODO(09) holes: gen_instr and gen_term. The shell (gen_binop, gen_print,
-   gen_allocas, the buffers, llvm_type) is given. Reference: solution/irgen.ml. *)
+   You fill four TODO(09) holes, in this order: gen_allocas, the instruction table in
+   gen_binop, gen_instr, and gen_term. The rest (gen_print, the buffers, llvm_type, the
+   division guard in gen_binop) is given. Reference: solution/irgen.ml. *)
 
 let llvm_type : Types.ty -> string = function
   | Types.TInt -> "i64"
@@ -85,36 +86,10 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
     let gen_binop result operator left right =
       let operand_type = value_type left in
       let result_operand = fresh_temp () in
-      let mnemonic =
-        match (operator, operand_type) with
-        | Ast.Add, Types.TInt -> "add i64"
-        | Ast.Sub, Types.TInt -> "sub i64"
-        | Ast.Mul, Types.TInt -> "mul i64"
-        | Ast.Div, Types.TInt -> "sdiv i64"
-        | Ast.Mod, Types.TInt -> "srem i64"
-        | Ast.Add, Types.TDouble -> "fadd double"
-        | Ast.Sub, Types.TDouble -> "fsub double"
-        | Ast.Mul, Types.TDouble -> "fmul double"
-        | Ast.Div, Types.TDouble -> "fdiv double"
-        | Ast.Eq, Types.TInt -> "icmp eq i64"
-        | Ast.Ne, Types.TInt -> "icmp ne i64"
-        | Ast.Lt, Types.TInt -> "icmp slt i64"
-        | Ast.Le, Types.TInt -> "icmp sle i64"
-        | Ast.Gt, Types.TInt -> "icmp sgt i64"
-        | Ast.Ge, Types.TInt -> "icmp sge i64"
-        | Ast.Eq, Types.TDouble -> "fcmp oeq double"
-        | Ast.Ne, Types.TDouble -> "fcmp une double"
-        | Ast.Lt, Types.TDouble -> "fcmp olt double"
-        | Ast.Le, Types.TDouble -> "fcmp ole double"
-        | Ast.Gt, Types.TDouble -> "fcmp ogt double"
-        | Ast.Ge, Types.TDouble -> "fcmp oge double"
-        | (Ast.Eq | Ast.Ne), Types.TBool ->
-            Printf.sprintf "icmp %s i1"
-              (if operator = Ast.Eq then "eq" else "ne")
-        | Ast.And, _ -> "and i1"
-        | Ast.Or, _ -> "or i1"
-        | _ -> "add i64" (* String ops not lowered in this subset *)
-      in
+      (* TODO(09): the instruction and its operand type, e.g. "add i64" or
+         "fcmp olt double"; the rest of the line is written below. Pick it from the operator
+         AND the operand type; §3 "The binop table" lists which pairs arrive. *)
+      let mnemonic : string = failwith "TODO(09): pick the LLVM instruction for a binop" in
       (* a zero divisor traps: run the operand through the guard, then divide by its result *)
       let right_operand =
         match (operator, operand_type) with
@@ -172,13 +147,14 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
       | Sil.String_lit text -> bind_operand value (add_string_const text)
       | Sil.Alloc_stack _ ->
           () (* emitted in the entry block by gen_allocas below (no-op here) *)
+      | Sil.Binop (operator, left, right) ->
+          gen_binop value operator left right (* given: the choice is gen_binop's hole *)
       (* TODO(09): the remaining instructions. The mapping is near 1:1 — §2 tabulates every SIL
          instruction against its LLVM line. Emit with [emit], and register each result operand
          with [bind_operand value (fresh_temp ())] so later instructions can refer to it.
          Watch the ones that emit NO line (a func_ref is just an operand) and the ones that
          produce no result (a void call, a store). *)
       | _ ->
-          ignore gen_binop;
           ignore gen_print;
           failwith "TODO(09): lower a SIL instruction"
     in
@@ -189,26 +165,10 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
          case: @main returns i32, so a valueless return there is `ret i32 0`. *)
       failwith "TODO(09): lower a SIL terminator"
     in
-    (* every alloca goes at the top of the ENTRY block: alloca'd stack space is only returned
-       when the function exits, so an alloca inside a loop body would grow the stack every
-       iteration. clang hoists allocas the same way (and LLVM's mem2reg only promotes
-       entry-block allocas). *)
-    let gen_allocas () =
-      List.iter
-        (fun (block : Sil.block) ->
-          List.iter
-            (fun (value, instr) ->
-              match (instr : Sil.instr) with
-              | Sil.Alloc_stack _ ->
-                  let stack_operand = fresh_temp () in
-                  emit
-                    (Printf.sprintf "  %s = alloca %s\n" stack_operand
-                       (llvm_type (value_type value)));
-                  bind_operand value stack_operand
-              | _ -> ())
-            (List.rev block.Sil.instrs))
-        (List.rev func.Sil.blocks)
-    in
+    (* TODO(09): emit one `alloca` per alloc_stack in the function — from EVERY block, not
+       just this one — and bind each slot's operand. It is called once, at the top of the
+       entry block; §2 "Every alloca in the entry block" says why it must be there. *)
+    let gen_allocas () = failwith "TODO(09): hoist the allocas into the entry block" in
     List.iteri
       (fun block_index (block : Sil.block) ->
         emit (Printf.sprintf "bb%d:\n" block.Sil.bid);

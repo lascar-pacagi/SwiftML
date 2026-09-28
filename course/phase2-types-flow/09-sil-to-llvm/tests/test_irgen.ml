@@ -52,15 +52,19 @@ let main_body_lines module_lines =
   in
   upto (after module_lines)
 
-(* ---- given: the module preamble and the alloca-hoisting rule ---- *)
+(* ---- given: the module preamble ---- *)
 
 let test_preamble () =
-  instruction_has "" "declare i32 @printf(ptr, ...)";
-  instruction_has "" "define i32 @main()";
-  instruction_has "" "@.fmt_int = private unnamed_addr constant"
+  (* a module with no function at all, so no hole is reached *)
+  let emitted = llvm_module { Sil.funcs = [] } in
+  List.iter
+    (fun needle -> Alcotest.(check bool) needle true (contains emitted needle))
+    [ "declare i32 @printf(ptr, ...)"; "@.fmt_int = private unnamed_addr constant" ]
+
+(* ---- TODO(09) gen_allocas ---- *)
 
 let test_allocas_in_entry () =
-  (* Use only the given Alloc_stack case, so this given-code check passes before gen_instr. *)
+  (* SIL built by hand, holding nothing but alloc_stacks: only gen_allocas is reached *)
   let value_types = Hashtbl.create 3 in
   List.iter (fun value -> Hashtbl.add value_types value Types.TInt) [ 0; 1; 2 ];
   let entry = { Sil.bid = 0; instrs = []; term = Sil.Return None } in
@@ -124,13 +128,18 @@ let test_literals_are_operands () =
   instruction_has "let x = 1" "store i64 1, ptr";
   instruction_has "let b = true" "store i1 1, ptr"
 
+let test_negation () =
+  instruction_has "let n = 7\n-n" "sub i64 0,";
+  instruction_has "let a = 1.5\n-a" "fneg double"
+
+(* ---- TODO(09) gen_binop: literal operands only, so no other gen_instr case runs ---- *)
+
 let test_int_opcodes () =
   instruction_has "1 + 2" "add i64";
   instruction_has "7 - 3" "sub i64";
   instruction_has "2 * 3" "mul i64";
   instruction_has "9 / 3" "sdiv i64";
-  instruction_has "9 % 4" "srem i64";
-  instruction_has "let n = 7\n-n" "sub i64 0,"
+  instruction_has "9 % 4" "srem i64"
 
 let test_compare_opcodes () =
   instruction_has "1 < 2" "icmp slt i64";
@@ -142,17 +151,27 @@ let test_compare_opcodes () =
 
 let test_double_opcodes () =
   (* the operand type picks the mnemonic: Double arithmetic is the f-prefixed family *)
-  instruction_has "let a = 1.5\na + 2.5" "fadd double";
-  instruction_has "let a = 1.5\na - 2.5" "fsub double";
-  instruction_has "let a = 1.5\na * 2.5" "fmul double";
-  instruction_has "let a = 1.5\na / 2.5" "fdiv double";
-  instruction_has "let a = 1.5\n-a" "fneg double";
-  instruction_has "let a = 1.5\na == 2.5" "fcmp oeq double";
-  instruction_has "let a = 1.5\na != 2.5" "fcmp une double";
-  instruction_has "let a = 1.5\na < 2.5" "fcmp olt double";
-  instruction_has "let a = 1.5\na <= 2.5" "fcmp ole double";
-  instruction_has "let a = 1.5\na > 2.5" "fcmp ogt double";
-  instruction_has "let a = 1.5\na >= 2.5" "fcmp oge double"
+  instruction_has "1.5 + 2.5" "fadd double";
+  instruction_has "1.5 - 2.5" "fsub double";
+  instruction_has "1.5 * 2.5" "fmul double";
+  instruction_has "1.5 / 2.5" "fdiv double";
+  instruction_has "1.5 == 2.5" "fcmp oeq double";
+  (* unordered: true when either side is NaN, so that nan != nan *)
+  instruction_has "1.5 != 2.5" "fcmp une double";
+  instruction_has "1.5 < 2.5" "fcmp olt double";
+  instruction_has "1.5 <= 2.5" "fcmp ole double";
+  instruction_has "1.5 > 2.5" "fcmp ogt double";
+  instruction_has "1.5 >= 2.5" "fcmp oge double"
+
+let test_division_guard () =
+  (* the given guard stays on Int division only: a Double divided by zero is an infinity *)
+  instruction_has "9 / 3" "@swiftml.divz(i64 3)";
+  instruction_has "9 % 4" "@swiftml.remz(i64 4)";
+  instruction_hasnt "1.5 / 2.5" "call i64 @swiftml.divz"
+
+let test_bool_opcodes () =
+  instruction_has "true == false" "icmp eq i1";
+  instruction_has "true != false" "icmp ne i1"
 
 let test_calls () =
   let src =
@@ -250,11 +269,23 @@ let test_unreachable () =
 let () =
   Alcotest.run "irgen"
     [
-      ( "given: preamble + alloca rule",
+      ( "given: preamble",
+        [ Alcotest.test_case "printf, formats, @main" `Quick test_preamble ] );
+      ( "hole: gen_allocas",
         [
-          Alcotest.test_case "printf, formats, @main" `Quick test_preamble;
           Alcotest.test_case "allocas only in the entry" `Quick
             test_allocas_in_entry;
+        ] );
+      ( "hole: gen_binop",
+        [
+          Alcotest.test_case "Int arithmetic mnemonics" `Quick test_int_opcodes;
+          Alcotest.test_case "signed icmp predicates" `Quick
+            test_compare_opcodes;
+          Alcotest.test_case "Double picks the f-family" `Quick
+            test_double_opcodes;
+          Alcotest.test_case "zero guard on Int only" `Quick
+            test_division_guard;
+          Alcotest.test_case "Bool == is icmp i1" `Quick test_bool_opcodes;
         ] );
       ( "hole: gen_instr",
         [
@@ -263,11 +294,7 @@ let () =
             test_double_memory;
           Alcotest.test_case "literals are operands" `Quick
             test_literals_are_operands;
-          Alcotest.test_case "Int arithmetic mnemonics" `Quick test_int_opcodes;
-          Alcotest.test_case "signed icmp predicates" `Quick
-            test_compare_opcodes;
-          Alcotest.test_case "Double picks the f-family" `Quick
-            test_double_opcodes;
+          Alcotest.test_case "negation: sub 0 / fneg" `Quick test_negation;
           Alcotest.test_case "func_ref + apply = call" `Quick test_calls;
           Alcotest.test_case "print dispatches by type" `Quick test_print;
         ] );

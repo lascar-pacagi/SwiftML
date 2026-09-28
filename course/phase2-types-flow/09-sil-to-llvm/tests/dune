@@ -9,7 +9,7 @@
   (:standard -warn-error -a)))
 
 (cram
- (applies_to irgen-instrs irgen-terms)
+ (applies_to irgen-allocas irgen-binop irgen-instrs irgen-terms)
  (deps lab.exe timeout.py))
 
 ; Compiling and linking programs costs more than inspecting emitted IR.  `make lab`

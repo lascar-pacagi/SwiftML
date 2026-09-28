@@ -101,3 +101,20 @@ Nested loops, with `break` and `continue` each addressing the inner one only.
   $ ./lab.exe build n.swift -o n && python3 timeout.py 5 ./n
   6
   4
+
+A `let` inside a loop that runs three million times needs no more stack than one that runs
+once: its `alloca` sits in the entry block. Emitted inside the loop, each trip would take
+another slot until the stack overflowed.
+
+  $ cat > hot.swift <<'EOF'
+  > var s = 0
+  > var i = 0
+  > while i < 3000000 {
+  >   let d = i % 7
+  >   s = s + d
+  >   i = i + 1
+  > }
+  > print(s)
+  > EOF
+  $ ./lab.exe build hot.swift -o hot && python3 timeout.py 10 ./hot
+  8999994

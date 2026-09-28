@@ -108,12 +108,11 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
         | Ast.Le, Types.TDouble -> "fcmp ole double"
         | Ast.Gt, Types.TDouble -> "fcmp ogt double"
         | Ast.Ge, Types.TDouble -> "fcmp oge double"
-        | (Ast.Eq | Ast.Ne), Types.TBool ->
-            Printf.sprintf "icmp %s i1"
-              (if operator = Ast.Eq then "eq" else "ne")
-        | Ast.And, _ -> "and i1"
-        | Ast.Or, _ -> "or i1"
-        | _ -> "add i64" (* String ops not lowered in this subset *)
+        | Ast.Eq, Types.TBool -> "icmp eq i1"
+        | Ast.Ne, Types.TBool -> "icmp ne i1"
+        (* nothing else arrives: SILGen lowered && and || to branches, and the String
+           operators are not lowered in this subset *)
+        | _ -> failwith "IRGen: no LLVM instruction for this binop"
       in
       (* a zero divisor traps: run the operand through the guard, then divide by its result *)
       let right_operand =
