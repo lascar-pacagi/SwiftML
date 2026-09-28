@@ -210,87 +210,89 @@ only shows up when something later depends on it.
 
 ## 3. Build it, step by step
 
-One skeleton, `irgen.ml`, and two holes in it — `gen_instr` and `gen_term`, both inside `gen_func`.
-The plumbing is given: `llvm_type`, the output buffers, `fresh_temp ()`, the `operands` value map,
-`gen_binop`'s opcode table, `gen_print`, `gen_allocas`, and the loop over blocks.
-`lookup_operand value` reads a value's LLVM operand, while `bind_operand value llvm_operand` records
-one. The literal cases of `gen_instr` are given too, as the pattern to copy: they bind an operand and
-emit nothing.
+One skeleton, `irgen.ml`, with two holes, both inside `gen_func`: **`gen_instr`** (one SIL
+instruction) and **`gen_term`** (one terminator). Everything around them is given:
 
-The normal `--emit-llvm` path needs both holes because every function ends in a terminator. The lab
-also has a test-only `--emit-llvm-instrs` mode. It omits block terminators, producing deliberately
-incomplete IR that is useful only for inspecting `gen_instr`. This lets its cases turn green before
-you start `gen_term`. Keep the final catch-all `failwith` while adding instruction cases above it;
-the OCaml file must still type-check before any test can run.
+| given | what it does |
+|---|---|
+| `emit "…"` | append a line of LLVM IR to the function |
+| `fresh_temp ()` | a new LLVM register name, `%t0`, `%t1`, … |
+| `bind_operand value op` / `lookup_operand value` | record / read the LLVM operand that stands for a SIL value |
+| `value_type value`, `llvm_type ty` | a SIL value's type, and its LLVM spelling (`i64`, `double`, `i1`, `ptr`, `void`) |
+| `gen_binop value op left right` | the whole `binop`: picks `add`/`fadd`/`icmp slt`/… and binds the result |
+| `gen_print value` | the whole `print`, per type |
+| `gen_allocas` | every `alloc_stack`, hoisted to the top of the entry block (§2) |
 
-1. **`gen_instr`**, working down the instruction table in §2. Emit a line with `emit "…"`; when the
-   instruction has a result, give it a `fresh_temp ()` and record it with `bind_operand` so later
-   instructions can name it. Types come from `llvm_type (value_type value)`. Not every SIL
-   instruction both emits an LLVM line and produces a result. Literals and `function_ref` only bind
-   an operand; they emit no line. A `store` emits a line but binds nothing. A non-void call emits
-   `%tK = call …` and records `%tK`, while a void call emits `call void …` without recording
-   a result.
-2. **`gen_term`**, the five terminator forms. `is_main` is in scope for the `@main` exception.
+The literal cases and `alloc_stack` are already in `gen_instr`, as the pattern to copy. What is left
+is seven instructions, and for each the question is the same: does it **emit a line**, and does it
+**produce a result** that later instructions will name?
 
-Then `./lab.exe build p.swift -o p && ./p` on anything from §4 — clang will tell you at once if the
-IR is not well-typed.
+| instruction | emits a line | binds a result | note |
+|---|---|---|---|
+| `load` | yes | yes | |
+| `store` | yes | no | |
+| `binop` | — | — | call `gen_binop`; it does both |
+| `unop` | yes | yes | `-x` on an `Int` or a `Double` (§2) |
+| `function_ref` | **no** | yes | just an operand: `@name` |
+| `apply` | yes | only if non-`Void` | `%tK = call …` versus `call void …` |
+| `print` | — | — | call `gen_print` |
+
+When an instruction binds a result, give it `fresh_temp ()` and record it with `bind_operand`, so
+the instructions after it can `lookup_operand` it. The LLVM text for each line is in §2's table.
+
+Then **`gen_term`**: four terminators — `br`, `cond_br`, `return` (with or without a value) and
+`unreachable`. One special case: `@main` returns `i32` to the operating system, so a `return` with
+no value in `main` is `ret i32 0`; `is_main` is in scope for it.
+
+**In what order.** `gen_instr` first. A function cannot be valid LLVM without its terminators, so
+the lab has a test-only mode, `--emit-llvm-instrs`, that prints the instructions and leaves the
+terminators out: that is what `irgen-instrs.t` reads, so it goes green before you start `gen_term`.
+Keep the final catch-all `failwith` below your cases until you have all seven — the file has to
+compile for any test to run. Then `gen_term`, and every test can run whole programs:
+
+```bash
+printf 'var i = 0\nwhile i < 3 {\n  print(i)\n  i = i + 1\n}\n' > p.swift
+_build/default/phase2-types-flow/09-sil-to-llvm/tests/lab.exe build p.swift -o p && ./p
+```
+
+If the IR is not well-typed, clang says so at once, naming the line.
 
 Reference: `solution/irgen.ml`.
 
 ## 4. Test it
 
 ```bash
-make lab C=phase2-types-flow/09-sil-to-llvm
+make lab C=phase2-types-flow/09-sil-to-llvm        # add T=irgen-instrs to run one file
 ```
 
-Five cram files (`make lab C=… T=run-control` runs one), a unit suite grouped by hole, and the
-oracle. The first two read the IR; the rest **build the program and run it**, which is the point of
-this concept:
+Six cram files, two unit suites and the oracle. The first two read the IR; the rest **build the
+program and run it**, which is the point of this concept:
 
-- `irgen-instrs.t` — test-only `--emit-llvm-instrs` down the instruction table: literals as
-  operands,
-  `alloca`/`load`/`store` model, the entry-block alloca rule (a `let` inside a loop still allocas
-  in `bb0`), the typed arithmetic mnemonics, the signed `icmp` predicates, `sub i64 0, x` for
-  unary minus, `function_ref` + `apply` becoming one `call`, and `print`'s two shapes.
-- `irgen-terms.t` — the five terminators, `@main`'s `ret i32 0`, an `unreachable` that survives
-  into LLVM, and a `build` at the end, because printable is not the same as well-typed.
-- `run-arith.t` — compiled and run: integer arithmetic and Swift's truncating division and
-  signed remainder, unary minus, Double comparisons including NaN, `Bool` printing,
-  `&&`/`||` **short-circuiting** (a program that
-  would print if the right operand were evaluated), and a silent program's exit code.
-- `run-control.t` — `if`/`else if`, `while`, `for` (including an empty range), `break` out of a
-  loop with a bound of 100, `continue` in a `for` — the case that caught the real bug — and
-  nested loops where each of `break` and `continue` addresses the inner one only.
-- `run-funcs.t` — argument order, mixed argument types, and nested calls, recursion (`fib 20`),
-  mutual recursion,
-  `Void` returns and an early bare `return`, a loop inside a function, and `gcd`/`collatz` as a
-  smoke test for the whole phase.
-- `test_irgen.ml` (alcotest `irgen`) — the same in-process, one group per hole plus a "given"
-  group that counts allocas and checks they are all in the entry block. Reading the text lets a
-  case ask *where* a line landed, which the cram greps cannot.
-- `oracle.t` — **the headline, and Milestone M2**: 29 programs from `oracle-corpus.txt` are
-  compiled by `swiftc -Onone` and by `./lab.exe build`, both binaries are run, and stdout and
-  exit code must be identical. The numbers in the other files were written down once; this one
-  asks swiftc on every run.
-- `test_exercises.ml` (Alcotest `exercises-09`) — the three optional §6 exercises. It compiles
-  and runs focused programs out of process, so parser and generated-code hangs time out.
+| file | flag | green with | what it pins |
+|---|---|---|---|
+| `irgen-instrs.t` | `--emit-llvm-instrs` | `gen_instr` | literals as operands, the `alloca`/`load`/`store` model, allocas all in `bb0`, the typed arithmetic, signed `icmp`, `sub i64 0, x` for minus, `function_ref` + `apply` as one `call`, `print`'s two shapes |
+| `irgen-terms.t` | `--emit-llvm-terms` | `gen_term` | the four terminators one by one, `@main`'s `ret i32 0`, an `unreachable` that survives into LLVM, and one `build`: printable is not the same as well-typed |
+| `run-arith.t` | `build` | both | truncating division and signed remainder, minus, Double comparisons including NaN, `Bool` printing, `&&`/`||` short-circuiting |
+| `run-control.t` | `build` | both | `if`/`else if`, `while`, `for` including an empty range, `break`, `continue` in a `for`, nested loops |
+| `run-funcs.t` | `build` | both | argument order and mixed types, nested calls, recursion, mutual recursion, `Void` and an early `return`, `gcd`/`collatz` |
+| `oracle.t` | `build` | both | **Milestone M2**: 30 programs built by `swiftc -Onone` and by you, both run, stdout and exit code identical |
 
-The `gen_instr` cases can pass before `gen_term` is started. The terminator and execution files stay
-red until the emitted module is complete. A failing case shows the wanted and printed output side by
-side.
+Two suites run in-process: `test_irgen.ml` (`irgen`) reads the emitted text to ask *where* a line
+landed, which a cram `grep` cannot, and its `given` group checks the allocas you did not write;
+`test_exercises.ml` (`exercises-09`) holds the three optional §6 exercises.
 
-Every generated executable runs through a five-second test deadline. A mistaken back-edge therefore
-fails with exit `124` instead of leaving `make lab` stuck in an infinite loop.
+### Three things worth knowing before you read a red report
 
-The terminator tests use `--emit-llvm-terms <kind>` to select `br`, `cond-br`, `return-value`,
-`return-none`, or `unreachable`. An unfinished terminator form therefore cannot hide the result of
-a completed one.
+**`gen_instr` can go green on its own.** A function is not valid LLVM without its terminators, so
+`--emit-llvm-instrs` prints each block's instructions and leaves the terminator out.
+`irgen-instrs.t` reads that; everything else needs both holes.
 
-While working on the first hole, run only its focused file:
+**The terminator tests are split by kind.** `--emit-llvm-terms <kind>` prints one kind — `br`,
+`cond-br`, `return-value`, `return-none` or `unreachable` — so an unfinished one cannot hide a
+finished one.
 
-```bash
-make lab C=phase2-types-flow/09-sil-to-llvm T=irgen-instrs
-```
+**A program that never ends fails; it does not hang.** Every executable the tests build runs under
+a five-second deadline, so a wrong back-edge shows up as exit `124` instead of freezing `make lab`.
 
 ## 5. Benchmark it
 

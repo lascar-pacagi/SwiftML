@@ -1,7 +1,7 @@
-Programs RUN — the first time since Phase 1. `build` sends the IR through clang and produces a
-native executable; these cases compile and execute it, so a mapping that merely prints is not
-enough. Every number here is what `swiftc` prints for the same program (`oracle.t` re-checks
-that on every run).
+Programs RUN — with types, control flow and functions, which Phase 1 could not run. `build`
+sends the IR through clang and produces a native executable; these cases compile and execute it,
+so a mapping that merely prints is not enough. Every number here is what `swiftc` prints for the
+same program (`oracle.t` re-checks that on every run).
 
 Integer arithmetic, precedence, and the sign rules Swift shares with C: division truncates
 toward zero and the remainder takes the sign of the left operand.
