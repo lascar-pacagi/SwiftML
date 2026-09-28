@@ -131,8 +131,13 @@ between two IRs, so this table is the specification of your work: every SIL form
 emit, and the LLVM line it becomes. `<-- yours` marks the cases behind the two `TODO(09)` holes;
 the rest is given.
 
-**Instructions** (`gen_instr`). Several emit *no line at all* into the function body — they only
-bind the SIL value to an operand, which is a shape worth expecting before you meet it:
+**Instructions** (`gen_instr`). Most SIL instructions become one LLVM line, but a few become
+**no line at all**. Take `%8 = integer_literal $Int, 1` from the example above. LLVM has no
+instruction that just produces a constant — a constant is written directly where it is used. So
+IRGen emits nothing for `%8`; it only records that `%8` is spelled `1`, and when the `binop` that
+uses `%8` is lowered, it looks that up and writes `add i64 %t3, 1`. That recording is
+`bind_operand`, and it is all that the literals and `function_ref` do — the rows below that say
+"no line".
 
 In the table, `$T` stands for a SIL type. `<ty>`, `<ty-a>`, `<ty-b>`, and `<ret>` stand for the
 corresponding LLVM type spellings produced by `llvm_type`, such as `i64`, `i1`, `double`, or `void`.
