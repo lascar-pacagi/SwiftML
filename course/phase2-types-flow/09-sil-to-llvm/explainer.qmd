@@ -32,7 +32,39 @@ func choose(_ value: Int, _ addOne: Bool) -> Int {
 print(choose(41, true))
 ```
 
-`swiftml2 --emit-llvm` produces this unoptimized LLVM module:
+Concept 08's SILGen has already turned it into this SIL — the **input** to the IRGen you write here:
+
+```
+sil @choose(%0 : $Int, %1 : $Bool) -> $Int {
+bb0:
+  %2 = alloc_stack $Int  // value
+  store %0 to %2
+  %4 = alloc_stack $Bool  // addOne
+  store %1 to %4
+  %6 = load %4 $Bool
+  cond_br %6, bb1, bb2
+bb1:
+  %7 = load %2 $Int
+  %8 = integer_literal $Int, 1
+  %9 = binop "+" %7, %8 $Int
+  return %9
+bb2:
+  %10 = load %2 $Int
+  return %10
+}
+
+sil @main() -> $() {
+bb0:
+  %0 = integer_literal $Int, 41
+  %1 = integer_literal $Bool, true
+  %2 = function_ref @choose
+  %3 = apply %2(%0, %1)
+  %4 = apply @print(%3)
+  return
+}
+```
+
+and `swiftml2 --emit-llvm` turns that into this unoptimized LLVM module:
 
 ```llvm
 ; swiftml Phase-2 LLVM IR
@@ -68,6 +100,14 @@ bb0:
 }
 
 ```
+
+Read the two side by side and the mapping is almost line for line: the same blocks with the same
+names, `alloc_stack` → `alloca`, `load` → `load`, `cond_br` → `br i1`, `return %9` → `ret i64`. The
+exceptions are the ones to watch in `gen_instr`. Literals and `function_ref` produce **no** LLVM
+line: `integer_literal $Int, 1` just becomes the operand `1` in `add i64 %t3, 1`, and `@choose`
+appears directly in the `call`. The value numbers change too — SIL's `%9` is LLVM's `%t4` — which is
+what the operand table is for. And `@main` returns `i32 0` to the operating system rather than
+nothing.
 
 The declarations and format strings are given scaffolding. `Int` becomes `i64`, while `Bool`
 becomes `i1`, a one-bit integer. `@choose` receives `%arg0` and `%arg1`, stores them in the stack
