@@ -112,6 +112,52 @@ let test_allocas_in_entry () =
 
 (* ---- TODO(09) gen_instr ---- *)
 
+(* @main with one block holding exactly these instructions, in program order, and no
+   terminator: SIL built by hand reaches cases no Swift source can isolate, such as a
+   load with no store before it *)
+let main_body_of (instructions : (Sil.value * Types.ty * Sil.instr) list) : string list =
+  let value_types = Hashtbl.create 8 in
+  List.iter (fun (value, ty, _) -> Hashtbl.replace value_types value ty) instructions;
+  let block =
+    {
+      Sil.bid = 0;
+      instrs = List.rev_map (fun (value, _, instr) -> (value, instr)) instructions;
+      term = Sil.Return None;
+    }
+  in
+  let func =
+    { Sil.fname = "main"; params = []; ret = Types.TVoid; blocks = [ block ];
+      val_ty = value_types }
+  in
+  llvm_module ~should_emit_terminator:(fun _ -> false) { Sil.funcs = [ func ] }
+  |> String.split_on_char '\n' |> main_body_lines
+
+let body_has body line =
+  Alcotest.(check bool) line true (List.mem line body)
+
+let test_load_alone () =
+  (* a load with no store before it: only the load case of gen_instr is reached *)
+  body_has
+    (main_body_of [ (0, Types.TInt, Sil.Alloc_stack "x"); (1, Types.TInt, Sil.Load 0) ])
+    "  %t1 = load i64, ptr %t0";
+  body_has
+    (main_body_of
+       [ (0, Types.TDouble, Sil.Alloc_stack "d"); (1, Types.TDouble, Sil.Load 0) ])
+    "  %t1 = load double, ptr %t0"
+
+let test_store_alone () =
+  (* a store and a literal: only the store case of gen_instr is reached *)
+  body_has
+    (main_body_of
+       [ (0, Types.TInt, Sil.Alloc_stack "x"); (1, Types.TInt, Sil.Int_lit 5);
+         (2, Types.TVoid, Sil.Store (1, 0)) ])
+    "  store i64 5, ptr %t0";
+  body_has
+    (main_body_of
+       [ (0, Types.TBool, Sil.Alloc_stack "b"); (1, Types.TBool, Sil.Bool_lit true);
+         (2, Types.TVoid, Sil.Store (1, 0)) ])
+    "  store i1 1, ptr %t0"
+
 let test_memory () =
   instruction_has "let x = 1\nx" "= alloca i64";
   instruction_has "let x = 1\nx" "store i64 1, ptr";
@@ -291,6 +337,9 @@ let () =
         ] );
       ( "hole: gen_instr",
         [
+          Alcotest.test_case "load alone, no store" `Quick test_load_alone;
+          Alcotest.test_case "store alone, no load" `Quick
+            test_store_alone;
           Alcotest.test_case "alloca / load / store" `Quick test_memory;
           Alcotest.test_case "Double memory stays typed" `Quick
             test_double_memory;
