@@ -206,23 +206,45 @@ bb2:                     // the loop body
 
 Lowered where it stands, `%9` would become an `alloca` in `bb2` and take a fresh slot on every
 trip round the loop. Three trips are harmless; three million need at least 24 MB, and the stack is
-8 MB (`run-control.t` runs exactly that loop). So `gen_allocas` runs once, at
-the top of `bb0`, and emits the `alloca` for every `alloc_stack` in the function, from every block:
+8 MB (`run-control.t` runs exactly that loop). So `gen_allocas` runs once, at the top of `bb0`,
+and emits the `alloca` for every `alloc_stack` in the function, from every block; the
+`alloc_stack` case of `gen_instr` then emits nothing. Here is the whole function IRGen writes for
+the loop:
 
 ```llvm
+define i32 @main() {
 bb0:
-  %t0 = alloca i64
-  %t1 = alloca i64
-  ...
+  %t0 = alloca i64                 ; i   <- written by gen_allocas
+  %t1 = alloca i64                 ; d   <- written by gen_allocas, moved up from bb2
+  store i64 0, ptr %t0
+  br label %bb1
+bb1:
+  %t2 = load i64, ptr %t0
+  %t3 = icmp slt i64 %t2, 3
+  br i1 %t3, label %bb2, label %bb3
+bb2:
+  %t4 = load i64, ptr %t0
+  %t5 = mul i64 %t4, 2
+  store i64 %t5, ptr %t1           ; SIL: store %8 to %9
+  %t6 = load i64, ptr %t1
+  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %t6)
+  %t7 = load i64, ptr %t0
+  %t8 = add i64 %t7, 1
+  store i64 %t8, ptr %t0
+  br label %bb1
+bb3:
+  ret i32 0
+}
 ```
 
-and the `alloc_stack` case of `gen_instr` emits nothing. The stack frame becomes fixed-size.
-Moving the allocas does not mix up names, for two reasons. `fresh_temp` is one counter per
-function, and `gen_allocas` draws from it first: in the loop above, `i`'s slot is `%t0` and `d`'s
-is `%t1`, and the next name handed out, to the `load` in `bb1`, is `%t2`. And `bind_operand`
-records each slot under its SIL value, so when `gen_instr` later reaches `store %8 to %9` in
-`bb2`, it looks `%9` up and writes `store i64 %t5, ptr %t1`, whichever block the `alloca` was
-printed in.
+The stack frame is now fixed-size: two slots, whatever the number of trips.
+
+Moving `d`'s `alloca` up does not break anything that refers to it. The `%tN` names are handed out
+in the order the lines are *written*, and `gen_allocas` writes first, so the slots get `%t0` and
+`%t1` and the numbering simply carries on from `%t2`. And the store in `bb2` does not find its slot
+by position: IRGen's table (`bind_operand`) says SIL `%9` is LLVM `%t1`, so `store %8 to %9`
+becomes `store i64 %t5, ptr %t1` no matter which block the `alloca` sits in.
+
 Entry-block allocation is also what LLVM's own `mem2reg` pass requires before it will promote a
 slot to a register.
 
