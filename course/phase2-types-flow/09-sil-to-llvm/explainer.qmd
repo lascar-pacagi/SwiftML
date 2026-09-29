@@ -342,9 +342,18 @@ only shows up when something later depends on it.
 
 ## 3. Build it, step by step
 
-One skeleton, `irgen.ml`, with four holes, all inside `gen_func`: **`gen_allocas`** (the slots),
-**the instruction table in `gen_binop`**, **`gen_instr`** (one SIL instruction) and **`gen_term`**
-(one terminator). Everything around them is given:
+One skeleton, `irgen.ml`, with four holes, all inside `gen_func`:
+
+- **`gen_allocas`** — one `alloca` for every stack slot of the function;
+- **the instruction table in `gen_binop`** — which LLVM instruction each operator becomes, for
+  each operand type;
+- **`gen_instr`** — the other SIL instructions: `load`, `store`, `unop`, `function_ref`,
+  `apply` and `print`. It is called once per instruction, so it is a `match` with a case for
+  each;
+- **`gen_term`** — the four terminators, `br`, `cond_br`, `return` and `unreachable`, again one
+  case each.
+
+Everything around them is given:
 
 | given | what it does |
 |---|---|
