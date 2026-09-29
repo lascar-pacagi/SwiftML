@@ -129,8 +129,9 @@ let test_literals_are_operands () =
   instruction_has "let b = true" "store i1 1, ptr"
 
 let test_negation () =
-  instruction_has "let n = 7\n-n" "sub i64 0,";
-  instruction_has "let a = 1.5\n-a" "fneg double"
+  (* literal operands: only the unop case of gen_instr is reached *)
+  instruction_has "-7" "sub i64 0, 7";
+  instruction_has "-(2.5)" "fneg double 0x4004000000000000"
 
 (* ---- TODO(09) binop_instruction: called directly, so no other hole is reached ---- *)
 

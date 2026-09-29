@@ -47,11 +47,17 @@ guard returns; a Double `/` has no guard, since dividing a Double by zero gives 
   }
   
 
-Unary minus has no LLVM opcode of its own on integers: it is a subtraction from zero.
+Unary minus has no LLVM opcode of its own on integers: `-7` is a subtraction from zero. The
+operand is a literal, so this needs the `unop` case and nothing else in `gen_instr`.
 
-  $ printf 'let n = 7\n-n\n' > neg.swift
-  $ ./lab.exe --emit-llvm-instrs neg.swift | grep "sub i64"
-    %t2 = sub i64 0, %t1
+  $ printf -- '-7\n' > neg.swift
+  $ ./lab.exe --emit-llvm-instrs neg.swift | sed -n '/define i32 @main/,$p'
+  define i32 @main() {
+  bb0:
+    %t0 = sub i64 0, 7
+  }
+  
+
 
 Double stack slots, stores, and loads keep their `double` type.
 
@@ -62,11 +68,16 @@ Double stack slots, stores, and loads keep their `double` type.
     %t1 = load double, ptr %t0
 
 Double negation is `fneg`, LLVM's one-operand floating-point instruction — not a subtraction
-from zero, which gives `+0.0` for `-(0.0)` where Swift gives `-0.0`.
+from zero, which gives `+0.0` for `-(0.0)` where Swift gives `-0.0`. Again a literal operand.
 
-  $ printf 'let a = 9.0\n-a\n' > dneg.swift
-  $ ./lab.exe --emit-llvm-instrs dneg.swift | grep "fneg"
-    %t2 = fneg double %t1
+  $ printf -- '-(2.5)\n' > dneg.swift
+  $ ./lab.exe --emit-llvm-instrs dneg.swift | sed -n '/define i32 @main/,$p'
+  define i32 @main() {
+  bb0:
+    %t0 = fneg double 0x4004000000000000
+  }
+  
+
 
 A `function_ref` emits no line either — it names the callee — and the `apply` becomes the
 `call`. Every argument keeps its own type, and a `Void` function is called as `call void`.
