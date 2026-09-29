@@ -267,9 +267,12 @@ floats, and either one produces an `i1`, LLVM's Bool. Two more choices hide in t
   is signed, so it is always the `s` form. `udiv` would read `-7` as 18446744073709551609, and
   `icmp ult` would say `-1 < 0` is false.
 - **Ordered or unordered.** A floating-point comparison is *ordered* (`fcmp olt`: false if either
-  side is NaN) or *unordered* (`fcmp ult`: true if either side is NaN). Swift's `==`, `<`, `<=`,
-  `>`, `>=` are all false on a NaN, so they are the ordered forms. Its `!=` is the negation of `==`,
-  so it is TRUE on a NaN: `fcmp une`, "unordered or not equal", which keeps `NaN != NaN` true.
+  side is NaN) or *unordered* (`fcmp ult`: true if either side is NaN). Which one a language wants
+  is not Swift's choice: the floating-point standard, IEEE 754, fixes it, and Swift, C and Java
+  all follow it. A NaN is "not a number" — the result of `0.0 / 0.0` — so it is not less than,
+  greater than, or equal to anything, itself included: `==`, `<`, `<=`, `>`, `>=` are all false
+  on a NaN, the ordered forms. `!=` is defined as "not `==`", so it is TRUE on a NaN: `fcmp une`,
+  "unordered or not equal". That is why `x != x` is true exactly when `x` is a NaN.
 
 The SIL function's `val_ty` map gives you each value's type, and `gen_binop` picks the instruction
 from it (§3).
