@@ -132,46 +132,49 @@ let test_negation () =
   instruction_has "let n = 7\n-n" "sub i64 0,";
   instruction_has "let a = 1.5\n-a" "fneg double"
 
-(* ---- TODO(09) gen_binop: literal operands only, so no other gen_instr case runs ---- *)
+(* ---- TODO(09) binop_instruction: called directly, so no other hole is reached ---- *)
+
+let instruction_is operator operand_type expected =
+  Alcotest.(check string) expected expected (Irgen.binop_instruction operator operand_type)
 
 let test_int_opcodes () =
-  instruction_has "1 + 2" "add i64";
-  instruction_has "7 - 3" "sub i64";
-  instruction_has "2 * 3" "mul i64";
-  instruction_has "9 / 3" "sdiv i64";
-  instruction_has "9 % 4" "srem i64"
+  instruction_is Ast.Add Types.TInt "add i64";
+  instruction_is Ast.Sub Types.TInt "sub i64";
+  instruction_is Ast.Mul Types.TInt "mul i64";
+  instruction_is Ast.Div Types.TInt "sdiv i64";
+  instruction_is Ast.Mod Types.TInt "srem i64"
 
 let test_compare_opcodes () =
-  instruction_has "1 < 2" "icmp slt i64";
-  instruction_has "1 <= 2" "icmp sle i64";
-  instruction_has "2 > 1" "icmp sgt i64";
-  instruction_has "2 >= 1" "icmp sge i64";
-  instruction_has "1 == 1" "icmp eq i64";
-  instruction_has "1 != 2" "icmp ne i64"
+  instruction_is Ast.Lt Types.TInt "icmp slt i64";
+  instruction_is Ast.Le Types.TInt "icmp sle i64";
+  instruction_is Ast.Gt Types.TInt "icmp sgt i64";
+  instruction_is Ast.Ge Types.TInt "icmp sge i64";
+  instruction_is Ast.Eq Types.TInt "icmp eq i64";
+  instruction_is Ast.Ne Types.TInt "icmp ne i64"
 
 let test_double_opcodes () =
   (* the operand type picks the mnemonic: Double arithmetic is the f-prefixed family *)
-  instruction_has "1.5 + 2.5" "fadd double";
-  instruction_has "1.5 - 2.5" "fsub double";
-  instruction_has "1.5 * 2.5" "fmul double";
-  instruction_has "1.5 / 2.5" "fdiv double";
-  instruction_has "1.5 == 2.5" "fcmp oeq double";
+  instruction_is Ast.Add Types.TDouble "fadd double";
+  instruction_is Ast.Sub Types.TDouble "fsub double";
+  instruction_is Ast.Mul Types.TDouble "fmul double";
+  instruction_is Ast.Div Types.TDouble "fdiv double";
+  instruction_is Ast.Eq Types.TDouble "fcmp oeq double";
   (* unordered: true when either side is NaN, so that nan != nan *)
-  instruction_has "1.5 != 2.5" "fcmp une double";
-  instruction_has "1.5 < 2.5" "fcmp olt double";
-  instruction_has "1.5 <= 2.5" "fcmp ole double";
-  instruction_has "1.5 > 2.5" "fcmp ogt double";
-  instruction_has "1.5 >= 2.5" "fcmp oge double"
+  instruction_is Ast.Ne Types.TDouble "fcmp une double";
+  instruction_is Ast.Lt Types.TDouble "fcmp olt double";
+  instruction_is Ast.Le Types.TDouble "fcmp ole double";
+  instruction_is Ast.Gt Types.TDouble "fcmp ogt double";
+  instruction_is Ast.Ge Types.TDouble "fcmp oge double"
+
+let test_bool_opcodes () =
+  instruction_is Ast.Eq Types.TBool "icmp eq i1";
+  instruction_is Ast.Ne Types.TBool "icmp ne i1"
 
 let test_division_guard () =
   (* the given guard stays on Int division only: a Double divided by zero is an infinity *)
   instruction_has "9 / 3" "@swiftml.divz(i64 3)";
   instruction_has "9 % 4" "@swiftml.remz(i64 4)";
   instruction_hasnt "1.5 / 2.5" "call i64 @swiftml.divz"
-
-let test_bool_opcodes () =
-  instruction_has "true == false" "icmp eq i1";
-  instruction_has "true != false" "icmp ne i1"
 
 let test_calls () =
   let src =
@@ -271,21 +274,19 @@ let () =
     [
       ( "given: preamble",
         [ Alcotest.test_case "printf, formats, @main" `Quick test_preamble ] );
-      ( "hole: gen_allocas",
-        [
-          Alcotest.test_case "allocas only in the entry" `Quick
-            test_allocas_in_entry;
-        ] );
-      ( "hole: gen_binop",
+      ( "hole: binop_instruction",
         [
           Alcotest.test_case "Int arithmetic mnemonics" `Quick test_int_opcodes;
           Alcotest.test_case "signed icmp predicates" `Quick
             test_compare_opcodes;
           Alcotest.test_case "Double picks the f-family" `Quick
             test_double_opcodes;
-          Alcotest.test_case "zero guard on Int only" `Quick
-            test_division_guard;
           Alcotest.test_case "Bool == is icmp i1" `Quick test_bool_opcodes;
+        ] );
+      ( "hole: gen_allocas",
+        [
+          Alcotest.test_case "allocas only in the entry" `Quick
+            test_allocas_in_entry;
         ] );
       ( "hole: gen_instr",
         [
@@ -295,6 +296,8 @@ let () =
           Alcotest.test_case "literals are operands" `Quick
             test_literals_are_operands;
           Alcotest.test_case "negation: sub 0 / fneg" `Quick test_negation;
+          Alcotest.test_case "zero guard on Int only" `Quick
+            test_division_guard;
           Alcotest.test_case "func_ref + apply = call" `Quick test_calls;
           Alcotest.test_case "print dispatches by type" `Quick test_print;
         ] );

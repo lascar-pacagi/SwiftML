@@ -30,6 +30,23 @@ straight across, which is why IRGen is this short.
   }
   
 
+A `binop` becomes one line: the instruction from `binop_instruction`, then the two operands. An
+Int `/` or `%` first runs its divisor through the given zero guard, and divides by what the
+guard returns; a Double `/` has no guard, since dividing a Double by zero gives an infinity.
+
+  $ printf '9 + 4\n9 / 4\n9 %% 4\n9.0 / 4.0\n' > ar.swift
+  $ ./lab.exe --emit-llvm-instrs ar.swift | sed -n '/define i32 @main/,$p'
+  define i32 @main() {
+  bb0:
+    %t0 = add i64 9, 4
+    %dz5 = call i64 @swiftml.divz(i64 4)
+    %t1 = sdiv i64 9, %dz5
+    %dz8 = call i64 @swiftml.remz(i64 4)
+    %t2 = srem i64 9, %dz8
+    %t3 = fdiv double 0x4022000000000000, 0x4010000000000000
+  }
+  
+
 Unary minus has no LLVM opcode of its own on integers: it is a subtraction from zero.
 
   $ printf 'let n = 7\n-n\n' > neg.swift

@@ -7,9 +7,10 @@ the end of Phase 2 and **Milestone M2**: `if`/`while`/`for`, functions, and recu
 **Prerequisites:** the front-end + SIL + SILGen (05–08), all given and complete. Your new work is
 IRGen.
 
-**You edit:** `irgen.ml` — four `TODO(09)` holes: `gen_allocas` (every slot's `alloca`, hoisted
-to the entry block), the instruction table in `gen_binop` (signed `Int`, ordered `Double`
-comparisons), `gen_instr` and `gen_term` (the rest of SIL, one LLVM line each). The mapping is
+**You edit:** `irgen.ml` — four `TODO(09)` holes: `binop_instruction` (the LLVM instruction for
+each operator and type: signed `Int`, ordered `Double` comparisons), `gen_allocas` (every slot's
+`alloca`, hoisted to the entry block), `gen_instr` and `gen_term` (the rest of SIL, one LLVM line
+each). The mapping is
 nearly one-to-one (SIL is already memory-based with basic blocks), so the plumbing (`llvm_type`,
 the buffers, the `gen_func` shell, the division guard, `gen_print`) is given.
 
@@ -34,7 +35,7 @@ Language Reference (`https://llvm.org/docs/LangRef.html`).
 
 ## Done when
 
-`make lab C=phase2-types-flow/09-sil-to-llvm` is green: `irgen-allocas.t`, `irgen-binop.t`,
+`make lab C=phase2-types-flow/09-sil-to-llvm` is green: `irgen-binop.t`, `irgen-allocas.t`,
 `irgen-instrs.t` and `irgen-terms.t` match the `--emit-llvm` mapping, one hole each;
 `run-arith.t`, `run-control.t` and `run-funcs.t` **build and run** programs and check their
 output; the alcotest groups — one per hole — pin the emitted IR; and `oracle.t` compiles all 30 corpus programs with `swiftc -Onone` and with

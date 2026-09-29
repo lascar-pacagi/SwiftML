@@ -17,6 +17,37 @@ let llvm_type : Types.ty -> string = function
   (* Sema stops the pipeline at its first error, so a TError never reaches IRGen *)
   | Types.TError -> invalid_arg "llvm_type: TError"
 
+(* the LLVM instruction for a binop, with its operand type; [operand_type] is the type of the
+   OPERANDS, so 1 < 2 is "icmp slt i64" although its result is a Bool *)
+let binop_instruction (operator : Ast.binop) (operand_type : Types.ty) : string =
+  match (operator, operand_type) with
+  | Ast.Add, Types.TInt -> "add i64"
+  | Ast.Sub, Types.TInt -> "sub i64"
+  | Ast.Mul, Types.TInt -> "mul i64"
+  | Ast.Div, Types.TInt -> "sdiv i64"
+  | Ast.Mod, Types.TInt -> "srem i64"
+  | Ast.Add, Types.TDouble -> "fadd double"
+  | Ast.Sub, Types.TDouble -> "fsub double"
+  | Ast.Mul, Types.TDouble -> "fmul double"
+  | Ast.Div, Types.TDouble -> "fdiv double"
+  | Ast.Eq, Types.TInt -> "icmp eq i64"
+  | Ast.Ne, Types.TInt -> "icmp ne i64"
+  | Ast.Lt, Types.TInt -> "icmp slt i64"
+  | Ast.Le, Types.TInt -> "icmp sle i64"
+  | Ast.Gt, Types.TInt -> "icmp sgt i64"
+  | Ast.Ge, Types.TInt -> "icmp sge i64"
+  | Ast.Eq, Types.TDouble -> "fcmp oeq double"
+  | Ast.Ne, Types.TDouble -> "fcmp une double"
+  | Ast.Lt, Types.TDouble -> "fcmp olt double"
+  | Ast.Le, Types.TDouble -> "fcmp ole double"
+  | Ast.Gt, Types.TDouble -> "fcmp ogt double"
+  | Ast.Ge, Types.TDouble -> "fcmp oge double"
+  | Ast.Eq, Types.TBool -> "icmp eq i1"
+  | Ast.Ne, Types.TBool -> "icmp ne i1"
+  (* nothing else arrives: SILGen lowered && and || to branches, and the String
+     operators are not lowered in this subset *)
+  | _ -> failwith "IRGen: no LLVM instruction for this binop"
+
 let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
     : string =
   let global_definitions = Buffer.create 256 in
@@ -97,35 +128,7 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
     let gen_binop result operator left right =
       let operand_type = value_type left in
       let result_operand = fresh_temp () in
-      let mnemonic =
-        match (operator, operand_type) with
-        | Ast.Add, Types.TInt -> "add i64"
-        | Ast.Sub, Types.TInt -> "sub i64"
-        | Ast.Mul, Types.TInt -> "mul i64"
-        | Ast.Div, Types.TInt -> "sdiv i64"
-        | Ast.Mod, Types.TInt -> "srem i64"
-        | Ast.Add, Types.TDouble -> "fadd double"
-        | Ast.Sub, Types.TDouble -> "fsub double"
-        | Ast.Mul, Types.TDouble -> "fmul double"
-        | Ast.Div, Types.TDouble -> "fdiv double"
-        | Ast.Eq, Types.TInt -> "icmp eq i64"
-        | Ast.Ne, Types.TInt -> "icmp ne i64"
-        | Ast.Lt, Types.TInt -> "icmp slt i64"
-        | Ast.Le, Types.TInt -> "icmp sle i64"
-        | Ast.Gt, Types.TInt -> "icmp sgt i64"
-        | Ast.Ge, Types.TInt -> "icmp sge i64"
-        | Ast.Eq, Types.TDouble -> "fcmp oeq double"
-        | Ast.Ne, Types.TDouble -> "fcmp une double"
-        | Ast.Lt, Types.TDouble -> "fcmp olt double"
-        | Ast.Le, Types.TDouble -> "fcmp ole double"
-        | Ast.Gt, Types.TDouble -> "fcmp ogt double"
-        | Ast.Ge, Types.TDouble -> "fcmp oge double"
-        | Ast.Eq, Types.TBool -> "icmp eq i1"
-        | Ast.Ne, Types.TBool -> "icmp ne i1"
-        (* nothing else arrives: SILGen lowered && and || to branches, and the String
-           operators are not lowered in this subset *)
-        | _ -> failwith "IRGen: no LLVM instruction for this binop"
-      in
+      let mnemonic = binop_instruction operator operand_type in
       (* a zero divisor traps: run the operand through the guard, then divide by its result *)
       let right_operand =
         match (operator, operand_type) with

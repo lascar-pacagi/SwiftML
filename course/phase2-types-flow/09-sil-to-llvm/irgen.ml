@@ -5,9 +5,9 @@
    an LLVM block, br/cond_br/return -> LLVM br/ret, apply -> call, print -> a printf call.
    Each SIL value maps to an LLVM operand (a constant, a global, or a fresh %tN).
 
-   You fill four TODO(09) holes, in this order: gen_allocas, the instruction table in
-   gen_binop, gen_instr, and gen_term. The rest (gen_print, the buffers, llvm_type, the
-   division guard in gen_binop) is given. Reference: solution/irgen.ml. *)
+   You fill four TODO(09) holes: binop_instruction, gen_allocas, gen_instr and gen_term, in
+   that order. The rest (gen_binop around the table, gen_print, the buffers, llvm_type) is
+   given. Reference: solution/irgen.ml. *)
 
 let llvm_type : Types.ty -> string = function
   | Types.TInt -> "i64"
@@ -17,6 +17,13 @@ let llvm_type : Types.ty -> string = function
   | Types.TVoid -> "void"
   (* Sema stops the pipeline at its first error, so a TError never reaches IRGen *)
   | Types.TError -> invalid_arg "llvm_type: TError"
+
+(* TODO(09): the LLVM instruction for a binop, with its operand type: "add i64",
+   "fcmp olt double", ... [operand_type] is the type of the OPERANDS, so 1 < 2 is
+   "icmp slt i64" although its result is a Bool. §3 "The binop table" lists every pair. *)
+let binop_instruction (operator : Ast.binop) (operand_type : Types.ty) : string =
+  ignore (operator, operand_type);
+  failwith "TODO(09): pick the LLVM instruction for a binop"
 
 let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
     : string =
@@ -95,10 +102,7 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
     let gen_binop result operator left right =
       let operand_type = value_type left in
       let result_operand = fresh_temp () in
-      (* TODO(09): the instruction and its operand type, e.g. "add i64" or
-         "fcmp olt double"; the rest of the line is written below. Pick it from the operator
-         AND the operand type; §3 "The binop table" lists which pairs arrive. *)
-      let mnemonic : string = failwith "TODO(09): pick the LLVM instruction for a binop" in
+      let mnemonic = binop_instruction operator operand_type in
       (* a zero divisor traps: run the operand through the guard, then divide by its result *)
       let right_operand =
         match (operator, operand_type) with

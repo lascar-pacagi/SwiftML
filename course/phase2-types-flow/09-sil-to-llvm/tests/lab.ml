@@ -3,6 +3,7 @@
    not see your work in this directory):
      ./lab.exe build <file.swift> [-o <out>]
      ./lab.exe --emit-tokens|--emit-ast|--typecheck|--emit-sil|--emit-llvm <file.swift>
+     ./lab.exe --binop-table <Int|Double|Bool>  (binop_instruction alone, no program)
      ./lab.exe --emit-llvm-allocas <file.swift>  (test gen_allocas before the rest)
      ./lab.exe --emit-llvm-instrs <file.swift>  (test gen_instr before gen_term)
      ./lab.exe --emit-llvm-terms <kind> <file.swift>  (test one terminator kind) *)
@@ -12,6 +13,7 @@ let usage () =
   prerr_endline
     "       lab --emit-tokens|--emit-ast|--typecheck|--emit-sil|--emit-llvm \
      <file.swift>";
+  prerr_endline "       lab --binop-table <Int|Double|Bool>";
   prerr_endline "       lab --emit-llvm-allocas <file.swift>";
   prerr_endline "       lab --emit-llvm-instrs <file.swift>";
   prerr_endline
@@ -38,6 +40,24 @@ let () =
         | _ -> usage ()
       in
       Driver.compile_file ~out ~src_path:file ~emit:Driver.Exe ()
+  | _ :: "--binop-table" :: [ type_name ] ->
+      (* every operator that exists at this operand type, and the instruction it becomes *)
+      let arithmetic = [ ("+", Ast.Add); ("-", Ast.Sub); ("*", Ast.Mul); ("/", Ast.Div) ] in
+      let comparisons =
+        [ ("==", Ast.Eq); ("!=", Ast.Ne); ("<", Ast.Lt); ("<=", Ast.Le); (">", Ast.Gt);
+          (">=", Ast.Ge) ]
+      in
+      let operand_type, operators =
+        match type_name with
+        | "Int" -> (Types.TInt, arithmetic @ [ ("%", Ast.Mod) ] @ comparisons)
+        | "Double" -> (Types.TDouble, arithmetic @ comparisons)
+        | "Bool" -> (Types.TBool, [ ("==", Ast.Eq); ("!=", Ast.Ne) ])
+        | _ -> usage ()
+      in
+      List.iter
+        (fun (symbol, operator) ->
+          Printf.printf "%-3s %s\n" symbol (Irgen.binop_instruction operator operand_type))
+        operators
   | _ :: "--emit-llvm-allocas" :: [ file ] ->
       (* only what gen_allocas writes: every instruction but alloc_stack is dropped from the
          SIL and no terminator is printed, so neither gen_instr nor gen_term is reached *)
