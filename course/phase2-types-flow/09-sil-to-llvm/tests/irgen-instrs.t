@@ -47,7 +47,7 @@ guard returns; a Double `/` has no guard, since dividing a Double by zero gives 
   }
   
 
-Unary minus has no LLVM opcode of its own on integers: `-7` is a subtraction from zero. The
+`unop` on an Int: LLVM has no negation for integers, so `-7` is a subtraction from zero. The
 operand is a literal, so this needs the `unop` case and nothing else in `gen_instr`.
 
   $ printf -- '-7\n' > neg.swift
@@ -67,7 +67,7 @@ Double stack slots, stores, and loads keep their `double` type.
     store double 0x3FF8000000000000, ptr %t0
     %t1 = load double, ptr %t0
 
-Double negation is `fneg`, LLVM's one-operand floating-point instruction — not a subtraction
+`unop` on a Double is `fneg`, LLVM's one-operand floating-point instruction — not a subtraction
 from zero, which gives `+0.0` for `-(0.0)` where Swift gives `-0.0`. Again a literal operand.
 
   $ printf -- '-(2.5)\n' > dneg.swift

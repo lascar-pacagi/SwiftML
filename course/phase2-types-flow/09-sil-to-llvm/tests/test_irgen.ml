@@ -296,7 +296,7 @@ let () =
             test_double_memory;
           Alcotest.test_case "literals are operands" `Quick
             test_literals_are_operands;
-          Alcotest.test_case "negation: sub 0 / fneg" `Quick test_negation;
+          Alcotest.test_case "unop: sub 0 / fneg" `Quick test_negation;
           Alcotest.test_case "zero guard on Int only" `Quick
             test_division_guard;
           Alcotest.test_case "func_ref + apply = call" `Quick test_calls;
