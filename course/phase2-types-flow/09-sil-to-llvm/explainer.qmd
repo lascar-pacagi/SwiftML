@@ -529,7 +529,10 @@ IRGen runtime benchmark -- Collatz for starts 1..<500000
 
 These are measured reference-solution results; timings vary by machine. The runner first requires
 byte-identical output from all five binaries, then reports the best of five executions after one
-warm-up. It has no speed gate because this concept deliberately emits unoptimized code.
+warm-up. It only reports the times; it never fails because a binary is too slow. Concept 01's
+benchmark has such a threshold, a *speed gate*: it fails unless your fast lexer is at least 3×
+the naive one. Here a gate would fail by design, because IRGen emits unoptimized code on
+purpose; making it fast is Phase 4's work, and the numbers above are the baseline it starts from.
 
 The flags select the optimization level. With no flag, clang uses `-O0`: it preserves the raw
 `alloca`, `load`, and `store` heavy shape closely. `clang -O2` enables LLVM's standard optimizations
@@ -538,7 +541,7 @@ optimizations for speed. `swiftc -Ounchecked` also optimizes, but removes runtim
 as integer-overflow checks.
 
 The `clang -O2` row is useful: without changing our SIL, LLVM removes much of the raw memory traffic
-and makes the program about 4.65 times faster. For this small scalar subset, we could defer much of
+and makes the program about 4.7 times faster. For this small scalar subset, we could defer much of
 the optimization work to LLVM. That shows IRGen already produces optimization-friendly LLVM IR.
 
 It does not make a SIL optimizer redundant. Swift-specific passes can reason about ownership,
