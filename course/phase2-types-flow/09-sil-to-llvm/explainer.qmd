@@ -116,7 +116,14 @@ appears directly in the `call`. The value numbers change too — SIL's `%9` is L
 what the operand table is for. And `@main` returns `i32 0` to the operating system rather than
 nothing.
 
-The declarations and format strings are given scaffolding. `Int` becomes `i64`, while `Bool`
+The declarations and format strings are given scaffolding. A format string is an LLVM byte
+array: `c"…"` writes the bytes as text, and `\XX` is one byte in hexadecimal — `\0A` the newline,
+`\00` the zero byte that ends every C string. So `c"%lld\0A\00"` is the six bytes `%`, `l`, `l`,
+`d`, newline, zero, which is why its type is `[6 x i8]`. `private` keeps the global inside this
+module, `unnamed_addr` says its address does not matter (LLVM may merge identical strings), and
+`constant` makes it read-only.
+
+`Int` becomes `i64`, while `Bool`
 becomes `i1`, a one-bit integer. `@choose` receives `%arg0` and `%arg1`, stores them in the stack
 slots used by raw SIL, and branches on the loaded `Bool`. Each branch returns an `i64`.
 
