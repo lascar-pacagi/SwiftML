@@ -11,6 +11,8 @@ let llvm_type : Types.ty -> string = function
   | Types.TDouble -> "double"
   | Types.TString -> "ptr"
   | Types.TVoid -> "void"
+  (* Sema stops the pipeline at its first error, so a TError never reaches IRGen *)
+  | Types.TError -> invalid_arg "llvm_type: TError"
 
 let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
     : string =
@@ -158,6 +160,7 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
                "  call i32 (ptr, ...) @printf(ptr @.fmt_dbl, double %s)\n"
                (lookup_operand value))
       | Types.TVoid -> ()
+      | Types.TError -> invalid_arg "gen_print: TError"
     in
     let gen_instr (value, instruction) =
       match (instruction : Sil.instr) with

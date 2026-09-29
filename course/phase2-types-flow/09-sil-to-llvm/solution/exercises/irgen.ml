@@ -14,6 +14,8 @@ let llvm_type : Types.ty -> string = function
   | Types.TDouble -> "double"
   | Types.TString -> "ptr"
   | Types.TVoid -> "void"
+  (* Sema stops the pipeline at its first error, so a TError never reaches IRGen *)
+  | Types.TError -> invalid_arg "llvm_type: TError"
 
 let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
     : string =
