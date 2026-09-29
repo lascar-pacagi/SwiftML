@@ -161,8 +161,8 @@ corresponding LLVM type spellings produced by `llvm_type`, such as `i64`, `i1`, 
 The three literal rows are already written in the skeleton, and `function_ref` is the same shape:
 copy how the `Int` literal case uses `bind_operand`.
 
-**Terminators** (`gen_term`) — the CFG, and the one asymmetry in the whole pass. All of them are
-yours:
+**Terminators** (`gen_term`) — the CFG. All of them are yours, and all but one map straight
+across:
 
 | SIL | LLVM |
 |---|---|
@@ -172,7 +172,7 @@ yours:
 | `return` | `ret void` — **but `ret i32 0` in `@main`** |
 | `unreachable` | `unreachable` — a real LLVM instruction |
 
-The asymmetry is `@main`. In SIL it is an ordinary function returning `$()`; in LLVM it is the C
+The exception is `@main`. In SIL it is an ordinary function returning `$()`; in LLVM it is the C
 entry point, whose `i32` result *is* the process's exit code, so a valueless `return` there has to
 become `ret i32 0`. Blocks and their labels carry across unchanged, which is why an `--emit-llvm`
 dump closely follows the structure of the `--emit-sil` dump for the same program, even though the
