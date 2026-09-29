@@ -13,6 +13,7 @@ let llty : Types.ty -> string = function
   | Types.TVoid -> "void"
   | Types.TStruct n -> "%" ^ n (* an LLVM named aggregate type — concept 10 *)
   | Types.TEnum n -> "%" ^ n (* a tagged union { i64 tag, i64×payload } — concept 11 *)
+  | Types.TError -> invalid_arg "TError: sema stops at its first error"
 
 let emit_llvm (m : Sil.modul) : string =
   let globals = Buffer.create 256 in

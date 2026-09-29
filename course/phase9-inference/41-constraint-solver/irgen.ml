@@ -14,6 +14,7 @@ let llvm_type : Types.ty -> string = function
   | Types.TDouble -> "double"
   | Types.TString -> "ptr"
   | Types.TVoid -> "void"
+  | Types.TError -> invalid_arg "TError: sema stops at its first error"
 
 let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
     : string =
@@ -160,6 +161,7 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
                "  call i32 (ptr, ...) @printf(ptr @.fmt_dbl, double %s)\n"
                (lookup_operand value))
       | Types.TVoid -> ()
+      | Types.TError -> invalid_arg "TError: sema stops at its first error"
     in
     let gen_instr (value, instr) =
       match (instr : Sil.instr) with

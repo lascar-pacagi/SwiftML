@@ -14,6 +14,7 @@ let rec llty : Types.ty -> string = function
   | Types.TStruct n -> "%" ^ n (* an LLVM named aggregate type — concept 10 *)
   | Types.TEnum n -> "%" ^ n (* a tagged union { i64 tag, i64×payload } — concept 11 *)
   | Types.TOptional t -> Printf.sprintf "{ i64, %s }" (llty t) (* an inline { tag, payload } — concept 13 *)
+  | Types.TError -> invalid_arg "TError: sema stops at its first error"
 
 let emit_llvm (m : Sil.modul) : string =
   let globals = Buffer.create 256 in

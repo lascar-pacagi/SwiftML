@@ -16,3 +16,4 @@ func doubleAll(_ a: [Int]) async -> Int {\n  return a.map({ (x: Int) -> Int in x
 func chain(_ n: Int) async -> Int {\n  if n == 0 { return 0 }\n  await Task.yield()\n  let r = await chain(n - 1)\n  return n + r\n}\nprint(await chain(10))
 func classify(_ n: Int) async -> Int {\n  return n > 0 ? 1 : (n < 0 ? -1 : 0)\n}\nprint(await classify(9))\nprint(await classify(-9))\nprint(await classify(0))
 func greet(_ s: String) async -> String { return s + "!" }\nprint(await greet("hi"))\nprint(await greet(""))
+let y = 5\nlet f = { (x: Int) -> Int in (y as Int) + x }\nprint(f(2))\nprint(f(y as Int))

@@ -23,6 +23,7 @@ let rec info_of (m : Sil.modul) (t : Types.ty) : info =
   | Types.TOptional inner ->
       let i = info_of m inner in
       { size = 8 + i.size; align = 8 } (* { i64 tag, T } *)
+  | Types.TError -> invalid_arg "TError: sema stops at its first error"
 
 and struct_info (m : Sil.modul) (fields : (string * Types.ty) list) : info =
   let off = ref 0 and align = ref 1 in

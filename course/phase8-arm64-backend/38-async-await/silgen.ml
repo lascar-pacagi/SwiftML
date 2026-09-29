@@ -152,7 +152,8 @@ let rec fv_expr (bound : string list) (e : Ast.expr) : string list =
   match e with
   | Ast.Var (x, _) -> if List.mem x bound then [] else [ x ]
   | Ast.Int_lit _ | Ast.Double_lit _ | Ast.Bool_lit _ | Ast.String_lit _ | Ast.Nil _ -> []
-  | Ast.Unary (_, a, _) | Ast.Force_unwrap (a, _) | Ast.Cast (a, _, _, _) -> go a
+  | Ast.Unary (_, a, _) | Ast.Force_unwrap (a, _) | Ast.Cast (a, _, _, _)
+  | Ast.Ascribe (a, _, _) -> go a
   | Ast.Binary (_, a, b, _) | Ast.Coalesce (a, b, _) -> go a @ go b
   | Ast.Ternary (c, a, b, _) -> go c @ go a @ go b
   | Ast.Call (f, args, _) -> (if List.mem f bound then [] else [ f ]) @ List.concat_map (fun (_, a) -> go a) args

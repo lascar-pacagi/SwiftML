@@ -14,6 +14,7 @@ let rec llty : Types.ty -> string = function
   | Types.TVar (_, c) -> "%any." ^ c
     (* concept 22: an unspecialized generic T travels in its CONSTRAINT's existential rep
        (SILGen already erased TVar to TProto; this arm is belt-and-braces) *)
+  | Types.TError -> invalid_arg "TError: sema stops at its first error"
 
 let emit_llvm (m : Sil.modul) : string =
   (* concept 21: how many 8-byte words a value of each type occupies — used to size the
@@ -28,6 +29,7 @@ let emit_llvm (m : Sil.modul) : string =
     | Types.TOptional t -> 1 + words t
     | Types.TProto p -> 1 + ex_words p
     | Types.TVar (_, c) -> 1 + ex_words c
+    | Types.TError -> invalid_arg "TError: sema stops at its first error"
   (* concept 23: the existential container is FIXED-SIZE — a 3-word inline buffer plus the
      witness-table pointer, exactly swiftc's layout. A conformer that fits stays inline; a
      larger one is heap-BOXED: the buffer's first word holds a pointer to malloc'd storage.

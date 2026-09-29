@@ -15,6 +15,7 @@ let rec llty : Types.ty -> string = function
   | Types.TEnum n -> "%" ^ n (* a tagged union { i64 tag, i64×payload } — concept 11 *)
   | Types.TOptional t -> Printf.sprintf "{ i64, %s }" (llty t) (* an inline { tag, payload } — concept 13 *)
   | Types.TProto n -> "%any." ^ n (* an existential { [N x i64] payload, ptr table } — concept 21 *)
+  | Types.TError -> invalid_arg "TError: sema stops at its first error"
 
 let emit_llvm (m : Sil.modul) : string =
   (* concept 21: how many 8-byte words a value of each type occupies — used to size the
@@ -28,6 +29,7 @@ let emit_llvm (m : Sil.modul) : string =
     | Types.TEnum n -> 1 + Types.max_payload (elay n)
     | Types.TOptional t -> 1 + words t
     | Types.TProto p -> 1 + ex_words p
+    | Types.TError -> invalid_arg "TError: sema stops at its first error"
   (* the payload buffer of `any P` is sized to P's LARGEST conforming struct — a whole-module
      luxury swiftc doesn't have (it uses a fixed 3-word buffer and spills big values to the
      heap; that indirection is concept 23). Minimum 1 so the type is well-formed. *)

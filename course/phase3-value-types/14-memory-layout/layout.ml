@@ -30,6 +30,7 @@ let rec info_of (m : Sil.modul) (t : Types.ty) : info =
   | Types.TOptional inner ->
       let i = info_of m inner in
       { size = 8 + i.size; align = 8 } (* { i64 tag, T } *)
+  | Types.TError -> invalid_arg "TError: sema stops at its first error"
 
 and struct_info (m : Sil.modul) (fields : (string * Types.ty) list) : info =
   (* TODO(14a): the padding walk, in DECLARATION order — each field starts at the next offset

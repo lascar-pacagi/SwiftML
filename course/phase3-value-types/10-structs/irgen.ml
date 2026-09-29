@@ -14,6 +14,7 @@ let llvm_type : Types.ty -> string = function
   | Types.TVoid -> "void"
   | Types.TStruct name ->
       "%" ^ name (* an LLVM named aggregate type — concept 10 *)
+  | Types.TError -> invalid_arg "TError: sema stops at its first error"
 
 let emit_llvm (sil_module : Sil.modul) : string =
   let global_definitions = Buffer.create 256 in
