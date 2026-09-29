@@ -378,21 +378,27 @@ instruction and every terminator, so it tests this hole alone.
 instruction and its operand type, such as `"add i64"` or `"fcmp olt double"`. Choose it from
 `operator` (an `Ast.binop`: `Add`, `Sub`, …, `Eq`, `Lt`, …) and `operand_type`. Use the OPERANDS'
 type, which is what the given code computes: a comparison's own result is a `Bool` (the SIL prints
-`binop "<" %3, %4 $Bool`), but `1 < 2` still needs `icmp slt i64`. These are the pairs that
-arrive:
+`binop "<" %3, %4 $Bool`), but `1 < 2` still needs `icmp slt i64`. Every pair that arrives, and
+the string it needs (a dash: that operator does not exist at that type):
 
-| operand type | operators | LLVM family |
-|---|---|---|
-| `Int` (`i64`) | `+ - * / %` | integer arithmetic, signed (§2) |
-| `Int` (`i64`) | `== != < <= > >=` | `icmp` with a signed predicate |
-| `Double` (`double`) | `+ - * /` | `fadd`, `fsub`, … |
-| `Double` (`double`) | `== != < <= > >=` | `fcmp`, ordered except `!=` (§2) |
-| `Bool` (`i1`) | `== !=` | `icmp` |
+| Swift | `Ast.binop` | `Int` | `Double` | `Bool` |
+|---|---|---|---|---|
+| `+` | `Add` | `add i64` | `fadd double` | — |
+| `-` | `Sub` | `sub i64` | `fsub double` | — |
+| `*` | `Mul` | `mul i64` | `fmul double` | — |
+| `/` | `Div` | `sdiv i64` | `fdiv double` | — |
+| `%` | `Mod` | `srem i64` | — | — |
+| `==` | `Eq` | `icmp eq i64` | `fcmp oeq double` | `icmp eq i1` |
+| `!=` | `Ne` | `icmp ne i64` | `fcmp une double` | `icmp ne i1` |
+| `<` | `Lt` | `icmp slt i64` | `fcmp olt double` | — |
+| `<=` | `Le` | `icmp sle i64` | `fcmp ole double` | — |
+| `>` | `Gt` | `icmp sgt i64` | `fcmp ogt double` | — |
+| `>=` | `Ge` | `icmp sge i64` | `fcmp oge double` | — |
 
-The predicates are spelled `eq ne slt sle sgt sge` for `icmp`, and for `fcmp` an `o` or a `u`
-before `eq ne lt le gt ge`. Nothing else reaches `gen_binop`: `&&` and `||` became branches in
-SILGen (08), and `String` operators are not lowered in this subset, so a catch-all `failwith` is
-the right last case. `irgen-binop.t` uses only literal operands, so the only lines it reads are
+The `s` in `sdiv`, `srem` and `slt` is signed, and the `o`/`u` in `fcmp` ordered/unordered; §2
+says why each is the right one. Nothing else reaches `gen_binop`: `&&` and `||` became branches
+in SILGen (08), and `String` operators are not lowered in this subset, so a catch-all `failwith`
+is the right last case. `irgen-binop.t` uses only literal operands, so the only lines it reads are
 your binops.
 
 **3. `gen_instr`.** The literal cases, `alloc_stack` and `binop` are already written, as the
