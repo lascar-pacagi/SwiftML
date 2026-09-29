@@ -537,10 +537,71 @@ self-detecting suite. They also appear in `make lab` as `TODO (optional)` until 
    iff it's initialized on exit of *all* predecessors; a `load` from an uninitialized slot is
    "variable '…' used before being initialized." Match `swiftc`.
 2. **`Double` output parity.** Print just enough decimal digits to preserve the exact `Double`
-   value when the text is parsed again. Use the Ryū or Grisu algorithm, or shell out, and make
-   `print(0.1 + 0.2)` match `swiftc`.
+   value when the text is parsed again, and make `print(0.1 + 0.2)` match `swiftc`. The problem
+   and the algorithms are below.
 3. **A tiny runtime.** Add a `runtime.c` (compiled and linked by the driver) with `swiftml_print_int`
-   etc., instead of inlining `printf` calls — the seed of a real standard library (Phase 7).
+   etc., instead of inlining `printf` calls — the seed of a real standard library (Phase 7). How to
+   build and run it is below.
+
+**Exercise 2 — what "just enough digits" means.** `0.1 + 0.2` is not 0.3: neither `0.1` nor `0.2`
+has an exact binary form, and the `Double` nearest their sum is 0.3000000000000000444…. Every
+`Double` is surrounded by a small interval of real numbers that round to it, and any decimal
+inside that interval reads back as the same `Double`. Swift prints the one with the *fewest
+significant digits*, and the closest to the exact value among those. Fixed precision gets it
+wrong both ways:
+
+| C format | `0.1 + 0.2` | `0.1` | Swift prints |
+|---|---|---|---|
+| `%g` (6 digits) | `0.3` — a different `Double` | `0.1` | `0.30000000000000004`, `0.1` |
+| `%.17g` (always enough) | `0.30000000000000004` | `0.10000000000000001` — too long | |
+
+The simple correct method: for *n* = 1, 2, … 17, print with *n* significant digits (`%.*e`) and
+parse it back with `strtod`; stop at the first *n* that returns the same `Double` (17 always
+does). It is exact, and slow only by the standard of a formatter that runs in 10 ns. The fast
+algorithms find the shortest digits directly, from the value's binary form `s × 2^e`, with no
+trial parsing:
+
+- **Dragon4** (Steele & White, 1990) — the first correct one; exact, using arbitrary-precision
+  integers. Ryan Juckett's *Printing Floating-Point Numbers*, a four-part series, builds it up
+  from the bit layout: `https://www.ryanjuckett.com/printing-floating-point-numbers/`.
+- **Grisu** (Loitsch, 2010) — the same search with 64-bit integers only. Much faster, but for
+  about 0.5% of values it cannot prove its answer is shortest and must fall back to a slow path.
+  Paper: "Printing Floating-Point Numbers Quickly and Accurately with Integers",
+  `https://doi.org/10.1145/1806596.1806623`.
+- **Ryū** (Adams, 2018) — always exact with 64/128-bit integers, using a precomputed table of
+  powers of 10; no fallback. Paper: `https://doi.org/10.1145/3192366.3192369`; readable C
+  reference implementation: `https://github.com/ulfjack/ryu`.
+
+swiftc's own printer, `swift/stdlib/public/core/FloatingPointToString.swift`, draws on Grisu and
+on Giulietti's *Schubfach* (2021), a relative of Ryū; its header comment is a good summary. Any of
+these methods gives the same digits, so the trial-and-`strtod` loop is a fine answer here. Then
+format them the way Swift does: plain notation between 1e-4 and 1e16, with `.0` added to a whole
+number (`1.0`, `100.0`), and exponential notation outside it with at least two exponent digits
+(`1e-05`, `1e+16`).
+
+**Exercise 3 — building with a runtime.** IRGen stops emitting `printf` and instead declares and
+calls your functions:
+
+```llvm
+declare void @swiftml_print_int(i64)
+...
+  call void @swiftml_print_int(i64 %t2)
+```
+
+That `.ll` no longer links on its own: the functions live in `runtime.c`, and clang compiles
+both and links them into one executable. You can do it by hand before touching the driver:
+
+```bash
+L=_build/default/phase2-types-flow/09-sil-to-llvm/tests/lab.exe
+$L --emit-llvm p.swift > p.ll                       # calls @swiftml_print_int
+clang -c runtime.c -o runtime.o                     # your runtime, compiled once
+clang -Wno-override-module p.ll runtime.o -o p && ./p
+```
+
+Then make `run_clang` in `driver.ml` do the same: pass `runtime.c` to its clang command beside the
+`.ll`. The driver has to find that file wherever `build` is run from (the cram tests run in a
+sandbox directory), so either locate it relative to the compiler or carry its text inside the
+driver as a string and write it to a temporary file before calling clang.
 
 ## 7. Recap & what's next — **Milestone M2**
 
@@ -686,10 +747,14 @@ and reaching-definitions in Phase 4 — definite initialization is the gentlest 
 
 ### 2 — Double output parity
 
-`print(d)` currently emits `printf("%g\n", d)`, which rounds to 6 significant figures. Swift prints
-the *shortest* decimal string that round-trips back to the same `Double`. Implement Ryū (or Grisu),
-or call into a C helper; format the result and pad/trim to Swift's rules (e.g. `1.0` prints as `1.0`,
-`0.1` as `0.1`). This is a self-contained, surprisingly deep numerics exercise.
+The key (`solution/exercises/driver.ml`, `swiftml_print_double` in the runtime it carries) uses
+the trial loop from §6: for `p` = 1 … 17, `snprintf(buf, …, "%.*e", p - 1, d)` and keep the first
+`buf` that `strtod` turns back into `d`. That string is `[-]D.DDDe±XX`, so the rest is splitting
+it into sign, digits and decimal exponent, dropping trailing zeros, and laying the digits out in
+Swift's form: exponential when the exponent is below -4 or at least 16, otherwise plain, padding
+with zeros and adding `.0` to a whole number. NaN and the infinities print as `nan`, `inf`,
+`-inf`. Checked against `swiftc`, including `0.1`, `1.0`, `100.0`, `0.30000000000000004`,
+`0.3333333333333333`, `1e+16`, `1e-05`, `0.0001` and the three special values.
 
 ### 3 — a runtime.c
 
