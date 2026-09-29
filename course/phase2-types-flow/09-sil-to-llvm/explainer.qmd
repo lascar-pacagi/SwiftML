@@ -217,12 +217,14 @@ bb0:
 ```
 
 and the `alloc_stack` case of `gen_instr` emits nothing. The stack frame becomes fixed-size.
-Hoisting cannot create a name collision: SILGen gives every value in a
-function a unique `%n`, so every allocation has a distinct key in `operands`. `gen_allocas` assigns
-those allocations LLVM names using `fresh_temp`; ordinary instruction lowering uses the same
-counter afterward, so it cannot reuse any of their `%tN` names. Entry-block allocation is also what
-LLVM's own `mem2reg` pass requires before it will promote a slot to a register. (Concept 20's
-benchmark shows exactly how this bites at a few million iterations.)
+Moving the allocas does not mix up names, for two reasons. `fresh_temp` is one counter per
+function, and `gen_allocas` draws from it first: in the loop above, `i`'s slot is `%t0` and `d`'s
+is `%t1`, and the next name handed out, to the `load` in `bb1`, is `%t2`. And `bind_operand`
+records each slot under its SIL value, so when `gen_instr` later reaches `store %8 to %9` in
+`bb2`, it looks `%9` up and writes `store i64 %t5, ptr %t1`, whichever block the `alloca` was
+printed in.
+Entry-block allocation is also what LLVM's own `mem2reg` pass requires before it will promote a
+slot to a register.
 
 The control-flow work — turning a tree into a graph and threading `break`/`continue` to the right
 blocks — happened in SILGen. IRGen walks that finished graph and translates it to LLVM. This
