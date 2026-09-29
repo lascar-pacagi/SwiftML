@@ -417,6 +417,10 @@ pattern to copy. What is left is six instructions, and for each the question is 
 
 When an instruction binds a result, give it `fresh_temp ()` and record it with `bind_operand`, so
 the instructions after it can `lookup_operand` it. The LLVM text for each line is in §2's table.
+Write every instruction line as the given code does, two spaces in and a newline at the end —
+`emit (Printf.sprintf "  %s = load %s, ptr %s\n" …)` — and block labels (`bb0:`) at the left
+margin. LLVM ignores the indentation, but the tests compare the printed text exactly, so a line
+without its two spaces reads as a difference.
 A function cannot be valid LLVM without its terminators, so `irgen-instrs.t` reads
 `--emit-llvm-instrs`, which prints the instructions and leaves the terminators out. Keep the final
 catch-all `failwith` below your cases until you have all six — the file has to compile for any
