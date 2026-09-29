@@ -312,8 +312,8 @@ we deliberately scope out, all documented:
   is observed through a `Bool`.
 - **Definite initialization** — Swift's mandatory "variable used before being initialized" pass on
   the SIL CFG — is *vacuous* for us, because every `let`/`var` is initialized at its declaration.
-  Adding uninitialized `var x: Int` and a DI dataflow pass (Exercise 1) is the genuine version, and a
-  direct sequel to the "missing return" analysis from concept 07.
+  Adding uninitialized `var x: Int` and a definite-initialization dataflow pass (Exercise 1) is
+  the genuine version, and a direct sequel to the "missing return" analysis from concept 07.
 
 > Oracle: `swift/lib/IRGen/IRGenSIL.cpp` is `visitSILInstruction` for each SIL opcode — the analogue
 > of your `gen_instr`. swiftc's IRGen is far larger because it also lowers ARC, generics, and value
@@ -680,9 +680,9 @@ With `var x: Int` lowering to an `alloc_stack` and no `store`, run a forward dat
 CFG. For each block compute `in[b] = ⋂ out[p]` over predecessors `p` (the entry's `in` is the empty
 set; a parameter slot starts initialized); walk the block updating the set on each `Store`, and on a
 `Load` of a slot **not** in the set, report "variable '…' used before being initialized." Iterate to a
-fixed point (a worklist). This is the same forward-meet-over-paths shape you'll reuse for liveness and
-reaching-definitions in Phase 4 — DI is the gentlest instance, and it's *mandatory* in swiftc because
-it's a soundness guarantee, not an optimization.
+fixed point (a worklist). This is the same forward-meet-over-paths shape you'll reuse for liveness
+and reaching-definitions in Phase 4 — definite initialization is the gentlest instance, and it's
+*mandatory* in swiftc because it's a soundness guarantee, not an optimization.
 
 ### 2 — Double output parity
 

@@ -29,7 +29,8 @@ Language Reference (`https://llvm.org/docs/LangRef.html`).
 > runtime (concatenation, comparison) aren't matched to
 > swiftc here (Swift's exact `Double` formatting and string memory management are later work), and the
 > mandatory **definite-initialization** diagnostic is vacuous in our subset (every `let`/`var` is
-> initialized at its declaration) — adding uninitialized `var x: T` + a DI dataflow pass is Exercise 1.
+> initialized at its declaration) — adding uninitialized `var x: T` + a definite-initialization
+> dataflow pass is Exercise 1.
 
 ## Done when
 
