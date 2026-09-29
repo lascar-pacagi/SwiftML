@@ -14,6 +14,12 @@ types, control flow and functions without running any of it. Here they run for t
 `if`/`while`/`for`, functions and recursion execute, and `swiftml2`'s output matches `swiftc`
 byte-for-byte. That's **Milestone M2**, and the end of Phase 2.
 
+@fig-pipeline puts this hop in place. Every stage to its left is already written: the lexer (01),
+the parser (02), the type checker (03, 05–07) and SILGen (08). IRGen is the arrow from SIL to LLVM
+IR, and after it `clang` compiles and links, so `./a.out` runs.
+
+![The complete Phase-2 pipeline: source → tokens → AST → typed AST → SIL → LLVM IR → native. IRGen (concept 09) is the last hop; then `clang` links it and the program runs.](figs/pipeline.png){#fig-pipeline}
+
 - **You implement:** the lowering in `irgen.ml` — the entry-block allocas (`gen_allocas`), the
   instruction each operator becomes (`gen_binop`), the other instructions (`gen_instr`) and the
   terminators (`gen_term`). Everything upstream (front-end, SIL, SILGen) is given and complete.
@@ -280,8 +286,6 @@ from it (§3).
 `print` lowers to a `printf` call keyed on the argument's type: `%lld` for `Int`, a `select` between
 `"true"`/`"false"` globals for `Bool`, `%s` for a `String`. And `@main` returns `i32` (the C entry
 point: `return` → `ret i32 0`), while other functions return their declared LLVM type.
-
-![The complete Phase-2 pipeline: source → tokens → AST → typed AST → SIL → LLVM IR → native. IRGen (concept 09) is the last hop; then `clang` links it and the program runs.](figs/pipeline.png)
 
 ### Running checks what structure alone cannot
 
