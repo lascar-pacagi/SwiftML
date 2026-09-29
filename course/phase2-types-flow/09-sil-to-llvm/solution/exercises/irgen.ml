@@ -22,6 +22,13 @@ let emit_llvm ?(should_emit_terminator = fun _ -> true) (sil_module : Sil.modul)
   let global_definitions = Buffer.create 256 in
   let function_definitions = Buffer.create 1024 in
   let next_string_id = ref 0 in
+  (* The text goes between the quotes of an LLVM c-string constant, where a double quote
+     ends the string and a backslash starts a two-hex-digit byte. Left raw, the Swift string
+     say "hi" would close the constant after `say ` (clang: got type [4 x i8] but expected
+     [9 x i8]), and the five bytes x, backslash, 4, 1, y would read back as the four bytes
+     xAy. So a double quote becomes \22 and a backslash \5C. Control and non-ASCII bytes
+     are escaped too, only to keep each line of the .ll printable; LLVM accepts them raw. The
+     [N x i8] length counts bytes before escaping, so each escape must stand for one byte. *)
   let escape text =
     let escaped = Buffer.create (String.length text) in
     String.iter
