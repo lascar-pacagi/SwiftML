@@ -395,12 +395,23 @@ for every operator of that type and prints the answers: no program is compiled, 
 before any other hole is written.
 
 **2. `gen_allocas`.** Every function calls it at the top of its entry block, so nothing that
-compiles a program runs until it exists. For every `alloc_stack` in the function — in every block,
-not only `bb0` — emit `%tK = alloca <ty>` with a `fresh_temp ()`, and `bind_operand` the SIL value
-to it, so the `load`s and `store`s that name the slot find it. Walk the blocks and their
-instructions in the order the block loop below it does (note its `List.rev`s: SILGen builds both
-lists newest first). §2 says why they all go here. `irgen-allocas.t` reads `--emit-llvm-allocas`,
-which drops every other instruction and every terminator, so it tests this hole alone.
+compiles a program runs until it exists. For every `alloc_stack` in the function — in every
+block, not only `bb0` — emit `%tK = alloca <ty>` with a `fresh_temp ()`, and `bind_operand` the
+SIL value to it, so the `load`s and `store`s that name the slot find it. §2 says why they all go
+here.
+
+Both lists you walk are stored **backwards**. SILGen builds them by putting each new item at the
+FRONT — `block.instrs <- (value, instruction) :: block.instrs` (`silgen.ml:50`), and the same for
+`blocks` (`silgen.ml:60`) — because in OCaml adding at the front of a list is one step, while
+adding at the end copies the whole list. So `func.Sil.blocks` starts with the LAST block SILGen
+created, and each `block.Sil.instrs` starts with that block's last instruction. Walk
+`List.rev func.Sil.blocks`, and in each block `List.rev block.Sil.instrs`, exactly as the given
+block loop below `gen_allocas` does. Forget it and the program is still valid LLVM, but the slots
+come out last-first: in §2's loop, `d` would get `%t0` and `i` `%t1`, and the tests, which expect
+SILGen's order, report the swap.
+
+`irgen-allocas.t` reads `--emit-llvm-allocas`, which drops every other instruction and every
+terminator, so it tests this hole alone.
 
 **3. `gen_instr`.** The literal cases, `alloc_stack` and `binop` are already written, as the
 pattern to copy. What is left is six instructions, and for each the question is the same: does it
