@@ -37,20 +37,33 @@ into an *index*.
 
 ![Value semantics: `var q = p` copies the whole aggregate into q's own slot, so `q.x = 99` changes only q — p still reads 1.](figs/value_semantics.png){#fig-value-semantics}
 
-`q` gets its **own slot**, and the assignment **copies p's bytes into it**. From then on `p` and `q`
-are completely independent: `q.x = 99` writes into q's slot and leaves p's slot alone. In our
-memory-based SIL this falls out *for free* — `var q = p` lowers to `load` the whole aggregate out of
-p's slot and `store` it into q's, and a field write goes through q's own address. There's no sharing
-to begin with, so there's nothing to alias. (Contrast a **reference** type — a `class`, coming in a
-later phase — where `q = p` copies a *pointer*, and both names see the same object. Value vs. reference
-is *the* Swift distinction, and it's a property of how the type is copied, which is exactly what you
-implement here.)
+`p` and `q` are two separate stack slots, and `var q = p` copies the contents of one into the
+other. Here is the SIL for those lines (the full program also prints `p.x` and `q.x`):
 
-The same rule applies when a function returns a struct. LLVM IR such as `ret %Point %value`
-returns the aggregate **value**, not the address of a slot in the callee's stack. Semantically the
-caller receives an independent copy. LLVM may later lower that return according to the platform
-ABI (calling convention), using registers or a hidden result buffer owned by the caller so no
-physical copy is needed. That changes how the return is performed, not its value semantics.
+```
+%3 = alloc_stack $Point            // p's slot
+store %2 to %3                     // var p = Point(x: 1, y: 2)
+%5 = load %3 $Point                // var q = p: read all of p...
+%6 = alloc_stack $Point            // q's slot
+store %5 to %6                     // ...and write it into q's slot
+%8 = integer_literal $Int, 99
+%9 = struct_element_addr %6, #0    // q.x = 99: the address of field 0, inside q's slot
+store %8 to %9
+```
+
+`var q = p` is a `load` of the whole `Point` out of p's slot (`%3`) and a `store` into q's (`%6`).
+`q.x = 99` writes to an address computed from q's slot, so it cannot reach p's: the program prints
+`1` for `p.x` and `99` for `q.x`. Nothing extra was needed to get this: two slots, and copying
+between them, *is* value semantics.
+
+A `class` (Phase 6) is the opposite. Its variable holds a pointer to one object on the heap, so
+`var q = p` copies the pointer, and after `q.x = 99` reading `p.x` gives `99` too. Whether a type is
+a value or a reference comes down to what copying it copies: the contents, or a pointer to them.
+
+Returning a struct from a function follows the same rule. `ret %Point %value` hands back the value
+itself, not a pointer into the callee's stack frame, which is gone once the function returns; the
+caller gets its own copy. How that value physically travels — in registers, or through a buffer
+the caller provides — is set by the platform's calling convention, and does not change that.
 
 ### Reading vs. writing a field — value vs. address
 
