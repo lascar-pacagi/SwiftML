@@ -32,9 +32,10 @@ into an *index*.
 
 ### Value semantics — the whole point
 
-Watch what `var q = p` does:
+@fig-value-semantics follows two statements, starting from a `Point` `p` holding `x = 1`,
+`y = 2`: first `var q = p` (left), then `q.x = 99` (right).
 
-![Value semantics: `var q = p` copies the whole aggregate into q's own slot, so `q.x = 99` changes only q — p still reads 1.](figs/value_semantics.png)
+![Value semantics: `var q = p` copies the whole aggregate into q's own slot, so `q.x = 99` changes only q — p still reads 1.](figs/value_semantics.png){#fig-value-semantics}
 
 `q` gets its **own slot**, and the assignment **copies p's bytes into it**. From then on `p` and `q`
 are completely independent: `q.x = 99` writes into q's slot and leaves p's slot alone. In our
