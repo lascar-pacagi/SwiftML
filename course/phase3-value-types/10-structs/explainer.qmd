@@ -38,17 +38,44 @@ into an *index*.
 ![Value semantics: `var q = p` copies the whole aggregate into q's own slot, so `q.x = 99` changes only q — p still reads 1.](figs/value_semantics.png){#fig-value-semantics}
 
 `p` and `q` are two separate stack slots, and `var q = p` copies the contents of one into the
-other. Here is the SIL for those lines (the full program also prints `p.x` and `q.x`):
+other. Here is the program behind the figure:
+
+```swift
+struct Point {
+  var x: Int
+  var y: Int
+}
+var p = Point(x: 1, y: 2)
+var q = p
+q.x = 99
+print(p.x)
+print(q.x)
+```
+
+and the SIL it lowers to:
 
 ```
-%3 = alloc_stack $Point            // p's slot
-store %2 to %3                     // var p = Point(x: 1, y: 2)
-%5 = load %3 $Point                // var q = p: read all of p...
-%6 = alloc_stack $Point            // q's slot
-store %5 to %6                     // ...and write it into q's slot
-%8 = integer_literal $Int, 99
-%9 = struct_element_addr %6, #0    // q.x = 99: the address of field 0, inside q's slot
-store %8 to %9
+sil @main() -> $() {
+bb0:
+  %0 = integer_literal $Int, 1
+  %1 = integer_literal $Int, 2
+  %2 = struct (%0, %1) $Point        // Point(x: 1, y: 2)
+  %3 = alloc_stack $Point  // p      // p's slot
+  store %2 to %3                     // var p = ...
+  %5 = load %3 $Point                // var q = p: read all of p...
+  %6 = alloc_stack $Point  // q      // q's slot
+  store %5 to %6                     // ...and write it into q's slot
+  %8 = integer_literal $Int, 99
+  %9 = struct_element_addr %6, #0    // q.x = 99: field 0's address, in q's slot
+  store %8 to %9
+  %11 = load %3 $Point               // print(p.x)
+  %12 = struct_extract %11, #0 $Int
+  %13 = apply @print(%12)
+  %14 = load %6 $Point               // print(q.x)
+  %15 = struct_extract %14, #0 $Int
+  %16 = apply @print(%15)
+  return
+}
 ```
 
 `var q = p` is a `load` of the whole `Point` out of p's slot (`%3`) and a `store` into q's (`%6`).
