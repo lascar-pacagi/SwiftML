@@ -114,8 +114,18 @@ what both SIL instructions take. So the checker resolves it, once, and the tree 
 `Tast.Field (base, index, name)` for the read, an index on `Tast.Set_member` for the write. The name
 survives only for printing.
 
+```swift
+struct P {
+  var x: Int
+  var y: Int
+}
+let p = P(x: 1, y: 2)
+print(p.y)
+```
+
+Saved as `p.swift`, the last line of its typed tree is the `print`:
+
 ```bash
-$ printf 'struct P { var x: Int\n  var y: Int }\nlet p = P(x: 1, y: 2)\nprint(p.y)\n' > p.swift
 $ ./lab.exe --emit-tast p.swift | tail -1
 (print (field (local p : P) #1 y : Int) : ())
 ```
@@ -634,7 +644,8 @@ and parse_postfix parser expression =
           (Ast.Member (expression, field_name,
              span_between (Ast.expr_span expression) field_token.Token.span))
     | _ ->
-        Diagnostics.error parser.diagnostics (peek parser).Token.span "expected a member name";
+        Diagnostics.error parser.diagnostics (peek parser).Token.span
+          "expected a member name";
         expression)
   else expression
 
@@ -683,20 +694,23 @@ in `solution/sema.ml`.
 ```ocaml
 (* SILGen — member read is a value; member write is an address. Sema supplied the INDEX,
    so neither arm looks anything up. *)
-  (* read a field out of a struct VALUE with struct_extract. The INDEX came from Sema, so there
-     is no layout to look up and no name to match — and no way to disagree about either. *)
+  (* read a field out of a struct VALUE with struct_extract. The INDEX came from Sema, so
+     there is no layout to look up and no name to match — and no way to disagree about
+     either. *)
   | Tast.Field (operand_expression, index, _) ->
       let struct_value = gen_expr builder operand_expression in
       emit builder (Sil.Struct_extract (struct_value, index)) ty
 
   | Tast.Set_member { obj = object_name; field = index; value; _ } ->
-      (* `p.x = expression`: take the field's ADDRESS in p's slot, then store — this is what
-         makes a struct a value type, since p has its own slot distinct from any copy. The index
-         is Sema's; SILGen looks nothing up. *)
+      (* `p.x = expression`: take the field's ADDRESS in p's slot, then store — this is
+         what makes a struct a value type, since p has its own slot distinct from any copy.
+         The index is Sema's; SILGen looks nothing up. *)
       let stored = gen_expr builder value in
       let object_address = Hashtbl.find builder.variables object_name in
       let field_address =
-        emit builder (Sil.Struct_element_addr (object_address, index)) (value_type builder stored)
+        emit builder
+          (Sil.Struct_element_addr (object_address, index))
+          (value_type builder stored)
       in
       emit_void builder (Sil.Store (stored, field_address))
 ```
