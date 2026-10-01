@@ -94,19 +94,40 @@ the caller provides — is set by the platform's calling convention, and does no
 
 ### Reading vs. writing a field — value vs. address
 
-The two halves of member access are deliberately asymmetric. An **lvalue** identifies a storage
-location that can be written; an **rvalue** produces a value that can be read or copied:
+Reading a field and writing one are lowered differently. Both appear in the SIL of the program
+above:
 
-- **Read `p.x`** wants a *value*. Lower `p` to a struct **value** (a `load`) and pull field `i` out
-  with **`struct_extract`** (LLVM `extractvalue`). This works on *any* struct expression — a variable,
-  a function result, a freshly built `Point(…)`.
-- **Write `p.x = e`** must change `p` *in place*. You can't extract-modify-reinsert a copy; you need
-  the **address** of the field inside p's slot. Take it with **`struct_element_addr`** (LLVM
-  `getelementptr`) and `store` into it. This is only meaningful for an **lvalue** — a `var`-bound
-  variable with a slot — which is exactly why `let`-bound structs reject field assignment, and why
-  writing `q.x` can't possibly disturb `p`.
+- **Reading `p.x`** works on a copy. `load` the whole `Point` out of p's slot, then take field 0 of
+  that value with `struct_extract` (LLVM `extractvalue`):
 
-That read-uses-a-value / write-uses-an-address split makes the distinction concrete.
+  ```
+  %11 = load %3 $Point               // a copy of all of p
+  %12 = struct_extract %11, #0 $Int  // its field 0, x
+  ```
+
+  Any struct value can be read this way, not only a variable: a function result, or a
+  `Point(x: 1, y: 2)` built on the spot.
+
+- **Writing `q.x = 99`** cannot work on a copy: changing a field of a copy changes the copy, and
+  `q` stays as it was. It has to change the bytes in q's own slot. So it computes the *address* of
+  field 0 inside that slot with `struct_element_addr` (LLVM `getelementptr`), and `store`s there:
+
+  ```
+  %9 = struct_element_addr %6, #0    // where q.x lives, inside q's slot %6
+  store %8 to %9                     // write 99 there; q.y is untouched
+  ```
+
+  (A copy *could* be made to work: load all of `q`, build a new `Point` with field 0 replaced,
+  store the whole thing back. That is three steps, and it rewrites fields that did not change; the
+  address goes straight to the one field.)
+
+A write therefore needs a variable to write into, since only a variable has a slot. swiftc rejects
+`f().x = 3` ("cannot assign to property: 'f' returns immutable value"), and in our subset the
+parser only accepts a variable name before `.x =`. And because the address is computed from q's
+slot, writing `q.x` cannot reach `p`'s.
+
+Writing a field of a `let` is rejected by a separate rule: Sema refuses it before any SIL exists,
+with swiftc's message, "cannot assign to property: 'p' is a 'let' constant".
 
 Both halves need one more thing, and it is this concept's contribution to the typed tree: **which**
 field. The source writes a *name*; what it means is a *position* in the layout, and the position is
