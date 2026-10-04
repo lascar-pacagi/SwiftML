@@ -192,12 +192,16 @@ The first is the AST, as written, labels included. The second is the typed tree:
 (`Tast.Struct_init`) holds only the two values, in field order, so SILGen builds the `Point`
 without reading a label.
 
-The initializer lowers to a **`struct`** instruction that
-builds the aggregate value from its fields. LLVM has no single struct-construction instruction:
-IRGen starts with `undef`, an aggregate whose fields have no specified values, then each
-`insertvalue` produces a new aggregate with one field filled. After every field has been inserted,
-the final aggregate is the complete `Point`. The SILGen construction plumbing is given; you still
-recognize and check the source syntax, then lower the SIL instruction to LLVM.
+The initializer lowers to a **`struct`** instruction that builds the aggregate value from its
+fields. LLVM has no single struct-construction instruction: IRGen starts with `undef`, an
+aggregate whose fields have no specified values, then each `insertvalue` produces a new aggregate
+with one field filled. After every field has been inserted, the final aggregate is the complete
+`Point`.
+
+Of this path, one piece is given: SILGen's lowering of `Point(x: 1, y: 2)` to the `struct`
+instruction. Everything else about the initializer is yours: lexing and parsing the call,
+checking its labels and types in Sema, and the `struct` → `insertvalue` lowering in IRGen. SILGen
+still has holes of yours, for the field *read* and *write* (the two lowerings shown above).
 
 Here is the whole path in one small program. To illustrate both value semantics and field
 selection, it copies a `Point`, then writes all three fields and reads fields with different
