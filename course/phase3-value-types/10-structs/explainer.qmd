@@ -156,9 +156,28 @@ disagree with the layout the program was type-checked against — the two can no
 
 ### The memberwise initializer
 
-`Point(x: 1, y: 2)` is the initializer Swift synthesizes from the stored properties — one labelled
-argument per field, **in declaration order, labels required** (sema checks the labels and types; a
-missing or wrong label is an error, just like swiftc).
+An *initializer* is the code that creates a value of a type; `Point(x: 1, y: 2)` calls one. Swift
+lets a struct declare its own, as `init`. When a struct declares none, Swift writes one for it,
+with one parameter per stored property — per `var` field — in declaration order. For `Point`,
+that is as if you had written:
+
+```swift
+struct Point {
+  var x: Int
+  var y: Int
+  init(x: Int, y: Int) {   // written by Swift, not by you
+    self.x = x
+    self.y = y
+  }
+}
+```
+
+Hence the name *memberwise*: one argument per member. Its parameters are named after the fields,
+and in Swift a parameter's name is also the label the call must write, so the call is
+`Point(x: 1, y: 2)`: labels required, in field order. Sema checks the labels and the types, and a
+missing or wrong label is an error, as in swiftc. In our subset the struct cannot declare an
+`init` of its own (that is a v1 feature), so this memberwise one is the only way to make a
+`Point`.
 
 A label only says which field a value goes into, and once Sema has checked `x:` against field 0
 and `y:` against field 1, the *order* of the values says the same thing. So, like the field name
