@@ -153,14 +153,27 @@ $ ./lab.exe --emit-tast p.swift | tail -1
 
 `#1` is the answer SILGen consumes. It performs no lookup of its own, which also means it cannot
 disagree with the layout the program was type-checked against — the two can no longer drift apart.
-The memberwise initializer resolves the same way: its labels are checked here and then **discharged**,
-leaving `Tast.Struct_init` with the values in layout order, because that is all a label ever meant.
 
 ### The memberwise initializer
 
 `Point(x: 1, y: 2)` is the initializer Swift synthesizes from the stored properties — one labelled
 argument per field, **in declaration order, labels required** (sema checks the labels and types; a
-missing or wrong label is an error, just like swiftc). It lowers to a **`struct`** instruction that
+missing or wrong label is an error, just like swiftc).
+
+A label only says which field a value goes into, and once Sema has checked `x:` against field 0
+and `y:` against field 1, the *order* of the values says the same thing. So, like the field name
+in `p.y` above, the labels stop at the checker. The two trees for `let p = Point(x: 1, y: 2)`:
+
+```
+(let p (Point x:1 y:2))
+(let p (init Point (int_lit 1 : Int) (int_lit 2 : Int) : Point))
+```
+
+The first is the AST, as written, labels included. The second is the typed tree: its `init`
+(`Tast.Struct_init`) holds only the two values, in field order, so SILGen builds the `Point`
+without reading a label.
+
+The initializer lowers to a **`struct`** instruction that
 builds the aggregate value from its fields. LLVM has no single struct-construction instruction:
 IRGen starts with `undef`, an aggregate whose fields have no specified values, then each
 `insertvalue` produces a new aggregate with one field filled. After every field has been inserted,
