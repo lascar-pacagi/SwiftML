@@ -463,7 +463,24 @@ let parse_struct (parser : t) : Ast.struct_decl =
         let token = peek parser in
         Diagnostics.error parser.diagnostics token.Token.span
           "expected a stored property: 'var name: Type'";
-        ignore (advance parser);
+        (* skip the whole member, reporting it once: up to the end of its line, stepping over
+           any `{ … }` it carries, so that the body's own `}` does not end the struct *)
+        let rec skip depth =
+          match peek_kind parser with
+          | Token.Eof -> ()
+          | Token.Newline when depth = 0 -> ()
+          | Token.RBrace when depth = 0 -> ()
+          | Token.LBrace ->
+              ignore (advance parser);
+              skip (depth + 1)
+          | Token.RBrace ->
+              ignore (advance parser);
+              skip (depth - 1)
+          | _ ->
+              ignore (advance parser);
+              skip depth
+        in
+        skip 0;
         loop accumulator
   in
   let fields = loop [] in

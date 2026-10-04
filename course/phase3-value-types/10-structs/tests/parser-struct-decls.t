@@ -46,6 +46,23 @@ Only `var` and `let` introduce stored properties in this subset.
   struct P { x: Int }
              ^
 
+A member that is not a stored property, here an `init` (not in this subset), is reported once;
+the parser skips it, body included, and the rest of the program still parses.
+
+  $ cat > bad-member.swift <<'EOF'
+  > struct P {
+  >   var x: Int
+  >   init(x: Int) { self.x = x }
+  >   var y: Int
+  > }
+  > let p = P(x: 1, y: 2)
+  > EOF
+  $ python3 timeout.py 2 ./lab.exe --emit-ast bad-member.swift 2>&1
+  3:3: error: expected a stored property: 'var name: Type'
+    init(x: Int) { self.x = x }
+    ^
+  [1]
+
 A stored property needs a name and a written type.
 
   $ printf 'struct P { var : Int }\n' > bad-property-name.swift

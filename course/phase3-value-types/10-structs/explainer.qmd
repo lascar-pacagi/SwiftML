@@ -459,8 +459,10 @@ concept's contract:
 
 `parse_struct` can produce all eight declaration errors above. Six come from its calls to
 `parse_ident` and the given `expect` helper. It emits the stored-property and declaration-separator
-messages directly. When it encounters an unexpected field introducer, it consumes that token and
-continues looking for the next property or the closing brace.
+messages directly. A member must begin with `var` or `let`; when one begins with anything else,
+say an `init` (not in this subset), report "expected a stored property" once, at that token, then
+skip the whole member — to the end of its line, stepping over any `{ … }` it carries, so that its
+own `}` is not mistaken for the struct's — and go on with the next one.
 
 ### The diagnostics Sema owes you
 
