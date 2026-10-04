@@ -1,8 +1,9 @@
-TODO(10e) struct expressions — a memberwise initializer checks one labeled value per field,
-in declaration order, and a member read obtains its type from the registered layout.
+TODO(10e) struct expressions — a member read obtains its type from the registered layout. The
+memberwise initializer's checks (one labeled value per field, in declaration order) are given
+code, tested here because they need the registry and the member read.
 
 A member read gets its result type from the field layout. Function parameters let this case test
-`Ast.Member` without using the memberwise initializer implemented later in the same hole.
+`Ast.Member` without building a struct value.
 
   $ cat > member-types.swift <<'EOF'
   > struct Pair {

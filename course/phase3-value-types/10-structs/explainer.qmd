@@ -198,12 +198,6 @@ aggregate whose fields have no specified values, then each `insertvalue` produce
 with one field filled. After every field has been inserted, the final aggregate is the complete
 `Point`.
 
-For the initializer, two pieces are given: Sema's check of the labels and types (once it can
-find the struct's layout), and SILGen's lowering of the call to the `struct` instruction. Yours
-are parsing the labelled arguments (TODO 10c), registering the struct layouts that check reads
-(10d), and the `struct` → `insertvalue` lowering in IRGen (10i). SILGen still has two holes of
-yours, the field *read* and *write* (10g and 10h, the two lowerings shown above).
-
 Here is the whole path in one small program. To illustrate both value semantics and field
 selection, it copies a `Point`, then writes all three fields and reads fields with different
 indices and LLVM types. The writes change only `q`:
@@ -498,40 +492,62 @@ machinery is the natural place to generalize), and `print` of a `Double` goes th
 
 ## 3. Build it, step by step
 
-- **`token.ml` + `lexer.ml`, TODO(10a)** — add `struct` to `keyword_or_ident`. In the lexer, keep
-  `..<` as the longest token beginning with `.`, otherwise emit `Dot`; turn `;` into `Newline` so
-  all later separator logic stays shared.
-- **`parser.ml`, TODO(10b)** — consume `struct Name { ... }`, accumulating stored properties in
-  source order. Each field records its name, written type, and whether its introducer was `var`.
-  Newlines and semicolons are already the same token by this point, and `skip_newlines parser`
-  (given, beside `expect`) walks past a run of them.
-- **`parser.ml`, TODO(10c)** — after a primary, repeatedly consume `.field`; before parsing a call
-  argument, recognize the two-token `label:` prefix; and recognize `name.field = expr` before the
-  ordinary expression-statement fallback.
-- **`sema.ml`, TODO(10d)** — make two passes over struct declarations: register every name with an
-  empty layout, then resolve field types and install the ordered layouts. The first pass permits a
-  field to use a struct declared later. Record `let` fields separately for assignment checking.
-- **`sema.ml`, TODO(10e)** — infer a member read from the base struct's layout. For a memberwise
-  initializer, check arity first, then compare each argument's optional label and value type with
-  the corresponding field. The expression's result is `TStruct name`. A base of type `TError`
-  (its type was unknown and already reported, concept 07) has every member: the read is `TError`
-  and reports nothing.
-- **`sema.ml`, TODO(10f)** — resolve the base binding and the field for a write. A write needs both
-  a `var` binding and a `var` field, and its right-hand side must check against the field type.
-  Again a `TError` base reports nothing; check the right-hand side against `TError`.
-- **`silgen.ml`, TODO(10g–h)** — in `gen_expr`, the `Member (operand_expression, field_name, _)`
-  case is a **read**: lower `operand_expression` to a struct *value*, ask `value_type` which struct
-  it is, and turn the field *name* into an *index* and a *type* through the layout in
-  `builder.struct_layouts` (`Types.field_index`, `Types.field_type`);
-  the result is one `Sil.Struct_extract`. In `gen_stmt`, the `Set_member { obj; field; value }` case
-  is a **write**: the variable's own slot is in `builder.variables`, and its type names the struct; take the
-  field's address with `Sil.Struct_element_addr` and `Sil.Store` the value through it. Generate the
-  value first — that is the order swiftc uses, and the tests print the SIL.
-- **`irgen.ml`, TODO(10i)** — three instructions: `Struct` is a chain of `insertvalue` starting
-  from the unspecified aggregate `undef` (each step names the previous register, the last one is the complete value); `Struct_extract`
-  is `extractvalue`; `Struct_element_addr` is `getelementptr <struct ty>, ptr <slot>, i32 0, i32 i`.
-  `llvm_type (value_type value)` gives the LLVM type of any value; `fresh_temp ()` creates a register;
-  `lookup_operand` and `bind_operand` read and update the SIL-to-LLVM operand map.
+Structs go through every stage, so the work is nine small holes, TODO(10a) to TODO(10i), in
+pipeline order. Each has its own test file, read through a lab mode that stops right after its
+stage, so do them in this order and watch each one go green:
+
+| hole | file | you write | test file | lab mode |
+|---|---|---|---|---|
+| 10a | `token.ml`, `lexer.ml` | the `struct` keyword, `.` and `;` | `lexer-structs.t` | `--emit-tokens` |
+| 10b | `parser.ml` | a `struct` declaration | `parser-struct-decls.t` | `--emit-ast` |
+| 10c | `parser.ml` | `p.x`, `x:` labels, `p.x = e` | `parser-struct-uses.t` | `--emit-ast` |
+| 10d | `sema.ml` | the struct registry | `sema-struct-decls.t` | `--typecheck` |
+| 10e | `sema.ml` | the type of a field read | `sema-struct-exprs.t` | `--typecheck` |
+| 10f | `sema.ml` | the checks on a field write | `sema-member-write.t` | `--typecheck` |
+| 10g | `silgen.ml` | a field read → `struct_extract` | `silgen-member-read.t` | `--emit-sil` |
+| 10h | `silgen.ml` | a field write → address + `store` | `silgen-member-write.t` | `--emit-sil` |
+| 10i | `irgen.ml` | the three struct instructions | `irgen-structs.t` | `--emit-llvm`, `build` |
+
+Given, so you do not write it: the new tree and SIL nodes (`ast.ml`, `tast.ml`, `sil.ml`); in Sema,
+the check of `Point(x: 1, y: 2)` (`infer_initializer`: arity, labels, argument types) and the
+refusal of `==` and `print` on a whole struct; in SILGen, the lowering of `Point(…)` to `struct`;
+and in IRGen, the `%Point = type { i64, i64 }` declarations.
+
+- **10a — `token.ml` + `lexer.ml`.** Add `struct` to `keyword_or_ident` in `token.ml`. In the
+  lexer, a `.` is `Dot`, except that `..<` stays the one token it already is; and `;` becomes a
+  `Newline` token, so the parser keeps a single statement separator.
+- **10b — `parser.ml`.** Parse `struct Name { … }`: the stored properties in source order, each
+  with its name, its written type, and whether it began with `var` or `let`. Newlines and `;` are
+  the same token by now, and `skip_newlines parser` (given, beside `expect`) walks past a run of
+  them.
+- **10c — `parser.ml`, three places.** `parse_postfix` consumes any number of `.field` after an
+  expression, nesting `Ast.Member`; the argument parser takes an optional `label:` (an `Ident`
+  then a `Colon`) before each argument; and a statement of the form `name.field = expr` becomes an
+  `Ast.Set_member`, recognised before the expression-statement fallback.
+- **10d — `sema.ml`, the registry.** Two passes over the struct declarations: first register every
+  name with an empty layout, so a field may name a struct declared later; then resolve each field's
+  type and install the layout, fields in order. Record the `let` fields too: 10f needs them. A name
+  declared twice is an error.
+- **10e — `sema.ml`, a field read.** Infer the base; it must be a struct; find the field in its
+  layout. The result is `Tast.Field (base, index, name)`, typed with the field's type: the index is
+  what SILGen will use. An unknown field and a non-struct base are errors (§2 lists the messages).
+  A base whose type is `TError` (already reported, concept 07) has every field: return `TError` and
+  report nothing.
+- **10f — `sema.ml`, a field write.** `p.x = e` needs `p` to be a `var` and `x` a `var` field, and
+  `e` must check against the field's type. Record the field's index in `Tast.Set_member`. As in
+  10e, a `TError` base reports nothing; check `e` against `TError`.
+- **10g — `silgen.ml`, a field read.** You get `Tast.Field (operand, index, _)` and the field's
+  type `ty`. Lower `operand` to a struct value and emit one `Sil.Struct_extract (value, index)` of
+  type `ty`. There is nothing to look up: Sema already turned the name into `index`.
+- **10h — `silgen.ml`, a field write.** You get `Set_member { obj; field = index; value }`. The
+  variable's slot is in `builder.variables`; emit `Sil.Struct_element_addr (slot, index)`, typed
+  with the field's type, then `Sil.Store` the value to that address. Whether you lower the value
+  before or after taking the address does not matter; the tests accept both.
+- **10i — `irgen.ml`, three instructions.** `Struct` is a chain of `insertvalue`, starting from
+  `undef`, each step building on the previous register, the last being the complete value.
+  `Struct_extract` is one `extractvalue`. `Struct_element_addr` is
+  `getelementptr <struct type>, ptr <slot>, i32 0, i32 <index>`. `llvm_type (value_type value)`
+  gives any value's LLVM type; `fresh_temp`, `lookup_operand` and `bind_operand` work as in 09.
 
 Reference: `solution/` — after you have tried it.
 
@@ -551,9 +567,9 @@ your code here. In the order you fill the holes:
   missing member name after `.`.
 - `sema-struct-decls.t` — `--typecheck`: the two-pass registry, forward types, unknown types, and
   duplicate names.
-- `sema-struct-exprs.t` — `--typecheck`: member reads from function parameters first, so that part
-  can pass before the initializer code in the same hole; then initialization, label/arity/type
-  errors, and the two explicit backend guards.
+- `sema-struct-exprs.t` — `--typecheck`: member reads, first on function parameters, then on
+  initialized structs; the initializer's label, arity and type errors (given code, run here
+  because they need your registry and your field read); and the two explicit backend guards.
 - `sema-member-write.t` — `--typecheck`: binding mutability, field mutability, and assigned type.
 - `silgen-member-read.t` — `--emit-sil`: `p.x` is a `load` then `struct_extract … #0`; `p.y` is
   `#1` with its type; a field of a fresh `Point(…)` or of a call result extracts with no load; a
