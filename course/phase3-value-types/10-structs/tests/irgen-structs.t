@@ -50,6 +50,30 @@ Fields keep their own LLVM types: `{ double, i1 }` for a Double and a Bool:
     %t = insertvalue %M undef, double 0x3FF8000000000000, 0
     %t = insertvalue %M %t, i1 1, 1
 
+A struct with no fields still has a value: with nothing to insert, it is `undef` itself, and it
+can be stored and passed like any other. The program builds and runs.
+
+  $ cat > empty.swift <<'EOF'
+  > struct Empty {}
+  > func seven(_ e: Empty) -> Int { return 7 }
+  > let e = Empty()
+  > print(seven(e))
+  > print(seven(Empty()))
+  > EOF
+  $ ./lab.exe --emit-llvm empty.swift | grep -E 'Empty' | sed -E 's/%t[0-9]+/%t/g'
+  %Empty = type {  }
+  define i64 @seven(%Empty %arg0) {
+    %t = alloca %Empty
+    store %Empty %arg0, ptr %t
+    %t = alloca %Empty
+    store %Empty undef, ptr %t
+    %t = load %Empty, ptr %t
+    %t = call i64 @seven(%Empty %t)
+    %t = call i64 @seven(%Empty undef)
+  $ ./lab.exe build empty.swift -o empty && python3 timeout.py 5 ./empty
+  7
+  7
+
 A read `p.y` is `extractvalue %Point %v, 1` on the loaded aggregate:
 
   $ cat > read.swift <<'EOF'
