@@ -29,7 +29,9 @@ let check (prog : Ast.program) (diags : Diagnostics.sink) : Tast.program option 
   let funcs : (string, Types.ty list * Types.ty) Hashtbl.t = Hashtbl.create 16 in
   let structs : (string, Types.struct_layout) Hashtbl.t = Hashtbl.create 16 in
   let enums : (string, Types.enum_layout) Hashtbl.t = Hashtbl.create 16 in
-  let let_fields : (string * string, unit) Hashtbl.t = Hashtbl.create 16 in (* (struct, `let` field) *)
+  (* the fields declared with `let`, as (struct name, field name) pairs: a write to one
+     is refused through every binding, `var` or not *)
+  let let_fields : (string * string, unit) Hashtbl.t = Hashtbl.create 16 in
   let err span msg = Diagnostics.error diags span msg in
   let lookup x = List.assoc_opt x !env in
   let bind name v = env := (name, v) :: !env in

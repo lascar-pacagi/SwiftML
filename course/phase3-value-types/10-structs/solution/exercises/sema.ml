@@ -41,6 +41,8 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
   let struct_layouts : (string, Types.struct_layout) Hashtbl.t =
     Hashtbl.create 16
   in
+  (* the fields declared with `let`, as (struct name, field name) pairs: a write to one
+     is refused through every binding, `var` or not *)
   let immutable_fields : (string * string, unit) Hashtbl.t =
     Hashtbl.create 16
   in
@@ -56,7 +58,6 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
   (* EX1: inside a method body, the struct it belongs to and whether it is `mutating` *)
   let current_self : (string * bool) option ref = ref None in
   let function_name_of struct_name member = struct_name ^ "." ^ member in
-  (* (struct, `let` field) *)
   let report_error span message = Diagnostics.error diagnostics span message in
   let lookup_binding name = List.assoc_opt name !environment in
   let bind_name name binding = environment := (name, binding) :: !environment in
