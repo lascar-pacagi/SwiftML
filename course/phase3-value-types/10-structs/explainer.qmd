@@ -198,10 +198,11 @@ aggregate whose fields have no specified values, then each `insertvalue` produce
 with one field filled. After every field has been inserted, the final aggregate is the complete
 `Point`.
 
-Of this path, one piece is given: SILGen's lowering of `Point(x: 1, y: 2)` to the `struct`
-instruction. Everything else about the initializer is yours: lexing and parsing the call,
-checking its labels and types in Sema, and the `struct` → `insertvalue` lowering in IRGen. SILGen
-still has holes of yours, for the field *read* and *write* (the two lowerings shown above).
+For the initializer, two pieces are given: Sema's check of the labels and types (once it can
+find the struct's layout), and SILGen's lowering of the call to the `struct` instruction. Yours
+are parsing the labelled arguments (TODO 10c), registering the struct layouts that check reads
+(10d), and the `struct` → `insertvalue` lowering in IRGen (10i). SILGen still has two holes of
+yours, the field *read* and *write* (10g and 10h, the two lowerings shown above).
 
 Here is the whole path in one small program. To illustrate both value semantics and field
 selection, it copies a `Point`, then writes all three fields and reads fields with different
