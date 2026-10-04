@@ -433,7 +433,8 @@ type item =
 
 In a `Call`, `Some "x"` preserves the label in `Point(x: 1)`, while `None` represents the
 positional argument in `add(1)`. `Member (base, "x", span)` can nest, so `line.b.x` becomes a
-`Member` whose base is another `Member`. `Set_member` deliberately stores `obj` as a name rather
+`Member` whose base is another `Member` (for a *read* only: a nested *write*, `line.b.x = 1`, is
+not in this subset, as said above). `Set_member` deliberately stores `obj` as a name rather
 than an arbitrary expression because this first version accepts only one-level writes such as
 `p.x = value`. A field keeps its written type name for Sema to resolve. Its `fld_var` Boolean is
 `true` when the declaration begins with `var` and `false` when it begins with `let`; Sema uses it
