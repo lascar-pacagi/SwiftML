@@ -595,10 +595,11 @@ from and which value is stored, not the spelling of `%6` or `%t3`, and they acce
 for two independent instructions, such as generating the stored value before or after the field
 address. Those choices do not change what the SIL or LLVM means.
 
-**A hole can read `FAIL` before you touch it.** Several holes in the skeleton fall back to the old
-behaviour instead of stopping at a `TODO`: until 10a, `struct` lexes as a plain identifier, so a
-program declaring a struct produces wrong output rather than reaching a `TODO`, and the report
-prints the differences. Fill the holes in order and read only the first red file.
+**Each hole goes green on its own, in order.** An unwritten hole stops at its `TODO`, so on the
+untouched skeleton every file reads `TODO`. Fill 10a and `lexer-structs.t` passes; 10b–10c and
+the two parser files pass; 10d–10f the three Sema files, and the front-end half of `oracle.t`
+(it reads `WAIT` until the rest is done); 10g–10h the two SILGen files; 10i the rest. A file that
+reads `FAIL` is therefore always about code you wrote.
 
 ## 5. Benchmark it
 

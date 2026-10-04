@@ -251,13 +251,13 @@ let rec next (lexer : t) : Token.t =
             make_token start_position lexer Token.DotDotLt)
           else (
             (* TODO(10a): a lone dot is member access; preserve the existing `..<` case. *)
-            report_error lexer start_position "unexpected character '.'";
-            next lexer)
+            failwith "TODO(10a): lex a lone `.` as Dot")
       | '\n' ->
           ignore (advance_char lexer);
           make_token start_position lexer Token.Newline
       (* TODO(10a): Swift also accepts `;` as a statement separator. Return the same token as
          a physical newline so the parser needs no second separator grammar. *)
+      | ';' -> failwith "TODO(10a): lex `;` as a statement separator"
       | _ ->
           (* swiftc's `diag::lex_invalid_character`; drop the byte and lex on *)
           ignore (advance_char lexer);

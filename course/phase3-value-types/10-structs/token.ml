@@ -117,6 +117,6 @@ let keyword_or_ident (text : string) : kind =
   | "continue" -> Kw_continue
   | "func" -> Kw_func
   | "return" -> Kw_return
-  (* TODO(10a): classify `struct` as its keyword token (§2). Until then it follows the
-     ordinary-identifier path below. *)
+  (* TODO(10a): classify `struct` as its keyword token (§2). *)
+  | "struct" -> failwith "TODO(10a): classify `struct` as a keyword"
   | _ -> Ident text

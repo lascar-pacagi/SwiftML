@@ -179,8 +179,8 @@ let rec parse_expr_bp (parser : t) (minimum_binding_power : int) : Ast.expr =
 (* TODO(10c): consume a repeated `.field` suffix and wrap [expression] in Ast.Member nodes. Postfix
    syntax binds tighter than every infix operator because this runs before [loop] above. *)
 and parse_postfix (parser : t) (expression : Ast.expr) : Ast.expr =
-  ignore parser;
-  expression
+  if peek_kind parser = Token.Dot then failwith "TODO(10c): parse a `.field` member read"
+  else expression
 
 (* call/init arguments: each is `[label:] expr` (the label is an Ident followed by ':') *)
 and parse_call_args (parser : t) : Ast.arg list =
@@ -189,7 +189,12 @@ and parse_call_args (parser : t) : Ast.arg list =
     let rec loop accumulator =
       (* TODO(10c): if the next two tokens are `Ident` `Colon`, consume them and keep the
          identifier as [Some label]. Ordinary function arguments remain [None]. *)
-      let label = None in
+      let label =
+        match peek_kind parser with
+        | Token.Ident _ when peek_kind_at parser 1 = Token.Colon ->
+            failwith "TODO(10c): parse an argument label `name:`"
+        | _ -> None
+      in
       let expression = parse_expr_bp parser 0 in
       let argument = (label, expression) in
       if peek_kind parser = Token.Comma then (
@@ -330,6 +335,9 @@ and parse_statement (parser : t) : Ast.stmt =
         }
   (* TODO(10c): before the fallback below, recognize `Ident Dot Ident Eq` as the one-level
      member assignment [Ast.Set_member]. *)
+  | Token.Ident _
+    when peek_kind_at parser 1 = Token.Dot && peek_kind_at parser 3 = Token.Eq ->
+      failwith "TODO(10c): parse a member write `p.x = e`"
   | _ ->
       let expression = parse_expr parser in
       Ast.Expr_stmt (expression, Ast.expr_span expression)
