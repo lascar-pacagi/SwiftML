@@ -50,3 +50,9 @@ with older constructs, struct construction in SILGen, and the Phase-2 compiler c
 Alcotest groups, and `oracle.t` — every program in `oracle-corpus.txt` compiled by
 `swiftc` and by `./lab.exe build`, run, and compared byte for byte (value semantics: `q.x = 99`
 leaves `p.x` unchanged; structs into and out of functions; nested structs; writes in loops).
+
+`solution/exercises/` holds the answer key with §6's exercises applied: 1 (methods and
+`mutating`, with `self` passed by address) reaches `token`, `ast`, `parser`, `tast`, `sema`, `sil`,
+`silgen` and `irgen`; 2 (computed properties) and 3 (`Equatable`) are `parser` and `sema`.
+`make check-exercises C=phase3-value-types/10-structs` builds and runs it, and this concept's own
+suite passes with it unchanged.

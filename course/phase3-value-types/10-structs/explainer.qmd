@@ -554,56 +554,47 @@ Reference: `solution/` — after you have tried it.
 ## 4. Test it
 
 ```bash
-make lab C=phase3-value-types/10-structs
+make lab C=phase3-value-types/10-structs        # add T=sema-struct-exprs to run one file
 ```
 
 Every `.t` file calls `./lab.exe`, built from **this directory's** library, so the report is about
-your code here. In the order you fill the holes:
+your code here. One file per hole, in the order of §3, then the files that build and run:
 
-- `lexer-structs.t` — `--emit-tokens`: `struct`, a lone `.`, the existing `..<`, and `;`.
-- `parser-struct-decls.t` — `--emit-ast`: ordered `var`/`let` stored properties and written types,
-  plus each declaration-specific parser diagnostic listed in §2.
-- `parser-struct-uses.t` — `--emit-ast`: initializer labels, chained reads, one-level writes, and a
-  missing member name after `.`.
-- `sema-struct-decls.t` — `--typecheck`: the two-pass registry, forward types, unknown types, and
-  duplicate names.
-- `sema-struct-exprs.t` — `--typecheck`: member reads, first on function parameters, then on
-  initialized structs; the initializer's label, arity and type errors (given code, run here
-  because they need your registry and your field read); and the two explicit backend guards.
-- `sema-member-write.t` — `--typecheck`: binding mutability, field mutability, and assigned type.
-- `silgen-member-read.t` — `--emit-sil`: `p.x` is a `load` then `struct_extract … #0`; `p.y` is
-  `#1` with its type; a field of a fresh `Point(…)` or of a call result extracts with no load; a
-  nested `l.b.x` is two extracts; a read inside a function goes through the parameter's slot. No
-  case writes a field, so this file goes green with the read hole alone.
-- `silgen-member-write.t` — `--emit-sil`: `p.x = 9` is `struct_element_addr %slot, #0` and a
-  `store`; the right-hand side and field address may be generated in either order; two writes
-  share one slot; after `var q = p` the write addresses **q's** slot (value semantics, visible in
-  the SIL); a write in a loop. No case reads a field.
-- `irgen-structs.t` — `--emit-llvm` then `build`: the named type, the `insertvalue` chain (this
-  first case needs no silgen hole), nested and mixed-type aggregates, `extractvalue`,
-  `getelementptr`; then programs **run**: 3/4, the value-semantics `1`/`99`, by-value argument,
-  struct result, field writes in a loop, and the `Double`-field case that pins a miscompile.
-- `test_structs.ml` (Alcotest `structs`) — the same nine TODO groups in process. Its lexer and parser
-  groups stop before Sema, so early work remains testable while later holes are unfinished.
-- `oracle.t` — **the headline**, in two halves. The runtime half compiles the 16 programs of
-  `oracle-corpus.txt` (value semantics, copies of nested structs, structs into and out of
-  functions, field writes in loops, Bool fields) with `swiftc -Onone` and with `./lab.exe build`,
-  runs both binaries, and demands identical stdout and exit code; when ours refuses with a
-  `TODO(` the loop stops, so it stays red until the last hole is filled. The front-end half asks
-  `swiftc -typecheck` and `./lab.exe --typecheck` for a verdict on the 20 programs of
-  `typecheck-corpus.txt` — six well-formed, fourteen the struct rules must refuse — and they must
-  agree; that half becomes green after the frontend holes and needs no lowering.
-- `test_exercises.ml` (Alcotest `exercises-10`) — methods, computed properties, and synthesized
-  equality. Each optional group activates separately and runs generated programs with a deadline.
+| file | lab mode | green with | what it pins |
+|---|---|---|---|
+| `lexer-structs.t` | `--emit-tokens` | 10a | `struct` as a keyword, a lone `.`, the existing `..<`, and `;` |
+| `parser-struct-decls.t` | `--emit-ast` | 10b | `var`/`let` stored properties in order with their written types, and the declaration errors of §2 |
+| `parser-struct-uses.t` | `--emit-ast` | 10c | initializer labels, chained reads, one-level writes, a missing member name after `.` |
+| `sema-struct-decls.t` | `--typecheck` | 10d | the two-pass registry, a field typed by a struct declared later, unknown types, duplicate names |
+| `sema-struct-exprs.t` | `--typecheck` | 10e | member reads, first on function parameters, then on built structs; the initializer's label, arity and type errors (given code, run here because it needs your registry); the refusal of `==` and `print` on a whole struct |
+| `sema-member-write.t` | `--typecheck` | 10f | a `let` binding, a `let` field, the assigned value's type |
+| `silgen-member-read.t` | `--emit-sil` | 10g | `p.x` is a `load` then `struct_extract #0`; `p.y` is `#1`; a field of a fresh `Point(…)` or a call result needs no `load`; `l.b.x` is two extracts; a read inside a function |
+| `silgen-member-write.t` | `--emit-sil` | 10h | `p.x = 9` is `struct_element_addr #0` of p's slot, then `store`; two writes to one slot; after `var q = p`, a write addresses **q's** slot; a write in a loop |
+| `irgen-structs.t` | `--emit-llvm`, `build` | 10i | the named type, the `insertvalue` chain, `extractvalue`, `getelementptr`; then programs **run**: 3/4, the value-semantics `1`/`99`, a struct argument and result, writes in a loop, a `Double` field |
+| `oracle.t` | `build`, `--typecheck` | all | **the headline**: below |
 
-The focused lowering tests compare field indices and data-flow relationships, not the spelling of
-temporary values such as `%6` or `%t3`. They also accept either order for two independent
-instructions. Those choices do not change the SIL or LLVM meaning.
+`oracle.t` has two halves. The first builds the 16 programs of `oracle-corpus.txt` with
+`swiftc -Onone` and with `./lab.exe build`, runs both, and requires the same output and exit code.
+The second asks both compilers for a verdict on the 20 programs of `typecheck-corpus.txt`, six
+that swiftc accepts and fourteen it rejects, and requires the same verdict. The second half needs
+only the front-end holes, 10a–10f.
 
-A hole you have not started shows as `TODO` with the list of what it will check; a hole in
-progress shows `FAIL` with, under each failing case, what the test wants and what your code
-printed. On the untouched skeleton, TODO(10a) is the first red stage. Each focused Cram file can be
-run alone with `T=<filename>` as you move through 10a–10i.
+Two suites run in-process. `test_structs.ml` (`structs`) has one group per test file above, named
+after it; its lexer and parser groups stop before Sema, so early holes can pass while later ones
+are unwritten. `test_exercises.ml` (`exercises-10`) holds the three optional §6 exercises, each
+group skipping itself until it sees that exercise started.
+
+### Two things worth knowing before you read a red report
+
+**The lowering tests compare relationships, not names.** They check which slot an address comes
+from and which value is stored, not the spelling of `%6` or `%t3`, and they accept either order
+for two independent instructions, such as generating the stored value before or after the field
+address. Those choices do not change what the SIL or LLVM means.
+
+**A hole can read `FAIL` before you touch it.** Several holes in the skeleton fall back to the old
+behaviour instead of stopping at a `TODO`: until 10a, `struct` lexes as a plain identifier, so a
+program declaring a struct produces wrong output rather than reaching a `TODO`, and the report
+prints the differences. Fill the holes in order and read only the first red file.
 
 ## 5. Benchmark it
 
@@ -674,8 +665,13 @@ self-detecting suite. They also appear in `make lab` as `TODO (optional)` until 
    (`struct_element_addr` territory) so it can write fields. This is how Swift threads `self`.
 2. **Computed properties.** `var area: Int { return w * h }` — a property with a getter, lowered to a
    call, not a stored field. Distinguish stored vs. computed in the layout.
-3. **`Equatable`.** Synthesize `==` for a struct (compare fields pairwise) — a first taste of Swift's
-   protocol-conformance synthesis (full protocols are Phase 5, concept 21).
+3. **`Equatable`.** Let `struct Pair: Equatable { … }` use `==` and `!=`, by synthesizing `==`
+   from the fields, compared pairwise — a first taste of Swift's protocol-conformance synthesis
+   (full protocols are Phase 5, concept 21). As in swiftc, a struct that does not declare
+   `: Equatable` still has no `==`, and every stored property must be `Equatable` itself.
+
+The answer key is `solution/exercises/`; `make check-exercises C=phase3-value-types/10-structs`
+builds it and runs both the exercise tests and this concept's own suite with it.
 
 ## 7. Recap & what's next
 
@@ -818,25 +814,76 @@ in `solution/sema.ml`.
 
 ## 9. Exercise solutions
 
+The answer key, `solution/exercises/`, applies all three, and every difference from the stock key
+is marked `EX1`, `EX2` or `EX3`. All three are lowered in Sema, to the functions the compiler
+already knows how to lower: a method is an ordinary function with `self` as its first parameter.
+So SILGen and IRGen learn only one new thing, passing an argument by address (exercise 1).
+
 ### 1 — methods and `mutating`
 
-Parse a `func` inside a `struct` body; lower it to a SIL function named e.g. `Point.dist` with an
-extra first parameter `self`. A **non-mutating** method takes `self` by value (a copy — reads only); a
-**`mutating`** method takes `self` by **address** (a pointer to the caller's slot) so its
-`self.x = …` writes back via `struct_element_addr`. A call `p.dist()` passes `p` (by value) or `&p`
-(its address, for mutating) as the first argument. This is exactly how Swift desugars methods.
+The parser accepts `func` and `mutating func` in a struct body, and `recv.m(args)` after an
+expression (`Ast.Method_call`). Sema turns a method `m` of `S` into the function `S.m`, with `self`
+first:
+
+```swift
+struct Counter {
+  var value: Int
+  func read() -> Int { return self.value }
+  mutating func increment() { self.value = self.value + 1 }
+}
+```
+
+becomes the functions `Counter.read(self)` and `Counter.increment(self)`, and `counter.read()` is
+the call `Counter.read(counter)`. Inside a method, a bare property or method name means
+`self.name`, so `value = value + 1` works too.
+
+A non-`mutating` method takes `self` by value, a copy, and Sema binds it as a `let`: writing
+`self.value` there is refused, with swiftc's "cannot assign to property: 'self' is immutable". A
+`mutating` method must change the caller's variable, so it takes `self` by **address**: the call
+passes the receiver's slot (`Tast.Address_of`), and inside the method `self` *is* that slot, with
+no copy of its own. The SIL shows it, with swiftc's `$*` spelling for an address type:
+
+```
+sil @Counter.increment(%0 : $*Counter) -> $() {
+bb0:
+  %1 = load %0 $Counter               // read through the caller's slot
+  %2 = struct_extract %1, #0 $Int
+  %3 = integer_literal $Int, 1
+  %4 = binop "+" %2, %3 $Int
+  %5 = struct_element_addr %0, #0     // and write back into it
+  store %4 to %5
+  return
+}
+```
+
+The receiver must be storage that can change: a `var`, or a path of `var` fields inside one
+(`line.end.bump()` passes the address of `end` inside `line`'s slot). A `let`, a `let` field or a
+call result is refused with swiftc's wording, e.g. "cannot use mutating member on immutable value:
+'box' is a 'let' constant". In LLVM the address parameter is a `ptr`, and since an argument's SIL
+type is that of what it points at, IRGen takes each call's argument types from the callee's
+signature.
+
+Why not copy `self` back after the call instead? That works only for a `mutating` method that
+returns nothing. `print(counter.bump())`, with `bump` both changing `self` and returning a value,
+needs two results from one call, and the address gives them for free. swiftc passes `self` by
+address for the same reason (an `@inout` parameter).
 
 ### 2 — computed properties
 
-Add a `computed` flag (or a separate list) to the layout: a computed property has a getter body, not a
-slot. Member access on a computed property lowers to a **call** to the getter, not a `struct_extract`.
-Stored and computed properties read the same at the call site (`p.area`), which is the point — uniform
-access.
+`var area: Int { return width * height }` in a struct body is parsed as a computed property. It
+has no storage, so the layout keeps only the stored fields (`%Rectangle = type { i64, i64 }`).
+Sema makes its body a getter, the function `Rectangle.area(self)`, and a read `r.area` that finds
+no stored field named `area` becomes a call to it. Stored and computed properties read the same at
+the use site, which is the point: uniform access. Assigning to one is refused, "cannot assign to
+property: 'area' is a get-only property".
 
 ### 3 — `Equatable`
 
-When a struct is used with `==`, synthesize a function that returns the `&&` of `a.fᵢ == b.fᵢ` over all
-fields. Register it so `infer_binary`'s `Eq` case accepts two `TStruct sn` operands. This is the
-gentlest case of Swift's *derived conformances*; the general mechanism (protocols + witness tables) is
-Phase 5 (concept 21).
-```
+`struct Pair: Equatable { var first: Int; var second: Bool }` is parsed with its conformance list.
+Sema checks that every stored property is `Equatable` (the scalar types, or a struct that declared
+it), else "type 'Pair' does not conform to protocol 'Equatable'". The first `a == b` on a `Pair`
+synthesizes the function `Pair.__eq(a, b)`, the `&&` of the fields' comparisons, so it stops at
+the first field that differs; a struct field compares through its own `__eq`. `a == b` is a call
+to it, and `a != b` compares that call with `false`. Without `: Equatable`, `==` on a struct is
+still the error it was. One gap remains, and it is this concept's, not the exercise's: comparing
+two `String`s is not lowered by this back end, so neither is a `String` field.

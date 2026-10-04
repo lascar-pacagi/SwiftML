@@ -56,7 +56,27 @@ let test_methods () =
        box.clear()"
   in
   Alcotest.(check bool)
-    "a let value cannot call a mutating method" true (mutating_let.status <> 0)
+    "a let value cannot call a mutating method" true (mutating_let.status <> 0);
+  (* a mutating method may return a value, and may be reached through a field: both need the
+     receiver's ADDRESS, which copying `self` back after the call cannot provide *)
+  let through_field =
+    Exercise_test_support.build_and_run
+      "struct Point {\n\
+      \  var x: Int\n\
+      \  mutating func bump() -> Int {\n\
+      \    x = x + 1\n\
+      \    return x\n\
+      \  }\n\
+       }\n\
+       struct Line { var start: Point; var end: Point }\n\
+       var line = Line(start: Point(x: 1), end: Point(x: 5))\n\
+       print(line.end.bump())\n\
+       print(line.end.x)\n\
+       print(line.start.x)"
+  in
+  Alcotest.(check int) "mutating through a field compiles" 0 through_field.status;
+  Alcotest.(check string)
+    "the field changes, its neighbour does not" "6\n6\n1\n" through_field.stdout
 
 let computed_program =
   "struct Rectangle {\n\
@@ -80,10 +100,18 @@ let test_computed_properties () =
   let ir = Exercise_test_support.lab [ "--emit-llvm" ] computed_program in
   Alcotest.(check bool)
     "the layout contains only the two stored fields" true
-    (Exercise_test_support.contains ir.stdout "%Rectangle = type { i64, i64 }")
+    (Exercise_test_support.contains ir.stdout "%Rectangle = type { i64, i64 }");
+  let assigned =
+    Exercise_test_support.lab [ "--typecheck" ]
+      (computed_program ^ "\nvar copy = rectangle\ncopy.area = 3")
+  in
+  Alcotest.(check bool)
+    "a computed property cannot be assigned" true
+    (Exercise_test_support.contains assigned.stderr "is a get-only property")
 
+(* swiftc synthesizes `==` only for a struct that DECLARES the conformance *)
 let equatable_program =
-  "struct Pair { var first: Int; var second: Bool }\n\
+  "struct Pair: Equatable { var first: Int; var second: Bool }\n\
    let a = Pair(first: 1, second: true)\n\
    let b = Pair(first: 1, second: true)\n\
    let c = Pair(first: 2, second: true)\n\
@@ -103,13 +131,21 @@ let test_equatable () =
     "every field participates" "true\nfalse\n" result.stdout;
   let bool_differs =
     Exercise_test_support.build_and_run
-      "struct Pair { var first: Int; var second: Bool }\n\
+      "struct Pair: Equatable { var first: Int; var second: Bool }\n\
        let a = Pair(first: 1, second: true)\n\
        let b = Pair(first: 1, second: false)\n\
        print(a == b)"
   in
   Alcotest.(check string)
-    "a later field participates too" "false\n" bool_differs.stdout
+    "a later field participates too" "false\n" bool_differs.stdout;
+  let undeclared =
+    Exercise_test_support.lab [ "--typecheck" ]
+      "struct Pair { var first: Int }\n\
+       let a = Pair(first: 1)\n\
+       print(a == a)"
+  in
+  Alcotest.(check bool)
+    "without `: Equatable`, == is still refused" true (undeclared.status <> 0)
 
 let () =
   Alcotest.run "exercises-10"
