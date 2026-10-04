@@ -387,8 +387,9 @@ arg         ::= [ ident ":" ] expr                                 <-- new (argu
 ```
 
 Three things to notice. A `struct` declaration is an **item**, not a statement — like `func`, it is
-legal only at top level, so `parse_program` dispatches on `Kw_struct` and everything else still
-goes to `parse_statement`. The member *write* is a **statement production**, not an assignment to an
+legal only at top level, so `parse_program` gains one case: it already sends `Kw_func` to
+`parse_function`, now sends `Kw_struct` to the struct parser, and everything else still goes to
+`parse_statement`. The member *write* is a **statement production**, not an assignment to an
 arbitrary expression: the parser commits to it on a four-token lookahead (`ident` `.` `ident` `=`),
 which is why `l.b.x = 1` — two levels deep — is not in this subset. And a call argument may now
 carry a **label**; the parser records it for every call, sema *checks* it only for a memberwise
