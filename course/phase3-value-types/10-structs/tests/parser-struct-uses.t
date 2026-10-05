@@ -29,3 +29,12 @@ A dot without a following identifier reports that a member name is missing.
   1:3: error: expected a member name
   p.
     ^
+
+A member expression spans all of it, from its base to the end of its field name: `line.b`
+starts at `line` (column 9), not at the `.`. A diagnostic about the whole expression points at
+that start.
+
+  $ printf 'let k = line.b\nlet n = line.b.x\n' > member-span.swift
+  $ ./lab.exe --emit-spans member-span.swift
+  (. line b) 1:9-1:15
+  (. (. line b) x) 2:9-2:17
