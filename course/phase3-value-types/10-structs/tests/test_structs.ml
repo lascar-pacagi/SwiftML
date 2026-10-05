@@ -376,6 +376,12 @@ let test_llvm_construction () =
   ir_has (point ^ "let p = Point(x: 1, y: 2)")
     "insertvalue %Point undef, i64"
 
+(* with no field to insert, the value is `undef` itself — stored and passed like any other *)
+let test_llvm_empty_struct () =
+  let src = "struct Empty {}\nfunc seven(_ e: Empty) -> Int { return 7 }\nprint(seven(Empty()))" in
+  ir_has src "%Empty = type {";
+  ir_has src "call i64 @seven(%Empty undef)"
+
 let test_llvm_extract () =
   ir_has (point ^ "var p = Point(x: 1, y: 2)\nprint(p.x)")
     "extractvalue %Point"
@@ -448,6 +454,8 @@ let () =
           Alcotest.test_case "nested struct type" `Quick test_llvm_nested_type;
           Alcotest.test_case "insertvalue construction" `Quick
             test_llvm_construction;
+          Alcotest.test_case "no fields: the value is undef" `Quick
+            test_llvm_empty_struct;
           Alcotest.test_case "extractvalue member read" `Quick test_llvm_extract;
           Alcotest.test_case "getelementptr member write" `Quick
             test_llvm_element_address;
