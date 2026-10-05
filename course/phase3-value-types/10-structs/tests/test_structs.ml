@@ -235,7 +235,21 @@ let test_recursive_struct () =
   (* holding a cycle it is not on: the check must remember what it visited, or never end *)
   has_error
     "struct A {\n  var b: B\n}\nstruct B {\n  var c: C\n}\nstruct C {\n  var b: B\n}"
-    "value type 'A' has infinite size"
+    "value type 'A' has infinite size";
+  (* one message per struct: two fields leading back still report it once, and a struct on a
+     cycle gets only the cycle message, even if it also holds another cycle *)
+  Alcotest.(check (list string))
+    "once per struct"
+    [ "value type 'A' cannot have a stored property that recursively contains it" ]
+    (errors "struct A {\n  var a1: A\n  var a2: A\n}");
+  Alcotest.(check (list string))
+    "on a cycle wins over infinite size"
+    [ "value type 'A' cannot have a stored property that recursively contains it";
+      "value type 'B' cannot have a stored property that recursively contains it";
+      "value type 'C' cannot have a stored property that recursively contains it" ]
+    (errors
+       "struct A {\n  var a: A\n  var b: B\n}\nstruct B {\n  var c: C\n}\n\
+        struct C {\n  var b: B\n}")
 
 (* --- TODO(10e): initialization and reads --- *)
 let test_member_read_from_parameter () =

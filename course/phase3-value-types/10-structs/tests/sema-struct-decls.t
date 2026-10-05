@@ -139,3 +139,44 @@ the `B`–`C` cycle while checking `A` (the 2-second limit turns that into a fai
   struct C {
   ^
   [1]
+
+Each struct gets ONE message, however many of its fields lead back to it: `A` holds two `A`s.
+
+  $ cat > two-fields.swift <<'EOF'
+  > struct A {
+  >   var a1: A
+  >   var a2: A
+  > }
+  > EOF
+  $ python3 timeout.py 2 ./lab.exe --typecheck two-fields.swift
+  1:1: error: value type 'A' cannot have a stored property that recursively contains it
+  struct A {
+  ^
+  [1]
+
+A struct that is on a cycle AND holds another one gets only the cycle message, the stronger
+fact: `A` holds an `A`, and also a `B` that is on the `B`–`C` cycle.
+
+  $ cat > both.swift <<'EOF'
+  > struct A {
+  >   var a: A
+  >   var b: B
+  > }
+  > struct B {
+  >   var c: C
+  > }
+  > struct C {
+  >   var b: B
+  > }
+  > EOF
+  $ python3 timeout.py 2 ./lab.exe --typecheck both.swift
+  1:1: error: value type 'A' cannot have a stored property that recursively contains it
+  struct A {
+  ^
+  5:1: error: value type 'B' cannot have a stored property that recursively contains it
+  struct B {
+  ^
+  8:1: error: value type 'C' cannot have a stored property that recursively contains it
+  struct C {
+  ^
+  [1]
