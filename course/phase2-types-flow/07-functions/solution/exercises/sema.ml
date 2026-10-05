@@ -35,6 +35,8 @@ and block_returns statements =
 
 let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.program option =
   (* a scope stack: innermost binding first, so List.assoc_opt finds the closest one *)
+  (* every name in scope, innermost first, with its type and whether it can be assigned:
+     true for a `var`, false for a `let` or a parameter *)
   let environment : (string * (Types.ty * bool)) list ref = ref [] in
   let loop_depth = ref 0 in
   (* `current_return_type` — None means "not inside a function"; Some t means "inside

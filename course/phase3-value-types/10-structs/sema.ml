@@ -23,6 +23,8 @@
    of that is re-derived downstream. PLAN.md §0.1. *)
 
 let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.program option =
+  (* every name in scope, innermost first, with its type and whether it can be assigned:
+     true for a `var`, false for a `let` or a parameter *)
   let environment : (string * (Types.ty * bool)) list ref = ref [] in
   let loop_depth = ref 0 in
   let current_return_type : Types.ty option ref = ref None in
