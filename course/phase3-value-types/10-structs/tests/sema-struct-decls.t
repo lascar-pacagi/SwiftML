@@ -112,3 +112,30 @@ One struct holding another, with no way back, is fine: `A` holds a `B`, and `B` 
   > }
   > EOF
   $ ./lab.exe --typecheck no-cycle.swift
+
+A struct that is not on a cycle but HOLDS one is infinite too: `A` holds a `B`, and `B` and `C`
+hold each other. The check must keep track of the structs it has visited, or it never ends on
+the `B`–`C` cycle while checking `A` (the 5-second limit turns that into a failure).
+
+  $ cat > reaches-cycle.swift <<'EOF'
+  > struct A {
+  >   var b: B
+  > }
+  > struct B {
+  >   var c: C
+  > }
+  > struct C {
+  >   var b: B
+  > }
+  > EOF
+  $ python3 timeout.py 5 ./lab.exe --typecheck reaches-cycle.swift
+  1:1: error: value type 'A' has infinite size
+  struct A {
+  ^
+  4:1: error: value type 'B' cannot have a stored property that recursively contains it
+  struct B {
+  ^
+  7:1: error: value type 'C' cannot have a stored property that recursively contains it
+  struct C {
+  ^
+  [1]

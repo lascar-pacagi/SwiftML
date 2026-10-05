@@ -155,7 +155,12 @@ let test_parse_struct_decl () =
   Alcotest.(check string)
     "ordered fields retain var/let and written types"
     "(struct Box (value:Point let visible:Bool))"
-    (ast "struct Box { var value: Point; let visible: Bool }")
+    (ast "struct Box { var value: Point; let visible: Bool }");
+  (* blank lines and comment lines are only newlines to the parser *)
+  Alcotest.(check string)
+    "blank and comment lines inside the body"
+    "(struct P (x:Int y:Int))"
+    (ast "struct P {\n  var x: Int\n\n  // y\n  var y: Int\n\n}")
 
 (* --- TODO(10c): uses --- *)
 
@@ -211,7 +216,11 @@ let test_recursive_struct () =
     [ "value type 'A' cannot have a stored property that recursively contains it";
       "value type 'B' cannot have a stored property that recursively contains it" ]
     (errors "struct A {\n  var b: B\n}\nstruct B {\n  var a: A\n}");
-  accepted "struct A {\n  var b: B\n}\nstruct B {\n  var x: Int\n}"
+  accepted "struct A {\n  var b: B\n}\nstruct B {\n  var x: Int\n}";
+  (* holding a cycle it is not on: the check must remember what it visited, or never end *)
+  has_error
+    "struct A {\n  var b: B\n}\nstruct B {\n  var c: C\n}\nstruct C {\n  var b: B\n}"
+    "value type 'A' has infinite size"
 
 (* --- TODO(10e): initialization and reads --- *)
 let test_member_read_from_parameter () =

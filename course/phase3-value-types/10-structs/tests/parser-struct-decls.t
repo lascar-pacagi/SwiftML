@@ -63,6 +63,55 @@ the parser skips it, body included, and the rest of the program still parses.
     ^
   [1]
 
+Blank lines and comment lines inside a struct body are allowed, between fields and before
+the `}`: after lexing, a comment line is just another newline.
+
+  $ cat > blank-lines.swift <<'EOF'
+  > struct P {
+  >   var x: Int // the first field
+  > 
+  >   // the second field
+  >   var y: Int
+  > 
+  > }
+  > EOF
+  $ python3 timeout.py 2 ./lab.exe --emit-ast blank-lines.swift
+  (struct P (x:Int y:Int))
+
+A bad member as the LAST one is reported once too, and the `}` after it still closes the
+struct.
+
+  $ cat > bad-last.swift <<'EOF'
+  > struct P {
+  >   var x: Int
+  >   init(x: Int) { self.x = x }
+  > }
+  > let p = P(x: 1)
+  > EOF
+  $ python3 timeout.py 2 ./lab.exe --emit-ast bad-last.swift 2>&1
+  3:3: error: expected a stored property: 'var name: Type'
+    init(x: Int) { self.x = x }
+    ^
+  [1]
+
+A bad member over several lines is skipped whole, braces included, and reported once.
+
+  $ cat > bad-multiline.swift <<'EOF'
+  > struct P {
+  >   var x: Int
+  >   init(x: Int) {
+  >     self.x = x
+  >   }
+  >   var y: Int
+  > }
+  > let p = P(x: 1, y: 2)
+  > EOF
+  $ python3 timeout.py 2 ./lab.exe --emit-ast bad-multiline.swift 2>&1
+  3:3: error: expected a stored property: 'var name: Type'
+    init(x: Int) {
+    ^
+  [1]
+
 A stored property needs a name and a written type.
 
   $ printf 'struct P { var : Int }\n' > bad-property-name.swift

@@ -830,13 +830,30 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
             | _ -> false)
           layout.Types.sl_fields
   in
+  let on_cycle name = contains name [] name in
+  (* a struct that is not on a cycle but holds one, directly or not, is infinite too *)
+  let rec reaches_cycle visited struct_name =
+    match Hashtbl.find_opt struct_layouts struct_name with
+    | None -> false
+    | Some layout ->
+        List.exists
+          (fun (_, field_type) ->
+            match field_type with
+            | Types.TStruct inner when not (List.mem inner visited) ->
+                on_cycle inner || reaches_cycle (inner :: visited) inner
+            | _ -> false)
+          layout.Types.sl_fields
+  in
   List.iter
     (function
-      | Ast.IStruct struct_decl when contains struct_decl.Ast.sname [] struct_decl.Ast.sname ->
+      | Ast.IStruct struct_decl when on_cycle struct_decl.Ast.sname ->
           report_error struct_decl.Ast.sspan
             (Printf.sprintf
                "value type '%s' cannot have a stored property that recursively contains it"
                struct_decl.Ast.sname)
+      | Ast.IStruct struct_decl when reaches_cycle [ struct_decl.Ast.sname ] struct_decl.Ast.sname ->
+          report_error struct_decl.Ast.sspan
+            (Printf.sprintf "value type '%s' has infinite size" struct_decl.Ast.sname)
       | _ -> ())
     program.Ast.items;
   (* PASS 1: collect signatures so calls/recursion/forward-references resolve. *)
