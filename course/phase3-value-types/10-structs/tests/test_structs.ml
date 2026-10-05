@@ -53,6 +53,22 @@ let has_error src msg =
     true
     (List.mem msg (errors src))
 
+(* the error [msg], AND where it points: swiftc reports a missing member at its NAME *)
+let has_error_at src (line, col) msg =
+  let _, d = front src in
+  let found =
+    Diagnostics.all d
+    |> List.filter (fun (x : Diagnostics.t) ->
+           x.Diagnostics.severity = Diagnostics.Error && x.Diagnostics.message = msg)
+    |> List.map (fun (x : Diagnostics.t) ->
+           Printf.sprintf "%d:%d" x.Diagnostics.span.Token.lo.Token.line
+             x.Diagnostics.span.Token.lo.Token.col)
+  in
+  Alcotest.(check (list string))
+    (Printf.sprintf "%S => %S" src msg)
+    [ Printf.sprintf "%d:%d" line col ]
+    found
+
 let contains hay needle =
   let n = String.length hay and m = String.length needle in
   let rec go i = i + m <= n && (String.sub hay i m = needle || go (i + 1)) in
@@ -178,12 +194,12 @@ let test_member_read_from_parameter () =
      func ready(_ pair: Pair) -> Bool { return pair.ready }"
 
 let test_member_read_errors_without_init () =
-  has_error
+  has_error_at
     "struct Point { var x: Int }\n\
      func read(_ point: Point) -> Int { return point.z }"
-    "value of type 'Point' has no member 'z'";
-  has_error "func read(_ number: Int) -> Int { return number.x }"
-    "value of type 'Int' has no member 'x'"
+    (2, 49) "value of type 'Point' has no member 'z'";
+  has_error_at "func read(_ number: Int) -> Int { return number.x }"
+    (1, 49) "value of type 'Int' has no member 'x'"
 
 let test_accept () =
   accepted (point ^ "let p = Point(x: 3, y: 4)\nprint(p.x)");
@@ -218,10 +234,17 @@ let test_init_rules () =
   has_error "let p = Nope(x: 1)" "cannot find 'Nope' in scope"
 
 let test_member_rules () =
-  has_error
+  has_error_at
     (point ^ "let p = Point(x: 1, y: 2)\nprint(p.z)")
-    "value of type 'Point' has no member 'z'";
-  has_error "let n = 3\nprint(n.x)" "value of type 'Int' has no member 'x'"
+    (6, 9) "value of type 'Point' has no member 'z'";
+  has_error_at "let n = 3\nprint(n.x)" (2, 9) "value of type 'Int' has no member 'x'"
+
+(* a base whose type is unknown was reported already: reading a member of it adds nothing *)
+let test_member_of_unknown () =
+  Alcotest.(check (list string))
+    "only the unknown type is reported"
+    [ "cannot find type 'Nope' in scope" ]
+    (errors (point ^ "let p: Nope = Point(x: 1, y: 2)\nlet q: Bool = p.y"))
 
 let test_backend_guards () =
   (* two programs swiftc treats differently from us, refused in sema so the back end never
@@ -398,6 +421,8 @@ let () =
           Alcotest.test_case "well-typed struct programs" `Quick test_accept;
           Alcotest.test_case "memberwise init rules" `Quick test_init_rules;
           Alcotest.test_case "member access rules" `Quick test_member_rules;
+          Alcotest.test_case "member of an unknown type" `Quick
+            test_member_of_unknown;
           Alcotest.test_case "== and print refused up front" `Quick
             test_backend_guards;
         ] );

@@ -136,6 +136,13 @@ attempted implementations, untouched holes, holes waiting on another, and tests 
 | `WAIT` | the learner's part passes; the rest needs another hole | some cases pass and every failure reached an explicit `TODO(NN)` — 08a's `n = n + 1` waits on 08b |
 | `SKIP` | **never ran** — a compile error aborted dune first | a build-error block was emitted |
 
+An alcotest suite is judged **case by case**: alcotest prints the details of its first failure
+only, so the runner reads each failing case's own log (`_build/…/_tests/<suite>/<group>.NNN.output`)
+and marks the case `WAIT` if it reached a `TODO(NN)`, `FAIL` otherwise (2026-10-05; before that,
+one real failure turned every waiting case of the suite into `FAIL`). A unit test that checks a
+diagnostic checks its POSITION as well as its text whenever the cram side does — else the two
+suites disagree, and the unit suite reads green on exactly what the cram file rejects.
+
 A `TODO` file lists what it *will* check and stops there (`typecheck.t` went from ~40 lines of
 want/got to four bullets); `DETAIL=1` forces the diffs back. An attempted implementation that
 makes every case fail is still `FAIL`, with its useful output shown by default. Then:

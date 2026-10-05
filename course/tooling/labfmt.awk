@@ -33,6 +33,18 @@ BEGIN {
 
 { clean = $0; gsub(/\033\[[0-9;]*m/, "", clean) }   # ANSI-free copy, for the matchers below
 
+# Alcotest keeps every case's full log in this directory, one file per case: the console shows
+# the details of the FIRST failure only, so a case's own log is the only place that says whether
+# it stopped at an unwritten TODO(NN).
+/Full test results in `/ {
+  p = clean; sub(/.*Full test results in `/, "", p); sub(/'.*$/, "", p)
+  sub(/^~/, ENVIRON["HOME"], p)
+  if (cur) resdir[cur] = p
+  # alcotest's failure box names the test file (`File "…test_x.ml", line N`), which the build-
+  # error rule below takes for the start of an error block and then swallows every line to the
+  # next `Error`: this line must be read before that, so it sits up here
+}
+
 function sec(kind, name,   key) {
   key = kind SUBSEP name
   if (!(key in idx)) { idx[key] = ++n; skind[n] = kind; sname[n] = name }
@@ -327,8 +339,10 @@ cram { dline++; next }
     if (ok && line ~ /^given:/) ngivenok[cur]++
     # a case named `given: …` checks code the learner was handed, so it says so instead of OK
     shown = line; if (ok && shown ~ /^given: */) sub(/^given: */, "", shown)
+    # a failing case is a placeholder for now: whether it is WRONG or only waiting on another
+    # hole is in its own log, read at the end (resolve_cases)
     put(ok ? "  " G (line ~ /^given:/ ? "GIVEN" : "OK  ") Z " " wrap_label(shown, 84) \
-           : "  " R "FAIL" Z " " wrap_label(line, 84))
+           : "\001" a[1] "\002" a[2] "\001" wrap_label(line, 84))
   }
   next
 }
@@ -390,6 +404,7 @@ END {
         # Zero passing cases does not mean untouched: an attempted implementation can make every
         # case fail or crash. Reserve TODO for output that names an explicit unfinished hole.
         waiting = 0
+        if (failing && kind == "alcotest") resolve_cases(si)
         if (failing && kind == "cram") {
           unstarted = all_failed_are_todo(si, tf)
           # some cases pass and every failure is a hole elsewhere: the learner's part is done
@@ -399,7 +414,8 @@ END {
         # A given case may already pass (08's `given: module shape`): TODO is about whether the
         # FAILURES reached a hole, which is what CLAUDE.md's table says, not about whether
         # anything passes. Requiring zero passes turned an untouched suite into a wall of FAIL.
-        else if (failing && nbad[si] > 0 && alctodo[si]) {
+        else if (failing && nbad[si] > 0 && \
+                 (resdir[si] != "" ? nwrong[si] == 0 : alctodo[si])) {
           if (nok[si] - ngivenok[si] > 0) waiting = 1; else unstarted = 1
         }
         total++
@@ -480,6 +496,32 @@ END {
   if (nfail || ntodo || nwait) printf "\n%s%d passing, %d failing%s%s\n", B, npass, nfail, tail, Z
   else if (npass || ngiven) printf "\n%s%d passing, 0 failing%s%s\n", G, npass, tail, Z
   else printf "\n%sno tests ran%s\n", B, Z
+}
+
+# Read each failing alcotest case's own log: a case that reached a TODO(NN) is waiting on a
+# hole, not wrong. Counts the cases that are really wrong into nwrong[si], then rewrites the
+# placeholders: when nothing is really wrong the suite's own WAIT/TODO pass relabels them, so
+# they keep the plain FAIL text it expects; otherwise each says WAIT or FAIL for itself.
+function resolve_cases(si,   pass, n, i, ln, m, g, x, f, l, hit, out, istodo) {
+  nwrong[si] = 0
+  for (pass = 1; pass <= 2; pass++) {
+    n = split(body[si], ln, "\n"); out = ""
+    for (i = 1; i <= n; i++) {
+      if (match(ln[i], /^\001[^\002]*\002[0-9]+\001/)) {
+        m = substr(ln[i], 2, RLENGTH - 2); split(m, x, "\002")
+        f = resdir[si] "/" x[1] "." sprintf("%03d", x[2]) ".output"
+        hit = 0
+        if (resdir[si] != "") { while ((getline l < f) > 0) if (l ~ /TODO\([^)]*\)/) hit = 1; close(f) }
+        istodo[i] = hit
+        if (pass == 1) { if (!hit) nwrong[si]++; out = out ln[i]; }
+        else if (nwrong[si] == 0 || !hit)
+          out = out "  " R "FAIL" Z " " substr(ln[i], RLENGTH + 1)
+        else out = out "  " Y "WAIT" Z " " substr(ln[i], RLENGTH + 1)
+      } else out = out ln[i]
+      if (i < n) out = out "\n"
+    }
+    if (pass == 2) body[si] = out
+  }
 }
 
 function failedcram(si,   b, f) {                        # any case in this .t with a diff?
