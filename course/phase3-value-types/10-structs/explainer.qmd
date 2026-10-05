@@ -83,14 +83,47 @@ bb0:
 `1` for `p.x` and `99` for `q.x`. Nothing extra was needed to get this: two slots, and copying
 between them, *is* value semantics.
 
+The LLVM that IRGen makes of it says the same thing, one level down:
+
+```llvm
+  %t0 = alloca %Point                       ; p's memory
+  %t1 = alloca %Point                       ; q's memory: a different place
+  ...
+  store %Point %t3, ptr %t0                 ; var p = Point(x: 1, y: 2)
+  %t4 = load %Point, ptr %t0                ; var q = p: read all of p…
+  store %Point %t4, ptr %t1                 ; …and write a copy into q's memory
+  %t5 = getelementptr %Point, ptr %t1, i32 0, i32 0
+  store i64 99, ptr %t5                     ; q.x = 99: only q's memory
+```
+
+Two LLVM types are at work, and the difference between them is the whole story. `%Point` is a
+struct *value*, the 16 bytes `{ i64, i64 }`; `ptr` is an *address*. `alloca` gives a `ptr`, `load`
+turns a `ptr` into a value, `store` writes a value through a `ptr`. A `ptr` does not say what it
+points at — the instruction using it does, as in `load %Point, ptr %t0` — but nothing above ever
+copies a `ptr` from one variable to another: only values move between `p` and `q`.
+
 A `class` (Phase 6) is the opposite. Its variable holds a pointer to one object on the heap, so
 `var q = p` copies the pointer, and after `q.x = 99` reading `p.x` gives `99` too. Whether a type is
 a value or a reference comes down to what copying it copies: the contents, or a pointer to them.
 
-Returning a struct from a function follows the same rule. `ret %Point %value` hands back the value
-itself, not a pointer into the callee's stack frame, which is gone once the function returns; the
-caller gets its own copy. How that value physically travels — in registers, or through a buffer
-the caller provides — is set by the platform's calling convention, and does not change that.
+Returning a struct follows the same rule: what comes back is the value, never an address.
+
+```llvm
+define %Point @mk(i64 %arg0) {              ; returns a %Point, not a ptr
+  %t1 = alloca %Point                       ; the local `p`, in mk's stack frame
+  ...
+  %t7 = load %Point, ptr %t1                ; return p: read the value out…
+  ret %Point %t7                            ; …and hand it back
+}
+  %t1 = call %Point @mk(i64 5)              ; in the caller: a value…
+  store %Point %t1, ptr %t0                 ; …copied into the caller's own memory
+```
+
+It could not be otherwise: `%t1` inside `mk` is in `mk`'s stack frame, which is gone as soon as
+`mk` returns, so a `ptr` to it would point at dead memory. Returning `%Point` cannot make that
+mistake, since there is no address in the result. How the 16 bytes physically travel back — in
+two registers here, or for a large struct through memory the *caller* provides — is decided by
+LLVM's back end and does not change what is returned.
 
 ### Reading vs. writing a field — value vs. address
 
