@@ -2,8 +2,8 @@ TODO(10e) struct expressions — a member read obtains its type from the registe
 memberwise initializer's checks (one labeled value per field, in declaration order) are given
 code, tested here because they need the registry and the member read.
 
-A member read gets its result type from the field layout. Function parameters let this case test
-`Ast.Member` without building a struct value.
+A field read takes its type from the struct's layout: `pair.count` is an `Int`, `pair.ready` a
+`Bool`, so both functions type-check. (The structs arrive as parameters, so no `Pair(…)` is built.)
 
   $ cat > member-types.swift <<'EOF'
   > struct Pair {
@@ -15,7 +15,8 @@ A member read gets its result type from the field layout. Function parameters le
   > EOF
   $ ./lab.exe --typecheck member-types.swift
 
-An unknown field on a struct parameter is diagnosed without constructing a struct value.
+Reading a field `Point` does not have, `point.z`, is an error, and it points at the field NAME
+`z` (column 49), as swiftc does — not at `point` or at the `.`.
 
   $ cat > unknown-member.swift <<'EOF'
   > struct Point {
@@ -23,17 +24,17 @@ An unknown field on a struct parameter is diagnosed without constructing a struc
   > }
   > func read(_ point: Point) -> Int { return point.z }
   > EOF
-  $ ./lab.exe --typecheck unknown-member.swift > member.err 2>&1; rc=$?; sed 's/^[0-9]*:[0-9]*: error: //' member.err; echo "exit=$rc"
-  value of type 'Point' has no member 'z'
+  $ ./lab.exe --typecheck unknown-member.swift > member.err 2>&1; rc=$?; cat member.err; echo "exit=$rc"
+  4:49: error: value of type 'Point' has no member 'z'
   func read(_ point: Point) -> Int { return point.z }
                                                   ^
   exit=1
 
-A scalar base has no stored-property layout.
+An `Int` has no fields, so `number.x` is the same error, again at the name `x` (column 49).
 
   $ printf 'func read(_ number: Int) -> Int { return number.x }\n' > scalar-member.swift
-  $ ./lab.exe --typecheck scalar-member.swift > scalar.err 2>&1; rc=$?; sed 's/^[0-9]*:[0-9]*: error: //' scalar.err; echo "exit=$rc"
-  value of type 'Int' has no member 'x'
+  $ ./lab.exe --typecheck scalar-member.swift > scalar.err 2>&1; rc=$?; cat scalar.err; echo "exit=$rc"
+  1:49: error: value of type 'Int' has no member 'x'
   func read(_ number: Int) -> Int { return number.x }
                                                   ^
   exit=1

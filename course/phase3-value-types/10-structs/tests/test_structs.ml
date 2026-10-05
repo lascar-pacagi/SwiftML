@@ -414,9 +414,9 @@ let () =
         ] );
       ( "sema-struct-exprs",
         [
-          Alcotest.test_case "member types without initializer" `Quick
+          Alcotest.test_case "field read types" `Quick
             test_member_read_from_parameter;
-          Alcotest.test_case "member errors without initializer" `Quick
+          Alcotest.test_case "unknown field, at its name" `Quick
             test_member_read_errors_without_init;
           Alcotest.test_case "well-typed struct programs" `Quick test_accept;
           Alcotest.test_case "memberwise init rules" `Quick test_init_rules;
