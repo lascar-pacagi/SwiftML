@@ -88,8 +88,9 @@ The LLVM that IRGen makes of it says the same thing, one level down:
 ```llvm
   %t0 = alloca %Point                       ; p's memory
   %t1 = alloca %Point                       ; q's memory: a different place
-  ...
-  store %Point %t3, ptr %t0                 ; var p = Point(x: 1, y: 2)
+  %t2 = insertvalue %Point undef, i64 1, 0  ; build the value Point(x: 1, y: 2):
+  %t3 = insertvalue %Point %t2, i64 2, 1    ;   x, then y
+  store %Point %t3, ptr %t0                 ; var p = that value
   %t4 = load %Point, ptr %t0                ; var q = p: read all of p…
   store %Point %t4, ptr %t1                 ; …and write a copy into q's memory
   %t5 = getelementptr %Point, ptr %t1, i32 0, i32 0
