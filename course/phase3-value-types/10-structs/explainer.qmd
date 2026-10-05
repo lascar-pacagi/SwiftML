@@ -534,7 +534,9 @@ and in IRGen, the `%Point = type { i64, i64 }` declarations.
   declared twice is an error.
 - **10e — `sema.ml`, a field read.** Infer the base; it must be a struct; find the field in its
   layout. The result is `Tast.Field (base, index, name)`, typed with the field's type: the index is
-  what SILGen will use. An unknown field and a non-struct base are errors (§2 lists the messages).
+  what SILGen will use. An unknown field and a non-struct base are errors (§2 lists the messages),
+  reported at the member *name*, as swiftc does: `print(p.z)` points at the `z`. The member's span
+  ends right after the name, so the name starts `String.length name` before that end.
   A base whose type is `TError` (already reported, concept 07) has every field: return `TError` and
   report nothing.
 - **10f — `sema.ml`, a field write.** `p.x = e` needs `p` to be a `var` and `x` a `var` field, and

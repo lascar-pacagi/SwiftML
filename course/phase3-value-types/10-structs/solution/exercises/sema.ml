@@ -201,7 +201,14 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
     | Ast.Member (operand_expression, field_name, span) -> (
         let base = infer_expression operand_expression in
         let unresolved t =
-          report_error span
+          (* at the member NAME, as swiftc does: `p.z` is reported at the `z`. The span ends
+             right after the name, so the name starts its length before that end. *)
+          let name_start =
+            { span.Token.hi with
+              Token.col = span.Token.hi.Token.col - String.length field_name;
+              offset = span.Token.hi.Token.offset - String.length field_name }
+          in
+          report_error { span with Token.lo = name_start }
             (Printf.sprintf "value of type '%s' has no member '%s'" t field_name);
           make (Tast.Field (base, 0, field_name)) Types.TInt span
         in

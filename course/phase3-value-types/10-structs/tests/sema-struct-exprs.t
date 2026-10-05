@@ -26,7 +26,7 @@ An unknown field on a struct parameter is diagnosed without constructing a struc
   $ ./lab.exe --typecheck unknown-member.swift > member.err 2>&1; rc=$?; sed 's/^[0-9]*:[0-9]*: error: //' member.err; echo "exit=$rc"
   value of type 'Point' has no member 'z'
   func read(_ point: Point) -> Int { return point.z }
-                                            ^
+                                                  ^
   exit=1
 
 A scalar base has no stored-property layout.
@@ -35,7 +35,7 @@ A scalar base has no stored-property layout.
   $ ./lab.exe --typecheck scalar-member.swift > scalar.err 2>&1; rc=$?; sed 's/^[0-9]*:[0-9]*: error: //' scalar.err; echo "exit=$rc"
   value of type 'Int' has no member 'x'
   func read(_ number: Int) -> Int { return number.x }
-                                           ^
+                                                  ^
   exit=1
 
 A well-typed initializer and member read are accepted, including a nested read.
@@ -117,12 +117,12 @@ An unknown field is diagnosed on a struct, and a scalar has no fields at all.
   > print(n.x)
   > EOF
   $ ./lab.exe --typecheck nomember.swift
-  5:7: error: value of type 'Point' has no member 'z'
+  5:9: error: value of type 'Point' has no member 'z'
   print(p.z)
-        ^
-  7:7: error: value of type 'Int' has no member 'x'
+          ^
+  7:9: error: value of type 'Int' has no member 'x'
   print(n.x)
-        ^
+          ^
   [1]
 
 Whole-struct equality and printing are rejected because this backend cannot lower them yet.
