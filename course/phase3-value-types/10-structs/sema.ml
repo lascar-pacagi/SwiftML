@@ -68,6 +68,17 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
   let make (e : Tast.expr_kind) (ty : Types.ty) (span : Token.span) : Tast.expr =
     { Tast.e; ty; span }
   in
+  (* where a member's NAME is, for a diagnostic: swiftc reports `point.z` at the `z`. The name is
+     the last thing in the member expression, so it ends where [span] ends — and starts its
+     length before that. *)
+  let member_name_span (span : Token.span) (name : string) : Token.span =
+    let length = String.length name in
+    { span with
+      Token.lo =
+        { span.Token.hi with
+          Token.col = span.Token.hi.Token.col - length;
+          offset = span.Token.hi.Token.offset - length } }
+  in
   (* `%` is absent: Swift has no `%` on Double, so a tree containing one can never take it *)
   let rec is_int_literal = function
     | Ast.Int_lit _ -> true
@@ -123,11 +134,12 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
     (* RESOLUTION: `p.x` becomes a field INDEX. The name was how the source spelled it; the
        position is what it means, and it is what SILGen needs. *)
     | Ast.Member (operand_expression, field_name, span) ->
-        ignore (operand_expression, field_name, span);
+        ignore (operand_expression, field_name, span, member_name_span);
         (* TODO(10e): infer the base, require a struct, and look up the field in its registered
            layout. Return a `Tast.Field` carrying the field's INDEX — the name was how the source
            spelled it, the position is what it means, and it is what SILGen needs so that it has
-           nothing left to look up. Diagnose both an unknown field and a scalar base (§2). *)
+           nothing left to look up. Diagnose both an unknown field and a scalar base (§2), at
+           the field's name: `member_name_span span field_name` (given, above) is that span. *)
         failwith "TODO(10e): type-check a member read"
   and infer_binary operator left_expression right_expression span : Tast.expr =
     let left = infer_expression left_expression and right = infer_expression right_expression in

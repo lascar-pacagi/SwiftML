@@ -89,6 +89,17 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
   let make (e : Tast.expr_kind) (ty : Types.ty) (span : Token.span) : Tast.expr =
     { Tast.e; ty; span }
   in
+  (* where a member's NAME is, for a diagnostic: swiftc reports `point.z` at the `z`. The name is
+     the last thing in the member expression, so it ends where [span] ends — and starts its
+     length before that. *)
+  let member_name_span (span : Token.span) (name : string) : Token.span =
+    let length = String.length name in
+    { span with
+      Token.lo =
+        { span.Token.hi with
+          Token.col = span.Token.hi.Token.col - length;
+          offset = span.Token.hi.Token.offset - length } }
+  in
   (* EX1: inside a method, an unbound [name] that is a stored or computed property (or, with
      [~as_method], a method) of the struct means `self.name` *)
   let self_member ?(as_method = false) name =
@@ -201,14 +212,7 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
     | Ast.Member (operand_expression, field_name, span) -> (
         let base = infer_expression operand_expression in
         let unresolved t =
-          (* at the member NAME, as swiftc does: `p.z` is reported at the `z`. The span ends
-             right after the name, so the name starts its length before that end. *)
-          let name_start =
-            { span.Token.hi with
-              Token.col = span.Token.hi.Token.col - String.length field_name;
-              offset = span.Token.hi.Token.offset - String.length field_name }
-          in
-          report_error { span with Token.lo = name_start }
+          report_error (member_name_span span field_name)
             (Printf.sprintf "value of type '%s' has no member '%s'" t field_name);
           make (Tast.Field (base, 0, field_name)) Types.TInt span
         in
