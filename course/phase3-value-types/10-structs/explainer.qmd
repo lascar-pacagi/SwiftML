@@ -500,11 +500,6 @@ handles all three awkward bodies:
 - **a bad member over several lines**, `init(x: Int) {⏎ self.x = x ⏎}`, goes to depth 1 at its
   `{`, so its newlines and its `}` do not stop the skip; it stops at the newline after that `}`.
 
-The natural first attempt breaks in two ways at once. It skips to the first newline, ignoring
-braces, so the second line of a multi-line member is read as the next member, and the member's
-`}` closes the struct. And after the skip it tries to parse a field whatever comes next, so one
-bad member becomes four or five errors.
-
 ### The diagnostics Sema owes you
 
 You implement these checks in TODO(10d–f). Once they pass, lowering may assume every rule below has
