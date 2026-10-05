@@ -526,10 +526,30 @@ from the pinned snapshot); the differences are stated, not hidden.
 | `p.x` or `p.x = 1`, where `p`'s own type was unknown (`var p: Nope = …`) | nothing more: that type was already reported, so `p.x` is unknown too (`TError`) and says nothing | **same** |
 | `struct A {…}` twice | `invalid redeclaration of 'A'` | **same** (`invalid_redecl`, l.1110) |
 | `var x: Int` twice in one struct | `invalid redeclaration of 'x'`, at the struct | **same**, but at the second `x`: a field has no position of its own in our AST |
-| `struct N { var n: N }`, or `A` holding a `B` holding an `A` | `value type 'N' cannot have a stored property that recursively contains it`, once per struct on the cycle | **same**, but at the field rather than the struct |
-| `A` holding a `B`, where `B` and `C` hold each other | `value type 'A' has infinite size` for `A`, then the cycle message for `B` and `C` | **same**, at the name rather than the struct |
+| a struct that contains itself | one of two messages per struct: see the next section | **same**, but at the field or the name rather than the struct |
 | `let s …; s.a = 2` with `let a` | `cannot assign to property: 'a' is a 'let' constant` — the field, not `s` | **same** |
 | `print(p)` on a struct | `cannot print a value of type 'Point' (only Int, Double, Bool and String)` | **accepted** — swiftc prints `Point(x: 1, y: 2)` through reflection; ours has no runtime to do it, so sema refuses instead of letting IRGen crash |
+
+#### A struct that contains itself
+
+A struct whose fields lead back to it would be infinitely large, so Sema refuses it. **Each struct
+gets at most one message**, decided in this order:
+
+1. `value type 'S' cannot have a stored property that recursively contains it` — `S` is **on a
+   cycle**: following struct-typed fields from `S`, you can get back to `S`.
+2. `value type 'S' has infinite size` — `S` is not on a cycle, but a struct it reaches is.
+
+A struct that is neither gets no message, and each message is at the struct's `struct`
+keyword. On these programs (fields written as `A ⟶ B`, "`A` has a field of type `B`"):
+
+| program | messages, in source order |
+|---|---|
+| `N ⟶ N` | `N`: on a cycle |
+| `A ⟶ A` twice (two fields) | `A`: on a cycle — once, not once per field |
+| `A ⟶ B`, `B ⟶ A` | `A`: on a cycle; `B`: on a cycle |
+| `A ⟶ B`, `B ⟶ C`, `C ⟶ B` | `A`: infinite size; `B`: on a cycle; `C`: on a cycle |
+| `A ⟶ A` and `A ⟶ B`, `B ⟶ C`, `C ⟶ B` | `A`: on a cycle only (rule 1 wins); `B`; `C` |
+| `A ⟶ B`, `B ⟶ Int` | none |
 
 Two more limitations of this concept: a **nested write** `l.b.x = 1` is
 not parsed (`Set_member` is one level, `p.x = e`; swiftc accepts it — Exercise 1's `mutating`
@@ -574,12 +594,9 @@ and in IRGen, the `%Point = type { i64, i64 }` declarations.
   name with an empty layout, so a field may name a struct declared later; then resolve each field's
   type and install the layout, fields in order. Record the `let` fields too: 10f needs them. A
   struct name declared twice is an error, and so is a field name declared twice in one struct.
-  Last, a struct may not contain itself, directly (`struct N { var n: N }`) or through other
-  structs (`A` holds a `B` that holds an `A`): its size would be infinite. Follow each struct's
-  struct-typed fields, keeping a list of the structs already visited so a cycle you are not
-  looking for does not loop forever, and report every struct that gets back to itself, once. A
-  struct that is not on a cycle but holds one (`A` holds a `B`, and `B` and `C` hold each other)
-  is infinite too: swiftc reports it as "value type 'A' has infinite size".
+  Last, a struct may not contain itself: §2's "A struct that contains itself" gives the rule
+  and the exact messages, one per struct at most. Following fields, keep track of the structs
+  already visited, so that a cycle you are not looking for cannot make the search loop forever.
 - **10e — `sema.ml`, a field read.** Infer the base; it must be a struct; find the field in its
   layout. The result is `Tast.Field (base, index, name)`, typed with the field's type: the index is
   what SILGen will use. An unknown field and a non-struct base are errors (§2 lists the messages),
