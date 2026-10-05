@@ -558,7 +558,9 @@ function cases_str(si, file, unstarted, waiting,   b, key, out, nsl, sl, i) {
     key = si SUBSEP b
     if (si && (key in bad)) {
       if (unstarted) { out = out sprintf("  %s·%s   %s\n", D, Z, wrap_label(label[file, b], 84)); continue }
-      if (waiting && (key in todo) && !detail_all)
+      # a case that stopped at an unwritten TODO(NN) is waiting, whatever its neighbours did: one
+      # real failure in the file used to turn every waiting case into FAIL
+      if ((key in todo) && !detail_all)
         out = out sprintf("  %sWAIT%s %s\n", Y, Z, wrap_label(label[file, b], 84))
       else
         out = out sprintf("  %sFAIL%s %s\n", R, Z, wrap_label(label[file, b], 84))
