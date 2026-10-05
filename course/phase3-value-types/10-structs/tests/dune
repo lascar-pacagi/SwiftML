@@ -14,7 +14,7 @@
 (executable
  (name test_structs)
  (modules test_structs)
- (libraries alcotest swiftml_structs)
+ (libraries alcotest unix swiftml_structs)
  (flags
   (:standard -warn-error -a)))
 

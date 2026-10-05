@@ -2,6 +2,21 @@
    own compiler stage: a learner can finish and test lexing before parsing works, and finish
    parsing before Sema works.  The lowering groups inspect SIL or LLVM text in process. *)
 
+(* Every case gets its own 2-second limit: a compiler that loops (a recursion check with no
+   memory of what it visited, say) then fails that ONE case, quickly and saying why, instead of
+   stalling the whole suite until its overall limit kills every result. *)
+module Alcotest = struct
+  include Alcotest
+
+  let test_case name speed f =
+    test_case name speed (fun () ->
+        Sys.set_signal Sys.sigalrm
+          (Sys.Signal_handle
+             (fun _ -> failwith "no answer after 2 seconds: an infinite loop in the compiler?"));
+        ignore (Unix.alarm 2);
+        Fun.protect ~finally:(fun () -> ignore (Unix.alarm 0)) f)
+end
+
 let lex_kinds (src : string) : string list =
   let diagnostics = Diagnostics.create () in
   Lexer.tokenize (Lexer.create src diagnostics)

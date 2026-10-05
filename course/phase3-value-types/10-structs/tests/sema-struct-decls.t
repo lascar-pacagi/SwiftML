@@ -115,7 +115,7 @@ One struct holding another, with no way back, is fine: `A` holds a `B`, and `B` 
 
 A struct that is not on a cycle but HOLDS one is infinite too: `A` holds a `B`, and `B` and `C`
 hold each other. The check must keep track of the structs it has visited, or it never ends on
-the `B`–`C` cycle while checking `A` (the 5-second limit turns that into a failure).
+the `B`–`C` cycle while checking `A` (the 2-second limit turns that into a failure).
 
   $ cat > reaches-cycle.swift <<'EOF'
   > struct A {
@@ -128,7 +128,7 @@ the `B`–`C` cycle while checking `A` (the 5-second limit turns that into a fai
   >   var b: B
   > }
   > EOF
-  $ python3 timeout.py 5 ./lab.exe --typecheck reaches-cycle.swift
+  $ python3 timeout.py 2 ./lab.exe --typecheck reaches-cycle.swift
   1:1: error: value type 'A' has infinite size
   struct A {
   ^
