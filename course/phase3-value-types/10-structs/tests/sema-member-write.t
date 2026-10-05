@@ -81,3 +81,103 @@ error, and `p.x = true` checks its right-hand side against that unknown type:
   var p: Nope = 1
   ^
   [1]
+
+When both the binding and the field are `let`, the FIELD is named, as swiftc does: the
+field is immutable whatever the binding.
+
+  $ cat > let-let.swift <<'EOF'
+  > struct S {
+  >   let a: Int
+  > }
+  > let s = S(a: 1)
+  > s.a = 2
+  > EOF
+  $ ./lab.exe --typecheck let-let.swift
+  5:1: error: cannot assign to property: 'a' is a 'let' constant
+  s.a = 2
+  ^
+  [1]
+
+Writing a field the struct does not have names the struct's TYPE, `Point`, not the
+variable `p`.
+
+  $ cat > write-unknown-field.swift <<'EOF'
+  > struct Point {
+  >   var x: Int
+  >   var y: Int
+  > }
+  > var p = Point(x: 1, y: 2)
+  > p.z = 1
+  > EOF
+  $ ./lab.exe --typecheck write-unknown-field.swift
+  6:1: error: value of type 'Point' has no member 'z'
+  p.z = 1
+  ^
+  [1]
+
+An `Int` has no fields to write either.
+
+  $ cat > write-int-member.swift <<'EOF'
+  > var n = 3
+  > n.x = 1
+  > EOF
+  $ ./lab.exe --typecheck write-int-member.swift
+  2:1: error: value of type 'Int' has no member 'x'
+  n.x = 1
+  ^
+  [1]
+
+A struct-typed field takes a whole struct value, and nothing else.
+
+  $ cat > write-struct-field.swift <<'EOF'
+  > struct Point {
+  >   var x: Int
+  >   var y: Int
+  > }
+  > struct Line {
+  >   var a: Point
+  >   var b: Point
+  > }
+  > var l = Line(a: Point(x: 1, y: 2), b: Point(x: 3, y: 4))
+  > l.a = Point(x: 9, y: 9)
+  > l.b = 3
+  > EOF
+  $ ./lab.exe --typecheck write-struct-field.swift
+  11:7: error: cannot convert value of type 'Int' to specified type 'Point'
+  l.b = 3
+        ^
+  [1]
+
+A parameter is a constant: writing one of its fields is refused, naming the parameter.
+
+  $ cat > write-param.swift <<'EOF'
+  > struct Point {
+  >   var x: Int
+  >   var y: Int
+  > }
+  > func f(_ p: Point) {
+  >   p.x = 1
+  > }
+  > EOF
+  $ ./lab.exe --typecheck write-param.swift
+  6:3: error: cannot assign to property: 'p' is a 'let' constant
+    p.x = 1
+    ^
+  [1]
+
+Replacing a whole `let` struct is the variable rule of concept 05, not a property rule:
+"cannot assign to value".
+
+  $ cat > let-whole.swift <<'EOF'
+  > struct Point {
+  >   var x: Int
+  >   var y: Int
+  > }
+  > let p = Point(x: 1, y: 2)
+  > p = Point(x: 3, y: 4)
+  > EOF
+  $ ./lab.exe --typecheck let-whole.swift
+  6:1: error: cannot assign to value: 'p' is a 'let' constant
+  p = Point(x: 3, y: 4)
+  ^
+  [1]

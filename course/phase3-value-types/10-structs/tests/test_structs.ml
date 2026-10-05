@@ -184,7 +184,19 @@ let test_struct_registry () =
      struct Point { var x: Int }";
   has_error "struct Bad { var value: Missing }"
     "cannot find type 'Missing' in scope";
-  has_error "struct A {}\nstruct A {}" "invalid redeclaration of 'A'"
+  has_error "struct A {}\nstruct A {}" "invalid redeclaration of 'A'";
+  has_error "struct P {\n  var x: Int\n  var x: Int\n}" "invalid redeclaration of 'x'"
+
+(* a struct may not contain itself, directly or through another struct *)
+let test_recursive_struct () =
+  has_error "struct N {\n  var n: N\n}"
+    "value type 'N' cannot have a stored property that recursively contains it";
+  Alcotest.(check (list string))
+    "each struct on the cycle, once"
+    [ "value type 'A' cannot have a stored property that recursively contains it";
+      "value type 'B' cannot have a stored property that recursively contains it" ]
+    (errors "struct A {\n  var b: B\n}\nstruct B {\n  var a: A\n}");
+  accepted "struct A {\n  var b: B\n}\nstruct B {\n  var x: Int\n}"
 
 (* --- TODO(10e): initialization and reads --- *)
 let test_member_read_from_parameter () =
@@ -270,7 +282,18 @@ let test_member_write_rules () =
     "cannot assign to property: 'x' is a 'let' constant";
   has_error
     (point ^ "var p = Point(x: 1, y: 2)\np.x = \"bad\"")
-    "cannot convert value of type 'String' to specified type 'Int'"
+    "cannot convert value of type 'String' to specified type 'Int'";
+  (* both `let`: the FIELD is named, once *)
+  Alcotest.(check (list string))
+    "let binding and let field"
+    [ "cannot assign to property: 'a' is a 'let' constant" ]
+    (errors "struct S {\n  let a: Int\n}\nlet s = S(a: 1)\ns.a = 2");
+  (* a missing field names the struct's type, not the variable *)
+  has_error (point ^ "var p = Point(x: 1, y: 2)\np.z = 1")
+    "value of type 'Point' has no member 'z'";
+  (* a parameter is a constant *)
+  has_error (point ^ "func f(_ p: Point) {\n  p.x = 1\n}")
+    "cannot assign to property: 'p' is a 'let' constant"
 
 (* --- TODO(10g): SIL member read --- *)
 let test_read_sil () =
@@ -415,6 +438,8 @@ let () =
         ] );
       ( "sema-struct-decls",
         [
+          Alcotest.test_case "a struct cannot contain itself" `Quick
+            test_recursive_struct;
           Alcotest.test_case "names first, then field layouts" `Quick
             test_struct_registry;
         ] );

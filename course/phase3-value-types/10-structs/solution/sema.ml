@@ -393,16 +393,17 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
                 Option.bind layout (fun l -> Types.field_index l field_name) )
             with
             | Some field_type, Some index ->
-                (* swiftc's `diag::assignment_lhs_is_immutable_property`: the binding first, then
-                   the field — a `let` field is immutable through every binding *)
-                if not is_var then
+                (* swiftc's `diag::assignment_lhs_is_immutable_property`: a `let` field first,
+                   naming the field — it is immutable through every binding — and only for a
+                   `var` field, a `let` binding, naming the binding *)
+                if Hashtbl.mem immutable_fields (struct_name, field_name) then
                   report_error span
                     (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant"
-                       object_name)
-                else if Hashtbl.mem immutable_fields (struct_name, field_name) then
+                       field_name)
+                else if not is_var then
                   report_error span
                     (Printf.sprintf "cannot assign to property: '%s' is a 'let' constant"
-                       field_name);
+                       object_name);
                 Tast.Set_member
                   { obj = object_name; field = index; field_name;
                     value = check_expr value field_type; span }
@@ -526,6 +527,44 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
             struct_decl.Ast.sfields;
           Hashtbl.replace struct_layouts struct_decl.Ast.sname
             { Types.sl_name = struct_decl.Ast.sname; sl_fields = fields }
+      | _ -> ())
+    program.Ast.items;
+  (* a field declared twice in one struct is a redeclaration, as for any other name *)
+  List.iter
+    (function
+      | Ast.IStruct struct_decl ->
+          let seen = Hashtbl.create 8 in
+          List.iter
+            (fun (field : Ast.field) ->
+              if Hashtbl.mem seen field.Ast.fld_name then
+                report_error struct_decl.Ast.sspan
+                  (Printf.sprintf "invalid redeclaration of '%s'" field.Ast.fld_name);
+              Hashtbl.replace seen field.Ast.fld_name ())
+            struct_decl.Ast.sfields
+      | _ -> ())
+    program.Ast.items;
+  (* a struct may not contain itself, directly or through other structs: its size would be
+     infinite. Each struct on such a cycle is reported once, as swiftc does. *)
+  let rec contains target visited struct_name =
+    match Hashtbl.find_opt struct_layouts struct_name with
+    | None -> false
+    | Some layout ->
+        List.exists
+          (fun (_, field_type) ->
+            match field_type with
+            | Types.TStruct inner when inner = target -> true
+            | Types.TStruct inner when not (List.mem inner visited) ->
+                contains target (inner :: visited) inner
+            | _ -> false)
+          layout.Types.sl_fields
+  in
+  List.iter
+    (function
+      | Ast.IStruct struct_decl when contains struct_decl.Ast.sname [] struct_decl.Ast.sname ->
+          report_error struct_decl.Ast.sspan
+            (Printf.sprintf
+               "value type '%s' cannot have a stored property that recursively contains it"
+               struct_decl.Ast.sname)
       | _ -> ())
     program.Ast.items;
   (* PASS 1: collect signatures so calls/recursion/forward-references resolve. *)

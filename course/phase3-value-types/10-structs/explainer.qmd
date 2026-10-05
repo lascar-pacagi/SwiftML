@@ -489,6 +489,9 @@ from the pinned snapshot); the differences are stated, not hidden.
 | `q.x = 1` or `print(q.x)`, where no `q` is declared | `cannot find 'q' in scope` | **same** |
 | `p.x` or `p.x = 1`, where `p`'s own type was unknown (`var p: Nope = …`) | nothing more: that type was already reported, so `p.x` is unknown too (`TError`) and says nothing | **same** |
 | `struct A {…}` twice | `invalid redeclaration of 'A'` | **same** (`invalid_redecl`, l.1110) |
+| `var x: Int` twice in one struct | `invalid redeclaration of 'x'`, at the struct | **same**, but at the second `x`: a field has no position of its own in our AST |
+| `struct N { var n: N }`, or `A` holding a `B` holding an `A` | `value type 'N' cannot have a stored property that recursively contains it`, once per struct on the cycle | **same**, but at the field rather than the struct |
+| `let s …; s.a = 2` with `let a` | `cannot assign to property: 'a' is a 'let' constant` — the field, not `s` | **same** |
 | `print(p)` on a struct | `cannot print a value of type 'Point' (only Int, Double, Bool and String)` | **accepted** — swiftc prints `Point(x: 1, y: 2)` through reflection; ours has no runtime to do it, so sema refuses instead of letting IRGen crash |
 
 Two more limitations of this concept: a **nested write** `l.b.x = 1` is
@@ -532,8 +535,12 @@ and in IRGen, the `%Point = type { i64, i64 }` declarations.
   `Ast.Set_member`, recognised before the expression-statement fallback.
 - **10d — `sema.ml`, the registry.** Two passes over the struct declarations: first register every
   name with an empty layout, so a field may name a struct declared later; then resolve each field's
-  type and install the layout, fields in order. Record the `let` fields too: 10f needs them. A name
-  declared twice is an error.
+  type and install the layout, fields in order. Record the `let` fields too: 10f needs them. A
+  struct name declared twice is an error, and so is a field name declared twice in one struct.
+  Last, a struct may not contain itself, directly (`struct N { var n: N }`) or through other
+  structs (`A` holds a `B` that holds an `A`): its size would be infinite. Follow each struct's
+  struct-typed fields, keeping a list of the structs already visited so a cycle you are not
+  looking for does not loop forever, and report every struct that gets back to itself, once.
 - **10e — `sema.ml`, a field read.** Infer the base; it must be a struct; find the field in its
   layout. The result is `Tast.Field (base, index, name)`, typed with the field's type: the index is
   what SILGen will use. An unknown field and a non-struct base are errors (§2 lists the messages),
@@ -542,7 +549,9 @@ and in IRGen, the `%Point = type { i64, i64 }` declarations.
   A base whose type is `TError` (already reported, concept 07) has every field: return `TError` and
   report nothing.
 - **10f — `sema.ml`, a field write.** `p.x = e` needs `p` to be a `var` and `x` a `var` field, and
-  `e` must check against the field's type. Record the field's index in `Tast.Set_member`. As in
+  `e` must check against the field's type. Check the field first: a `let` field is refused naming
+  the field, whatever the binding; only for a `var` field is a `let` binding refused, naming the
+  binding — one error either way, as in swiftc. Record the field's index in `Tast.Set_member`. As in
   10e, a `TError` base reports nothing; check `e` against `TError`.
 - **10g — `silgen.ml`, a field read.** You get `Tast.Field (operand, index, _)` and the field's
   type `ty`. Lower `operand` to a struct value and emit one `Sil.Struct_extract (value, index)` of

@@ -106,6 +106,82 @@ Initializer arity and argument types are checked before lowering.
                           ^
   [1]
 
+A field's type is the type it was declared with, struct types included: `l.b` is a
+`Point`, so it cannot be a `Bool`, while `l.b.y` is an `Int`.
+
+  $ cat > field-types.swift <<'EOF'
+  > struct Point {
+  >   var x: Int
+  >   var y: Int
+  > }
+  > struct Line {
+  >   var a: Point
+  >   var b: Point
+  > }
+  > let l = Line(a: Point(x: 1, y: 2), b: Point(x: 3, y: 4))
+  > let k: Bool = l.b
+  > let n: Int = l.b.y
+  > EOF
+  $ ./lab.exe --typecheck field-types.swift
+  10:15: error: cannot convert value of type 'Point' to specified type 'Bool'
+  let k: Bool = l.b
+                ^
+  [1]
+
+A field can be read from any struct value, here a function's result, and a missing field
+there is the same error.
+
+  $ cat > call-member.swift <<'EOF'
+  > struct Point {
+  >   var x: Int
+  >   var y: Int
+  > }
+  > func mk() -> Point { return Point(x: 1, y: 2) }
+  > print(mk().y)
+  > print(mk().z)
+  > EOF
+  $ ./lab.exe --typecheck call-member.swift
+  7:12: error: value of type 'Point' has no member 'z'
+  print(mk().z)
+             ^
+  [1]
+
+A field of an `Int` field is the scalar error: `p.x` is an `Int`, so `p.x.y` has no member
+`y`.
+
+  $ cat > int-field-member.swift <<'EOF'
+  > struct Point {
+  >   var x: Int
+  >   var y: Int
+  > }
+  > let p = Point(x: 1, y: 2)
+  > print(p.x.y)
+  > EOF
+  $ ./lab.exe --typecheck int-field-member.swift
+  6:11: error: value of type 'Int' has no member 'y'
+  print(p.x.y)
+            ^
+  [1]
+
+An initializer argument for a struct-typed field is checked against that struct type.
+
+  $ cat > init-struct-field.swift <<'EOF'
+  > struct Point {
+  >   var x: Int
+  >   var y: Int
+  > }
+  > struct Line {
+  >   var a: Point
+  >   var b: Point
+  > }
+  > let l = Line(a: 1, b: Point(x: 3, y: 4))
+  > EOF
+  $ ./lab.exe --typecheck init-struct-field.swift
+  9:17: error: cannot convert value of type 'Int' to specified type 'Point'
+  let l = Line(a: 1, b: Point(x: 3, y: 4))
+                  ^
+  [1]
+
 An unknown field is diagnosed on a struct, and a scalar has no fields at all.
 
   $ cat > nomember.swift <<'EOF'
