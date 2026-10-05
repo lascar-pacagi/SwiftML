@@ -65,9 +65,9 @@ let check (program : Ast.program) (diagnostics : Diagnostics.sink) : Tast.progra
   let make (e : Tast.expr_kind) (ty : Types.ty) (span : Token.span) : Tast.expr =
     { Tast.e; ty; span }
   in
-  (* where a member's NAME is, for a diagnostic: swiftc reports `point.z` at the `z`. The name is
-     the last thing in the member expression, so it ends where [span] ends — and starts its
-     length before that. *)
+  (* Given the span of a member expression such as `point.z`, return the span of just its
+     field name, the `z`. Report a bad member with it, so the error points at the name, as
+     in swiftc. *)
   let member_name_span (span : Token.span) (name : string) : Token.span =
     let length = String.length name in
     { span with
