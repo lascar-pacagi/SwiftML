@@ -422,68 +422,49 @@ let parse_function (parser : t) : Ast.func_decl =
     fspan = keyword.Token.span;
   }
 
+(* skip the rest of a bad member: up to the newline that ends it, or the `}` that closes
+   the struct. A `{ … }` inside it is stepped over whole, so neither its newlines nor its
+   own `}` end the member. *)
+let skip_member (parser : t) : unit =
+  let rec skip depth =
+    match peek_kind parser with
+    | Token.Eof -> ()                                      (* never run past the end *)
+    | (Token.Newline | Token.RBrace) when depth = 0 -> ()  (* the member ends here *)
+    | Token.LBrace -> ignore (advance parser); skip (depth + 1)
+    | Token.RBrace -> ignore (advance parser); skip (depth - 1)
+    | _ -> ignore (advance parser); skip depth
+  in
+  skip 0
+
 (* `struct Name { (var|let) name: Type … }` — stored properties in order (concept 10) *)
 let parse_struct (parser : t) : Ast.struct_decl =
-  let keyword =
-    advance parser
-    (* struct *)
-  in
+  let keyword = advance parser (* struct *) in
   let struct_name, _ = parse_ident parser "a struct name" in
   ignore (expect parser Token.LBrace "'{'");
   let rec loop accumulator =
-    skip_newlines parser;
+    skip_newlines parser;                             (* blank and comment lines *)
     match peek_kind parser with
-    | Token.RBrace ->
-        ignore (advance parser);
-        List.rev accumulator
-    | Token.Eof ->
-        ignore (expect parser Token.RBrace "'}'");
-        List.rev accumulator
-    | Token.Kw_let | Token.Kw_var ->
-        let is_variable = (advance parser).Token.kind = Token.Kw_var in
-        let field_name, _ = parse_ident parser "a property name" in
+    | Token.RBrace | Token.Eof -> List.rev accumulator
+    | Token.Kw_var | Token.Kw_let ->
+        let fld_var = (advance parser).Token.kind = Token.Kw_var in
+        let fld_name, _ = parse_ident parser "a property name" in
         ignore (expect parser Token.Colon "':'");
-        let field_type, _ = parse_ident parser "a property type" in
-        (* a declaration ends at a newline or at the body's `}` — `{ var x: Int var y: Int }`
-           is an error here as in Swift (`consecutive declarations on a line …`) *)
+        let fld_ty, _ = parse_ident parser "a property type" in
+        (* a field ends at a newline or at the `}` *)
         (match peek_kind parser with
-        | Token.Newline -> ignore (advance parser)
-        | Token.RBrace | Token.Eof -> ()
-        | _ ->
-            Diagnostics.error parser.diagnostics (peek parser).Token.span
-              "expected newline or end of declaration");
-        loop
-          ({
-             Ast.fld_name = field_name;
-             fld_ty = field_type;
-             fld_var = is_variable;
-           }
-          :: accumulator)
+         | Token.Newline | Token.RBrace | Token.Eof -> ()
+         | _ ->
+             Diagnostics.error parser.diagnostics (peek parser).Token.span
+               "expected newline or end of declaration");
+        loop ({ Ast.fld_name; fld_ty; fld_var } :: accumulator)
     | _ ->
-        let token = peek parser in
-        Diagnostics.error parser.diagnostics token.Token.span
+        Diagnostics.error parser.diagnostics (peek parser).Token.span
           "expected a stored property: 'var name: Type'";
-        (* skip the whole member, reporting it once: up to the end of its line, stepping over
-           any `{ … }` it carries, so that the body's own `}` does not end the struct *)
-        let rec skip depth =
-          match peek_kind parser with
-          | Token.Eof -> ()
-          | Token.Newline when depth = 0 -> ()
-          | Token.RBrace when depth = 0 -> ()
-          | Token.LBrace ->
-              ignore (advance parser);
-              skip (depth + 1)
-          | Token.RBrace ->
-              ignore (advance parser);
-              skip (depth - 1)
-          | _ ->
-              ignore (advance parser);
-              skip depth
-        in
-        skip 0;
-        loop accumulator
+        skip_member parser;                           (* report once, skip it whole *)
+        loop accumulator                              (* the loop decides what is next *)
   in
   let fields = loop [] in
+  ignore (expect parser Token.RBrace "'}'");
   { Ast.sname = struct_name; sfields = fields; sspan = keyword.Token.span }
 
 (* A program is a sequence of top-level items: function declarations and statements. *)

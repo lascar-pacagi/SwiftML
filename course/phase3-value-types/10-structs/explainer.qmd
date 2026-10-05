@@ -460,9 +460,50 @@ concept's contract:
 `parse_struct` can produce all eight declaration errors above. Six come from its calls to
 `parse_ident` and the given `expect` helper. It emits the stored-property and declaration-separator
 messages directly. A member must begin with `var` or `let`; when one begins with anything else,
-say an `init` (not in this subset), report "expected a stored property" once, at that token, then
-skip the whole member — to the end of its line, stepping over any `{ … }` it carries, so that its
-own `}` is not mistaken for the struct's — and go on with the next one.
+say an `init` (not in this subset), `parse_struct` reports "expected a stored property" once, and
+recovers.
+
+#### Recovering from a bad member
+
+The technique is called **panic-mode recovery**: report once, then skip tokens until a
+*synchronization point*, a place where parsing can safely start again. In a struct body, a member
+ends at a newline or at the struct's `}`. The catch is that a member can carry its own `{ … }`,
+and a `}` or a newline *inside* it does not end it. So the skip counts braces, and stops only at
+depth 0:
+
+```ocaml
+(* skip the rest of a bad member: up to the newline that ends it, or the `}` that closes
+   the struct. A `{ … }` inside it is stepped over whole, so neither its newlines nor its
+   own `}` end the member. *)
+let skip_member (parser : t) : unit =
+  let rec skip depth =
+    match peek_kind parser with
+    | Token.Eof -> ()                                      (* never run past the end *)
+    | (Token.Newline | Token.RBrace) when depth = 0 -> ()  (* the member ends here *)
+    | Token.LBrace -> ignore (advance parser); skip (depth + 1)
+    | Token.RBrace -> ignore (advance parser); skip (depth - 1)
+    | _ -> ignore (advance parser); skip depth
+  in
+  skip 0
+```
+
+It stops *before* the newline or the `}`, without consuming it, and that is what avoids the
+cascades: the struct loop, not the recovery, decides what comes next. Its bad-member branch is
+three steps — report, `skip_member`, go round again — with no attempt to parse a field from
+whatever follows. And because the loop starts each turn with `skip_newlines`, one structure
+handles all three awkward bodies:
+
+- **a blank or comment line** — a comment is only a newline after lexing — is absorbed by
+  `skip_newlines`;
+- **a bad member that is the last one**: `skip_member` stops at the struct's `}`, and the loop
+  returns;
+- **a bad member over several lines**, `init(x: Int) {⏎ self.x = x ⏎}`, goes to depth 1 at its
+  `{`, so its newlines and its `}` do not stop the skip; it stops at the newline after that `}`.
+
+The natural first attempt breaks in two ways at once. It skips to the first newline, ignoring
+braces, so the second line of a multi-line member is read as the next member, and the member's
+`}` closes the struct. And after the skip it tries to parse a field whatever comes next, so one
+bad member becomes four or five errors.
 
 ### The diagnostics Sema owes you
 
@@ -747,8 +788,42 @@ let label =
   | _ -> None
 ```
 
-`parse_struct` follows the grammar directly: consume the keyword, name, and `{`; skip separators;
-for every `var` or `let`, parse `name : Type`, append an `Ast.field`, and stop at `}`. The member-write
+`parse_struct` follows the grammar directly: consume the keyword, name, and `{`; then loop over
+the members, with `skip_member` (§2) for a bad one, and expect the `}`.
+
+```ocaml
+let parse_struct (parser : t) : Ast.struct_decl =
+  let keyword = advance parser (* struct *) in
+  let struct_name, _ = parse_ident parser "a struct name" in
+  ignore (expect parser Token.LBrace "'{'");
+  let rec loop accumulator =
+    skip_newlines parser;                             (* blank and comment lines *)
+    match peek_kind parser with
+    | Token.RBrace | Token.Eof -> List.rev accumulator
+    | Token.Kw_var | Token.Kw_let ->
+        let fld_var = (advance parser).Token.kind = Token.Kw_var in
+        let fld_name, _ = parse_ident parser "a property name" in
+        ignore (expect parser Token.Colon "':'");
+        let fld_ty, _ = parse_ident parser "a property type" in
+        (* a field ends at a newline or at the `}` *)
+        (match peek_kind parser with
+         | Token.Newline | Token.RBrace | Token.Eof -> ()
+         | _ ->
+             Diagnostics.error parser.diagnostics (peek parser).Token.span
+               "expected newline or end of declaration");
+        loop ({ Ast.fld_name; fld_ty; fld_var } :: accumulator)
+    | _ ->
+        Diagnostics.error parser.diagnostics (peek parser).Token.span
+          "expected a stored property: 'var name: Type'";
+        skip_member parser;                           (* report once, skip it whole *)
+        loop accumulator                              (* the loop decides what is next *)
+  in
+  let fields = loop [] in
+  ignore (expect parser Token.RBrace "'}'");
+  { Ast.sname = struct_name; sfields = fields; sspan = keyword.Token.span }
+```
+
+The member-write
 arm uses the four-token lookahead from §2 and constructs `Ast.Set_member` before the expression
 fallback.
 

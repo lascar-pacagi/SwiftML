@@ -437,6 +437,20 @@ let parse_function (parser : t) : Ast.func_decl =
     fspan = keyword.Token.span;
   }
 
+(* skip the rest of a bad member: up to the newline that ends it, or the `}` that closes
+   the struct. A `{ … }` inside it is stepped over whole, so neither its newlines nor its
+   own `}` end the member. *)
+let skip_member (parser : t) : unit =
+  let rec skip depth =
+    match peek_kind parser with
+    | Token.Eof -> ()                                      (* never run past the end *)
+    | (Token.Newline | Token.RBrace) when depth = 0 -> ()  (* the member ends here *)
+    | Token.LBrace -> ignore (advance parser); skip (depth + 1)
+    | Token.RBrace -> ignore (advance parser); skip (depth - 1)
+    | _ -> ignore (advance parser); skip depth
+  in
+  skip 0
+
 (* `struct Name { (var|let) name: Type … }` — stored properties in order (concept 10) *)
 let parse_struct (parser : t) : Ast.struct_decl =
   let keyword =
@@ -526,24 +540,7 @@ let parse_struct (parser : t) : Ast.struct_decl =
         let token = peek parser in
         Diagnostics.error parser.diagnostics token.Token.span
           "expected a stored property: 'var name: Type'";
-        (* skip the whole member, reporting it once: up to the end of its line, stepping over
-           any `{ … }` it carries, so that the body's own `}` does not end the struct *)
-        let rec skip depth =
-          match peek_kind parser with
-          | Token.Eof -> ()
-          | Token.Newline when depth = 0 -> ()
-          | Token.RBrace when depth = 0 -> ()
-          | Token.LBrace ->
-              ignore (advance parser);
-              skip (depth + 1)
-          | Token.RBrace ->
-              ignore (advance parser);
-              skip (depth - 1)
-          | _ ->
-              ignore (advance parser);
-              skip depth
-        in
-        skip 0;
+        skip_member parser;                           (* report once, skip it whole *)
         loop accumulator
   in
   let fields = loop [] in
