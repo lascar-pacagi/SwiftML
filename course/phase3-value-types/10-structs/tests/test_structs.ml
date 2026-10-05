@@ -170,6 +170,21 @@ let test_parse_member_reads () =
     "postfix member reads chain left to right" "(print (. (. line b) x))"
     (ast "print(line.b.x)")
 
+(* a member expression spans ALL of `line.b`, from its base to its field name: a diagnostic
+   about the expression (`cannot convert value of type 'Point' …`) points at its start *)
+let test_member_span () =
+  let member_span src =
+    match (parse src).Ast.items with
+    | [ Ast.IStmt (Ast.Let { value; _ }) ] ->
+        let span = Ast.expr_span value in
+        (span.Token.lo.Token.col, span.Token.hi.Token.col)
+    | _ -> Alcotest.fail "expected one `let`"
+  in
+  Alcotest.(check (pair int int))
+    "`line.b` runs from `line` to just after `b`" (9, 15) (member_span "let k = line.b");
+  Alcotest.(check (pair int int))
+    "and `line.b.x` from `line` to just after `x`" (9, 17) (member_span "let k = line.b.x")
+
 let test_parse_member_write () =
   Alcotest.(check string)
     "one-level write retains its expression" "(.= p x (+ (. p x) 1))"
@@ -431,6 +446,8 @@ let () =
       ( "parser-struct-uses",
         [
           Alcotest.test_case "argument labels" `Quick test_parse_argument_labels;
+          Alcotest.test_case "member span: base to field" `Quick
+            test_member_span;
           Alcotest.test_case "chained member reads" `Quick
             test_parse_member_reads;
           Alcotest.test_case "one-level member write" `Quick
