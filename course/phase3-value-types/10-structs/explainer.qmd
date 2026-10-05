@@ -486,6 +486,8 @@ from the pinned snapshot); the differences are stated, not hidden.
 | `let n: Int = p` | `cannot convert value of type 'Point' to specified type 'Int'` | **same** |
 | `struct Box { var value: Missing }` | `cannot find type 'Missing' in scope` | **same** |
 | `Nope(x: 1)` | `cannot find 'Nope' in scope` | **same** |
+| `q.x = 1` or `print(q.x)`, where no `q` is declared | `cannot find 'q' in scope` | **same** |
+| `p.x` or `p.x = 1`, where `p`'s own type was unknown (`var p: Nope = …`) | nothing more: that type was already reported, so `p.x` is unknown too (`TError`) and says nothing | **same** |
 | `struct A {…}` twice | `invalid redeclaration of 'A'` | **same** (`invalid_redecl`, l.1110) |
 | `print(p)` on a struct | `cannot print a value of type 'Point' (only Int, Double, Bool and String)` | **accepted** — swiftc prints `Point(x: 1, y: 2)` through reflection; ours has no runtime to do it, so sema refuses instead of letting IRGen crash |
 

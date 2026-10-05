@@ -59,6 +59,16 @@ The assigned expression is checked against the property's declared type.
         ^
   [1]
 
+Writing a member of a variable that was never declared, `q.x = 1`, reports `q` itself, as
+swiftc does.
+
+  $ printf 'struct P {\n  var x: Int\n}\nq.x = 1\n' > undeclared.swift
+  $ ./lab.exe --typecheck undeclared.swift
+  4:1: error: cannot find 'q' in scope
+  q.x = 1
+  ^
+  [1]
+
 Writing a member of a value whose type is unknown reports nothing more: `var p: Nope` is the one
 error, and `p.x = true` checks its right-hand side against that unknown type:
 
